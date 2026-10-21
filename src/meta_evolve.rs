@@ -22,6 +22,7 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -629,6 +630,26 @@ pub fn meta_run(
     eval: Option<&LearnerEvalSetup>,
     no_hidden: bool,
 ) -> Result<MetaRunSummary> {
+    // The default search proposes children with the random mutator, exactly as before
+    // the proposer seam existed. A Stage-2 run injects its own proposer through
+    // `meta_run_with_proposer`.
+    let cfg = MetaConfig::load(&run_dir.join(META_CONFIG_FILE))?;
+    let proposer: Arc<dyn ProgramProposer> = Arc::new(RandomProgramMutator {
+        mode: cfg.variation,
+    });
+
+    meta_run_with_proposer(run_dir, eval, no_hidden, proposer)
+}
+
+/// `meta_run` with an explicit proposer. Stage 2 passes an `LlmProposer` (built over a
+/// `ModelBackend`); the default `meta_run` passes a `RandomProgramMutator`. The proposer
+/// is shared across the search's worker threads, so it must be `Send + Sync`.
+pub fn meta_run_with_proposer(
+    run_dir: &Path,
+    eval: Option<&LearnerEvalSetup>,
+    no_hidden: bool,
+    proposer: Arc<dyn ProgramProposer>,
+) -> Result<MetaRunSummary> {
     let cfg = MetaConfig::load(&run_dir.join(META_CONFIG_FILE))?;
     let archive_path = run_dir.join(ARCHIVE_FILE);
 
@@ -657,7 +678,7 @@ pub fn meta_run(
     archive.append(started, now_unix_ms())?;
 
     let eval = if no_hidden { None } else { eval };
-    let result = run_inner(run_dir, &cfg, eval, &mut archive);
+    let result = run_inner(run_dir, &cfg, eval, &mut archive, proposer);
 
     // Records buffered by the search are written on every path out of the run.
     let flushed = archive.set_buffered(false);
@@ -762,7 +783,9 @@ struct Ctx<'a> {
     settings: EvalSettings,
     stop: &'a StopSignal,
     probes: [TaskInstance; 2],
-    proposer: RandomProgramMutator,
+    /// How children are proposed. The default run uses a `RandomProgramMutator`; a
+    /// Stage-2 run may inject an `LlmProposer` through `meta_run_with_proposer`.
+    proposer: Arc<dyn ProgramProposer>,
     seeds: Vec<(&'static str, LearnerGenome)>,
     seed_ids: Vec<String>,
     reference: LearnerGenome,
@@ -770,7 +793,12 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    fn new(run_dir: &'a Path, cfg: &'a MetaConfig, stop: &'a StopSignal) -> Result<Ctx<'a>> {
+    fn new(
+        run_dir: &'a Path,
+        cfg: &'a MetaConfig,
+        stop: &'a StopSignal,
+        proposer: Arc<dyn ProgramProposer>,
+    ) -> Result<Ctx<'a>> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(cfg.threads)
             .build()
@@ -786,9 +814,7 @@ impl<'a> Ctx<'a> {
             },
             stop,
             probes: protocol::probe_tasks(),
-            proposer: RandomProgramMutator {
-                mode: cfg.variation,
-            },
+            proposer,
             seeds,
             seed_ids,
             reference: seeds::reference_nn(),
@@ -960,10 +986,11 @@ fn run_inner(
     cfg: &MetaConfig,
     eval: Option<&LearnerEvalSetup>,
     archive: &mut Archive,
+    proposer: Arc<dyn ProgramProposer>,
 ) -> Result<MetaRunSummary> {
     let stop = StopSignal::new(run_dir);
     let mut guard = Guard::new(run_dir, &cfg.limits);
-    let ctx = Ctx::new(run_dir, cfg, &stop)?;
+    let ctx = Ctx::new(run_dir, cfg, &stop, proposer)?;
 
     for dir in [PROGRAMS_DIR, LINEAGE_DIR, SNAPSHOT_DIR] {
         std::fs::create_dir_all(run_dir.join(dir))?;
@@ -3389,7 +3416,10 @@ pub(crate) fn recompute_metrics(
     }
 
     let stop = StopSignal::new(run_dir);
-    let ctx = Ctx::new(run_dir, cfg, &stop)?;
+    let proposer: Arc<dyn ProgramProposer> = Arc::new(RandomProgramMutator {
+        mode: cfg.variation,
+    });
+    let ctx = Ctx::new(run_dir, cfg, &stop, proposer)?;
     let stopped = || BrutError::Stopped("kill switch while computing the report".into());
     let mut flops = 0u64;
     let mut sets: HashMap<u64, TaskSet> = HashMap::new();
