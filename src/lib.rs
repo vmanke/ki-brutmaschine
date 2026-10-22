@@ -17,6 +17,7 @@ pub mod config;
 pub mod evolve;
 pub mod genome;
 pub mod hidden_eval;
+pub mod hitl;
 pub mod learner;
 pub mod learner_hidden;
 pub mod ledger;
