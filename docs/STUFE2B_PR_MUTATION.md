@@ -39,6 +39,16 @@ Abnahme oder ein Geheimnis ändern. Das ist der direkte Schutz gegen den Fall, d
 Darwin-Gödel-Maschine berichtet (angenommen bei der ICLR 2026): ein Agent schaltete seinen
 Prüfer ab, statt die Aufgabe zu lösen.
 
+Damit der Mutant den Prüfer nicht selbst aushebelt, baut die CI `brut-ingest` aus der
+vertrauenswürdigen Basis, nie aus dem Code des Pull Requests, und liest dessen Dateien nur
+als Daten (die Liste geänderter Pfade und die Kandidaten-JSON). So läuft kein vom Pull
+Request gesteuerter Code, auch kein Cargo-Bauskript, bevor der Zaun greift. Der Vergleich
+nutzt `--no-renames`, damit eine aus einem geschützten Pfad nach `candidates/` verschobene
+Datei auch über ihre Quell-Löschung auffällt, nicht nur über das Ziel. Eine Lücke bleibt
+bei einem Pull Request aus demselben Repository: Er kann diese Workflow-Datei selbst
+ändern. Diese schließen wir server-seitig über eine Repository-Regel, welche Pushes auf
+`mutate/*` auf `candidates/**` beschränkt, unabhängig von der CI.
+
 ## 4. Blindheit und Freigabe
 
 Vorschlager und Prüfer sehen die verdeckten Familien nie. Die Review prüft Gültigkeit,

@@ -4,6 +4,14 @@ name: scope-fence
 # under candidates/ only. This job runs for those branches alone, so ordinary development
 # pull requests are not affected. It enforces two gates: the scope fence (no file outside
 # candidates/) and candidate validity (parse, check, id matches file name).
+#
+# Trust: the checker (brut-ingest) is built from the BASE revision, never from the pull
+# request's code, and the pull request's own files are read only as data (changed-path
+# list and candidate JSON). No pull-request-controlled code is built or executed here, so
+# a mutation cannot neuter its own checker or run a Cargo build script before the fence
+# (ADR 0004). The one residual gap for a same-repo pull request is that it can still edit
+# this workflow file itself; close that with a repository ruleset restricting `mutate/*`
+# pushes to `candidates/**`, enforced server-side regardless of CI.
 on:
   pull_request:
 
@@ -12,19 +20,29 @@ jobs:
     if: startsWith(github.head_ref, 'mutate/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the base revision (trusted)
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Check out the pull request (data only)
+        uses: actions/checkout@v4
+        with:
+          path: pr
           fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build brut-ingest
-        run: cargo build --quiet --bin brut-ingest
+      - name: Build the checker from the base revision
+        run: cargo build --quiet --manifest-path base/Cargo.toml --bin brut-ingest
 
       - name: Scope fence (candidates/ only)
+        working-directory: pr
         run: |
-          git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-            | ./target/debug/brut-ingest --scope-check
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          git diff --no-renames --name-only "origin/${{ github.base_ref }}...HEAD" \
+            | ../base/target/debug/brut-ingest --scope-check
 
-      - name: Validate candidates
-        run: ./target/debug/brut-ingest --candidates candidates
+      - name: Validate candidates (as data)
+        run: ./base/target/debug/brut-ingest --candidates pr/candidates

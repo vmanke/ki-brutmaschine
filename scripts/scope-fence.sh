@@ -10,7 +10,9 @@ set -euo pipefail
 base="${1:?usage: scope-fence.sh <base-ref>}"
 ingest="${BRUT_INGEST:-}"
 
-changed="$(git diff --name-only "${base}...HEAD")"
+# --no-renames so a file moved out of a protected path into candidates/ shows up as the
+# source deletion (outside candidates/) too, not only the destination addition.
+changed="$(git diff --no-renames --name-only "${base}...HEAD")"
 
 if [ -z "${changed}" ]; then
   echo "scope-fence: no changed files"

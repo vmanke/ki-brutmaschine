@@ -210,9 +210,17 @@ fn pick_parents(pool: &[LearnerGenome], master_seed: u64) -> Vec<LearnerGenome> 
     vec![source[i].clone(), source[j].clone()]
 }
 
+/// Bounded retries so a pair never collides on the same content id. Independent seeds can
+/// still produce the same child (e.g. two `Remove`s on a one-instruction parent), which
+/// would write the content-addressed file twice and leave one file for a two-entry
+/// manifest.
+const PROPOSE_ATTEMPTS: usize = 16;
+
 /// Build a two-candidate proposal from a parent pool (or the seed programs when the pool
-/// is empty), under one master seed. Each candidate gets an independent derived seed, so
-/// the pair is reproducible and the two are drawn independently.
+/// is empty), under one master seed. Each candidate takes its own derived seed; if a draw
+/// repeats an earlier child's content id, or is a no-op, the next derived seed is tried.
+/// The result is always two distinct, reproducible candidates, and the seed actually used
+/// is recorded in each candidate's provenance.
 pub fn propose_pair(
     adapter: &GenomeAdapter,
     pool: &[LearnerGenome],
@@ -220,12 +228,37 @@ pub fn propose_pair(
     master_seed: u64,
 ) -> Result<(Vec<Proposed>, ProposalManifest)> {
     let parents = pick_parents(pool, master_seed);
-    let mut proposed = Vec::with_capacity(parents.len());
+    let mut proposed: Vec<Proposed> = Vec::with_capacity(parents.len());
 
     for (k, parent) in parents.iter().enumerate() {
-        let seed = derive_seed(master_seed, &format!("cand/{k}"));
+        let mut chosen = None;
 
-        proposed.push(propose_one(adapter, parent, mode, seed)?);
+        for attempt in 0..PROPOSE_ATTEMPTS {
+            let seed = derive_seed(master_seed, &format!("cand/{k}/{attempt}"));
+
+            let cand = match propose_one(adapter, parent, mode, seed) {
+                Ok(c) => c,
+                Err(_) => continue, // no-op or invalid draw: try the next seed
+            };
+
+            let clash = proposed
+                .iter()
+                .any(|p| p.provenance.child_id == cand.provenance.child_id);
+
+            if !clash {
+                chosen = Some(cand);
+                break;
+            }
+        }
+
+        match chosen {
+            Some(c) => proposed.push(c),
+            None => {
+                return Err(BrutError::Invalid(format!(
+                    "could not draw a distinct candidate {k} after {PROPOSE_ATTEMPTS} seeds; try another master seed"
+                )));
+            }
+        }
     }
 
     let manifest = ProposalManifest {
@@ -322,6 +355,10 @@ mod tests {
             assert_ne!(p.provenance.child_id, p.provenance.parent_id);
             assert_eq!(adapter.fingerprint(&p.genome), p.provenance.child_id);
         }
+
+        // The two candidates must never share a content id (else one file is written
+        // twice for a two-entry manifest).
+        assert_ne!(a[0].provenance.child_id, a[1].provenance.child_id);
 
         // Different master seed gives a different proposal.
         let (_c, mc) = propose_pair(&adapter, &[], VariationMode::Full, 43).expect("pair c");

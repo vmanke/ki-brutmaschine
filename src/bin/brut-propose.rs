@@ -66,6 +66,22 @@ fn run() -> Result<()> {
     let (proposed, manifest) = propose_pair(&adapter, &pool, mode, seed)?;
 
     let cand_dir = out.join("candidates");
+
+    // Reject a non-empty output so a stale candidate from an earlier run cannot ride along
+    // into the pull request; each proposal must carry exactly its two candidates.
+    if cand_dir.exists() {
+        let has_json = std::fs::read_dir(&cand_dir)?
+            .filter_map(|e| e.ok())
+            .any(|e| e.path().extension().is_some_and(|x| x == "json"));
+
+        if has_json {
+            return Err(BrutError::Invalid(format!(
+                "{} already contains candidate files; use a fresh --out so the pull request carries exactly the two proposed candidates",
+                cand_dir.display()
+            )));
+        }
+    }
+
     std::fs::create_dir_all(&cand_dir)?;
 
     for p in &proposed {
