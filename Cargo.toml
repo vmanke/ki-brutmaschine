@@ -31,3 +31,12 @@ path = "src/main.rs"
 [[bin]]
 name = "brut-eval"
 path = "src/bin/brut-eval.rs"
+
+# Human-in-the-loop pull-request mutation of candidates (ADR 0004).
+[[bin]]
+name = "brut-propose"
+path = "src/bin/brut-propose.rs"
+
+[[bin]]
+name = "brut-ingest"
+path = "src/bin/brut-ingest.rs"

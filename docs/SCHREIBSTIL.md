@@ -3,7 +3,8 @@
 Diese Vorgabe gilt für die deutschen Berichte des Repositorys: README.md,
 docs/ARCHITEKTUR.md, docs/SICHERHEIT_UND_RECHT.md, docs/PLAN_GENERALISIERUNG.md,
 docs/ERGEBNISSE_STUFE1.md, docs/ENTSCHEIDUNGEN_STUFE2A.md,
-docs/POSITIVKONTROLLE.md und docs/STUFE2A_PILOT.md. Der Code, seine
+docs/POSITIVKONTROLLE.md, docs/STUFE2A_PILOT.md und
+docs/STUFE2B_PR_MUTATION.md. Der Code, seine
 Kommentare, das Begriffswörterbuch CONTEXT.md, der Bauvertrag und die ADRs
 bleiben englisch, damit sie zu den Code-Begriffen passen. Die Vorgabe folgt dem
 Schreibstil des Projektplans Self-Mixing-Diagnose; wir übernehmen ihn, damit das

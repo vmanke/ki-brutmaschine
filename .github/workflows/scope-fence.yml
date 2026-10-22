@@ -1,0 +1,30 @@
+name: scope-fence
+
+# Mutation pull requests (ADR 0004) come from a `mutate/` branch and may change files
+# under candidates/ only. This job runs for those branches alone, so ordinary development
+# pull requests are not affected. It enforces two gates: the scope fence (no file outside
+# candidates/) and candidate validity (parse, check, id matches file name).
+on:
+  pull_request:
+
+jobs:
+  fence:
+    if: startsWith(github.head_ref, 'mutate/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build brut-ingest
+        run: cargo build --quiet --bin brut-ingest
+
+      - name: Scope fence (candidates/ only)
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+            | ./target/debug/brut-ingest --scope-check
+
+      - name: Validate candidates
+        run: ./target/debug/brut-ingest --candidates candidates
