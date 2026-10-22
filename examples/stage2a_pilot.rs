@@ -154,9 +154,8 @@ fn run_pilot(
     // logging is auditable from its output, not only from the printed aggregates
     // (ADR 0002). This keeps the available metadata; it is not full request/response
     // replay, which belongs to a real backend on a host.
-    if let Ok(text) = serde_json::to_string_pretty(&attempts) {
-        let _ = std::fs::write(dir.join("attempts.json"), text);
-    }
+    let text = serde_json::to_string_pretty(&attempts).expect("serialize pilot attempts");
+    std::fs::write(dir.join("attempts.json"), text).expect("write pilot attempts");
 
     (dir, summary, attempts, invalid)
 }
