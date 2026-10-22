@@ -3,7 +3,9 @@
 //! scope fence and ingest gate behave on the public API.
 #![forbid(unsafe_code)]
 
-use brutmaschine::hitl::{GenomeAdapter, ingest_one, path_in_scope, propose_pair};
+use std::collections::HashSet;
+
+use brutmaschine::hitl::{GenomeAdapter, ingest_one, path_in_scope, propose_pair, seed_ids};
 use brutmaschine::learner::VariationMode;
 
 /// The adapter parses, validates and fingerprints a real stored candidate, and the id is
@@ -41,13 +43,37 @@ fn proposal_is_valid_reproducible_and_ingests() {
 
         let id = adapter.fingerprint(&p.genome);
         let json = adapter.to_json(&p.genome).expect("encode");
-        let rec = ingest_one(&adapter, &format!("candidates/{id}.json"), &json, &id);
+        let rec = ingest_one(
+            &adapter,
+            &format!("candidates/{id}.json"),
+            &json,
+            &id,
+            &HashSet::new(),
+        );
 
         assert!(
             rec.accepted,
             "ingest rejected a freshly proposed candidate: {}",
             rec.reason
         );
+
+        // The same candidate is rejected once it is already known (dedupe against seeds
+        // or an existing pool).
+        let known: HashSet<String> = [id.clone()].into_iter().collect();
+        let dup = ingest_one(
+            &adapter,
+            &format!("candidates/{id}.json"),
+            &json,
+            &id,
+            &known,
+        );
+        assert!(!dup.accepted, "duplicate candidate should be rejected");
+    }
+
+    // A proposed child is never one of the seed programs (a mutation changes the genome).
+    let seeds = seed_ids();
+    for p in &first {
+        assert!(!seeds.contains(&p.provenance.child_id));
     }
 }
 

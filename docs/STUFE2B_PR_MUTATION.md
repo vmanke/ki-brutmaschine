@@ -18,10 +18,14 @@ Rust-Variante sind spätere Arbeit.
 - **`scripts/propose-pr.sh`** kopiert die zwei Dateien nach `candidates/`, committet auf
   einem `mutate/`-Zweig, pusht und öffnet einen Entwurfs-Pull-Request mit der Herkunft im
   Text. Es mergt nie.
-- **`brut-ingest --candidates candidates`** prüft den Topf nach dem Merge: Jede Datei muss
-  sich einlesen lassen, `check` bestehen (Struktur und Kostendeckel) und einen Dateinamen
-  tragen, der ihrer Inhalts-Kennung gleicht. Das ist das Tor, das gemergte Kandidaten in
-  einen Lauf lässt.
+- **`brut-ingest --candidates candidates [--against <topf>]`** prüft den Topf nach dem
+  Merge: Jede Datei muss sich einlesen lassen, `check` bestehen (Struktur und
+  Kostendeckel), einen Dateinamen tragen, der ihrer Inhalts-Kennung gleicht, und darf
+  keine Dopplung sein — weder einer Startprogramm-Kennung noch (mit `--against`) einer
+  bereits im Topf liegenden Kandidaten-Kennung. Das ist das Tor, das gemergte Kandidaten in
+  einen Lauf lässt. Der Abgleich gegen die Evolutions-Saaten verhindert, dass eine bloße
+  Wiedervorlage eines Startprogramms als Suchfortschritt durchgeht (Gegenmittel „e" der
+  Generalisierungs-Notiz).
 
 Je Pull Request genau zwei mutierte Kandidaten, gemeinsam geprüft und gemergt. Die
 Herkunft (Eltern-Kennung, Operator, Seed, Adapter, Schrittkosten je Breite) steht im
