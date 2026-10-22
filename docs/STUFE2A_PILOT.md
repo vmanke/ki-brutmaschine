@@ -72,4 +72,8 @@ cargo run --release --example stage2a_pilot -- <scratch_dir>
 ```
 
 Der Lauf nutzt keine verdeckte Auswertung, kein Geheimnis und kein Netz; er schreibt
-allein in `<scratch_dir>`.
+allein in `<scratch_dir>`. Je Lauf legt er die Versuchs-Datensätze (Modell,
+Prompt-Hash, Token-Zahl, Ergebnis, Genom-Kennung) nach `<scratch_dir>/<lauf>/attempts.json`
+ab, womit sich die Protokollierung aus den Ausgabedateien prüfen lässt. Das ist der
+verfügbare Umfang, nicht die vollständige Wiedergabe von Anfrage und Antwort, welche
+erst die echte Modell-Rückseite auf einem Rechner leistet.
