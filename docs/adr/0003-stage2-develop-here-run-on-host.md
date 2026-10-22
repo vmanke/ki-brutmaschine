@@ -1,0 +1,5 @@
+# Stage 2 runs a local open model on a separate host; this container only develops it
+
+Stage 2 workers are local open-weight models served by Ollama inside a Docker sandbox. This managed Claude-Code container cannot run them: Ollama is not installed, its registry is network-blocked, free disk is about 1.6 GB, the Docker daemon is not running, there is no `/dev/kvm`, and runc is 1.3.6 (below the 1.5.x the plan wants). So Stage 2 is developed here as code behind a host boundary and tested against a deterministic stub model that speaks the same interface; the real model runs later on a host the user controls (a cloud VM with a GPU, Docker, and network). Nothing in the core crate gains a network dependency (see ADR 0001).
+
+The benchmark target is a comparable open-weight model, not Opus 5.5. A local model that fits on modest hardware cannot beat Opus 5.5 on a real benchmark; prompt and code evolution improve a weak base model but the base model is the ceiling. The honest, measurable goal is to beat a same-size open-model baseline under equal compute, reported alongside the project's tamper-proof yardstick.
