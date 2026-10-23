@@ -11,6 +11,8 @@
 //! and Rust adapters are future work (ADR 0004) and are deliberately absent, not stubbed.
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
+
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
@@ -282,14 +284,24 @@ pub struct IngestRecord {
     pub reason: String,
 }
 
+/// Content ids of the seed programs. A candidate whose content id equals a seed's is a
+/// trivial re-submission of a starting program and adds no search progress, so ingest
+/// rejects it (fix (e) of the generalization note: dedupe against the evolution seeds).
+pub fn seed_ids() -> HashSet<String> {
+    seed_programs().into_iter().map(|(_, g)| g.id()).collect()
+}
+
 /// Validate one candidate's JSON against the adapter and the id taken from its file name.
-/// Accepts only when it parses, passes `check`, and its content id equals `expected_stem`
-/// (the file name without `.json`), so a candidate cannot be renamed to hide its content.
+/// Accepts only when it parses, passes `check`, its content id equals `expected_stem` (the
+/// file name without `.json`, so a candidate cannot be renamed to hide its content), and
+/// its content id is not already in `known` — the seed ids plus any existing pool, so a
+/// run is never fed a duplicate of a seed or of a candidate it already holds.
 pub fn ingest_one(
     adapter: &GenomeAdapter,
     path: &str,
     text: &str,
     expected_stem: &str,
+    known: &HashSet<String>,
 ) -> IngestRecord {
     let reject = |id: Option<String>, reason: String| IngestRecord {
         path: path.to_string(),
@@ -313,6 +325,13 @@ pub fn ingest_one(
         return reject(
             Some(id.clone()),
             format!("file name {expected_stem} does not match content id {id}"),
+        );
+    }
+
+    if known.contains(&id) {
+        return reject(
+            Some(id.clone()),
+            format!("duplicate: content id {id} is already a seed or an existing candidate"),
         );
     }
 
@@ -366,23 +385,67 @@ mod tests {
     }
 
     #[test]
-    fn ingest_accepts_matching_and_rejects_tampered() {
+    fn ingest_accepts_matching_rejects_tampered_and_dedupes() {
         let adapter = GenomeAdapter::new();
         let (proposed, _m) = propose_pair(&adapter, &[], VariationMode::Full, 7).expect("pair");
         let g = &proposed[0].genome;
         let id = adapter.fingerprint(g);
         let json = adapter.to_json(g).expect("json");
+        let none = HashSet::new();
 
-        // File named by its content id: accepted.
-        let ok = ingest_one(&adapter, &format!("candidates/{id}.json"), &json, &id);
+        // File named by its content id, not previously known: accepted.
+        let ok = ingest_one(
+            &adapter,
+            &format!("candidates/{id}.json"),
+            &json,
+            &id,
+            &none,
+        );
         assert!(ok.accepted, "{}", ok.reason);
 
         // Wrong file name for the same content: rejected.
-        let bad = ingest_one(&adapter, "candidates/deadbeef.json", &json, "deadbeef");
+        let bad = ingest_one(
+            &adapter,
+            "candidates/deadbeef.json",
+            &json,
+            "deadbeef",
+            &none,
+        );
         assert!(!bad.accepted);
 
         // Not JSON: rejected.
-        let junk = ingest_one(&adapter, "candidates/x.json", "not json", "x");
+        let junk = ingest_one(&adapter, "candidates/x.json", "not json", "x", &none);
         assert!(!junk.accepted);
+
+        // Already known (a seed or an existing candidate with this id): rejected as a duplicate.
+        let known: HashSet<String> = [id.clone()].into_iter().collect();
+        let dup = ingest_one(
+            &adapter,
+            &format!("candidates/{id}.json"),
+            &json,
+            &id,
+            &known,
+        );
+        assert!(!dup.accepted);
+        assert!(dup.reason.contains("duplicate"), "{}", dup.reason);
+    }
+
+    #[test]
+    fn ingest_rejects_a_seed_resubmission() {
+        let adapter = GenomeAdapter::new();
+        let (_name, seed) = seed_programs().into_iter().next().expect("a seed program");
+        let id = adapter.fingerprint(&seed);
+        let json = adapter.to_json(&seed).expect("json");
+
+        let rec = ingest_one(
+            &adapter,
+            &format!("candidates/{id}.json"),
+            &json,
+            &id,
+            &seed_ids(),
+        );
+
+        assert!(!rec.accepted);
+        assert!(rec.reason.contains("duplicate"), "{}", rec.reason);
     }
 }
