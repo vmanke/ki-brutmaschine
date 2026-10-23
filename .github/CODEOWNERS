@@ -1,0 +1,13 @@
+# Code owners (ADR 0004).
+#
+# Everything in the repository requires the owner's review. The candidates/ mutation
+# sandbox is the exception: it has no code owner, so a human-in-the-loop mutation pull
+# request that touches only candidates/ needs no code-owner approval, while any change
+# outside it does. Turn this into a hard gate by enabling "Require review from Code
+# Owners" in the branch protection for the default branch; that enforcement is
+# server-side and cannot be bypassed by editing a workflow file in a pull request.
+#
+# Later patterns take precedence, so the second line removes ownership for candidates/.
+
+*             @vmanke
+/candidates/
