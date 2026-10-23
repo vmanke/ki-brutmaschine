@@ -1,3 +1,10 @@
+Bezogen auf die Branch-Rules schreibt Claude:
+
+```
+Wichtig — nichts anderes eintragen. Fügen Sie keine App/keinen Bot in die Bypass-Liste ein. Nur so bleibt das Tor für den Agenten wirksam: Ein agenten-erzeugter PR, der etwas außerhalb candidates/ anfasst, braucht weiter Ihre Code-Owner-Freigabe (die Sie geben können, da Sie dort nicht der Autor sind); ein PR, der nur candidates/ berührt, braucht ohnehin keine.
+```
+
+
 # Brutmaschine
 
 Die Brutmaschine ist ein kleiner, sicherer und reproduzierbarer Prototyp eines
