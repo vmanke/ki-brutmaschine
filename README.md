@@ -7,6 +7,10 @@ Wichtig — nichts anderes eintragen. Fügen Sie keine App/keinen Bot in die Byp
 
 # Brutmaschine
 
+<p align="center">
+  <img src="assets/cover.jpg" alt="Brutmaschine" width="480">
+</p>
+
 Die Brutmaschine ist ein kleiner, sicherer und reproduzierbarer Prototyp eines
 „KI-Modell-Brutkastens“. Sie erzeugt viele kleine neuronale Netze, trainiert
 sie, bewertet sie und behält die besten. Aus den besten entstehen neue
