@@ -11,6 +11,10 @@
 //! Cascades it is not related to. Judging skill is measured against the known answers of
 //! the search panel and enters fitness with a fixed weight (decisions Q2, Q12, Q13). The
 //! puzzles, their answers and the scoring never depend on a Cascade's content.
+//!
+//! The breeder works on any task family (`Domain`, step 1); the grid puzzles of Stage 2c
+//! are the default. Every committed generation ends with a `state` event that holds the
+//! universe observables (`observe.rs`).
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,14 +26,12 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
-use crate::cascade::domain::{Domain, DomainConfig, GridDomain};
-use crate::cascade::genome::{Cascade, CascadeLimits, Worker, seeds_for};
-use crate::cascade::puzzle::{
-    Grid, Puzzle, SELF_CHECK_TEXT, Verdict, generate_panel, parse_answer, parse_verdict,
-    render_judge_prompt, render_solve_prompt,
-};
+use crate::cascade::domain::{Domain, DomainConfig, GenePool, GridDomain};
+use crate::cascade::genome::{Cascade, CascadeLimits, Worker, adapt_seeds};
+use crate::cascade::observe::{ObserveInput, UniverseState, observe};
+use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::variation::{
-    Op, llm_crossover_request, llm_mutate_request, mutate, parse_llm_cascade,
+    Op, llm_crossover_request_with, llm_mutate_request_with, mutate_with, parse_llm_cascade,
     section_crossover, stage_crossover,
 };
 use crate::util::{BrutError, Result, derive_seed, sha256_hex};
@@ -103,11 +105,16 @@ impl Usage {
 /// The request for one Worker call: its system prompt (plus the fixed self-check text
 /// when that Trait is on) and its Traits as generation limits.
 pub fn worker_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
+    worker_request_with(w, prompt, seed, SELF_CHECK_TEXT)
+}
+
+/// `worker_request` for a domain whose self-check text is `check_text`.
+pub fn worker_request_with(w: &Worker, prompt: String, seed: u64, check_text: &str) -> GenRequest {
     let mut system = w.system_prompt();
 
     if w.traits.self_check {
         system.push_str("## check\n");
-        system.push_str(SELF_CHECK_TEXT);
+        system.push_str(check_text);
         system.push('\n');
     }
 
@@ -124,12 +131,13 @@ pub fn worker_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
 /// One Worker call with usage accounting. Every attempted call counts against the budget
 /// and pays its model's fixed price, also when the backend fails, since a failed request
 /// may already have used compute; tokens count only for an answer. A model without a
-/// backend is not attempted and gives None.
+/// backend is not attempted and gives None. `check_text` is the domain's self-check text.
 fn call_worker(
     ctx: Ctx,
     w: &Worker,
     prompt: String,
     seed: u64,
+    check_text: &str,
     usage: &mut Usage,
 ) -> Option<GenResponse> {
     let backend = ctx.pool.get(&w.model).ok()?;
@@ -138,7 +146,8 @@ fn call_worker(
     usage.calls += 1;
     usage.model_cost += cost;
 
-    let resp = backend.generate(&worker_request(w, prompt, seed)).ok()?;
+    let req = worker_request_with(w, prompt, seed, check_text);
+    let resp = backend.generate(&req).ok()?;
 
     usage.prompt_tokens += u64::from(resp.prompt_tokens);
     usage.completion_tokens += u64::from(resp.completion_tokens);
@@ -157,20 +166,21 @@ enum Judgment {
     Verdict(bool),
 }
 
-/// Ask Worker `w` which of `a` and `b` follows the rule. The order shown is drawn from
-/// `seed`, so a judge cannot learn a position bias.
-fn judge_with(
+/// Ask Worker `w` which answer of the pair `(a, b)` is the better one on `task`. The
+/// order shown is drawn from `seed`, so a judge cannot learn a position bias.
+fn judge_in<D: Domain>(
     ctx: Ctx,
+    domain: &D,
     w: &Worker,
-    p: &Puzzle,
-    a: &Grid,
-    b: &Grid,
+    task: &D::Task,
+    (a, b): (&D::Answer, &D::Answer),
     seed: u64,
     usage: &mut Usage,
 ) -> Judgment {
     let swap = ChaCha8Rng::seed_from_u64(derive_seed(seed, "order")).random_bool(0.5);
     let (first, second) = if swap { (b, a) } else { (a, b) };
-    let Some(resp) = call_worker(ctx, w, render_judge_prompt(p, first, second), seed, usage) else {
+    let prompt = domain.judge_prompt(task, first, second);
+    let Some(resp) = call_worker(ctx, w, prompt, seed, domain.self_check_text(), usage) else {
         return Judgment::NoReply;
     };
 
@@ -198,12 +208,12 @@ pub fn cascade_call_bound(c: &Cascade) -> u64 {
     c.stages.iter().map(|s| stage_call_bound(s.workers.len())).sum()
 }
 
-/// The result of one Cascade on one puzzle.
+/// The result of one Cascade on one task.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CascadeRun {
+pub struct CascadeRun<A = Grid> {
     /// The last answer the Cascade chose (the residual path keeps an earlier one when a
     /// later stage produces nothing usable).
-    pub answer: Option<Grid>,
+    pub answer: Option<A>,
     pub usage: Usage,
 }
 
@@ -217,25 +227,38 @@ pub fn run_cascade(
     p: &Puzzle,
     seed: u64,
 ) -> CascadeRun {
+    run_cascade_in(&GridDomain, pool, limits, c, p, seed)
+}
+
+/// `run_cascade` on a task of `domain`, which renders the prompts and reads the answers.
+pub fn run_cascade_in<D: Domain>(
+    domain: &D,
+    pool: &ModelPool,
+    limits: &CascadeLimits,
+    c: &Cascade,
+    task: &D::Task,
+    seed: u64,
+) -> CascadeRun<D::Answer> {
     let ctx = Ctx { pool, limits };
+    let check = domain.self_check_text();
     let mut usage = Usage::default();
-    let mut chosen: Vec<Grid> = Vec::new();
+    let mut chosen: Vec<D::Answer> = Vec::new();
 
     for (k, stage) in c.stages.iter().enumerate() {
-        let prompt = render_solve_prompt(p, &chosen);
-        let mut distinct: Vec<Grid> = Vec::new();
+        let prompt = domain.solve_prompt(task, &chosen);
+        let mut distinct: Vec<D::Answer> = Vec::new();
 
         for (j, w) in stage.workers.iter().enumerate() {
             let s = derive_seed(seed, &format!("stage{k}/worker{j}"));
-            let resp = call_worker(ctx, w, prompt.clone(), s, &mut usage);
-            let grid = resp
+            let resp = call_worker(ctx, w, prompt.clone(), s, check, &mut usage);
+            let answer = resp
                 .filter(|r| r.stop_reason == StopReason::Stop)
-                .and_then(|r| parse_answer(&r.text));
+                .and_then(|r| domain.parse_answer(task, &r.text));
 
-            if let Some(g) = grid
-                && !distinct.contains(&g)
+            if let Some(a) = answer
+                && !distinct.contains(&a)
             {
-                distinct.push(g);
+                distinct.push(a);
             }
         }
 
@@ -244,8 +267,9 @@ pub fn run_cascade(
             1 => Some(0),
             _ => Some(stage_vote(
                 ctx,
+                domain,
                 &stage.workers,
-                p,
+                task,
                 &distinct,
                 derive_seed(seed, &format!("vote{k}")),
                 &mut usage,
@@ -253,9 +277,9 @@ pub fn run_cascade(
         };
 
         if let Some(i) = winner
-            && let Some(g) = distinct.get(i)
+            && let Some(a) = distinct.get(i)
         {
-            chosen.push(g.clone());
+            chosen.push(a.clone());
         }
     }
 
@@ -267,11 +291,12 @@ pub fn run_cascade(
 
 /// Blind vote among a stage's distinct answers: every Worker judges every pair. Returns
 /// the index of the answer with the most pairwise wins, ties to the lowest index.
-fn stage_vote(
+fn stage_vote<D: Domain>(
     ctx: Ctx,
+    domain: &D,
     workers: &[Worker],
-    p: &Puzzle,
-    answers: &[Grid],
+    task: &D::Task,
+    answers: &[D::Answer],
     seed: u64,
     usage: &mut Usage,
 ) -> usize {
@@ -282,7 +307,7 @@ fn stage_vote(
             for (j, w) in workers.iter().enumerate() {
                 let s = derive_seed(seed, &format!("{x}/{y}/{j}"));
 
-                match judge_with(ctx, w, p, ax, ay, s, usage) {
+                match judge_in(ctx, domain, w, task, (ax, ay), s, usage) {
                     Judgment::Verdict(true) => wins[x] += 1,
                     Judgment::Verdict(false) => wins[y] += 1,
                     Judgment::NoReply | Judgment::NoVerdict => {}
@@ -512,6 +537,28 @@ pub struct BreedConfig {
     /// hashes are unchanged.
     #[serde(default, skip_serializing_if = "DomainConfig::is_grid")]
     pub domain: DomainConfig,
+    /// How parents are drawn (step 1). DGM selection is left out, so configs and fixed
+    /// hashes of earlier runs are unchanged.
+    #[serde(default, skip_serializing_if = "ParentSelection::is_dgm")]
+    pub selection: ParentSelection,
+}
+
+/// How a generation draws its parents and crossover partners.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentSelection {
+    /// Darwin-Gödel-Machine weights; a partner is the best rated of a few draws (Q2).
+    #[default]
+    Dgm,
+    /// The control arm of step 1: every member weighs the same, and a partner is the
+    /// first valid draw, whatever its peer rating.
+    Uniform,
+}
+
+impl ParentSelection {
+    pub fn is_dgm(&self) -> bool {
+        matches!(self, ParentSelection::Dgm)
+    }
 }
 
 impl Default for BreedConfig {
@@ -536,6 +583,7 @@ impl Default for BreedConfig {
             finalists: 3,
             limits: CascadeLimits::default(),
             domain: DomainConfig::Grid,
+            selection: ParentSelection::Dgm,
         }
     }
 }
@@ -587,15 +635,19 @@ impl BreedConfig {
 
 /// One Cascade in the archive with everything measured about it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Member {
+pub struct Member<A = Grid> {
     pub id: String,
     pub cascade: Cascade,
     pub parents: Vec<String>,
     pub op: Op,
     pub generation: usize,
-    /// Answer per search-panel puzzle (None: nothing usable).
-    pub answers: Vec<Option<Grid>>,
+    /// Answer per search-panel task (None: nothing usable).
+    pub answers: Vec<Option<A>>,
     pub solved: usize,
+    /// Summed graded value over the search panel. None for a domain that is not graded
+    /// (grids): there fitness uses the solved count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<f64>,
     pub usage: Usage,
     /// Archived children (the n_i of DGM selection).
     pub children: usize,
@@ -605,14 +657,14 @@ pub struct Member {
     pub rating: f64,
 }
 
-impl Member {
+impl<A> Member<A> {
     /// Judging skill with a Laplace prior: (correct + 1) / (judged + 2).
     pub fn judge_skill(&self) -> f64 {
         f64::from(self.judge_correct + 1) / f64::from(self.judge_correct + self.judge_wrong + 2)
     }
 }
 
-/// One judged pair of answers from two Cascades on one search puzzle.
+/// One judged pair of answers from two Cascades on one search task.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comparison {
     pub generation: usize,
@@ -621,9 +673,10 @@ pub struct Comparison {
     pub second: String,
     pub judge: String,
     /// None when the judge replied without a usable verdict; such a record exists only
-    /// for a pair with exactly one right answer, and counts as a wrong judgment.
+    /// for a scored pair, and counts as a wrong judgment.
     pub winner: Option<String>,
-    /// Some when exactly one of the two answers is right: whether the judge chose it.
+    /// Some for a scored pair, one whose better answer the domain knows (for grids:
+    /// exactly one of the two is right): whether the judge chose that answer.
     pub judge_correct: Option<bool>,
 }
 
@@ -646,6 +699,13 @@ pub enum Event {
         solved: usize,
         puzzles: usize,
         usage: Usage,
+        /// The summed graded value, for a graded domain.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quality: Option<f64>,
+        /// The answers as text, one per search task, for a domain that logs them (grids do
+        /// not). Left out when no answer has a text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answers: Option<Vec<Option<String>>>,
     },
     LlmExchange {
         generation: usize,
@@ -665,6 +725,8 @@ pub enum Event {
         calls_used: u64,
     },
     Finalist(Finalist),
+    /// The universe observables of a committed generation: the last event of its step.
+    State(UniverseState),
 }
 
 /// A member's standing, for reports.
@@ -691,6 +753,9 @@ pub struct Finalist {
     pub search_solved_rate: f64,
     pub select_solved: usize,
     pub select_puzzles: usize,
+    /// The summed graded value on the select panel, for a graded domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select_quality: Option<f64>,
 }
 
 /// The end-of-run summary.
@@ -710,16 +775,16 @@ pub struct Report {
     pub best_seed_select_rate: f64,
 }
 
-/// Select-panel answers already obtained: member id, then puzzle id.
-pub type SelectAnswers = BTreeMap<String, BTreeMap<String, Option<Grid>>>;
+/// Select-panel answers already obtained: member id, then task id.
+pub type SelectAnswers<A = Grid> = BTreeMap<String, BTreeMap<String, Option<A>>>;
 
 /// Resumable state, written after every completed generation, and before the first call
 /// of a generation or select phase (then with `reserved` set).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct Snapshot<A = Grid> {
     pub config_hash: String,
     pub next_generation: usize,
-    pub archive: Vec<Member>,
+    pub archive: Vec<Member<A>>,
     pub comparisons: Vec<Comparison>,
     pub calls: u64,
     pub mutator_answers: u64,
@@ -729,8 +794,10 @@ pub struct Snapshot {
     #[serde(default)]
     pub reserved: u64,
     /// Answers on the select panel so far, so a stopped select phase never pays twice.
-    #[serde(default)]
-    pub select_answers: SelectAnswers,
+    /// Empty when absent. The empty map is named directly: a plain `default` would make
+    /// serde require `A: Default`, which a domain's answer type need not have.
+    #[serde(default = "BTreeMap::new")]
+    pub select_answers: SelectAnswers<A>,
     /// True when the select phase finished on this archive and returned its events.
     #[serde(default)]
     pub finished: bool,
@@ -755,41 +822,72 @@ struct Draft {
 }
 
 /// Receives a snapshot to store before calls are made (see `Breeder::step_with`).
-pub type Persist<'p> = dyn FnMut(&Snapshot) -> Result<()> + 'p;
+pub type Persist<'p, A = Grid> = dyn FnMut(&Snapshot<A>) -> Result<()> + 'p;
 
-/// The breeding run: archive, panels, budget and the generation loop.
-pub struct Breeder<'a> {
+/// The breeding run: archive, panels, budget and the generation loop, on the tasks of
+/// domain `D` with Cascades made from a gene pool.
+pub struct Breeder<'a, D: Domain = GridDomain> {
     cfg: BreedConfig,
+    domain: D,
+    genes: GenePool,
     pool: &'a ModelPool,
     mutator: Option<&'a dyn Mutator>,
-    search: Vec<Puzzle>,
-    select: Vec<Puzzle>,
-    archive: Vec<Member>,
+    search: Vec<D::Task>,
+    select: Vec<D::Task>,
+    archive: Vec<Member<D::Answer>>,
     comparisons: Vec<Comparison>,
     calls: u64,
     mutator_answers: u64,
     next_generation: usize,
-    select_answers: SelectAnswers,
+    select_answers: SelectAnswers<D::Answer>,
     finished: bool,
 }
 
-impl<'a> Breeder<'a> {
-    /// A fresh run. Generation 0 (the seed Cascades) is evaluated by the first `step`.
+impl<'a> Breeder<'a, GridDomain> {
+    /// A fresh run on grid puzzles. Generation 0 (the seed Cascades) is evaluated by the
+    /// first `step`.
     pub fn new(
         cfg: BreedConfig,
         pool: &'a ModelPool,
         mutator: Option<&'a dyn Mutator>,
     ) -> Result<Breeder<'a>> {
-        cfg.check()?;
-        GridDomain::from_config(&cfg)?;
-        pool.covers(&cfg.limits)?;
-        seeds_for(&cfg.limits)?;
+        Breeder::start(cfg, GenePool::grid(), pool, mutator)
+    }
 
-        let search = generate_panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
-        let select = generate_panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
+    /// Continue a run on grid puzzles from `snap` (see `resume_from`).
+    pub fn resume(
+        cfg: BreedConfig,
+        pool: &'a ModelPool,
+        mutator: Option<&'a dyn Mutator>,
+        snap: Snapshot,
+    ) -> Result<Breeder<'a>> {
+        Breeder::resume_from(cfg, GenePool::grid(), pool, mutator, snap)
+    }
+}
+
+impl<'a, D: Domain> Breeder<'a, D> {
+    /// A fresh run on the domain `cfg` names, with Cascades made from `genes`.
+    /// Generation 0 (the seed Cascades) is evaluated by the first `step`.
+    pub fn start(
+        cfg: BreedConfig,
+        genes: GenePool,
+        pool: &'a ModelPool,
+        mutator: Option<&'a dyn Mutator>,
+    ) -> Result<Breeder<'a, D>> {
+        cfg.check()?;
+
+        let domain = D::from_config(&cfg)?;
+
+        pool.covers(&cfg.limits)?;
+        adapt_seeds((genes.seeds)(), &cfg.limits)?;
+
+        let search = domain.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+        let select = domain.panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
 
         Ok(Breeder {
             cfg,
+            domain,
+            genes,
             pool,
             mutator,
             search,
@@ -799,19 +897,20 @@ impl<'a> Breeder<'a> {
             calls: 0,
             mutator_answers: 0,
             next_generation: 0,
-            select_answers: SelectAnswers::new(),
+            select_answers: BTreeMap::new(),
             finished: false,
         })
     }
 
     /// Continue a run from `snap`. Refused when the experiment-defining settings changed.
     /// Calls the snapshot reserved for work in flight count as spent.
-    pub fn resume(
+    pub fn resume_from(
         cfg: BreedConfig,
+        genes: GenePool,
         pool: &'a ModelPool,
         mutator: Option<&'a dyn Mutator>,
-        snap: Snapshot,
-    ) -> Result<Breeder<'a>> {
+        snap: Snapshot<D::Answer>,
+    ) -> Result<Breeder<'a, D>> {
         if snap.config_hash != cfg.fixed_hash() {
             return Err(BrutError::Invalid(
                 "resume refused: settings other than generations and max_calls changed"
@@ -819,7 +918,7 @@ impl<'a> Breeder<'a> {
             ));
         }
 
-        let mut b = Breeder::new(cfg, pool, mutator)?;
+        let mut b = Breeder::start(cfg, genes, pool, mutator)?;
 
         b.archive = snap.archive;
         b.comparisons = snap.comparisons;
@@ -832,13 +931,23 @@ impl<'a> Breeder<'a> {
         Ok(b)
     }
 
+    /// The domain this run breeds on.
+    pub fn domain(&self) -> &D {
+        &self.domain
+    }
+
+    /// The tasks of the search panel.
+    pub fn search_panel(&self) -> &[D::Task] {
+        &self.search
+    }
+
     /// The state after the last committed generation.
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Snapshot<D::Answer> {
         self.snapshot_with(0)
     }
 
     /// The state with `reserved` calls set aside for work about to start.
-    fn snapshot_with(&self, reserved: u64) -> Snapshot {
+    fn snapshot_with(&self, reserved: u64) -> Snapshot<D::Answer> {
         Snapshot {
             config_hash: self.cfg.fixed_hash(),
             next_generation: self.next_generation,
@@ -857,7 +966,7 @@ impl<'a> Breeder<'a> {
         self.calls.saturating_add(need) <= self.cfg.max_calls
     }
 
-    pub fn archive(&self) -> &[Member] {
+    pub fn archive(&self) -> &[Member<D::Answer>] {
         &self.archive
     }
 
@@ -877,7 +986,7 @@ impl<'a> Breeder<'a> {
     /// every seed, plus `finalists` Cascades of the widest shape in the archive or among
     /// `drafts` (finalists can only come from there).
     fn select_reserve(&self, drafts: &[Draft]) -> u64 {
-        let seeds: u64 = seeds_for(&self.cfg.limits)
+        let seeds: u64 = adapt_seeds((self.genes.seeds)(), &self.cfg.limits)
             .unwrap_or_default()
             .iter()
             .map(|(_, c)| cascade_call_bound(c))
@@ -909,10 +1018,16 @@ impl<'a> Breeder<'a> {
     /// After the budget check and before the first Worker call, `persist` receives a
     /// snapshot that reserves the generation's worst-case calls. Stored as the
     /// checkpoint, it makes a resume after a crash or kill count those calls as spent.
+    ///
+    /// An integrity alarm from the domain (an answer graded beyond a proven bound) ends
+    /// the step with that error. As on a stop, only the calls made stay spent.
+    ///
+    /// A committed step's events end with one `State` event: the observables of the
+    /// committed state (`observe.rs`).
     pub fn step_with(
         &mut self,
         stop: &(dyn Fn() -> bool + Sync),
-        persist: &mut Persist,
+        persist: &mut Persist<'_, D::Answer>,
     ) -> Result<(Status, Vec<Event>)> {
         let g = self.next_generation;
 
@@ -924,16 +1039,23 @@ impl<'a> Breeder<'a> {
         let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(self.cfg.seed, &format!("gen/{g}")));
 
         if g == 0 {
+            let ids = |panel: &[D::Task]| -> Vec<String> {
+                panel
+                    .iter()
+                    .map(|t| self.domain.task_id(t).to_string())
+                    .collect()
+            };
+
             events.push(Event::RunStart {
                 config: self.cfg.clone(),
                 config_hash: self.cfg.fixed_hash(),
-                search: self.search.iter().map(|p| p.id.clone()).collect(),
-                select: self.select.iter().map(|p| p.id.clone()).collect(),
+                search: ids(&self.search),
+                select: ids(&self.select),
             });
         }
 
         let (drafts, llm_events, answers_used) = if g == 0 {
-            let seeds = seeds_for(&self.cfg.limits)?
+            let seeds = adapt_seeds((self.genes.seeds)(), &self.cfg.limits)?
                 .into_iter()
                 .map(|(_, c)| Draft {
                     cascade: c,
@@ -986,6 +1108,7 @@ impl<'a> Breeder<'a> {
         // Evaluate the children on the search panel.
         let mut archive = self.archive.clone();
         let mut calls = self.calls;
+        let mut generation_usage = Usage::default();
         let first_new = archive.len();
 
         for d in drafts {
@@ -1000,7 +1123,20 @@ impl<'a> Breeder<'a> {
 
                 return Ok((Status::Done("stopped".to_string()), Vec::new()));
             };
-            let solved = count_solved(&answers, &self.search);
+            let (solved, quality) = match tally(&self.domain, &answers, &self.search) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.calls = calls;
+
+                    return Err(e);
+                }
+            };
+            let artefacts: Vec<Option<String>> = answers
+                .iter()
+                .map(|a| a.as_ref().and_then(|a| self.domain.artefact(a)))
+                .collect();
+
+            generation_usage.add(&usage);
 
             for p in &d.parents {
                 if let Some(m) = archive.iter_mut().find(|m| &m.id == p) {
@@ -1017,6 +1153,8 @@ impl<'a> Breeder<'a> {
                 solved,
                 puzzles: self.search.len(),
                 usage,
+                quality,
+                answers: artefacts.iter().any(Option::is_some).then_some(artefacts),
             });
 
             archive.push(Member {
@@ -1027,6 +1165,7 @@ impl<'a> Breeder<'a> {
                 generation: g,
                 answers,
                 solved,
+                quality,
                 usage,
                 children: 0,
                 judge_correct: 0,
@@ -1043,6 +1182,7 @@ impl<'a> Breeder<'a> {
         let (new_comparisons, peer_usage) = self.peer_round(&archive, &new, g, &mut rng, stop);
 
         calls += peer_usage.calls;
+        generation_usage.add(&peer_usage);
 
         let Some(new_comparisons) = new_comparisons else {
             self.calls = calls;
@@ -1080,6 +1220,20 @@ impl<'a> Breeder<'a> {
         self.next_generation = g + 1;
         self.finished = false;
 
+        // The observables of the committed state, with the weights the next generation
+        // draws its parents by.
+        let weights = self.selection_weights();
+
+        events.push(Event::State(observe(&ObserveInput {
+            generation: g,
+            archive: &self.archive,
+            first_new,
+            comparisons: &self.comparisons,
+            selection_weights: &weights,
+            generation_usage,
+            tasks: self.search.len(),
+        })));
+
         Ok((Status::Continue, events))
     }
 
@@ -1102,12 +1256,13 @@ impl<'a> Breeder<'a> {
     /// Before each member it scores, `persist` receives a snapshot that keeps the answers
     /// so far and reserves that member's worst case. The events come back only once per
     /// archive: a run finished before gets its report again with no events, since its log
-    /// already holds them.
+    /// already holds them. An integrity alarm from the domain ends the phase with that
+    /// error.
     pub fn finish_with(
         &mut self,
         stop: &(dyn Fn() -> bool + Sync),
         stop_reason: &str,
-        persist: &mut Persist,
+        persist: &mut Persist<'_, D::Answer>,
     ) -> Result<Option<(Report, Vec<Event>)>> {
         let order = rank(&self.archive);
         let mut events = Vec::new();
@@ -1138,15 +1293,15 @@ impl<'a> Breeder<'a> {
                 persist(&self.snapshot_with(self.member_need(i)))?;
 
                 let tag = format!("select/{id}");
-                let puzzles: Vec<&Puzzle> = missing.iter().map(|&j| &self.select[j]).collect();
-                let (answers, usage) = self.run_panel(&self.archive[i].cascade, &puzzles, &tag, stop);
+                let tasks: Vec<&D::Task> = missing.iter().map(|&j| &self.select[j]).collect();
+                let (answers, usage) = self.run_panel(&self.archive[i].cascade, &tasks, &tag, stop);
                 let mut complete = true;
                 let got = self.select_answers.entry(id.clone()).or_default();
 
-                for (p, answer) in puzzles.iter().zip(answers) {
+                for (task, answer) in tasks.iter().zip(answers) {
                     match answer {
                         Some(a) => {
-                            got.insert(p.id.clone(), a);
+                            got.insert(self.domain.task_id(task).to_string(), a);
                         }
                         None => complete = false,
                     }
@@ -1160,18 +1315,24 @@ impl<'a> Breeder<'a> {
             }
 
             let got = self.select_answers.get(&id);
-            let answers: Vec<Option<Grid>> = self
+            let answers: Vec<Option<D::Answer>> = self
                 .select
                 .iter()
-                .map(|p| got.and_then(|g| g.get(&p.id)).cloned().flatten())
+                .map(|t| {
+                    got.and_then(|g| g.get(self.domain.task_id(t)))
+                        .cloned()
+                        .flatten()
+                })
                 .collect();
+            let (select_solved, select_quality) = tally(&self.domain, &answers, &self.select)?;
             let m = &self.archive[i];
             let f = Finalist {
                 id,
                 is_seed: m.op == Op::Seed,
                 search_solved_rate: m.solved as f64 / self.search.len().max(1) as f64,
-                select_solved: count_solved(&answers, &self.select),
+                select_solved,
                 select_puzzles: self.select.len(),
+                select_quality,
             };
 
             events.push(Event::Finalist(f.clone()));
@@ -1250,52 +1411,58 @@ impl<'a> Breeder<'a> {
             .fold(0u64, u64::saturating_add)
     }
 
-    /// Indices of the select-panel puzzles member `id` has no answer for yet.
+    /// Indices of the select-panel tasks member `id` has no answer for yet.
     fn select_missing(&self, id: &str) -> Vec<usize> {
         let got = self.select_answers.get(id);
 
         (0..self.select.len())
-            .filter(|&j| !got.is_some_and(|g| g.contains_key(&self.select[j].id)))
+            .filter(|&j| {
+                let task = self.domain.task_id(&self.select[j]);
+
+                !got.is_some_and(|g| g.contains_key(task))
+            })
             .collect()
     }
 
     /// Answers and usage of `c` on `panel`. The answers are None when `stop` fired before
-    /// some puzzle; the usage still counts every call that was made.
+    /// some task; the usage still counts every call that was made.
     fn evaluate(
         &self,
         c: &Cascade,
-        panel: &[Puzzle],
+        panel: &[D::Task],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> (Option<Vec<Option<Grid>>>, Usage) {
-        let puzzles: Vec<&Puzzle> = panel.iter().collect();
-        let (answers, usage) = self.run_panel(c, &puzzles, tag, stop);
+    ) -> (Option<Vec<Option<D::Answer>>>, Usage) {
+        let tasks: Vec<&D::Task> = panel.iter().collect();
+        let (answers, usage) = self.run_panel(c, &tasks, tag, stop);
 
         (answers.into_iter().collect(), usage)
     }
 
-    /// Run `c` on every puzzle of `panel`, in parallel. An entry is None when `stop`
-    /// fired before that puzzle started; a started puzzle always finishes, and the usage
-    /// counts every call made. Every call's seed comes from `tag` (which names the
-    /// Cascade) and the puzzle id, so the result depends neither on thread count nor on
-    /// when, or with which other puzzles, the Cascade runs.
+    /// Run `c` on every task of `panel`, in parallel. An entry is None when `stop` fired
+    /// before that task started; a started task always finishes, and the usage counts
+    /// every call made. Every call's seed comes from `tag` (which names the Cascade) and
+    /// the task id, so the result depends neither on thread count nor on when, or with
+    /// which other tasks, the Cascade runs.
     fn run_panel(
         &self,
         c: &Cascade,
-        panel: &[&Puzzle],
+        panel: &[&D::Task],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> (Vec<Option<Option<Grid>>>, Usage) {
-        let runs: Vec<Option<CascadeRun>> = panel
+    ) -> (Vec<Option<Option<D::Answer>>>, Usage) {
+        let runs: Vec<Option<CascadeRun<D::Answer>>> = panel
             .par_iter()
-            .map(|p| {
+            .map(|task| {
                 if stop() {
                     return None;
                 }
 
-                let seed = derive_seed(self.cfg.seed, &format!("{tag}/{}", p.id));
+                let id = self.domain.task_id(task);
+                let seed = derive_seed(self.cfg.seed, &format!("{tag}/{id}"));
+                let run = run_cascade_in(&self.domain, self.pool, &self.cfg.limits, c, task, seed);
 
-                Some(run_cascade(self.pool, &self.cfg.limits, c, p, seed))
+                Some(run)
             })
             .collect();
 
@@ -1334,7 +1501,7 @@ impl<'a> Breeder<'a> {
     /// every call that was made.
     fn peer_round(
         &self,
-        archive: &[Member],
+        archive: &[Member<D::Answer>],
         new: &[usize],
         g: usize,
         rng: &mut ChaCha8Rng,
@@ -1388,7 +1555,7 @@ impl<'a> Breeder<'a> {
                     return None;
                 }
 
-                let p = &self.search[i];
+                let task = &self.search[i];
                 let (Some(Some(a)), Some(Some(b))) = (archive[c].answers.get(i), archive[o].answers.get(i))
                 else {
                     return Some((None, Usage::default()));
@@ -1402,27 +1569,30 @@ impl<'a> Breeder<'a> {
                     pool: self.pool,
                     limits: &self.cfg.limits,
                 };
-                // Scored: exactly one of the two answers is right.
-                let scored = (a == &p.test_output) != (b == &p.test_output);
+                // Scored: the domain strictly prefers one of the two answers (for grids,
+                // exactly one of them is right). Some(true) when it prefers `a`.
+                let preferred = self.domain.prefer(task, a, b);
                 let record = |winner: Option<usize>, judge_correct: Option<bool>| Comparison {
                     generation: g,
-                    puzzle: p.id.clone(),
+                    puzzle: self.domain.task_id(task).to_string(),
                     first: archive[c].id.clone(),
                     second: archive[o].id.clone(),
                     judge: archive[j].id.clone(),
                     winner: winner.map(|x| archive[x].id.clone()),
                     judge_correct,
                 };
-                let comparison = match judge_with(ctx, w, p, a, b, seed, &mut usage) {
+                let verdict = judge_in(ctx, &self.domain, w, task, (a, b), seed, &mut usage);
+                let comparison = match verdict {
                     Judgment::Verdict(a_won) => {
-                        let (winner, chosen) = if a_won { (c, a) } else { (o, b) };
+                        let winner = if a_won { c } else { o };
+                        let judge_correct = preferred.map(|a_better| a_better == a_won);
 
-                        Some(record(Some(winner), scored.then(|| chosen == &p.test_output)))
+                        Some(record(Some(winner), judge_correct))
                     }
                     // A reply without a usable verdict on a scored pair is a wrong
                     // judgment, so a Cascade cannot keep the prior skill of 1/2 by
                     // never answering in the judge format.
-                    Judgment::NoVerdict if scored => Some(record(None, Some(false))),
+                    Judgment::NoVerdict if preferred.is_some() => Some(record(None, Some(false))),
                     Judgment::NoVerdict | Judgment::NoReply => None,
                 };
 
@@ -1473,11 +1643,10 @@ impl<'a> Breeder<'a> {
                 match partner {
                     Some(b) => {
                         let pb = &self.archive[b];
-                        let req = llm_crossover_request(
-                            &pa.cascade,
-                            pa.fitness,
-                            &pb.cascade,
-                            pb.fitness,
+                        let req = llm_crossover_request_with(
+                            self.genes.brief,
+                            (&pa.cascade, pa.fitness),
+                            (&pb.cascade, pb.fitness),
                             &self.cfg.limits,
                             seed,
                         );
@@ -1485,7 +1654,13 @@ impl<'a> Breeder<'a> {
                         planned.push((req, vec![pa.id.clone(), pb.id.clone()], Op::LlmCrossover));
                     }
                     None => {
-                        let req = llm_mutate_request(&pa.cascade, pa.fitness, &self.cfg.limits, seed);
+                        let req = llm_mutate_request_with(
+                            self.genes.brief,
+                            &pa.cascade,
+                            pa.fitness,
+                            &self.cfg.limits,
+                            seed,
+                        );
 
                         planned.push((req, vec![pa.id.clone()], Op::LlmMutate));
                     }
@@ -1524,6 +1699,11 @@ impl<'a> Breeder<'a> {
                     Some(r) if !r.is_usable() => Err(format!("unusable answer ({:?})", r.stop_reason)),
                     Some(r) => parse_llm_cascade(&r.text, &self.cfg.limits).map_err(|e| e.to_string()),
                 };
+                // The gene pool's admission rule holds for every new Cascade.
+                let parsed = parsed.and_then(|c| match (self.genes.admit)(&c) {
+                    Ok(()) => Ok(c),
+                    Err(e) => Err(format!("not admitted: {e}")),
+                });
                 let (accepted, reason) = match parsed {
                     Ok(c) if seen.contains(&c.id()) => (false, "duplicate of an archived Cascade".to_string()),
                     Ok(c) => {
@@ -1555,9 +1735,9 @@ impl<'a> Breeder<'a> {
         Ok(Drafted::Ready(drafts, events, answers_used))
     }
 
-    /// Add random children (mutation and crossover, all distinct and new) to `drafts`
-    /// until they and `others` other children reach `children_per_generation`, or the
-    /// draws run out.
+    /// Add random children (mutation and crossover, all distinct, new and admitted by the
+    /// gene pool) to `drafts` until they and `others` other children reach
+    /// `children_per_generation`, or the draws run out.
     fn fill_random(
         &self,
         drafts: &mut Vec<Draft>,
@@ -1595,12 +1775,13 @@ impl<'a> Breeder<'a> {
             }
 
             if child.is_none() {
-                child = mutate(&parent.cascade, &self.cfg.limits, rng)
+                child = mutate_with(&parent.cascade, &self.cfg.limits, self.genes.phrases, rng)
                     .map(|(c, op)| (c, vec![parent.id.clone()], op));
             }
 
             if let Some((c, parents, op)) = child
                 && c.check(&self.cfg.limits).is_ok()
+                && (self.genes.admit)(&c).is_ok()
                 && seen.insert(c.id())
             {
                 drafts.push(Draft {
@@ -1612,20 +1793,30 @@ impl<'a> Breeder<'a> {
         }
     }
 
-    /// DGM selection weights over the archive, from fitness and children counts.
+    /// Parent selection weights over the archive: DGM weights from fitness and children
+    /// counts, or the same weight for every member under uniform selection.
     fn selection_weights(&self) -> Vec<f64> {
+        if self.cfg.selection == ParentSelection::Uniform {
+            return vec![1.0; self.archive.len()];
+        }
+
         let scores: Vec<f64> = self.archive.iter().map(|m| m.fitness).collect();
         let children: Vec<usize> = self.archive.iter().map(|m| m.children).collect();
 
         dgm_weights(&scores, &children, self.cfg.dgm_lambda, self.cfg.dgm_alpha0)
     }
 
-    /// A crossover partner for member `a`: draw a few by DGM weight and take the one the
-    /// peers rate highest (Q2: peer judgment decides who mates with whom).
+    /// A crossover partner for member `a`: draw a few by selection weight and take the
+    /// one the peers rate highest (Q2: peer judgment decides who mates with whom). Under
+    /// uniform selection, the first draw other than `a`, so ratings play no part.
     fn partner(&self, a: usize, weights: &[f64], rng: &mut ChaCha8Rng) -> Option<usize> {
+        let candidates = match self.cfg.selection {
+            ParentSelection::Dgm => PARTNER_CANDIDATES,
+            ParentSelection::Uniform => 1,
+        };
         let mut best: Option<usize> = None;
 
-        for _ in 0..PARTNER_CANDIDATES {
+        for _ in 0..candidates {
             for _ in 0..DRAW_ATTEMPTS {
                 let b = draw(weights, rng)?;
 
@@ -1659,7 +1850,7 @@ struct Kinship {
 }
 
 impl Kinship {
-    fn new(archive: &[Member]) -> Kinship {
+    fn new<A>(archive: &[Member<A>]) -> Kinship {
         let index: HashMap<&str, usize> = archive
             .iter()
             .enumerate()
@@ -1696,20 +1887,52 @@ impl Kinship {
     }
 }
 
-/// Number of puzzles whose answer equals the ground truth.
-fn count_solved(answers: &[Option<Grid>], panel: &[Puzzle]) -> usize {
-    answers
-        .iter()
-        .zip(panel)
-        .filter(|(a, p)| a.as_ref() == Some(&p.test_output))
-        .count()
+/// The number of tasks of `panel` that `answers` solve and, for a graded domain, their
+/// summed value. An error is the domain's integrity alarm, or a value outside [0, 1]: a
+/// broken grader must not reach fitness or the log.
+fn tally<D: Domain>(
+    domain: &D,
+    answers: &[Option<D::Answer>],
+    panel: &[D::Task],
+) -> Result<(usize, Option<f64>)> {
+    let mut solved = 0;
+    let mut value = 0.0;
+
+    for (answer, task) in answers.iter().zip(panel) {
+        let Some(a) = answer else {
+            continue;
+        };
+        let grade = domain.grade(task, a)?;
+
+        if !(0.0..=1.0).contains(&grade.value) {
+            return Err(BrutError::Integrity(format!(
+                "task {} was graded {}, outside [0, 1]",
+                domain.task_id(task),
+                grade.value
+            )));
+        }
+
+        if grade.solved {
+            solved += 1;
+        }
+
+        value += grade.value;
+    }
+
+    Ok((solved, domain.graded().then_some(value)))
 }
 
 /// Recompute judging skill, peer ratings and fitness of every member from all
 /// comparisons so far. A judge's vote weighs ln(u / (1 - u)) for skill u > 0.5, else 0:
 /// the optimal weight of an independent voter of known accuracy (Nitzan and Paroush
-/// 1982, International Economic Review 23(2), 289-297).
-fn refresh(archive: &mut [Member], comparisons: &[Comparison], cfg: &BreedConfig, puzzles: usize) {
+/// 1982, International Economic Review 23(2), 289-297). Fitness counts the graded value
+/// of a graded domain where the solved count stands otherwise.
+fn refresh<A>(
+    archive: &mut [Member<A>],
+    comparisons: &[Comparison],
+    cfg: &BreedConfig,
+    puzzles: usize,
+) {
     let index: HashMap<String, usize> = archive
         .iter()
         .enumerate()
@@ -1757,7 +1980,7 @@ fn refresh(archive: &mut [Member], comparisons: &[Comparison], cfg: &BreedConfig
     let n = puzzles.max(1) as f64;
 
     for (m, r) in archive.iter_mut().zip(ratings) {
-        let solved_rate = m.solved as f64 / n;
+        let solved_rate = m.quality.unwrap_or(m.solved as f64) / n;
         let tokens = m.usage.completion_tokens as f64 / n;
         let cost = cfg.token_cost_per_1k * tokens / 1000.0 + m.usage.model_cost / n;
 
@@ -1768,7 +1991,7 @@ fn refresh(archive: &mut [Member], comparisons: &[Comparison], cfg: &BreedConfig
 }
 
 /// Archive indices best first: fitness, then peer rating (tie-break, Q13), then id.
-fn rank(archive: &[Member]) -> Vec<usize> {
+fn rank<A>(archive: &[Member<A>]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..archive.len()).collect();
 
     order.sort_by(|&a, &b| {
@@ -1783,7 +2006,7 @@ fn rank(archive: &[Member]) -> Vec<usize> {
     order
 }
 
-fn ranked(m: &Member, puzzles: usize) -> Ranked {
+fn ranked<A>(m: &Member<A>, puzzles: usize) -> Ranked {
     Ranked {
         id: m.id.clone(),
         generation: m.generation,
@@ -1799,15 +2022,28 @@ fn ranked(m: &Member, puzzles: usize) -> Ranked {
     }
 }
 
-/// Run a whole breeding run to the end in memory: steps until done, then `finish`.
-/// Used by tests and by callers that need no checkpoints. A pending LLM round ends the
-/// run with reason "waiting for LLM answers".
+/// Run a whole breeding run on grid puzzles to the end in memory: steps until done, then
+/// `finish`. Used by tests and by callers that need no checkpoints. A pending LLM round
+/// ends the run with reason "waiting for LLM answers".
 pub fn breed_to_end(
     cfg: BreedConfig,
     pool: &ModelPool,
     mutator: Option<&dyn Mutator>,
 ) -> Result<(Report, Vec<Event>)> {
-    let mut b = Breeder::new(cfg, pool, mutator)?;
+    let (report, events, _) = breed_to_end_in::<GridDomain>(cfg, GenePool::grid(), pool, mutator)?;
+
+    Ok((report, events))
+}
+
+/// `breed_to_end` on the domain `cfg` names, with Cascades made from `genes`. Also
+/// returns the final state.
+pub fn breed_to_end_in<D: Domain>(
+    cfg: BreedConfig,
+    genes: GenePool,
+    pool: &ModelPool,
+    mutator: Option<&dyn Mutator>,
+) -> Result<(Report, Vec<Event>, Snapshot<D::Answer>)> {
+    let mut b: Breeder<'_, D> = Breeder::start(cfg, genes, pool, mutator)?;
     let never = || false;
     let mut events = Vec::new();
 
@@ -1829,15 +2065,18 @@ pub fn breed_to_end(
 
     events.extend(ev);
 
-    Ok((report, events))
+    Ok((report, events, b.snapshot()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::StubModel;
-    use crate::cascade::genome::seed_cascades;
+    use crate::cascade::domain::Grade;
+    use crate::cascade::genome::{Section, Stage, Traits, seed_cascades, seeds_for};
+    use crate::cascade::puzzle::generate_panel;
     use crate::cascade::sim::SimModel;
+    use crate::cascade::variation::MutatorBrief;
 
     fn sim_pool() -> ModelPool {
         let mut pool = ModelPool::new();
@@ -1858,6 +2097,19 @@ mod tests {
             finalists: 2,
             ..BreedConfig::default()
         }
+    }
+
+    /// `judge_in` on a grid puzzle, as the Stage 2c tests below call it.
+    fn judge_with(
+        ctx: Ctx,
+        w: &Worker,
+        p: &Puzzle,
+        a: &Grid,
+        b: &Grid,
+        seed: u64,
+        usage: &mut Usage,
+    ) -> Judgment {
+        judge_in(ctx, &GridDomain, w, p, (a, b), seed, usage)
     }
 
     #[test]
@@ -2627,5 +2879,862 @@ mod tests {
 
         assert_eq!(status, Status::Continue, "the answers fit");
         assert_eq!(used, requests.len());
+    }
+
+    #[test]
+    fn one_state_per_committed_generation_last_in_step() {
+        let pool = sim_pool();
+        let never = || false;
+        let mut b = Breeder::new(small_config(47), &pool, None).expect("breeder");
+        let mut committed = 0;
+        let mut judged = false;
+
+        loop {
+            let before = b.calls_used();
+            let (status, events) = b.step(&never).expect("step");
+
+            if status != Status::Continue {
+                assert!(events.is_empty(), "{status:?}");
+                break;
+            }
+
+            let g = b.next_generation() - 1;
+            let states = events
+                .iter()
+                .filter(|e| matches!(e, Event::State(_)))
+                .count();
+            let Some(Event::State(state)) = events.last() else {
+                panic!("generation {g} does not end with a state event");
+            };
+
+            // The state follows the generation's summary and describes the committed
+            // archive.
+            assert_eq!(states, 1, "generation {g}");
+            assert!(matches!(
+                &events[events.len() - 2],
+                Event::Generation { generation, .. } if *generation == g
+            ));
+            assert_eq!(state.generation, g);
+            assert_eq!(state.performance.archive_size, b.archive().len());
+            assert_eq!(
+                state.performance.born,
+                b.archive().iter().filter(|m| m.generation == g).count()
+            );
+
+            // Its cost is the generation's own: every call of the step, made by the
+            // newborns on the search panel and by the peer round.
+            let newborn_calls: u64 = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Born { usage, .. } => Some(usage.calls),
+                    _ => None,
+                })
+                .sum();
+
+            assert_eq!(state.cost.calls, b.calls_used() - before, "generation {g}");
+            judged |= state.cost.calls > newborn_calls;
+            committed += 1;
+        }
+
+        assert_eq!(committed, small_config(47).generations + 1);
+        assert!(judged, "no peer round made a call");
+
+        // A stopped step commits nothing, so it logs no state.
+        let mut stopped = Breeder::new(small_config(47), &pool, None).expect("breeder");
+        let always = || true;
+        let (status, events) = stopped.step(&always).expect("step");
+
+        assert_eq!(status, Status::Done("stopped".to_string()));
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn uniform_selection_is_uniform_and_ignores_ratings() {
+        let pool = sim_pool();
+        let never = || false;
+        let uniform = BreedConfig {
+            selection: ParentSelection::Uniform,
+            ..small_config(19)
+        };
+        let mut b = Breeder::new(uniform.clone(), &pool, None).expect("breeder");
+
+        assert_eq!(b.step(&never).expect("gen 0").0, Status::Continue);
+
+        // Fitness and children counts do not matter: every member weighs the same.
+        let n = b.archive.len();
+
+        b.archive[0].fitness = 0.9;
+        b.archive[1].children = 5;
+        assert_eq!(b.selection_weights(), vec![1.0; n]);
+
+        // The partner is the first draw other than the parent, whatever the ratings.
+        let weights = b.selection_weights();
+
+        for seed in 0..32u64 {
+            let mut replay = ChaCha8Rng::seed_from_u64(seed);
+            let first = (0..DRAW_ATTEMPTS)
+                .filter_map(|_| draw(&weights, &mut replay))
+                .find(|&x| x != 0);
+
+            for flip in [1.0, -1.0] {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+                for (i, m) in b.archive.iter_mut().enumerate() {
+                    m.rating = flip * i as f64;
+                }
+
+                assert_eq!(b.partner(0, &weights, &mut rng), first);
+            }
+        }
+
+        // Under DGM selection the ratings decide between the drawn partners.
+        let mut dgm = Breeder::new(small_config(19), &pool, None).expect("breeder");
+
+        dgm.step(&never).expect("gen 0");
+
+        let weights = dgm.selection_weights();
+        let mut follows_ratings = false;
+
+        for seed in 0..32u64 {
+            let mut picks = Vec::new();
+
+            for flip in [1.0, -1.0] {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+                for (i, m) in dgm.archive.iter_mut().enumerate() {
+                    m.rating = flip * i as f64;
+                }
+
+                picks.push(dgm.partner(0, &weights, &mut rng));
+            }
+
+            follows_ratings |= picks[0] != picks[1];
+        }
+
+        assert!(follows_ratings);
+
+        // The choice is part of the settings; DGM runs record and hash as before.
+        let json = serde_json::to_string(&uniform).expect("json");
+        let dgm_json = serde_json::to_string(&small_config(19)).expect("json");
+
+        assert!(json.contains(r#""selection":"uniform""#), "{json}");
+        assert!(!dgm_json.contains("selection"), "{dgm_json}");
+        assert_ne!(uniform.fixed_hash(), small_config(19).fixed_hash());
+
+        let (report, _) = breed_to_end(uniform, &pool, None).expect("run");
+
+        assert!(report.archive_size > seed_cascades().len());
+    }
+
+    /// Admits no Worker on the large model.
+    fn small_only(c: &Cascade) -> std::result::Result<(), String> {
+        let mut workers = c.stages.iter().flat_map(|s| &s.workers);
+
+        match workers.find(|w| w.model != "sim:small") {
+            Some(w) => Err(format!("uses {}", w.model)),
+            None => Ok(()),
+        }
+    }
+
+    /// Answers every Mutator request with the first seed moved to the large model, with a
+    /// temperature drawn from the request's seed.
+    struct Large;
+
+    impl Mutator for Large {
+        fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+            let mut c = seed_cascades()[0].1.clone();
+            let w = &mut c.stages[0].workers[0];
+
+            w.model = "sim:large".to_string();
+            w.traits.temperature = (req.seed % 100) as f32 / 100.0;
+
+            Some(GenResponse {
+                text: serde_json::to_string(&c).ok()?,
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                stop_reason: StopReason::Stop,
+                backend: "large".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn admit_rule_rejects_drafts() {
+        let pool = sim_pool();
+        let cfg = BreedConfig {
+            llm_every: 1,
+            ..small_config(53)
+        };
+        let genes = GenePool {
+            admit: small_only,
+            ..GenePool::grid()
+        };
+        let (_, events, snap) =
+            breed_to_end_in::<GridDomain>(cfg.clone(), genes, &pool, Some(&Large)).expect("run");
+        let exchanges: Vec<(bool, &str)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::LlmExchange {
+                    accepted, reason, ..
+                } => Some((*accepted, reason.as_str())),
+                _ => None,
+            })
+            .collect();
+
+        // Every answer from the Mutator is refused, and no random child slips through.
+        assert!(!exchanges.is_empty());
+
+        for (accepted, reason) in &exchanges {
+            assert!(!accepted, "{reason}");
+            assert!(
+                reason.starts_with("not admitted: uses sim:large"),
+                "{reason}"
+            );
+        }
+
+        assert!(snap.archive.iter().all(|m| small_only(&m.cascade).is_ok()));
+        assert!(snap.archive.iter().any(|m| m.op != Op::Seed));
+
+        // Without the rule, the same answers are bred, and so is a random child on the
+        // large model.
+        let (_, events, open) =
+            breed_to_end_in::<GridDomain>(cfg, GenePool::grid(), &pool, Some(&Large)).expect("run");
+        let bred = events
+            .iter()
+            .any(|e| matches!(e, Event::LlmExchange { accepted: true, .. }));
+        let random_large = open.archive.iter().any(|m| {
+            !matches!(m.op, Op::Seed | Op::LlmMutate | Op::LlmCrossover)
+                && small_only(&m.cascade).is_err()
+        });
+
+        assert!(bred && random_large);
+    }
+
+    /// A tiny domain for the generic breeder: task n asks for 2n. The exact answer solves
+    /// the task and is worth 1; 2n + 2 is right in kind and worth 1/2; anything else is
+    /// worth 0. An answer above 1000 beats a "proven bound": an integrity alarm.
+    struct Doubling;
+
+    /// One task of `Doubling`.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Number {
+        id: String,
+        n: u64,
+    }
+
+    /// The value of `answer` on task `n`.
+    fn doubled(n: u64, answer: u64) -> f64 {
+        if answer == 2 * n {
+            1.0
+        } else if answer == 2 * n + 2 {
+            0.5
+        } else {
+            0.0
+        }
+    }
+
+    impl Domain for Doubling {
+        type Task = Number;
+        type Answer = u64;
+
+        fn from_config(_cfg: &BreedConfig) -> Result<Doubling> {
+            Ok(Doubling)
+        }
+
+        fn panel(&self, seed: u64, n: usize) -> Vec<Number> {
+            (0..n)
+                .map(|i| {
+                    let n = derive_seed(seed, &format!("number/{i}")) % 40 + 1;
+
+                    Number {
+                        id: format!("task{i}-{n}"),
+                        n,
+                    }
+                })
+                .collect()
+        }
+
+        fn task_id<'t>(&self, task: &'t Number) -> &'t str {
+            &task.id
+        }
+
+        fn solve_prompt(&self, task: &Number, previous: &[u64]) -> String {
+            format!("DOUBLE {} AFTER {previous:?}", task.n)
+        }
+
+        fn judge_prompt(&self, task: &Number, a: &u64, b: &u64) -> String {
+            format!("WHICH {} {a} {b}", task.n)
+        }
+
+        fn parse_answer(&self, _task: &Number, text: &str) -> Option<u64> {
+            text.strip_prefix("ANSWER ")?.trim().parse().ok()
+        }
+
+        fn grade(&self, task: &Number, answer: &u64) -> Result<Grade> {
+            if *answer > 1000 {
+                let alarm = format!("{answer} beats a proven bound");
+
+                return Err(BrutError::Integrity(alarm));
+            }
+
+            let value = doubled(task.n, *answer);
+
+            Ok(Grade {
+                correct: value > 0.0,
+                solved: value == 1.0,
+                value,
+            })
+        }
+
+        fn prefer(&self, task: &Number, a: &u64, b: &u64) -> Option<bool> {
+            let (x, y) = (doubled(task.n, *a), doubled(task.n, *b));
+
+            (x != y).then_some(x > y)
+        }
+
+        fn graded(&self) -> bool {
+            true
+        }
+
+        fn artefact(&self, answer: &u64) -> Option<String> {
+            Some(answer.to_string())
+        }
+
+        fn self_check_text(&self) -> &'static str {
+            "Check the double once."
+        }
+    }
+
+    /// Answers `Doubling` prompts by the words of the system prompt: "overflow" gives
+    /// 5000, "exact" or the domain's self-check text 2n, "over" 2n + 2, anything else n.
+    /// A judge whose prompt says "careful", or carries the self-check text, picks the
+    /// better answer; any other picks the first one shown.
+    struct Scripted;
+
+    impl ModelBackend for Scripted {
+        fn name(&self) -> &str {
+            "scripted"
+        }
+
+        fn generate(&self, req: &GenRequest) -> Result<GenResponse> {
+            let numbers: Vec<u64> = req
+                .prompt
+                .split_whitespace()
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            let n = numbers[0];
+            let checked = req.system.contains(Doubling.self_check_text());
+            let text = if req.prompt.starts_with("WHICH") {
+                let (a, b) = (numbers[1], numbers[2]);
+                let careful = checked || req.system.contains("careful");
+                let first = !careful || doubled(n, a) >= doubled(n, b);
+
+                if first { "VERDICT A" } else { "VERDICT B" }.to_string()
+            } else if req.system.contains("overflow") {
+                "ANSWER 5000".to_string()
+            } else if checked || req.system.contains("exact") {
+                format!("ANSWER {}", 2 * n)
+            } else if req.system.contains("over") {
+                format!("ANSWER {}", 2 * n + 2)
+            } else {
+                format!("ANSWER {n}")
+            };
+
+            Ok(GenResponse {
+                text,
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                stop_reason: StopReason::Stop,
+                backend: "scripted".to_string(),
+            })
+        }
+    }
+
+    fn scripted_pool() -> ModelPool {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Scripted));
+        pool.insert("sim:large", Box::new(Scripted));
+
+        pool
+    }
+
+    /// A one-Worker Cascade on the small model with this strategy.
+    fn doubler(strategy: &str) -> Cascade {
+        let section = |name: &str, text: &str| Section {
+            name: name.to_string(),
+            text: text.to_string(),
+        };
+
+        Cascade {
+            stages: vec![Stage {
+                workers: vec![Worker {
+                    model: "sim:small".to_string(),
+                    sections: vec![
+                        section("role", "You double numbers."),
+                        section("strategy", strategy),
+                        section("format", "Answer with the line ANSWER and the number."),
+                    ],
+                    traits: Traits::default(),
+                }],
+            }],
+        }
+    }
+
+    fn doubling_seeds() -> Vec<(String, Cascade)> {
+        vec![
+            ("plain".to_string(), doubler("Repeat the number.")),
+            ("exact".to_string(), doubler("Give the exact double.")),
+            ("over".to_string(), doubler("Go over the double by two.")),
+            ("careful".to_string(), doubler("Repeat it; be careful.")),
+        ]
+    }
+
+    /// The phrase pool of `Doubling`; its admission rule refuses the last text.
+    const DOUBLING_PHRASES: &[(&str, &str)] = &[
+        ("strategy", "Give the exact double."),
+        ("strategy", "Go over the double by two."),
+        ("strategy", "Repeat the number."),
+        ("check", "Be careful when you judge."),
+        ("style", "Be brief."),
+        ("style", "This text is forbidden."),
+    ];
+
+    static DOUBLING_BRIEF: MutatorBrief = MutatorBrief {
+        system: "You edit Cascades that double numbers.",
+        context: "A Cascade doubles numbers.\n\n",
+        format: "Format: as for grid puzzles.\n\n",
+        mutate_task: "Task: make the parent double better. ",
+        crossover_task: "Task: merge Parent A and Parent B. ",
+    };
+
+    /// Admits no section that says "forbidden".
+    fn no_forbidden(c: &Cascade) -> std::result::Result<(), String> {
+        let said = c
+            .stages
+            .iter()
+            .flat_map(|s| &s.workers)
+            .flat_map(|w| &w.sections)
+            .any(|s| s.text.contains("forbidden"));
+
+        if said {
+            Err("a section says forbidden".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn doubling_genes() -> GenePool {
+        GenePool {
+            seeds: doubling_seeds,
+            phrases: DOUBLING_PHRASES,
+            brief: &DOUBLING_BRIEF,
+            admit: no_forbidden,
+        }
+    }
+
+    /// Answers every Mutator request: a mutation with an "exact" Cascade that has its own
+    /// style line, a crossover with one whose style text is forbidden.
+    struct Writer;
+
+    impl Mutator for Writer {
+        fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+            let style = if req.prompt.contains("Parent A") {
+                "This text is forbidden.".to_string()
+            } else {
+                format!("Variant {}.", req.seed % 997)
+            };
+            let mut c = doubler("Give the exact double.");
+
+            c.stages[0].workers[0].sections.push(Section {
+                name: "style".to_string(),
+                text: style,
+            });
+
+            Some(GenResponse {
+                text: serde_json::to_string(&c).ok()?,
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                stop_reason: StopReason::Stop,
+                backend: "writer".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_generic_domain_breeds_on_graded_values_and_preferences() {
+        let pool = scripted_pool();
+        let cfg = BreedConfig {
+            llm_every: 1,
+            ..small_config(59)
+        };
+        let (report, events, snap) =
+            breed_to_end_in::<Doubling>(cfg.clone(), doubling_genes(), &pool, Some(&Writer))
+                .expect("run");
+        let panel = Doubling.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+        let n = panel.len() as f64;
+        let answer = |id: &str, task: &str| -> u64 {
+            let m = snap.archive.iter().find(|m| m.id == id).expect("member");
+            let i = panel.iter().position(|t| t.id == task).expect("task");
+
+            m.answers[i].expect("an answer")
+        };
+
+        // Fitness counts the graded value, so a Cascade can earn without solving.
+        for m in &snap.archive {
+            let quality: f64 = m
+                .answers
+                .iter()
+                .zip(&panel)
+                .filter_map(|(a, t)| a.map(|a| doubled(t.n, a)))
+                .sum();
+            let cost = cfg.token_cost_per_1k * (m.usage.completion_tokens as f64 / n) / 1000.0
+                + m.usage.model_cost / n;
+            let fitness =
+                (1.0 - cfg.judge_weight) * quality / n + cfg.judge_weight * m.judge_skill() - cost;
+
+            assert_eq!(m.quality, Some(quality), "{}", m.id);
+            assert!((m.fitness - fitness).abs() < 1e-12, "{}", m.id);
+        }
+
+        assert!(
+            snap.archive
+                .iter()
+                .any(|m| m.solved == 0 && m.quality > Some(0.0))
+        );
+
+        // Born events carry the graded value and the answers as text.
+        for e in &events {
+            if let Event::Born {
+                id,
+                quality,
+                answers,
+                ..
+            } = e
+            {
+                let m = snap.archive.iter().find(|m| &m.id == id).expect("archived");
+                let texts: Vec<Option<String>> =
+                    m.answers.iter().map(|a| a.map(|a| a.to_string())).collect();
+
+                assert_eq!(*quality, m.quality);
+                assert_eq!(answers.as_ref(), Some(&texts));
+            }
+        }
+
+        // A judgment is scored exactly when the domain prefers one answer, and it is
+        // right when the judge chose that one. Pairs without an exact answer count too.
+        let mut inexact = 0;
+
+        assert!(!snap.comparisons.is_empty());
+
+        for c in &snap.comparisons {
+            let task = panel.iter().find(|t| t.id == c.puzzle).expect("task");
+            let (a, b) = (answer(&c.first, &c.puzzle), answer(&c.second, &c.puzzle));
+            let preferred = Doubling.prefer(task, &a, &b);
+
+            assert_eq!(c.judge_correct.is_some(), preferred.is_some(), "{c:?}");
+
+            if let (Some(winner), Some(a_better)) = (&c.winner, preferred) {
+                let better = if a_better { &c.first } else { &c.second };
+
+                assert_eq!(c.judge_correct, Some(winner == better), "{c:?}");
+            }
+
+            if preferred.is_some() && a != 2 * task.n && b != 2 * task.n {
+                inexact += 1;
+            }
+        }
+
+        assert!(inexact > 0);
+
+        // The Mutator gets the domain's brief, and its forbidden answers are refused.
+        let mut refused = 0;
+
+        for e in &events {
+            if let Event::LlmExchange {
+                request,
+                accepted,
+                reason,
+                ..
+            } = e
+            {
+                assert_eq!(request.system, DOUBLING_BRIEF.system);
+
+                if !accepted {
+                    assert!(reason.starts_with("not admitted: "), "{reason}");
+                    refused += 1;
+                }
+            }
+        }
+
+        assert!(refused > 0);
+        assert!(snap.archive.iter().any(|m| m.op == Op::LlmMutate));
+        assert!(
+            snap.archive
+                .iter()
+                .all(|m| no_forbidden(&m.cascade).is_ok())
+        );
+
+        // Random children take their texts from the domain's phrases, never the grid's.
+        let random: Vec<&str> = snap
+            .archive
+            .iter()
+            .filter(|m| !matches!(m.op, Op::Seed | Op::LlmMutate | Op::LlmCrossover))
+            .flat_map(|m| m.cascade.stages.iter().flat_map(|s| &s.workers))
+            .flat_map(|w| w.sections.iter().map(|s| s.text.as_str()))
+            .collect();
+        let grid_phrases = GenePool::grid().phrases;
+
+        assert!(
+            ["Be brief.", "Be careful when you judge."]
+                .iter()
+                .any(|t| random.contains(t))
+        );
+        assert!(
+            random
+                .iter()
+                .all(|t| grid_phrases.iter().all(|(_, g)| g != t))
+        );
+
+        // A finalist's select quality is its summed value on the select panel.
+        let select = Doubling.panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
+
+        for f in &report.finalists {
+            let got = &snap.select_answers[&f.id];
+            let values: Vec<f64> = select
+                .iter()
+                .filter_map(|t| got.get(&t.id).copied().flatten().map(|a| doubled(t.n, a)))
+                .collect();
+            let quality: f64 = values.iter().sum();
+            let solved = values.iter().filter(|&&v| v == 1.0).count();
+
+            assert_eq!(f.select_quality, Some(quality), "{}", f.id);
+            assert_eq!(f.select_solved, solved, "{}", f.id);
+        }
+
+        // Every generation logs its state, with quality rates; finalists carry theirs.
+        let states: Vec<&UniverseState> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::State(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(states.len(), cfg.generations + 1);
+        assert!(states.iter().all(|s| s.performance.quality_best.is_some()));
+        assert!(report.finalists.iter().all(|f| f.select_quality.is_some()));
+
+        // The state of a generic run reads back as it was written.
+        let json = serde_json::to_string(&snap).expect("json");
+        let back: Snapshot<u64> = serde_json::from_str(&json).expect("back");
+
+        assert_eq!(back, snap);
+    }
+
+    #[test]
+    fn a_generic_cascade_checks_and_votes_by_its_domain() {
+        let pool = scripted_pool();
+        let limits = CascadeLimits::default();
+        let ctx = Ctx {
+            pool: &pool,
+            limits: &limits,
+        };
+        let task = Number {
+            id: "seven".to_string(),
+            n: 7,
+        };
+        let plain = doubler("Repeat the number.");
+        let mut checked = plain.clone();
+
+        checked.stages[0].workers[0].traits.self_check = true;
+
+        // The self-check Trait adds the domain's text, not the grid's. Only the domain's
+        // text makes this Worker answer the exact double.
+        let w = &checked.stages[0].workers[0];
+        let grid_request = worker_request(w, Doubling.solve_prompt(&task, &[]), 3);
+        let unchecked = run_cascade_in(&Doubling, &pool, &limits, &plain, &task, 3);
+        let run = run_cascade_in(&Doubling, &pool, &limits, &checked, &task, 3);
+        let grid_reply = Scripted.generate(&grid_request).expect("reply");
+
+        assert_eq!(grid_reply.text, "ANSWER 7");
+        assert_eq!(unchecked.answer, Some(7));
+        assert_eq!(run.answer, Some(14));
+        assert_eq!(run.usage.calls, 1);
+
+        // As a judge, the Worker gets the domain's text too, so it picks the better
+        // answer. Asked in both orders, it sees each answer first once. A verdict is true
+        // when the first answer of the pair won.
+        let (worse, better) = (7, 14);
+        let mut usage = Usage::default();
+        let verdicts = [(&worse, &better), (&better, &worse)]
+            .map(|pair| judge_in(ctx, &Doubling, w, &task, pair, 11, &mut usage));
+
+        assert_eq!(
+            verdicts,
+            [Judgment::Verdict(false), Judgment::Verdict(true)]
+        );
+
+        // Two Workers that disagree vote by the domain's judge prompt. Both judge with
+        // care, so the better answer wins, although it is not the first Worker's. That
+        // takes two answers and two votes.
+        let worker = |strategy: &str| doubler(strategy).stages[0].workers[0].clone();
+        let pair = Cascade {
+            stages: vec![Stage {
+                workers: vec![
+                    worker("Repeat it; be careful."),
+                    worker("Go over the double by two; be careful."),
+                ],
+            }],
+        };
+        let run = run_cascade_in(&Doubling, &pool, &limits, &pair, &task, 5);
+
+        assert_eq!(run.answer, Some(16));
+        assert_eq!(run.usage.calls, 4);
+        assert_eq!(run.usage.calls, cascade_call_bound(&pair));
+    }
+
+    #[test]
+    fn a_generic_run_resumes_like_a_straight_one() {
+        let pool = scripted_pool();
+        let never = || false;
+        let cfg = BreedConfig {
+            llm_every: 2,
+            ..small_config(67)
+        };
+        let start = || -> Breeder<'_, Doubling> {
+            Breeder::start(cfg.clone(), doubling_genes(), &pool, Some(&Writer)).expect("breeder")
+        };
+        let mut straight = start();
+        let mut events_straight = Vec::new();
+
+        while let (Status::Continue, ev) = straight.step(&never).expect("step") {
+            events_straight.extend(ev);
+        }
+
+        let mut first = start();
+        let mut events_split = Vec::new();
+
+        for _ in 0..2 {
+            events_split.extend(first.step(&never).expect("step").1);
+        }
+
+        let snap = first.snapshot();
+        let mut second: Breeder<'_, Doubling> =
+            Breeder::resume_from(cfg.clone(), doubling_genes(), &pool, Some(&Writer), snap)
+                .expect("resume");
+
+        while let (Status::Continue, ev) = second.step(&never).expect("step") {
+            events_split.extend(ev);
+        }
+
+        assert_eq!(events_straight, events_split);
+        assert_eq!(straight.snapshot(), second.snapshot());
+
+        // The panel comes from the domain.
+        let panel = Doubling.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+
+        assert_eq!(second.search_panel(), &panel[..]);
+        assert_eq!(second.domain().task_id(&panel[0]), panel[0].id);
+    }
+
+    /// Seeds of which the second answers beyond the proven bound.
+    fn overflowing() -> Vec<(String, Cascade)> {
+        vec![
+            ("exact".to_string(), doubler("Give the exact double.")),
+            ("overflow".to_string(), doubler("Let the answer overflow.")),
+            ("plain".to_string(), doubler("Repeat the number.")),
+        ]
+    }
+
+    #[test]
+    fn an_integrity_alarm_commits_nothing() {
+        let pool = scripted_pool();
+        let genes = GenePool {
+            seeds: overflowing,
+            ..doubling_genes()
+        };
+        let mut b: Breeder<'_, Doubling> =
+            Breeder::start(small_config(61), genes, &pool, None).expect("breeder");
+        let never = || false;
+        let mut stored = Vec::new();
+        let alarm = b.step_with(&never, &mut |s| {
+            stored.push(s.clone());
+
+            Ok(())
+        });
+
+        assert!(matches!(alarm, Err(BrutError::Integrity(_))), "{alarm:?}");
+
+        // Nothing is committed. The calls made, one per task for each of the first two
+        // seeds, stay spent, and the reservation stored before them covers them.
+        let snap = b.snapshot();
+
+        assert!(snap.archive.is_empty() && snap.comparisons.is_empty());
+        assert_eq!(snap.next_generation, 0);
+        assert_eq!(b.calls_used(), 2 * 12);
+        assert_eq!(snap.calls, b.calls_used());
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].reserved >= b.calls_used());
+    }
+
+    /// An answer type without a `Default`, which the `Domain` trait allows.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Label(String);
+
+    #[test]
+    fn a_snapshot_reads_back_for_answers_without_a_default() {
+        let (_, cascade) = seed_cascades().swap_remove(0);
+        let member = Member {
+            id: cascade.id(),
+            cascade,
+            parents: Vec::new(),
+            op: Op::Seed,
+            generation: 0,
+            answers: vec![Some(Label("a".to_string())), None],
+            solved: 1,
+            quality: None,
+            usage: Usage::default(),
+            children: 0,
+            judge_correct: 0,
+            judge_wrong: 0,
+            fitness: 0.5,
+            rating: 0.0,
+        };
+        let mut snap = Snapshot {
+            config_hash: "h".to_string(),
+            next_generation: 1,
+            archive: vec![member],
+            comparisons: Vec::new(),
+            calls: 2,
+            mutator_answers: 0,
+            reserved: 0,
+            select_answers: BTreeMap::new(),
+            finished: false,
+        };
+
+        snap.select_answers
+            .entry(snap.archive[0].id.clone())
+            .or_default()
+            .insert("t".to_string(), Some(Label("b".to_string())));
+
+        // This compiles only while reading a snapshot asks nothing more of the answer
+        // type than the `Domain` trait promises.
+        let json = serde_json::to_string(&snap).expect("json");
+        let back: Snapshot<Label> = serde_json::from_str(&json).expect("back");
+
+        assert_eq!(back, snap);
+
+        // A snapshot without select answers, as written before they were kept, has none.
+        let mut old: serde_json::Value = serde_json::from_str(&json).expect("value");
+
+        old.as_object_mut()
+            .expect("object")
+            .remove("select_answers");
+
+        let back: Snapshot<Label> = serde_json::from_value(old).expect("old");
+
+        assert!(back.select_answers.is_empty());
+        assert_eq!(back.archive, snap.archive);
     }
 }
