@@ -1232,7 +1232,7 @@ impl<'a> Breeder<'a> {
         let mut seen: HashSet<String> = self.archive.iter().map(|m| m.id.clone()).collect();
         let weights = self.selection_weights();
 
-        let llm_round = self.cfg.llm_every > 0 && g % self.cfg.llm_every == 0;
+        let llm_round = self.cfg.llm_every > 0 && g.is_multiple_of(self.cfg.llm_every);
 
         if llm_round && let Some(mutator) = self.mutator {
             let n = self.cfg.llm_children.min(self.cfg.children_per_generation);
@@ -1383,9 +1383,7 @@ impl<'a> Breeder<'a> {
 
         for _ in 0..PARTNER_CANDIDATES {
             for _ in 0..DRAW_ATTEMPTS {
-                let Some(b) = draw(weights, rng) else {
-                    return None;
-                };
+                let b = draw(weights, rng)?;
 
                 if b != a {
                     let better = best.is_none_or(|x| self.archive[b].rating > self.archive[x].rating);
@@ -1833,13 +1831,14 @@ mod tests {
 
     #[test]
     fn seeds_adapt_to_a_host_allow_list() {
-        let mut limits = CascadeLimits::default();
-
-        limits.models = vec![crate::cascade::genome::ModelSpec {
-            tag: "sim:large".to_string(),
-            cost_per_call: 0.001,
-        }];
-        limits.think_ceiling_per_stage = vec![0];
+        let limits = CascadeLimits {
+            models: vec![crate::cascade::genome::ModelSpec {
+                tag: "sim:large".to_string(),
+                cost_per_call: 0.001,
+            }],
+            think_ceiling_per_stage: vec![0],
+            ..CascadeLimits::default()
+        };
 
         let seeds = seeds_for(&limits).expect("adapted seeds");
 
