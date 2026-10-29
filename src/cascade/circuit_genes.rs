@@ -407,28 +407,79 @@ fn section(name: &str, text: &str) -> Section {
 /// - any other word that is not a gate name, when the number stands in square brackets
 ///   right after it, as a register with its index: a[2], qr[2] and qubits[2] read as q2.
 ///
-/// After a gate name the number stays a word of its own, so H[2] reads as "H 2".
+/// After a gate name the number stays a word of its own, so H[2] reads as "H 2". A gate
+/// name that opens a call counts with the first qubit index inside the call's
+/// parentheses, so keyword and nested arguments count too: h(qubit=0) reads as "h 0" and
+/// H(LineQubit(2)) as "H 2".
 fn gate_mentions(text: &str) -> Vec<String> {
-    let mut words: Vec<String> = Vec::new();
+    let mut words: Vec<(String, String)> = Vec::new();
 
     for (gap, piece) in words_and_gaps(text) {
         let number = piece.bytes().all(|b| b.is_ascii_digit());
 
         match words.last_mut() {
-            Some(last) if number && matches!(last.as_str(), "q" | "Q") => last.push_str(&piece),
-            Some(last) if number && gap.trim() == "[" && !Gate::is_name(last) => {
+            Some((_, last)) if number && matches!(last.as_str(), "q" | "Q") => {
+                last.push_str(&piece)
+            }
+            Some((_, last)) if number && gap.trim() == "[" && !Gate::is_name(last) => {
                 *last = format!("q{piece}");
             }
-            _ => words.push(piece),
+            _ => words.push((gap, piece)),
         }
     }
 
-    words
-        .iter()
-        .zip(words.iter().skip(1))
-        .filter(|(name, index)| Gate::is_name(name) && is_qubit_index(index))
-        .map(|(name, index)| format!("{name} {index}"))
-        .collect()
+    let mut mentions = Vec::new();
+
+    for (i, (_, name)) in words.iter().enumerate() {
+        if !Gate::is_name(name) {
+            continue;
+        }
+
+        let index = match words.get(i + 1) {
+            Some((_, next)) if is_qubit_index(next) => Some(next.as_str()),
+            _ => call_index(&words[i + 1..]),
+        };
+
+        if let Some(index) = index {
+            mentions.push(format!("{name} {index}"));
+        }
+    }
+
+    mentions
+}
+
+/// The first qubit index inside the parentheses that open in the first gap of `rest`, as
+/// a call writes its arguments; None when no call opens there or it holds no index.
+fn call_index(rest: &[(String, String)]) -> Option<&str> {
+    let opens = rest
+        .first()
+        .is_some_and(|(gap, _)| gap.trim_start().starts_with('('));
+
+    if !opens {
+        return None;
+    }
+
+    let mut depth = 0i32;
+
+    for (gap, word) in rest {
+        for ch in gap.chars() {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+        }
+
+        if depth <= 0 {
+            return None;
+        }
+
+        if is_qubit_index(word) {
+            return Some(word);
+        }
+    }
+
+    None
 }
 
 /// The words of `text` in order, each after the characters that separate it from the word
@@ -1388,6 +1439,16 @@ mod tests {
             ["h q2", "cx q1", "H 0"]
         );
 
+        // A gate name that opens a call counts with the first index inside the call, so
+        // keyword and nested arguments count once per call.
+        assert_eq!(
+            gate_mentions(
+                "qc.h(qubit=0); qc.cx(control_qubit=0, target_qubit=1); cirq.T(cirq.LineQubit(2))"
+            ),
+            ["h 0", "cx 0", "T 2"]
+        );
+        assert!(gate_mentions("Use T (one quarter turn) once; X (a flip) is free.").is_empty());
+
         // Prose may name a gate, a qubit, or a gate on a qubit once or twice.
         for text in [
             "Use one CNOT, then look at qubit 0 again.",
@@ -1421,6 +1482,9 @@ mod tests {
             "qc.h(qr[2]); qc.cx(qr[1], qr[2]); qc.tdg(qr[2]);",
             "H(qs[2]); CNOT(qs[1], qs[2]); T(qs[2]);",
             "cirq.H(qubits[2]), cirq.CNOT(qubits[1], qubits[2]), cirq.T(qubits[2])",
+            "qc.h(qubit=0); qc.cx(control_qubit=0, target_qubit=1); qc.t(qubit=1)",
+            "cirq.H(cirq.LineQubit(2)), cirq.CNOT(cirq.LineQubit(1), cirq.LineQubit(2)), \
+             cirq.T(cirq.LineQubit(2))",
         ] {
             let reason = no_gate_lists(&single("strategy", text)).expect_err(text);
 

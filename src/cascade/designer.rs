@@ -1897,6 +1897,9 @@ fn simplify(c: &Circuit, n: usize, pool: &mut Pool<'_>, table: &mut Cliffords, m
             return;
         };
 
+        // The folded circuit is offered before its windows are rebuilt, so a budget that
+        // runs out while rebuilding cannot lose an improvement already found.
+        offer(folded.clone(), pool, meter);
         offer(rewindow(folded, table, meter), pool, meter);
     }
 }
@@ -3460,6 +3463,38 @@ mod tests {
 
         assert!(peephole(circuit("H 0; H 0").gates().to_vec(), &mut meter).is_some());
         assert_eq!(meter.used, 2);
+    }
+
+    #[test]
+    fn simplify_keeps_a_folded_circuit_when_rebuilding_windows_runs_out() {
+        // Folding turns the two T gates of this circuit into one S on the parity x0 xor x1.
+        // Rebuilding windows costs more than the budget has left after that, so the folded
+        // circuit must be verified and kept before the rebuilding starts.
+        let c = circuit("CNOT 0 1; T 1; CNOT 0 1; CNOT 1 0; T 0");
+        let target = monomial(2, |j| {
+            let parity = (j >> 1) ^ (j & 1);
+
+            (
+                (parity << 1) | (j & 1),
+                u8::try_from(2 * parity).expect("phase"),
+            )
+        });
+
+        assert!(check(&target, &c).expect("check").exact);
+
+        let mut pool = Pool::new(&target, true, 64);
+        let mut table = Cliffords::default();
+        let mut meter = Meter::new(14, 1);
+
+        simplify(&c, 2, &mut pool, &mut table, &mut meter);
+
+        let best = pool.best.expect("a verified circuit");
+
+        assert!(
+            meter.exhausted,
+            "the budget must run out while rebuilding windows"
+        );
+        assert_eq!(best.cost().t, 0, "{}", best.render());
     }
 
     #[test]
