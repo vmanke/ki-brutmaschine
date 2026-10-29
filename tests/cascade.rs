@@ -258,6 +258,44 @@ fn breed_runs_are_reproducible_across_processes_and_verifiable() {
     assert_eq!(breed(&["--out", none.to_str().expect("path"), "--verify"]).status.code(), Some(2));
 }
 
+#[test]
+fn verify_takes_the_stop_reason_from_the_checkpoint_not_the_report() {
+    // A finished run ended either after its last generation or because the next one no
+    // longer fit the call budget; the checkpoint shows which. A report that relabels one
+    // as the other fails --verify and --promote.
+    let full = fresh("reason-full");
+    let capped = fresh("reason-capped");
+
+    ok(&small_run(&full, &[]));
+    ok(&small_run(&capped, &["--max-calls", "400"]));
+
+    for (dir, honest, forged) in [
+        (&full, "all generations done", "call budget reached"),
+        (&capped, "call budget reached", "all generations done"),
+    ] {
+        let path = dir.to_str().expect("path");
+        let text = std::fs::read_to_string(dir.join("report.json")).expect("report");
+        let mut r = report(dir);
+
+        assert_eq!(r["stop_reason"], honest);
+        ok(&breed(&["--out", path, "--verify"]));
+
+        r["stop_reason"] = serde_json::json!(forged);
+        std::fs::write(dir.join("report.json"), serde_json::to_string_pretty(&r).expect("json"))
+            .expect("forge report");
+
+        for mode in ["--verify", "--promote"] {
+            let refused = breed(&["--out", path, mode]);
+
+            assert_eq!(refused.status.code(), Some(1), "{mode}: {honest} relabelled as {forged}");
+            assert!(String::from_utf8_lossy(&refused.stderr).contains("stop reason"), "{mode}");
+        }
+
+        std::fs::write(dir.join("report.json"), text).expect("restore report");
+        ok(&breed(&["--out", path, "--verify"]));
+    }
+}
+
 /// The events of a run's log, as JSON values.
 fn events(dir: &Path) -> Vec<serde_json::Value> {
     std::fs::read_to_string(dir.join("events.jsonl"))

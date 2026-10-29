@@ -343,6 +343,27 @@ const LLM_CROSSOVER_TASK: &str = "Task: merge Parent A and Parent B into one chi
 that keeps what works in each, so that it solves more grid puzzles at lower cost. You may \
 take stages, Workers, sections and Traits from either parent and change them. ";
 
+/// The words that tell the Mutator what it breeds, one set per task family (grid puzzles;
+/// quantum circuits in step 1). The Cascade format's limits and `LLM_RULES` stay shared.
+#[derive(Debug)]
+pub struct MutatorBrief {
+    pub system: &'static str,
+    pub context: &'static str,
+    pub format: &'static str,
+    pub mutate_task: &'static str,
+    pub crossover_task: &'static str,
+}
+
+/// The brief of the grid puzzles: the Stage 2c texts, byte for byte, so recorded answer
+/// keys stay valid.
+pub static GRID_BRIEF: MutatorBrief = MutatorBrief {
+    system: LLM_SYSTEM,
+    context: LLM_CONTEXT,
+    format: LLM_FORMAT,
+    mutate_task: LLM_MUTATE_TASK,
+    crossover_task: LLM_CROSSOVER_TASK,
+};
+
 /// The rules every request ends with.
 const LLM_RULES: &str = "Every model call and every thinking token costs fitness, so spend \
 them only where they pay off. Keep the result valid under the format and the limits above. \
@@ -389,12 +410,23 @@ pub fn mutate(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op)> {
+    mutate_with(parent, limits, PHRASES, rng)
+}
+
+/// `mutate` for the task family whose phrase pool is `phrases`: the section operators
+/// draw their texts from there. The grid puzzles use `PHRASES`.
+pub fn mutate_with(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op)> {
     let parents = [parent.id()];
 
     for _ in 0..MUTATE_ATTEMPTS {
         let op = draw_op(rng);
 
-        let Some(mut child) = apply(parent, op, limits, rng) else {
+        let Some(mut child) = apply_with(parent, op, limits, phrases, rng) else {
             continue;
         };
 
@@ -503,13 +535,25 @@ pub fn llm_mutate_request(
     limits: &CascadeLimits,
     seed: u64,
 ) -> GenRequest {
+    llm_mutate_request_with(&GRID_BRIEF, parent, fitness, limits, seed)
+}
+
+/// `llm_mutate_request` for the task family that `brief` describes.
+pub fn llm_mutate_request_with(
+    brief: &MutatorBrief,
+    parent: &Cascade,
+    fitness: f64,
+    limits: &CascadeLimits,
+    seed: u64,
+) -> GenRequest {
     let prompt = llm_prompt(
+        brief,
         &[("Parent Cascade", parent, fitness)],
         limits,
-        LLM_MUTATE_TASK,
+        brief.mutate_task,
     );
 
-    llm_request(prompt, seed)
+    llm_request(brief, prompt, seed)
 }
 
 /// Request to merge two parents into one child (semantic crossover), with both fitness
@@ -522,13 +566,26 @@ pub fn llm_crossover_request(
     limits: &CascadeLimits,
     seed: u64,
 ) -> GenRequest {
+    llm_crossover_request_with(&GRID_BRIEF, (a, fa), (b, fb), limits, seed)
+}
+
+/// `llm_crossover_request` for the task family that `brief` describes; each parent comes
+/// with its fitness.
+pub fn llm_crossover_request_with(
+    brief: &MutatorBrief,
+    (a, fa): (&Cascade, f64),
+    (b, fb): (&Cascade, f64),
+    limits: &CascadeLimits,
+    seed: u64,
+) -> GenRequest {
     let prompt = llm_prompt(
+        brief,
         &[("Parent A", a, fa), ("Parent B", b, fb)],
         limits,
-        LLM_CROSSOVER_TASK,
+        brief.crossover_task,
     );
 
-    llm_request(prompt, seed)
+    llm_request(brief, prompt, seed)
 }
 
 /// Extract the JSON object from an LLM answer (from the first `{` to the `}` that closes
@@ -572,11 +629,12 @@ fn draw_op(rng: &mut ChaCha8Rng) -> Op {
 }
 
 /// Apply one mutation operator to a copy of `parent`, or None when the operator cannot
-/// change this parent. The result is not clamped yet.
-fn apply(
+/// change this parent. Section texts come from `phrases`. The result is not clamped yet.
+fn apply_with(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
     let mut child = parent.clone();
@@ -652,13 +710,14 @@ fn apply(
             let i = rng.random_range(0..worker.sections.len());
             let section = worker.sections.get_mut(i)?;
 
-            section.text = replacement_text(rng, &section.name, &section.text)?.to_string();
+            section.text =
+                replacement_text(rng, phrases, &section.name, &section.text)?.to_string();
         }
 
         Op::SectionAdd => {
             let (s, w) = pick(rng, &worker_slots(parent, |_, _| true))?;
             let worker = worker_mut(&mut child, s, w)?;
-            let options: Vec<(&str, &str)> = PHRASES
+            let options: Vec<(&str, &str)> = phrases
                 .iter()
                 .copied()
                 .filter(
@@ -731,7 +790,7 @@ fn apply(
 
             let (s, w) = pick(rng, &worker_slots(parent, |_, _| true))?;
             let mut worker = parent.stages.get(s)?.workers.get(w)?.clone();
-            let residual: Vec<&str> = PHRASES
+            let residual: Vec<&str> = phrases
                 .iter()
                 .filter(|(name, _)| *name == RESIDUAL)
                 .map(|(_, text)| *text)
@@ -889,10 +948,15 @@ fn model_tags(limits: &CascadeLimits) -> Vec<&str> {
     tags
 }
 
-/// A phrase text other than `current`: with p = 0.7 one of the phrases named `name` (when
-/// there is such a phrase), otherwise one of the whole pool.
-fn replacement_text(rng: &mut ChaCha8Rng, name: &str, current: &str) -> Option<&'static str> {
-    let same_name: Vec<&'static str> = PHRASES
+/// A text of `phrases` other than `current`: with p = 0.7 one of the phrases named `name`
+/// (when there is such a phrase), otherwise one of the whole pool.
+fn replacement_text(
+    rng: &mut ChaCha8Rng,
+    phrases: &'static [(&'static str, &'static str)],
+    name: &str,
+    current: &str,
+) -> Option<&'static str> {
+    let same_name: Vec<&'static str> = phrases
         .iter()
         .filter(|(n, t)| *n == name && *t != current)
         .map(|(_, t)| *t)
@@ -902,7 +966,7 @@ fn replacement_text(rng: &mut ChaCha8Rng, name: &str, current: &str) -> Option<&
         return pick(rng, &same_name);
     }
 
-    let any: Vec<&'static str> = PHRASES
+    let any: Vec<&'static str> = phrases
         .iter()
         .filter(|(_, t)| *t != current)
         .map(|(_, t)| *t)
@@ -976,9 +1040,9 @@ fn cross_worker(child: &mut Worker, other: &Worker, rng: &mut ChaCha8Rng) {
 }
 
 /// A request to the LLM mutator with the fixed generation settings.
-fn llm_request(prompt: String, seed: u64) -> GenRequest {
+fn llm_request(brief: &MutatorBrief, prompt: String, seed: u64) -> GenRequest {
     GenRequest {
-        system: LLM_SYSTEM.to_string(),
+        system: brief.system.to_string(),
         prompt,
         max_tokens: LLM_MAX_TOKENS,
         temperature: LLM_TEMPERATURE,
@@ -989,11 +1053,16 @@ fn llm_request(prompt: String, seed: u64) -> GenRequest {
 
 /// The user prompt: context, format, limits, each parent as pretty JSON with its public
 /// search fitness, then the task and the rules.
-fn llm_prompt(parents: &[(&str, &Cascade, f64)], limits: &CascadeLimits, task: &str) -> String {
+fn llm_prompt(
+    brief: &MutatorBrief,
+    parents: &[(&str, &Cascade, f64)],
+    limits: &CascadeLimits,
+    task: &str,
+) -> String {
     let mut p = String::new();
 
-    p.push_str(LLM_CONTEXT);
-    p.push_str(LLM_FORMAT);
+    p.push_str(brief.context);
+    p.push_str(brief.format);
     p.push_str(&describe_limits(limits));
     p.push('\n');
 
@@ -1164,6 +1233,16 @@ mod tests {
     /// A fresh rng for `seed`.
     fn rng(seed: u64) -> ChaCha8Rng {
         ChaCha8Rng::seed_from_u64(seed)
+    }
+
+    /// One operator with the grid phrase pool, as the operator tests below call it.
+    fn apply(
+        parent: &Cascade,
+        op: Op,
+        limits: &CascadeLimits,
+        rng: &mut ChaCha8Rng,
+    ) -> Option<Cascade> {
+        apply_with(parent, op, limits, PHRASES, rng)
     }
 
     /// The first seed with its one Worker's Traits replaced.

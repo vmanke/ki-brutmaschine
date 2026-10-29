@@ -1,0 +1,116 @@
+run_start hash=09a9f77408b14c40caab7f1be0436c353a26725fd5d2b64487a8ec1ae45e2923 search=7bf41d491a3391ce,0b4db1a9a9d39f81,26f2e67a8c5cde40,9985afa9ae2c2b90,9476e884babb4e26,4c351d7c1696857f,11f91125a4d19244,c77e84f7f631b5ca,2785f3df9dd0cb38,deb7498fcb71e99e,a3f9a96fdedbee33,c52479d820a714f4 select=2855523056ea0fb6,7599668e700a7b97,a685d48da832c578,528b0a48bcd9964f,ae833ebd6ecbcd04,c63b63bb3f75b7c7,caa057f943628857,cf7b8567f787fecd,15330101e70c4fd9,5d4a9031b3d49daf,acc29740c4607e0e,df14f270cc067044
+born g=0 id=f39cb429fa9b9363 parents= op=Seed solved=2/12 calls=12 prompt=2644 completion=1030
+born g=0 id=45379dd30abebb66 parents= op=Seed solved=0/12 calls=12 prompt=2680 completion=2566
+born g=0 id=3db3dfb2e3603931 parents= op=Seed solved=2/12 calls=12 prompt=2884 completion=518
+born g=0 id=3e52074d3f6376e6 parents= op=Seed solved=5/12 calls=12 prompt=2668 completion=838
+compared {"generation":0,"puzzle":"9476e884babb4e26","first":"f39cb429fa9b9363","second":"3db3dfb2e3603931","judge":"3e52074d3f6376e6","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"4c351d7c1696857f","first":"f39cb429fa9b9363","second":"3db3dfb2e3603931","judge":"45379dd30abebb66","winner":"3db3dfb2e3603931","judge_correct":false}
+compared {"generation":0,"puzzle":"11f91125a4d19244","first":"f39cb429fa9b9363","second":"3e52074d3f6376e6","judge":"3db3dfb2e3603931","winner":"3e52074d3f6376e6","judge_correct":null}
+compared {"generation":0,"puzzle":"9985afa9ae2c2b90","first":"f39cb429fa9b9363","second":"3e52074d3f6376e6","judge":"3db3dfb2e3603931","winner":"3e52074d3f6376e6","judge_correct":true}
+compared {"generation":0,"puzzle":"9476e884babb4e26","first":"f39cb429fa9b9363","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":0,"puzzle":"7bf41d491a3391ce","first":"f39cb429fa9b9363","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"f39cb429fa9b9363","judge_correct":null}
+compared {"generation":0,"puzzle":"c77e84f7f631b5ca","first":"45379dd30abebb66","second":"3db3dfb2e3603931","judge":"f39cb429fa9b9363","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"9985afa9ae2c2b90","first":"45379dd30abebb66","second":"3db3dfb2e3603931","judge":"f39cb429fa9b9363","winner":"3db3dfb2e3603931","judge_correct":true}
+compared {"generation":0,"puzzle":"7bf41d491a3391ce","first":"45379dd30abebb66","second":"f39cb429fa9b9363","judge":"3db3dfb2e3603931","winner":"f39cb429fa9b9363","judge_correct":null}
+compared {"generation":0,"puzzle":"0b4db1a9a9d39f81","first":"45379dd30abebb66","second":"f39cb429fa9b9363","judge":"3db3dfb2e3603931","winner":"f39cb429fa9b9363","judge_correct":null}
+compared {"generation":0,"puzzle":"0b4db1a9a9d39f81","first":"45379dd30abebb66","second":"3e52074d3f6376e6","judge":"f39cb429fa9b9363","winner":"45379dd30abebb66","judge_correct":false}
+compared {"generation":0,"puzzle":"deb7498fcb71e99e","first":"45379dd30abebb66","second":"3e52074d3f6376e6","judge":"f39cb429fa9b9363","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":0,"puzzle":"a3f9a96fdedbee33","first":"3db3dfb2e3603931","second":"f39cb429fa9b9363","judge":"45379dd30abebb66","winner":"3db3dfb2e3603931","judge_correct":true}
+compared {"generation":0,"puzzle":"c77e84f7f631b5ca","first":"3db3dfb2e3603931","second":"f39cb429fa9b9363","judge":"45379dd30abebb66","winner":"f39cb429fa9b9363","judge_correct":null}
+compared {"generation":0,"puzzle":"deb7498fcb71e99e","first":"3db3dfb2e3603931","second":"3e52074d3f6376e6","judge":"45379dd30abebb66","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"c77e84f7f631b5ca","first":"3db3dfb2e3603931","second":"3e52074d3f6376e6","judge":"45379dd30abebb66","winner":"3e52074d3f6376e6","judge_correct":null}
+compared {"generation":0,"puzzle":"11f91125a4d19244","first":"3db3dfb2e3603931","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":0,"puzzle":"4c351d7c1696857f","first":"3db3dfb2e3603931","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"26f2e67a8c5cde40","first":"3e52074d3f6376e6","second":"f39cb429fa9b9363","judge":"3db3dfb2e3603931","winner":"3e52074d3f6376e6","judge_correct":null}
+compared {"generation":0,"puzzle":"11f91125a4d19244","first":"3e52074d3f6376e6","second":"f39cb429fa9b9363","judge":"45379dd30abebb66","winner":"3e52074d3f6376e6","judge_correct":null}
+compared {"generation":0,"puzzle":"c52479d820a714f4","first":"3e52074d3f6376e6","second":"3db3dfb2e3603931","judge":"f39cb429fa9b9363","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"deb7498fcb71e99e","first":"3e52074d3f6376e6","second":"3db3dfb2e3603931","judge":"f39cb429fa9b9363","winner":"3db3dfb2e3603931","judge_correct":null}
+compared {"generation":0,"puzzle":"0b4db1a9a9d39f81","first":"3e52074d3f6376e6","second":"45379dd30abebb66","judge":"3db3dfb2e3603931","winner":"45379dd30abebb66","judge_correct":false}
+compared {"generation":0,"puzzle":"deb7498fcb71e99e","first":"3e52074d3f6376e6","second":"45379dd30abebb66","judge":"f39cb429fa9b9363","winner":"3e52074d3f6376e6","judge_correct":null}
+generation g=0 best=3e52074d3f6376e6 solved=5 size=4 calls=72
+born g=1 id=b747c24419ee2a41 parents=3e52074d3f6376e6,3db3dfb2e3603931 op=SectionCrossover solved=2/12 calls=12 prompt=2668 completion=262
+born g=1 id=3250a5627e5283c6 parents=3db3dfb2e3603931 op=StageAdd solved=2/12 calls=24 prompt=6282 completion=1036
+born g=1 id=3fc7acc02ca9ff41 parents=f39cb429fa9b9363,3e52074d3f6376e6 op=StageCrossover solved=7/12 calls=24 prompt=5598 completion=1804
+born g=1 id=1055447934a73db8 parents=f39cb429fa9b9363,3db3dfb2e3603931 op=StageCrossover solved=4/12 calls=24 prompt=5814 completion=1484
+compared {"generation":1,"puzzle":"2785f3df9dd0cb38","first":"b747c24419ee2a41","second":"45379dd30abebb66","judge":"f39cb429fa9b9363","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":1,"puzzle":"4c351d7c1696857f","first":"b747c24419ee2a41","second":"45379dd30abebb66","judge":"f39cb429fa9b9363","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":1,"puzzle":"0b4db1a9a9d39f81","first":"b747c24419ee2a41","second":"f39cb429fa9b9363","judge":"45379dd30abebb66","winner":"b747c24419ee2a41","judge_correct":null}
+compared {"generation":1,"puzzle":"a3f9a96fdedbee33","first":"b747c24419ee2a41","second":"f39cb429fa9b9363","judge":"45379dd30abebb66","winner":"b747c24419ee2a41","judge_correct":true}
+compared {"generation":1,"puzzle":"7bf41d491a3391ce","first":"3250a5627e5283c6","second":"3e52074d3f6376e6","judge":"45379dd30abebb66","winner":"3e52074d3f6376e6","judge_correct":true}
+compared {"generation":1,"puzzle":"9476e884babb4e26","first":"3250a5627e5283c6","second":"3e52074d3f6376e6","judge":"f39cb429fa9b9363","winner":"3e52074d3f6376e6","judge_correct":true}
+compared {"generation":1,"puzzle":"2785f3df9dd0cb38","first":"3250a5627e5283c6","second":"45379dd30abebb66","judge":"3fc7acc02ca9ff41","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":1,"puzzle":"11f91125a4d19244","first":"3250a5627e5283c6","second":"45379dd30abebb66","judge":"3fc7acc02ca9ff41","winner":"45379dd30abebb66","judge_correct":null}
+compared {"generation":1,"puzzle":"0b4db1a9a9d39f81","first":"3250a5627e5283c6","second":"f39cb429fa9b9363","judge":"3e52074d3f6376e6","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":1,"puzzle":"c77e84f7f631b5ca","first":"3250a5627e5283c6","second":"f39cb429fa9b9363","judge":"3e52074d3f6376e6","winner":"f39cb429fa9b9363","judge_correct":null}
+compared {"generation":1,"puzzle":"7bf41d491a3391ce","first":"3fc7acc02ca9ff41","second":"45379dd30abebb66","judge":"3250a5627e5283c6","winner":"45379dd30abebb66","judge_correct":false}
+compared {"generation":1,"puzzle":"0b4db1a9a9d39f81","first":"3fc7acc02ca9ff41","second":"45379dd30abebb66","judge":"3250a5627e5283c6","winner":"45379dd30abebb66","judge_correct":false}
+compared {"generation":1,"puzzle":"c52479d820a714f4","first":"3fc7acc02ca9ff41","second":"3250a5627e5283c6","judge":"45379dd30abebb66","winner":"3250a5627e5283c6","judge_correct":false}
+compared {"generation":1,"puzzle":"deb7498fcb71e99e","first":"3fc7acc02ca9ff41","second":"3250a5627e5283c6","judge":"45379dd30abebb66","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":1,"puzzle":"11f91125a4d19244","first":"3fc7acc02ca9ff41","second":"3db3dfb2e3603931","judge":"45379dd30abebb66","winner":"3fc7acc02ca9ff41","judge_correct":null}
+compared {"generation":1,"puzzle":"2785f3df9dd0cb38","first":"3fc7acc02ca9ff41","second":"3db3dfb2e3603931","judge":"45379dd30abebb66","winner":"3fc7acc02ca9ff41","judge_correct":null}
+compared {"generation":1,"puzzle":"0b4db1a9a9d39f81","first":"1055447934a73db8","second":"3e52074d3f6376e6","judge":"45379dd30abebb66","winner":"3e52074d3f6376e6","judge_correct":true}
+compared {"generation":1,"puzzle":"2785f3df9dd0cb38","first":"1055447934a73db8","second":"3e52074d3f6376e6","judge":"45379dd30abebb66","winner":"1055447934a73db8","judge_correct":null}
+compared {"generation":1,"puzzle":"2785f3df9dd0cb38","first":"1055447934a73db8","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"1055447934a73db8","judge_correct":null}
+compared {"generation":1,"puzzle":"0b4db1a9a9d39f81","first":"1055447934a73db8","second":"45379dd30abebb66","judge":"3e52074d3f6376e6","winner":"1055447934a73db8","judge_correct":null}
+generation g=1 best=3fc7acc02ca9ff41 solved=7 size=8 calls=176
+born g=2 id=93b92c74fa4ff037 parents=1055447934a73db8 op=SectionSwap solved=4/12 calls=24 prompt=5814 completion=1484
+born g=2 id=bdd9edb8a8c708dc parents=3fc7acc02ca9ff41,1055447934a73db8 op=SectionCrossover solved=4/12 calls=24 prompt=5598 completion=1228
+born g=2 id=55677fd0849d91a6 parents=3fc7acc02ca9ff41,1055447934a73db8 op=SectionCrossover solved=7/12 calls=24 prompt=5814 completion=2444
+born g=2 id=32d4e158f53ae208 parents=3fc7acc02ca9ff41 op=ThinkDown solved=7/12 calls=24 prompt=5598 completion=1804
+compared {"generation":2,"puzzle":"a3f9a96fdedbee33","first":"93b92c74fa4ff037","second":"f39cb429fa9b9363","judge":"32d4e158f53ae208","winner":"93b92c74fa4ff037","judge_correct":true}
+compared {"generation":2,"puzzle":"9985afa9ae2c2b90","first":"93b92c74fa4ff037","second":"f39cb429fa9b9363","judge":"32d4e158f53ae208","winner":"93b92c74fa4ff037","judge_correct":true}
+compared {"generation":2,"puzzle":"7bf41d491a3391ce","first":"93b92c74fa4ff037","second":"32d4e158f53ae208","judge":"3250a5627e5283c6","winner":"93b92c74fa4ff037","judge_correct":false}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"93b92c74fa4ff037","second":"32d4e158f53ae208","judge":"b747c24419ee2a41","winner":"93b92c74fa4ff037","judge_correct":null}
+compared {"generation":2,"puzzle":"9476e884babb4e26","first":"93b92c74fa4ff037","second":"3250a5627e5283c6","judge":"32d4e158f53ae208","winner":"93b92c74fa4ff037","judge_correct":null}
+compared {"generation":2,"puzzle":"7bf41d491a3391ce","first":"93b92c74fa4ff037","second":"3250a5627e5283c6","judge":"32d4e158f53ae208","winner":"93b92c74fa4ff037","judge_correct":null}
+compared {"generation":2,"puzzle":"c52479d820a714f4","first":"bdd9edb8a8c708dc","second":"3250a5627e5283c6","judge":"3e52074d3f6376e6","winner":"3250a5627e5283c6","judge_correct":false}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"bdd9edb8a8c708dc","second":"3250a5627e5283c6","judge":"45379dd30abebb66","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":2,"puzzle":"c77e84f7f631b5ca","first":"bdd9edb8a8c708dc","second":"b747c24419ee2a41","judge":"f39cb429fa9b9363","winner":"b747c24419ee2a41","judge_correct":null}
+compared {"generation":2,"puzzle":"deb7498fcb71e99e","first":"bdd9edb8a8c708dc","second":"b747c24419ee2a41","judge":"45379dd30abebb66","winner":"bdd9edb8a8c708dc","judge_correct":null}
+compared {"generation":2,"puzzle":"4c351d7c1696857f","first":"bdd9edb8a8c708dc","second":"3e52074d3f6376e6","judge":"3db3dfb2e3603931","winner":"3e52074d3f6376e6","judge_correct":false}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"bdd9edb8a8c708dc","second":"3e52074d3f6376e6","judge":"f39cb429fa9b9363","winner":"3e52074d3f6376e6","judge_correct":null}
+compared {"generation":2,"puzzle":"deb7498fcb71e99e","first":"55677fd0849d91a6","second":"3db3dfb2e3603931","judge":"3e52074d3f6376e6","winner":"55677fd0849d91a6","judge_correct":null}
+compared {"generation":2,"puzzle":"7bf41d491a3391ce","first":"55677fd0849d91a6","second":"3db3dfb2e3603931","judge":"45379dd30abebb66","winner":"55677fd0849d91a6","judge_correct":true}
+compared {"generation":2,"puzzle":"26f2e67a8c5cde40","first":"55677fd0849d91a6","second":"3250a5627e5283c6","judge":"f39cb429fa9b9363","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"55677fd0849d91a6","second":"3250a5627e5283c6","judge":"3e52074d3f6376e6","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":2,"puzzle":"0b4db1a9a9d39f81","first":"55677fd0849d91a6","second":"b747c24419ee2a41","judge":"45379dd30abebb66","winner":"55677fd0849d91a6","judge_correct":true}
+compared {"generation":2,"puzzle":"26f2e67a8c5cde40","first":"55677fd0849d91a6","second":"b747c24419ee2a41","judge":"f39cb429fa9b9363","winner":"b747c24419ee2a41","judge_correct":null}
+compared {"generation":2,"puzzle":"7bf41d491a3391ce","first":"32d4e158f53ae208","second":"f39cb429fa9b9363","judge":"93b92c74fa4ff037","winner":"f39cb429fa9b9363","judge_correct":false}
+compared {"generation":2,"puzzle":"a3f9a96fdedbee33","first":"32d4e158f53ae208","second":"f39cb429fa9b9363","judge":"93b92c74fa4ff037","winner":"32d4e158f53ae208","judge_correct":true}
+compared {"generation":2,"puzzle":"c52479d820a714f4","first":"32d4e158f53ae208","second":"b747c24419ee2a41","judge":"93b92c74fa4ff037","winner":"b747c24419ee2a41","judge_correct":false}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"32d4e158f53ae208","second":"b747c24419ee2a41","judge":"93b92c74fa4ff037","winner":"32d4e158f53ae208","judge_correct":null}
+compared {"generation":2,"puzzle":"2785f3df9dd0cb38","first":"32d4e158f53ae208","second":"3e52074d3f6376e6","judge":"93b92c74fa4ff037","winner":"32d4e158f53ae208","judge_correct":null}
+compared {"generation":2,"puzzle":"11f91125a4d19244","first":"32d4e158f53ae208","second":"3e52074d3f6376e6","judge":"93b92c74fa4ff037","winner":"3e52074d3f6376e6","judge_correct":null}
+generation g=2 best=32d4e158f53ae208 solved=7 size=12 calls=296
+born g=3 id=642ac2fb34a07e1c parents=55677fd0849d91a6 op=ThinkDown solved=7/12 calls=24 prompt=5814 completion=2444
+born g=3 id=51e205aa453be0e7 parents=55677fd0849d91a6 op=SectionReplace solved=2/12 calls=24 prompt=5874 completion=4108
+born g=3 id=f8bea4df6a7545a9 parents=55677fd0849d91a6 op=ModelSwitch solved=7/12 calls=24 prompt=5814 completion=2092
+born g=3 id=fac96003d985abef parents=93b92c74fa4ff037,55677fd0849d91a6 op=StageCrossover solved=7/12 calls=36 prompt=9270 completion=2962
+compared {"generation":3,"puzzle":"4c351d7c1696857f","first":"642ac2fb34a07e1c","second":"b747c24419ee2a41","judge":"f39cb429fa9b9363","winner":"642ac2fb34a07e1c","judge_correct":true}
+compared {"generation":3,"puzzle":"9476e884babb4e26","first":"642ac2fb34a07e1c","second":"b747c24419ee2a41","judge":"32d4e158f53ae208","winner":"642ac2fb34a07e1c","judge_correct":true}
+compared {"generation":3,"puzzle":"11f91125a4d19244","first":"642ac2fb34a07e1c","second":"93b92c74fa4ff037","judge":"3fc7acc02ca9ff41","winner":"93b92c74fa4ff037","judge_correct":null}
+compared {"generation":3,"puzzle":"9476e884babb4e26","first":"642ac2fb34a07e1c","second":"93b92c74fa4ff037","judge":"3250a5627e5283c6","winner":"93b92c74fa4ff037","judge_correct":false}
+compared {"generation":3,"puzzle":"4c351d7c1696857f","first":"642ac2fb34a07e1c","second":"3e52074d3f6376e6","judge":"93b92c74fa4ff037","winner":"642ac2fb34a07e1c","judge_correct":true}
+compared {"generation":3,"puzzle":"11f91125a4d19244","first":"642ac2fb34a07e1c","second":"3e52074d3f6376e6","judge":"1055447934a73db8","winner":"642ac2fb34a07e1c","judge_correct":null}
+compared {"generation":3,"puzzle":"a3f9a96fdedbee33","first":"51e205aa453be0e7","second":"32d4e158f53ae208","judge":"45379dd30abebb66","winner":"51e205aa453be0e7","judge_correct":false}
+compared {"generation":3,"puzzle":"7bf41d491a3391ce","first":"51e205aa453be0e7","second":"32d4e158f53ae208","judge":"3e52074d3f6376e6","winner":"32d4e158f53ae208","judge_correct":true}
+compared {"generation":3,"puzzle":"9985afa9ae2c2b90","first":"51e205aa453be0e7","second":"1055447934a73db8","judge":"45379dd30abebb66","winner":"1055447934a73db8","judge_correct":true}
+compared {"generation":3,"puzzle":"a3f9a96fdedbee33","first":"51e205aa453be0e7","second":"1055447934a73db8","judge":"32d4e158f53ae208","winner":"1055447934a73db8","judge_correct":true}
+compared {"generation":3,"puzzle":"9985afa9ae2c2b90","first":"51e205aa453be0e7","second":"93b92c74fa4ff037","judge":"b747c24419ee2a41","winner":"93b92c74fa4ff037","judge_correct":true}
+compared {"generation":3,"puzzle":"a3f9a96fdedbee33","first":"51e205aa453be0e7","second":"93b92c74fa4ff037","judge":"3db3dfb2e3603931","winner":"93b92c74fa4ff037","judge_correct":true}
+compared {"generation":3,"puzzle":"11f91125a4d19244","first":"f8bea4df6a7545a9","second":"3fc7acc02ca9ff41","judge":"3db3dfb2e3603931","winner":"3fc7acc02ca9ff41","judge_correct":null}
+compared {"generation":3,"puzzle":"26f2e67a8c5cde40","first":"f8bea4df6a7545a9","second":"3250a5627e5283c6","judge":"bdd9edb8a8c708dc","winner":"3250a5627e5283c6","judge_correct":null}
+compared {"generation":3,"puzzle":"c77e84f7f631b5ca","first":"f8bea4df6a7545a9","second":"3250a5627e5283c6","judge":"bdd9edb8a8c708dc","winner":"f8bea4df6a7545a9","judge_correct":null}
+compared {"generation":3,"puzzle":"c77e84f7f631b5ca","first":"f8bea4df6a7545a9","second":"bdd9edb8a8c708dc","judge":"3250a5627e5283c6","winner":"bdd9edb8a8c708dc","judge_correct":null}
+compared {"generation":3,"puzzle":"9476e884babb4e26","first":"f8bea4df6a7545a9","second":"bdd9edb8a8c708dc","judge":"3e52074d3f6376e6","winner":"f8bea4df6a7545a9","judge_correct":true}
+compared {"generation":3,"puzzle":"4c351d7c1696857f","first":"fac96003d985abef","second":"3e52074d3f6376e6","judge":"f39cb429fa9b9363","winner":"fac96003d985abef","judge_correct":true}
+compared {"generation":3,"puzzle":"c52479d820a714f4","first":"fac96003d985abef","second":"3e52074d3f6376e6","judge":"1055447934a73db8","winner":"3e52074d3f6376e6","judge_correct":false}
+compared {"generation":3,"puzzle":"4c351d7c1696857f","first":"fac96003d985abef","second":"3db3dfb2e3603931","judge":"3fc7acc02ca9ff41","winner":"3db3dfb2e3603931","judge_correct":false}
+compared {"generation":3,"puzzle":"7bf41d491a3391ce","first":"fac96003d985abef","second":"3db3dfb2e3603931","judge":"f39cb429fa9b9363","winner":"3db3dfb2e3603931","judge_correct":false}
+generation g=3 best=32d4e158f53ae208 solved=7 size=16 calls=425
+finalist id=32d4e158f53ae208 seed=false select=3/12
+finalist id=642ac2fb34a07e1c seed=false select=4/12
+finalist id=f39cb429fa9b9363 seed=true select=0/12
+finalist id=45379dd30abebb66 seed=true select=4/12
+finalist id=3db3dfb2e3603931 seed=true select=4/12
+finalist id=3e52074d3f6376e6 seed=true select=3/12

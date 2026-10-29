@@ -607,6 +607,16 @@ pub fn seed_cascades() -> Vec<(String, Cascade)> {
 /// budgets are clamped to each stage's ceiling. Errors when an adapted seed still fails
 /// the check (for example when the limits cannot hold even one Worker).
 pub fn seeds_for(limits: &CascadeLimits) -> Result<Vec<(String, Cascade)>> {
+    adapt_seeds(seed_cascades(), limits)
+}
+
+/// `seeds` adapted to `limits` as `seeds_for` adapts the grid seeds: off-list models take
+/// the first allowed model, thinking budgets are clamped per stage, and every adapted seed
+/// must pass the check.
+pub fn adapt_seeds(
+    seeds: Vec<(String, Cascade)>,
+    limits: &CascadeLimits,
+) -> Result<Vec<(String, Cascade)>> {
     let first = limits
         .models
         .first()
@@ -614,7 +624,7 @@ pub fn seeds_for(limits: &CascadeLimits) -> Result<Vec<(String, Cascade)>> {
         .ok_or_else(|| BrutError::Invalid("cascade: the model allow-list is empty".to_string()))?;
     let mut out = Vec::new();
 
-    for (name, mut c) in seed_cascades() {
+    for (name, mut c) in seeds {
         for (k, stage) in c.stages.iter_mut().enumerate() {
             for w in &mut stage.workers {
                 if limits.model(&w.model).is_none() {

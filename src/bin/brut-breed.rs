@@ -12,11 +12,16 @@
 //!   brut-breed --out <dir> [--config <json>] [--seed N] [--generations G]
 //!              [--children C] [--search P] [--select S] [--max-calls M]
 //!              [--max-seconds T] [--llm-every K] [--llm-children N] [--no-pause]
-//!              [--llm-answers <dir>]
+//!              [--llm-answers <dir>] [--domain grid|circuits] [--selection dgm|uniform]
 //!   brut-breed --out <dir> --resume [--generations G] [--max-calls M] [--max-seconds T]
 //!              [--llm-answers <dir>]
 //!   brut-breed --out <dir> --promote
 //!   brut-breed --out <dir> --verify
+//!
+//! --domain names the task family a run breeds on (step 1, ADR 0006); grid is the default.
+//! The integration step of step 1 wires the circuit domain in; until then it is refused.
+//! --selection says how parents are drawn: dgm (the default) or uniform, the control arm.
+//! Both define the experiment, so a resume cannot change them.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -25,6 +30,10 @@
 //! select phase scores, the checkpoint reserves the worst-case calls of that work; a
 //! resume after a kill counts them as spent, so `max_calls` holds even then. One writer
 //! at a time holds `<dir>/LOCK` (--verify shares it).
+//!
+//! Wall time: `<dir>/timings.jsonl` gets one line `{"generation":g,"seconds":s}` for each
+//! committed generation. It is not part of the record: no hash covers it, and --verify
+//! does not read it.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
@@ -37,9 +46,11 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use brutmaschine::cascade::arena::{
-    AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, Report, Snapshot, Status,
-    request_key,
+    AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, ParentSelection, Report,
+    Snapshot, Status, request_key,
 };
+use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
+use brutmaschine::cascade::puzzle::Grid;
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
 
@@ -47,10 +58,14 @@ const EVENTS: &str = "events.jsonl";
 const SNAPSHOT: &str = "snapshot.json";
 const CONFIG: &str = "config.json";
 const REPORT: &str = "report.json";
+const TIMINGS: &str = "timings.jsonl";
 const STOP: &str = "STOP";
 const LOCK: &str = "LOCK";
 const PROMOTE: &str = "promote";
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Why a circuit run is refused for now.
+const CIRCUITS_LATER: &str = "the integration step of step 1 wires the circuit domain into brut-breed; until then a run breeds on grid puzzles only";
 
 /// Options each mode accepts. A resume may change only what `BreedConfig::fixed_hash`
 /// leaves out, plus the per-process wall-clock limit and the answers directory.
@@ -85,12 +100,30 @@ struct LogLine {
     event: Event,
 }
 
-/// The checkpoint: breeder state plus where the log stood when it was taken.
+/// The checkpoint: breeder state plus where the log stood when it was taken. `A` is the
+/// answer type of the run's domain.
 #[derive(Serialize, Deserialize)]
-struct Checkpoint {
-    snapshot: Snapshot,
+struct Checkpoint<A = Grid> {
+    snapshot: Snapshot<A>,
     log_len: u64,
     log_head: String,
+}
+
+/// What a task family brings to the binary besides its domain: the gene pool its
+/// Cascades are made from, the models they call, and what it writes once a select phase
+/// is complete.
+struct Family<D: Domain> {
+    genes: GenePool,
+    pool: ModelPool,
+    /// Called right after the report of a completed select phase is written.
+    after_finish: fn(&Path, &Breeder<'_, D>) -> Result<()>,
+}
+
+/// One line of `timings.jsonl`: the wall time of one committed generation.
+#[derive(Serialize)]
+struct Timing {
+    generation: usize,
+    seconds: f64,
 }
 
 /// Hash of one log entry: SHA-256 over the previous hash, a newline, and the event JSON.
@@ -352,15 +385,9 @@ fn run() -> Result<i32> {
     // a writer writes) and works on a read-only run directory too.
     let _lock = lock_run(&out, !args.contains_key("verify"))?;
 
-    if args.contains_key("verify") {
-        return verify(&out);
-    }
-
-    if args.contains_key("promote") {
-        return promote(&out);
-    }
-
-    let cfg = if resume {
+    // The settings name the task family, so every mode reads them first: the recorded
+    // ones (a resume may change two of them) or those of a fresh run.
+    let cfg = if resume || read_only {
         let mut cfg: BreedConfig = read_json(&out.join(CONFIG))?;
 
         // Only these may change on resume (BreedConfig::fixed_hash).
@@ -377,8 +404,28 @@ fn run() -> Result<i32> {
         fresh_config(&args)?
     };
 
+    if args.contains_key("promote") {
+        return promote(&out, &cfg);
+    }
+
+    match cfg.domain {
+        DomainConfig::Grid if args.contains_key("verify") => verify(&out, &cfg, &grid_family()),
+        DomainConfig::Grid => drive(cfg, &grid_family(), &args, &out, resume),
+        DomainConfig::Circuits(_) => Err(usage(CIRCUITS_LATER)),
+    }
+}
+
+/// Breed a run on the domain `D` until it is done, stopped, or waits for LLM answers: the
+/// run loop of Stage 2c for any task family. `cfg` holds a fresh run's settings, or the
+/// recorded ones with a resume's changes.
+fn drive<D: Domain>(
+    cfg: BreedConfig,
+    family: &Family<D>,
+    args: &BTreeMap<String, String>,
+    out: &Path,
+    resume: bool,
+) -> Result<i32> {
     let max_seconds: Option<u64> = args.get("max-seconds").map(|v| num(v, "--max-seconds")).transpose()?;
-    let pool = sim_pool();
     let answers_dir = args
         .get("llm-answers")
         .map(PathBuf::from)
@@ -388,7 +435,7 @@ fn run() -> Result<i32> {
     // Every check runs before anything on disk changes (see Settle), so a refused resume
     // leaves the run's records as they were.
     let (mut breeder, mut log) = if resume {
-        let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
+        let cp: Checkpoint<D::Answer> = read_json(&out.join(SNAPSHOT))?;
         let mut log = Log::open(&out.join(EVENTS))?;
 
         log.keep(cp.log_len, &cp.log_head)?;
@@ -400,7 +447,15 @@ fn run() -> Result<i32> {
             );
         }
 
-        (Breeder::resume(cfg.clone(), &pool, Some(&book), cp.snapshot)?, log)
+        let b = Breeder::<D>::resume_from(
+            cfg.clone(),
+            family.genes,
+            &family.pool,
+            Some(&book),
+            cp.snapshot,
+        )?;
+
+        (b, log)
     } else {
         if out.join(EVENTS).exists() || out.join(SNAPSHOT).exists() {
             return Err(usage(&format!(
@@ -409,14 +464,14 @@ fn run() -> Result<i32> {
             )));
         }
 
-        let b = Breeder::new(cfg.clone(), &pool, Some(&book))?;
+        let b = Breeder::<D>::start(cfg.clone(), family.genes, &family.pool, Some(&book))?;
         let log = Log::open(&out.join(EVENTS))?;
 
         (b, log)
     };
 
     let mut settle = Settle {
-        out: &out,
+        out,
         cfg: &cfg,
         done: !resume,
     };
@@ -425,7 +480,7 @@ fn run() -> Result<i32> {
         // Settings first, then the checkpoint before generation 0, so every checkpoint
         // on disk has its settings next to it.
         write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
-        checkpoint(&out, breeder.snapshot(), &log)?;
+        checkpoint(out, breeder.snapshot(), &log)?;
     }
 
     if !book.is_empty() {
@@ -454,16 +509,20 @@ fn run() -> Result<i32> {
     };
 
     let reason = loop {
+        let generation = breeder.next_generation();
+        let began = Instant::now();
         let (status, events) = breeder.step_with(&stop, &mut |snap| {
             settle.now(&mut log)?;
-            checkpoint(&out, snap.clone(), &log)
+            checkpoint(out, snap.clone(), &log)
         })?;
 
         match status {
             Status::Continue => {
                 settle.now(&mut log)?;
                 log.append(&events)?;
-                checkpoint(&out, breeder.snapshot(), &log)?;
+                checkpoint(out, breeder.snapshot(), &log)?;
+                // The time from the step's start until its checkpoint is written.
+                record_timing(out, generation, began.elapsed())?;
                 print_generation(&events);
             }
             Status::Done(reason) => break reason,
@@ -498,7 +557,7 @@ fn run() -> Result<i32> {
     if reason == "stopped" {
         // Nothing of the interrupted generation is kept except the calls it spent.
         settle.now(&mut log)?;
-        checkpoint(&out, breeder.snapshot(), &log)?;
+        checkpoint(out, breeder.snapshot(), &log)?;
         stopped(&format!("before generation {} completed", breeder.next_generation()));
 
         return Ok(0);
@@ -507,12 +566,12 @@ fn run() -> Result<i32> {
     // A refusal here (the select phase does not fit the budget) comes before any write.
     let finished = breeder.finish_with(&stop, &reason, &mut |snap| {
         settle.now(&mut log)?;
-        checkpoint(&out, snap.clone(), &log)
+        checkpoint(out, snap.clone(), &log)
     })?;
     let Some((report, events)) = finished else {
         // The answers obtained so far are kept; a resume scores only the rest.
         settle.now(&mut log)?;
-        checkpoint(&out, breeder.snapshot(), &log)?;
+        checkpoint(out, breeder.snapshot(), &log)?;
         stopped("during the select phase");
 
         return Ok(0);
@@ -523,15 +582,16 @@ fn run() -> Result<i32> {
     // still cut back to the checkpoint).
     settle.now(&mut log)?;
     log.append(&events)?;
-    checkpoint(&out, breeder.snapshot(), &log)?;
+    checkpoint(out, breeder.snapshot(), &log)?;
     write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
+    (family.after_finish)(out, &breeder)?;
     print_report(&report);
 
     Ok(0)
 }
 
 /// Write the checkpoint: `snapshot` plus where the log stands.
-fn checkpoint(out: &Path, snapshot: Snapshot, log: &Log) -> Result<()> {
+fn checkpoint<A: Serialize>(out: &Path, snapshot: Snapshot<A>, log: &Log) -> Result<()> {
     let cp = Checkpoint {
         snapshot,
         log_len: log.len,
@@ -539,6 +599,23 @@ fn checkpoint(out: &Path, snapshot: Snapshot, log: &Log) -> Result<()> {
     };
 
     write_atomic(&out.join(SNAPSHOT), serde_json::to_string(&cp)?.as_bytes())
+}
+
+/// Append the wall time of the committed generation `generation` to `timings.jsonl`.
+/// The file is not part of the record: no hash covers it, and --verify does not read it.
+fn record_timing(out: &Path, generation: usize, took: Duration) -> Result<()> {
+    let line = serde_json::to_string(&Timing {
+        generation,
+        seconds: took.as_secs_f64(),
+    })?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out.join(TIMINGS))?;
+
+    f.write_all(format!("{line}\n").as_bytes())?;
+
+    Ok(())
 }
 
 /// Take `<out>/LOCK` for the life of the process, so two processes never write one run
@@ -588,11 +665,11 @@ fn lock_run(out: &Path, write: bool) -> Result<Option<File>> {
     }
 }
 
-/// A run as recorded: the log verified in full and against the checkpoint's anchor, and
-/// the settings checked against the checkpoint and the log's start.
-fn open_run(out: &Path) -> Result<(Log, Checkpoint, BreedConfig)> {
-    let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
-    let cfg: BreedConfig = read_json(&out.join(CONFIG))?;
+/// A run on the domain `D` as recorded: the log verified in full and against the
+/// checkpoint's anchor, and the settings `cfg` from the run directory checked against
+/// the checkpoint and the log's start.
+fn open_run<D: Domain>(out: &Path, cfg: &BreedConfig) -> Result<(Log, Checkpoint<D::Answer>)> {
+    let cp: Checkpoint<D::Answer> = read_json(&out.join(SNAPSHOT))?;
     let log = Log::open(&out.join(EVENTS))?;
 
     if log.torn {
@@ -617,7 +694,7 @@ fn open_run(out: &Path) -> Result<(Log, Checkpoint, BreedConfig)> {
         )));
     }
 
-    Ok((log, cp, cfg))
+    Ok((log, cp))
 }
 
 /// The Finalist events after the last Generation event: the select phase of the archive
@@ -641,7 +718,13 @@ fn logged_finalists(events: &[Event]) -> Vec<Finalist> {
 /// ones in the log. When the checkpoint keeps every select-panel answer (a finished
 /// run), the whole report is recomputed from it, without a model call, and must be equal;
 /// returns whether that happened.
-fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) -> Result<bool> {
+fn check_report<D: Domain>(
+    report: &Report,
+    log: &Log,
+    cp: &Checkpoint<D::Answer>,
+    cfg: &BreedConfig,
+    family: &Family<D>,
+) -> Result<bool> {
     let mismatch = |what: &str| {
         BrutError::Integrity(format!(
             "report.json does not match {what}; resume the run to finish it"
@@ -656,8 +739,26 @@ fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) 
         return Ok(false);
     }
 
-    let pool = sim_pool();
-    let mut breeder = Breeder::resume(cfg.clone(), &pool, None, cp.snapshot.clone())?;
+    // The report's own stop reason is not trusted. This binary finishes a run only when
+    // every generation is done or the next one no longer fits the call budget (a stop
+    // returns before the select phase), so the checkpoint tells which.
+    let reason = if cp.snapshot.next_generation > cfg.generations {
+        "all generations done"
+    } else {
+        "call budget reached"
+    };
+
+    if report.stop_reason != reason {
+        return Err(mismatch("the stop reason the checkpoint implies"));
+    }
+
+    let mut breeder = Breeder::<D>::resume_from(
+        cfg.clone(),
+        family.genes,
+        &family.pool,
+        None,
+        cp.snapshot.clone(),
+    )?;
 
     if breeder.select_need() > 0 {
         return Ok(false);
@@ -665,7 +766,7 @@ fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) 
 
     // Every answer is kept, so nothing runs; stopping at once guards that anyway.
     let at_once = || true;
-    let again = breeder.finish(&at_once, &report.stop_reason)?;
+    let again = breeder.finish(&at_once, reason)?;
 
     match again {
         Some((r, _)) if r == *report => Ok(true),
@@ -673,12 +774,13 @@ fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) 
     }
 }
 
-/// Check a run directory: the hash chain, the checkpoint anchor, the settings, and the
-/// report (recomputed from the checkpoint for a finished run).
-fn verify(out: &Path) -> Result<i32> {
-    let (log, cp, cfg) = open_run(out)?;
+/// Check a run directory on the domain `D` with the settings `cfg` read from it: the hash
+/// chain, the checkpoint anchor, the settings, and the report (recomputed from the
+/// checkpoint for a finished run). `timings.jsonl` is not part of the record.
+fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Result<i32> {
+    let (log, cp) = open_run::<D>(out, cfg)?;
     let report = if out.join(REPORT).exists() {
-        if check_report(&read_json(&out.join(REPORT))?, &log, &cp, &cfg)? {
+        if check_report(&read_json(&out.join(REPORT))?, &log, &cp, cfg, family)? {
             "; report recomputed and equal"
         } else {
             "; report finalists match the log"
@@ -708,6 +810,16 @@ fn sim_pool() -> ModelPool {
     }
 
     pool
+}
+
+/// The grid puzzles of Stage 2c: the grid gene pool and the simulated models. A finished
+/// grid run writes nothing besides its report.
+fn grid_family() -> Family<GridDomain> {
+    Family {
+        genes: GenePool::grid(),
+        pool: sim_pool(),
+        after_finish: |_, _| Ok(()),
+    }
 }
 
 /// Recorded LLM answers: every `<key>.txt` in `dir`.
@@ -764,6 +876,39 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
         cfg.pause_for_llm = false;
     }
 
+    // --domain circuits keeps the circuit settings a config file brings. --domain grid next
+    // to such settings is refused, so they are never dropped unnoticed.
+    if let Some(v) = args.get("domain") {
+        match (v.as_str(), &cfg.domain) {
+            ("grid", DomainConfig::Grid) | ("circuits", DomainConfig::Circuits(_)) => {}
+            ("circuits", DomainConfig::Grid) => {
+                cfg.domain = DomainConfig::Circuits(CircuitConfig::default());
+            }
+            ("grid", DomainConfig::Circuits(_)) => {
+                return Err(usage(
+                    "--domain grid contradicts the circuit settings in --config",
+                ));
+            }
+            _ => {
+                return Err(usage(&format!(
+                    "--domain must be grid or circuits, got {v:?}"
+                )));
+            }
+        }
+    }
+
+    if let Some(v) = args.get("selection") {
+        cfg.selection = match v.as_str() {
+            "dgm" => ParentSelection::Dgm,
+            "uniform" => ParentSelection::Uniform,
+            _ => {
+                return Err(usage(&format!(
+                    "--selection must be dgm or uniform, got {v:?}"
+                )));
+            }
+        };
+    }
+
     cfg.check()?;
 
     Ok(cfg)
@@ -771,9 +916,17 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
 
 /// Write the two best non-seed finalists (by select panel, then search panel) as
 /// candidate files plus a provenance manifest, ready for `scripts/propose-pr.sh`. Only
-/// a finished run whose report matches its verified log is promoted.
-fn promote(out: &Path) -> Result<i32> {
-    let (log, cp, cfg) = open_run(out)?;
+/// a finished grid run whose report matches its verified log is promoted; `cfg` holds the
+/// run's recorded settings.
+fn promote(out: &Path, cfg: &BreedConfig) -> Result<i32> {
+    if !cfg.domain.is_grid() {
+        return Err(BrutError::Invalid(
+            "promotion of circuit Cascades is not part of step 1 (ADR 0006)".to_string(),
+        ));
+    }
+
+    let family = grid_family();
+    let (log, cp) = open_run::<GridDomain>(out, cfg)?;
 
     if !out.join(REPORT).exists() {
         return Err(BrutError::Invalid(format!(
@@ -784,7 +937,7 @@ fn promote(out: &Path) -> Result<i32> {
 
     let report: Report = read_json(&out.join(REPORT))?;
 
-    check_report(&report, &log, &cp, &cfg)?;
+    check_report(&report, &log, &cp, cfg, &family)?;
 
     let mut finalists: Vec<_> = report.finalists.iter().filter(|f| !f.is_seed).collect();
 
@@ -925,7 +1078,7 @@ fn usage(m: &str) -> BrutError {
 /// `--key value` pairs; `--resume`, `--promote`, `--verify` and `--no-pause` take none.
 fn parse_args() -> Result<BTreeMap<String, String>> {
     const FLAGS: [&str; 4] = ["resume", "promote", "verify", "no-pause"];
-    const KEYS: [&str; 12] = [
+    const KEYS: [&str; 14] = [
         "out",
         "config",
         "seed",
@@ -938,6 +1091,8 @@ fn parse_args() -> Result<BTreeMap<String, String>> {
         "llm-every",
         "llm-children",
         "llm-answers",
+        "domain",
+        "selection",
     ];
 
     let mut map = BTreeMap::new();
