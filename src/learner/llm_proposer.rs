@@ -212,6 +212,7 @@ impl LlmProposer {
             max_tokens: MAX_TOKENS,
             temperature: TEMPERATURE,
             seed,
+            think_tokens: 0,
         }
     }
 
