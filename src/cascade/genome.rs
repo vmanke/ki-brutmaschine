@@ -6,6 +6,8 @@
 //! (decision Q19); only a code-owner-reviewed pull request can.
 #![forbid(unsafe_code)]
 
+use std::ops::RangeInclusive;
+
 use serde::{Deserialize, Serialize};
 
 use crate::util::{BrutError, Result, sha256_hex};
@@ -29,25 +31,106 @@ pub const MAX_SECTION_NAME_CHARS: usize = 32;
 pub const TEMPERATURE_MIN: f32 = 0.0;
 pub const TEMPERATURE_MAX: f32 = 1.5;
 
-/// Smallest answer budget that can still hold a 10x10 grid.
+/// Smallest answer budget a Worker may carry. In whitespace-separated tokens
+/// (`approx_tokens`) it holds the ANSWER line and a grid of up to 63 cells: a 7x7 grid is
+/// 50 tokens. That is enough for every generated puzzle (at most 6x6, 37 tokens). A 10x10
+/// grid needs 101 such tokens, and exact tokenizer counts are higher.
 pub const ANSWER_TOKENS_MIN: u32 = 64;
 
-/// Text fragments that look like credentials. A Cascade carrying one is rejected, so a
-/// prompt can never smuggle a secret into a pull request or a model call.
-const SECRET_MARKERS: [&str; 8] = [
-    "sk-",
-    "ghp_",
-    "github_pat_",
-    "-----begin",
-    "api_key",
-    "apikey",
-    "password=",
-    "secret=",
+/// Characters that render invisibly and can hide a secret or an instruction in a prompt.
+const INVISIBLE: [RangeInclusive<char>; 15] = [
+    '\u{00AD}'..='\u{00AD}',
+    '\u{0600}'..='\u{0605}',
+    '\u{061C}'..='\u{061C}',
+    '\u{06DD}'..='\u{06DD}',
+    '\u{070F}'..='\u{070F}',
+    '\u{180E}'..='\u{180E}',
+    '\u{200B}'..='\u{200F}',
+    '\u{202A}'..='\u{202E}',
+    '\u{2060}'..='\u{2064}',
+    '\u{2066}'..='\u{206F}',
+    '\u{FE00}'..='\u{FE0F}',
+    '\u{FEFF}'..='\u{FEFF}',
+    '\u{FFF9}'..='\u{FFFB}',
+    '\u{E0000}'..='\u{E007F}',
+    '\u{E0100}'..='\u{E01EF}',
 ];
+
+/// Credential fragments that count anywhere in the lower-cased text.
+const SECRET_FRAGMENTS: [&str; 3] = ["-----begin", "api_key", "apikey"];
+
+/// Prefixes of API tokens in the lower-cased text. A prefix counts only at a token start,
+/// and only when at least `TOKEN_TAIL_MIN` characters from [a-z0-9_-] follow it.
+const TOKEN_PREFIXES: [&str; 19] = [
+    // OpenAI, Anthropic and Stripe.
+    "sk-",
+    "sk_",
+    "rk_",
+    // GitHub and GitLab.
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    // Slack.
+    "xoxa-",
+    "xoxb-",
+    "xoxp-",
+    "xoxr-",
+    "xoxs-",
+    "xapp-",
+    // Hugging Face, npm and PyPI.
+    "hf_",
+    "npm_",
+    "pypi-",
+];
+
+/// Shortest tail after a token prefix that makes it look like a key.
+const TOKEN_TAIL_MIN: usize = 6;
+
+/// A set of characters, given as a test on one character.
+type CharClass = fn(char) -> bool;
+
+/// Keys matched case-sensitively in the original text: a prefix, then this many characters
+/// of the class, with no ASCII letter or digit on either side. AKIA and ASIA start AWS
+/// access key ids; AIza starts Google API keys.
+const CASED_KEYS: [(&str, usize, CharClass); 3] = [
+    ("AKIA", 16, is_upper_or_digit),
+    ("ASIA", 16, is_upper_or_digit),
+    ("AIza", 35, is_key_char),
+];
+
+/// Keywords of key-value pairs in the lower-cased text, each with the separators that may
+/// follow it. A keyword counts only at a token start. Spaces or tabs may stand between the
+/// keyword and its separator. "secret" needs '=', because "The secret: ..." is plausible
+/// puzzle prose.
+const SECRET_KEYS: [(&str, &str); 15] = [
+    ("password", ":="),
+    ("passwd", ":="),
+    ("api-key", ":="),
+    ("api key", ":="),
+    ("access-key", ":="),
+    ("access_key", ":="),
+    ("access key", ":="),
+    ("private-key", ":="),
+    ("private_key", ":="),
+    ("private key", ":="),
+    ("client-secret", ":="),
+    ("client_secret", ":="),
+    ("client secret", ":="),
+    ("authorization", ":="),
+    ("secret", "="),
+];
+
+/// Shortest token after "bearer" that makes it look like a credential.
+const BEARER_TOKEN_MIN: usize = 16;
 
 /// One model a Worker may use, with its fixed fitness cost per call (Q21). Costs are set
 /// before a run and recorded with it; they are not genes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelSpec {
     pub tag: String,
     /// Fitness subtracted per call to this model, in solved-rate units.
@@ -55,8 +138,10 @@ pub struct ModelSpec {
 }
 
 /// Run-level limits on Cascades. Every field is clamped to the hard ceilings above, so a
-/// configuration can tighten them but never loosen them.
+/// configuration can tighten them but never loosen them. Unknown keys are rejected, so a
+/// setting the code does not know fails loudly instead of being dropped.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CascadeLimits {
     /// Allow-list of models (Q21). A Worker naming any other model is invalid.
     pub models: Vec<ModelSpec>,
@@ -227,7 +312,8 @@ impl Cascade {
     }
 
     /// Structural validity against `limits` and the hard ceilings. Rejects unknown models,
-    /// out-of-range Traits, oversize prompts, control characters and credential look-alikes.
+    /// out-of-range Traits, oversize prompts, control and invisible characters, and common
+    /// credential formats.
     pub fn check(&self, limits: &CascadeLimits) -> Result<()> {
         let bad = |m: String| Err(BrutError::Invalid(format!("cascade: {m}")));
 
@@ -259,7 +345,11 @@ impl Cascade {
     }
 }
 
-fn check_worker(w: &Worker, limits: &CascadeLimits, stage: usize) -> std::result::Result<(), String> {
+fn check_worker(
+    w: &Worker,
+    limits: &CascadeLimits,
+    stage: usize,
+) -> std::result::Result<(), String> {
     if limits.model(&w.model).is_none() {
         return Err(format!("model {:?} is not on the allow-list", w.model));
     }
@@ -313,40 +403,133 @@ fn check_text(what: &str, text: &str, max_chars: usize) -> std::result::Result<(
         return Err(format!("{what} contains a control character"));
     }
 
-    let lower = text.to_lowercase();
+    if text.chars().any(is_invisible) {
+        return Err(format!("{what} contains an invisible formatting character"));
+    }
 
-    if let Some(m) = SECRET_MARKERS.iter().find(|m| lower.contains(*m)) {
+    if let Some(m) = credential_marker(text) {
         return Err(format!("{what} looks like it carries a credential ({m:?})"));
     }
 
     Ok(())
 }
 
+/// The first credential marker in `text`, if any. It finds common credential formats:
+/// fragments such as a PEM header, token prefixes with a key-like tail, AWS and Google
+/// keys, key-value pairs such as "password: ...", and bearer tokens. The check is best
+/// effort. It is not a guarantee that no secret can pass.
+fn credential_marker(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+
+    let fragment = || SECRET_FRAGMENTS.into_iter().find(|m| lower.contains(m));
+
+    let prefix = || {
+        TOKEN_PREFIXES.into_iter().find(|p| {
+            after_token_start(&lower, p).any(|rest| run_len(rest, is_key_char) >= TOKEN_TAIL_MIN)
+        })
+    };
+
+    let cased = || {
+        CASED_KEYS
+            .into_iter()
+            .find(|&(p, len, class)| {
+                after_token_start(text, p).any(|rest| {
+                    let next = rest.chars().nth(len);
+
+                    run_len(rest, class) >= len && !next.is_some_and(|c| c.is_ascii_alphanumeric())
+                })
+            })
+            .map(|(p, _, _)| p)
+    };
+
+    let pair = || {
+        SECRET_KEYS
+            .into_iter()
+            .find(|&(k, separators)| {
+                after_token_start(&lower, k).any(|rest| {
+                    rest.trim_start_matches([' ', '\t'])
+                        .starts_with(|c: char| separators.contains(c))
+                })
+            })
+            .map(|(k, _)| k)
+    };
+
+    let bearer = || {
+        after_token_start(&lower, "bearer")
+            .any(|rest| {
+                rest.starts_with(' ')
+                    && run_len(rest.trim_start_matches(' '), is_bearer_char) >= BEARER_TOKEN_MIN
+            })
+            .then_some("bearer")
+    };
+
+    fragment()
+        .or_else(prefix)
+        .or_else(cased)
+        .or_else(pair)
+        .or_else(bearer)
+}
+
+/// The rest of `text` after each `marker` at a token start: at the start of `text`, or
+/// after a character that is not an ASCII letter or digit.
+fn after_token_start<'a>(text: &'a str, marker: &str) -> impl Iterator<Item = &'a str> {
+    text.match_indices(marker)
+        .filter(move |&(i, _)| !text[..i].ends_with(|c: char| c.is_ascii_alphanumeric()))
+        .map(move |(i, m)| &text[i + m.len()..])
+}
+
+/// Number of leading characters of `s` that are in `class`.
+fn run_len(s: &str, class: CharClass) -> usize {
+    s.chars().take_while(|&c| class(c)).count()
+}
+
+/// A character from the `INVISIBLE` table.
+fn is_invisible(c: char) -> bool {
+    INVISIBLE.iter().any(|r| r.contains(&c))
+}
+
+/// An ASCII letter or digit, '_' or '-': the characters of most API keys.
+fn is_key_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// An upper-case ASCII letter or a digit: the characters of an AWS access key id.
+fn is_upper_or_digit(c: char) -> bool {
+    c.is_ascii_uppercase() || c.is_ascii_digit()
+}
+
+/// An ASCII letter or digit, or one of "._~+/=-": the characters of a bearer token.
+fn is_bearer_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "._~+/=-".contains(c)
+}
+
 /// Hand-written starting Cascades. They are deliberately plain: one Worker each, with
 /// different strategies, so that search has something to recombine.
 pub fn seed_cascades() -> Vec<(String, Cascade)> {
-    let worker = |model: &str, strategy: &str, think: u32, check: bool| Worker {
-        model: model.to_string(),
-        sections: vec![
-            Section {
-                name: "role".to_string(),
-                text: "You solve grid puzzles. Each puzzle shows input and output grids that follow one hidden rule.".to_string(),
+    let worker = |model: &str, strategy: &str, think: u32, check: bool| {
+        Worker {
+            model: model.to_string(),
+            sections: vec![
+                Section {
+                    name: "role".to_string(),
+                    text: "You solve grid puzzles. Each puzzle shows input and output grids that follow one hidden rule.".to_string(),
+                },
+                Section {
+                    name: "strategy".to_string(),
+                    text: strategy.to_string(),
+                },
+                Section {
+                    name: "format".to_string(),
+                    text: "Answer with the line ANSWER followed by the output grid, one row per line, digits separated by spaces.".to_string(),
+                },
+            ],
+            traits: Traits {
+                think_tokens: think,
+                temperature: 0.2,
+                answer_tokens: 512,
+                self_check: check,
             },
-            Section {
-                name: "strategy".to_string(),
-                text: strategy.to_string(),
-            },
-            Section {
-                name: "format".to_string(),
-                text: "Answer with the line ANSWER followed by the output grid, one row per line, digits separated by spaces.".to_string(),
-            },
-        ],
-        traits: Traits {
-            think_tokens: think,
-            temperature: 0.2,
-            answer_tokens: 512,
-            self_check: check,
-        },
+        }
     };
 
     let single = |w: Worker| Cascade {
@@ -482,6 +665,75 @@ mod tests {
         let w = c.stages[0].workers[0].clone();
         c.stages[0].workers = vec![w.clone(), w.clone(), w.clone(), w];
         assert!(c.check(&limits).is_err(), "too wide");
+    }
+
+    #[test]
+    fn text_check_keeps_prose_and_rejects_secrets() {
+        let prose = [
+            "Look for task-specific rules.",
+            "Build a mask-based map.",
+            "Desk-check every cell.",
+            "A risk-free check of the examples.",
+            "Asia-Pacific colours",
+            "Slovakia",
+            "The secret: count colours first.",
+            "Use at most 512 tokens: be brief.",
+        ];
+
+        // Built at run time, so the source holds no string of the Google key shape.
+        let google = format!("key AIza{}", "x".repeat(35));
+        let leaks = [
+            ("ghp_abcdef123", "ghp_"),
+            ("ghs_16C7e42F292c6912E7710c838347Ae178B4a", "ghs_"),
+            ("gho_16C7e42F292c6912E7710c838347Ae178B4a", "gho_"),
+            ("hf_abcdefghijklmnopqrstuvwxyz0123456789", "hf_"),
+            ("AKIAIOSFODNN7EXAMPLE", "AKIA"),
+            (google.as_str(), "AIza"),
+            ("xoxb-123456-abcdef", "xoxb-"),
+            ("x-api-key: abc", "api-key"),
+            ("password: hunter2", "password"),
+            ("secret=abc", "secret"),
+            (
+                "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc",
+                "authorization",
+            ),
+            ("Send bearer eyJhbGciOiJIUzI1NiJ9.e30.abc", "bearer"),
+            ("-----BEGIN RSA PRIVATE KEY-----", "-----begin"),
+            ("s\u{200B}k-ant-api03-abcdef", "invisible"),
+            ("Be concise.\u{E0041}", "invisible"),
+        ];
+
+        for text in prose {
+            assert_eq!(
+                check_text("text", text, MAX_SECTION_CHARS),
+                Ok(()),
+                "{text}"
+            );
+        }
+
+        for (text, why) in leaks {
+            let err = check_text("text", text, MAX_SECTION_CHARS).expect_err(text);
+
+            assert!(err.contains(why), "{text}: {err}");
+        }
+    }
+
+    #[test]
+    fn limits_reject_unknown_keys() {
+        let limits = CascadeLimits::default();
+        let json = serde_json::to_string(&limits).expect("encode");
+        let back: CascadeLimits = serde_json::from_str(&json).expect("decode");
+
+        assert_eq!(back, limits);
+
+        let extra_limit = json.replacen('{', "{\"answer_tokens_ceiling\": 256, ", 1);
+        let extra_model = json.replacen("\"tag\"", "\"max_calls\": 10, \"tag\"", 1);
+
+        for bad in [extra_limit, extra_model] {
+            let err = serde_json::from_str::<CascadeLimits>(&bad).expect_err(&bad);
+
+            assert!(err.to_string().contains("unknown field"), "{err}");
+        }
     }
 
     #[test]
