@@ -5,45 +5,104 @@
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 const BREED: &str = env!("CARGO_BIN_EXE_brut-breed");
 const INGEST: &str = env!("CARGO_BIN_EXE_brut-ingest");
 
-/// Strings `src/cascade/**` must never contain: the module is pure computation.
-const IO_MARKERS: [&str; 10] = [
+/// Strings `src/cascade/**` must never contain: the module is pure computation (no
+/// files, network, processes, environment or clock, also not through crate helpers).
+const IO_MARKERS: [&str; 18] = [
     "std::fs",
     "std::net",
     "std::process",
     "std::env",
+    "std::io",
+    "std::time",
     "File::",
     "Command",
     "TcpStream",
     "include_str",
     "include_bytes",
     "Instant",
+    "SystemTime",
+    "env!(",
+    "option_env!(",
+    "now_unix_ms",
+    "write_atomic",
+    "parse_env_file",
 ];
+
+/// Modules a grouped `use std::{..}` must not name.
+const IO_MODULES: [&str; 6] = ["fs", "net", "process", "env", "io", "time"];
 
 fn crate_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
+/// Every `.rs` file under `src/cascade`, subdirectories included.
 fn cascade_sources() -> Vec<(String, String)> {
-    let dir = crate_path("src/cascade");
-    let mut out: Vec<(String, String)> = std::fs::read_dir(&dir)
-        .expect("src/cascade")
-        .map(|e| e.expect("entry").path())
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
-        .map(|p| {
-            let text = std::fs::read_to_string(&p).expect("read");
+    let mut out = Vec::new();
+    let mut pending = vec![crate_path("src/cascade")];
 
-            (p.display().to_string(), text)
-        })
-        .collect();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("src/cascade") {
+            let path = entry.expect("entry").path();
+
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|x| x == "rs") {
+                let text = std::fs::read_to_string(&path).expect("read");
+
+                out.push((path.display().to_string(), text));
+            }
+        }
+    }
 
     out.sort();
 
     out
+}
+
+/// First path segment of every item in each `std::{...}` group of whitespace-free
+/// source (as in tests/learner_security.rs).
+fn grouped_std_imports(compact: &str) -> Vec<String> {
+    let mut out = Vec::new();
+
+    for (start, marker) in compact.match_indices("std::{") {
+        let body = &compact[start + marker.len()..];
+        let mut depth = 0usize;
+        let mut item = String::new();
+
+        for c in body.chars() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    item.push(c);
+                }
+                '}' if depth == 0 => break,
+                '}' => {
+                    depth -= 1;
+                    item.push(c);
+                }
+                ',' if depth == 0 => {
+                    out.push(first_segment(&item));
+                    item.clear();
+                }
+                _ => item.push(c),
+            }
+        }
+
+        out.push(first_segment(&item));
+    }
+
+    out
+}
+
+/// First path segment of one item in a `use` group, e.g. "fs" for "fs::File".
+fn first_segment(item: &str) -> String {
+    item.split("::").next().unwrap_or("").to_string()
 }
 
 #[test]
@@ -56,6 +115,12 @@ fn cascade_module_is_pure_and_forbids_unsafe() {
         for marker in IO_MARKERS {
             if text.contains(marker) || compact.contains(&marker.replace(' ', "")) {
                 violations.push(format!("{path}: mentions {marker}"));
+            }
+        }
+
+        for module in grouped_std_imports(&compact) {
+            if IO_MODULES.contains(&module.as_str()) {
+                violations.push(format!("{path}: imports std::{module} in a group"));
             }
         }
 
@@ -160,20 +225,97 @@ fn breed_runs_are_reproducible_across_processes_and_verifiable() {
     assert_ne!(spacing, ea);
     assert!(verify_fails(&value), "a changed value must fail");
     assert!(verify_fails(&spacing), "a whitespace edit must fail");
+
+    // A cut log is a valid chain, but it no longer reaches the checkpoint's anchor; a
+    // torn last line (a write the process did not finish) fails too.
+    let head: String = ea.lines().take(10).map(|l| format!("{l}\n")).collect();
+    let torn = format!("{ea}{{\"seq\":");
+
+    assert!(verify_fails(&head), "a cut log must fail");
+    assert!(verify_fails(&torn), "a torn last line must fail");
+
+    // A report that does not match the logged finalists fails.
+    std::fs::write(a.join("events.jsonl"), &ea).expect("restore");
+    ok(&breed(&["--out", a.to_str().expect("path"), "--verify"]));
+    tamper_report(&a);
+    assert_eq!(breed(&["--out", a.to_str().expect("path"), "--verify"]).status.code(), Some(1));
+
+    // A directory without a run is wrong usage, not an empty success.
+    let none = fresh("repro-none");
+
+    assert_eq!(breed(&["--out", none.to_str().expect("path"), "--verify"]).status.code(), Some(2));
+}
+
+/// The events of a run's log, as JSON values.
+fn events(dir: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dir.join("events.jsonl"))
+        .expect("log")
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).expect("json");
+
+            v["event"].clone()
+        })
+        .collect()
+}
+
+fn count(events: &[serde_json::Value], kind: &str) -> usize {
+    events.iter().filter(|e| e["kind"] == kind).count()
+}
+
+/// What a run decided: every Cascade and judgment, plus the finalists after the last
+/// generation (earlier finalist sets are history), without cumulative call counts.
+fn lineage(dir: &Path) -> Vec<String> {
+    let all = events(dir);
+    let last = all
+        .iter()
+        .rposition(|e| e["kind"] == "generation")
+        .map_or(0, |i| i + 1);
+    let mut out: Vec<String> = all
+        .iter()
+        .filter(|e| e["kind"] == "born" || e["kind"] == "compared")
+        .map(|e| e.to_string())
+        .collect();
+
+    out.extend(all[last..].iter().filter(|e| e["kind"] == "finalist").map(|e| e.to_string()));
+
+    out
+}
+
+fn report(dir: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(dir.join("report.json")).expect("report");
+
+    serde_json::from_str(&text).expect("json")
+}
+
+/// Raise the first finalist's select score in report.json by one.
+fn tamper_report(dir: &Path) {
+    let mut r = report(dir);
+    let solved = r["finalists"][0]["select_solved"].as_u64().expect("select_solved");
+
+    r["finalists"][0]["select_solved"] = serde_json::json!(solved + 1);
+    std::fs::write(dir.join("report.json"), serde_json::to_string_pretty(&r).expect("json"))
+        .expect("tamper report");
 }
 
 #[test]
 fn kill_switch_then_resume_equals_a_straight_run() {
     let straight = fresh("straight");
     let split = fresh("split");
+    let path = split.to_str().expect("path");
 
     ok(&small_run(&straight, &[]));
 
     // With STOP present the run stops before committing generation 0: a checkpoint
-    // exists (written before generation 0), but no event and no report.
+    // exists (written before generation 0), but no event and no report. The message
+    // says to delete STOP before resuming.
     std::fs::create_dir_all(&split).expect("mkdir");
     std::fs::write(split.join("STOP"), "").expect("stop");
-    ok(&small_run(&split, &[]));
+
+    let stopped = small_run(&split, &[]);
+
+    ok(&stopped);
+    assert!(String::from_utf8_lossy(&stopped.stdout).contains("delete"));
     assert!(split.join("snapshot.json").exists());
     assert!(!split.join("events.jsonl").exists());
     assert!(!split.join("report.json").exists());
@@ -182,61 +324,158 @@ fn kill_switch_then_resume_equals_a_straight_run() {
     // and a second resume continues it with more generations.
     std::fs::remove_file(split.join("STOP")).expect("unstop");
     assert_eq!(small_run(&split, &[]).status.code(), Some(2));
-    ok(&breed(&[
-        "--out",
-        split.to_str().expect("path"),
-        "--resume",
-        "--generations",
-        "1",
-    ]));
-    ok(&breed(&[
-        "--out",
-        split.to_str().expect("path"),
-        "--resume",
-        "--generations",
-        "3",
-    ]));
+    ok(&breed(&["--out", path, "--resume", "--generations", "1"]));
 
-    // Resume cut the log back to the last checkpoint (dropping the finalist lines of the
-    // short run), so every Cascade and every judgment matches the straight run. Events
-    // that carry the cumulative call count differ: the short run's select phase really
-    // spent calls, and they stay counted.
-    let lineage = |dir: &Path| -> Vec<String> {
-        std::fs::read_to_string(dir.join("events.jsonl"))
-            .expect("log")
-            .lines()
-            .map(|l| {
-                let v: serde_json::Value = serde_json::from_str(l).expect("json");
+    let short_finalists = count(&events(&split), "finalist");
 
-                v["event"].clone()
-            })
-            .filter(|e| e["kind"] == "born" || e["kind"] == "compared" || e["kind"] == "finalist")
-            .map(|e| e.to_string())
-            .collect()
-    };
+    assert!(short_finalists > 0);
+    ok(&breed(&["--out", path, "--resume", "--generations", "3"]));
 
+    // The short run's finalists stay in the log as history. Every Cascade, every
+    // judgment and the final finalists match the straight run. The short run's select
+    // phase really spent calls; answers it can reuse are not paid for again.
     assert_eq!(lineage(&straight), lineage(&split));
+    assert_eq!(
+        count(&events(&split), "finalist"),
+        short_finalists + count(&events(&straight), "finalist")
+    );
 
-    let report = |dir: &Path| -> serde_json::Value {
-        let text = std::fs::read_to_string(dir.join("report.json")).expect("report");
-
-        serde_json::from_str(&text).expect("json")
-    };
     let (mut a, mut b) = (report(&straight), report(&split));
 
-    assert!(b["calls_used"].as_u64() > a["calls_used"].as_u64());
+    assert!(b["calls_used"].as_u64() >= a["calls_used"].as_u64());
 
     a["calls_used"] = serde_json::Value::Null;
     b["calls_used"] = serde_json::Value::Null;
     assert_eq!(a, b);
+    ok(&breed(&["--out", path, "--verify"]));
+}
+
+#[test]
+fn a_finished_run_resumes_without_change_and_a_refused_resume_touches_nothing() {
+    let dir = fresh("finished");
+    let path = dir.to_str().expect("path");
+
+    ok(&small_run(&dir, &[]));
+
+    let log = std::fs::read(dir.join("events.jsonl")).expect("log");
+    let rep = std::fs::read(dir.join("report.json")).expect("report");
+    let config = std::fs::read_to_string(dir.join("config.json")).expect("config");
+
+    // Options that define the experiment cannot change on resume.
+    assert_eq!(breed(&["--out", path, "--resume", "--seed", "9"]).status.code(), Some(2));
+    assert_eq!(breed(&["--out", path, "--resume", "--no-pause"]).status.code(), Some(2));
+    assert_eq!(breed(&["--out", path, "--verify", "--seed", "9"]).status.code(), Some(2));
+
+    // A resume refused for changed settings leaves every file as it was.
+    let edited = config.replacen("\"judge_weight\": 0.2", "\"judge_weight\": 0.3", 1);
+
+    assert_ne!(edited, config);
+    std::fs::write(dir.join("config.json"), edited).expect("edit");
+    assert_eq!(breed(&["--out", path, "--resume"]).status.code(), Some(1));
+    assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
+    assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
+    std::fs::write(dir.join("config.json"), &config).expect("restore");
+
+    // Resuming the finished run gives the same report with no new calls and no new
+    // events (its finalists are logged already).
+    ok(&breed(&["--out", path, "--resume"]));
+    assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
+    assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
+
+    // Promotion needs a report that matches the log.
+    ok(&breed(&["--out", path, "--promote"]));
+    tamper_report(&dir);
+    assert_eq!(breed(&["--out", path, "--promote"]).status.code(), Some(1));
+}
+
+/// Wait until `cond` holds, polling every 10 ms, for at most `secs` seconds.
+fn wait_for(secs: u64, mut cond: impl FnMut() -> bool) -> bool {
+    let end = Instant::now() + Duration::from_secs(secs);
+
+    while Instant::now() < end {
+        if cond() {
+            return true;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    false
+}
+
+/// Calls the stored checkpoint reserves for work in flight (0 when there is none).
+fn reserved(dir: &Path) -> u64 {
+    std::fs::read_to_string(dir.join("snapshot.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["snapshot"]["reserved"].as_u64())
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_killed_run_counts_its_reservation_and_holds_the_lock() {
+    // One long generation 0 (the four seeds on a large panel), so the kill lands in it.
+    let long = |dir: &Path| -> Vec<String> {
+        let mut args = vec!["--out".to_string(), dir.display().to_string()];
+
+        for a in ["--generations", "0", "--search", "20000", "--select", "12", "--max-calls", "1000000"] {
+            args.push(a.to_string());
+        }
+
+        args
+    };
+    let straight = fresh("kill-straight");
+    let killed = fresh("kill");
+    let path = killed.to_str().expect("path");
+
+    ok(&Command::new(BREED).args(long(&straight)).output().expect("straight run"));
+
+    let mut child = Command::new(BREED)
+        .args(long(&killed))
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn");
+
+    assert!(wait_for(120, || reserved(&killed) > 0), "reservation stored before the first call");
+
+    // While it runs, a second process on the same directory is refused.
+    let second = breed(&["--out", path, "--verify"]);
+
+    assert_eq!(second.status.code(), Some(2), "{}", String::from_utf8_lossy(&second.stderr));
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+
+    // The resume counts the killed attempt's worst case as spent, then repeats the
+    // generation exactly.
+    let r = reserved(&killed);
+
+    assert!(r > 0, "killed inside the run");
+    ok(&breed(&["--out", path, "--resume"]));
+
+    let calls = |dir: &Path| report(dir)["calls_used"].as_u64().expect("calls");
+
+    assert_eq!(calls(&killed), calls(&straight) + r);
+    assert_eq!(lineage(&straight), lineage(&killed));
+    ok(&breed(&["--out", path, "--verify"]));
 }
 
 #[test]
 fn llm_round_pauses_for_answers_and_promotion_passes_the_gate() {
     let dir = fresh("llm");
-    let out = small_run(&dir, &["--llm-every", "2", "--llm-children", "2"]);
+    let answers = dir.join("my-answers");
+    let answers_arg = answers.to_str().expect("path");
+    let out = small_run(
+        &dir,
+        &["--llm-every", "2", "--llm-children", "2", "--llm-answers", answers_arg],
+    );
 
     assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+
+    // The printed resume command names the answers directory.
+    let printed = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(printed.contains(&format!("--resume --llm-answers {answers_arg}")), "{printed}");
 
     let requests: Vec<PathBuf> = std::fs::read_dir(dir.join("llm").join("requests"))
         .expect("requests")
@@ -247,8 +486,6 @@ fn llm_round_pauses_for_answers_and_promotion_passes_the_gate() {
 
     // Answer every request with a valid Cascade (a seed with a larger thinking budget,
     // distinct per request) wrapped in prose, as a Claude session would.
-    let answers = dir.join("llm").join("answers");
-
     std::fs::create_dir_all(&answers).expect("answers dir");
 
     for (i, path) in requests.iter().enumerate() {
@@ -266,7 +503,7 @@ fn llm_round_pauses_for_answers_and_promotion_passes_the_gate() {
             .expect("answer");
     }
 
-    let resumed = breed(&["--out", dir.to_str().expect("path"), "--resume"]);
+    let resumed = breed(&["--out", dir.to_str().expect("path"), "--resume", "--llm-answers", answers_arg]);
 
     ok(&resumed);
 
