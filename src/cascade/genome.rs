@@ -103,25 +103,27 @@ const CASED_KEYS: [(&str, usize, CharClass); 3] = [
 ];
 
 /// Keywords of key-value pairs in the lower-cased text, each with the separators that may
-/// follow it. A keyword counts only at a token start. Spaces or tabs may stand between the
-/// keyword and its separator. "secret" needs '=', because "The secret: ..." is plausible
-/// puzzle prose.
-const SECRET_KEYS: [(&str, &str); 15] = [
-    ("password", ":="),
-    ("passwd", ":="),
-    ("api-key", ":="),
-    ("api key", ":="),
-    ("access-key", ":="),
-    ("access_key", ":="),
-    ("access key", ":="),
-    ("private-key", ":="),
-    ("private_key", ":="),
-    ("private key", ":="),
-    ("client-secret", ":="),
-    ("client_secret", ":="),
-    ("client secret", ":="),
-    ("authorization", ":="),
-    ("secret", "="),
+/// follow it, and whether it counts anywhere (true) or only at a token start. Spaces or
+/// tabs may stand between the keyword and its separator. "password", "passwd" and
+/// "secret" count anywhere, so "PGPASSWORD=" and "dbsecret=" are caught as the old plain
+/// markers caught them. "secret" needs '=', because "The secret: ..." is plausible puzzle
+/// prose.
+const SECRET_KEYS: [(&str, &str, bool); 15] = [
+    ("password", ":=", true),
+    ("passwd", ":=", true),
+    ("api-key", ":=", false),
+    ("api key", ":=", false),
+    ("access-key", ":=", false),
+    ("access_key", ":=", false),
+    ("access key", ":=", false),
+    ("private-key", ":=", false),
+    ("private_key", ":=", false),
+    ("private key", ":=", false),
+    ("client-secret", ":=", false),
+    ("client_secret", ":=", false),
+    ("client secret", ":=", false),
+    ("authorization", ":=", false),
+    ("secret", "=", true),
 ];
 
 /// Shortest token after "bearer" that makes it look like a credential.
@@ -445,13 +447,19 @@ fn credential_marker(text: &str) -> Option<&'static str> {
     let pair = || {
         SECRET_KEYS
             .into_iter()
-            .find(|&(k, separators)| {
-                after_token_start(&lower, k).any(|rest| {
+            .find(|&(k, separators, anywhere)| {
+                let separated = |rest: &str| {
                     rest.trim_start_matches([' ', '\t'])
                         .starts_with(|c: char| separators.contains(c))
-                })
+                };
+
+                if anywhere {
+                    lower.match_indices(k).any(|(i, _)| separated(&lower[i + k.len()..]))
+                } else {
+                    after_token_start(&lower, k).any(separated)
+                }
             })
-            .map(|(k, _)| k)
+            .map(|(k, _, _)| k)
     };
 
     let bearer = || {
@@ -680,19 +688,27 @@ mod tests {
             "Use at most 512 tokens: be brief.",
         ];
 
-        // Built at run time, so the source holds no string of the Google key shape.
+        // Key-shaped strings are built at run time, so the source holds nothing a secret
+        // scanner would take for a real key.
         let google = format!("key AIza{}", "x".repeat(35));
+        let ghs = format!("{}{}", "ghs_", "Ab12".repeat(9));
+        let gho = format!("{}{}", "gho_", "Ab12".repeat(9));
+        let hugging = format!("{}{}", "hf_", "abcd".repeat(9));
+        let aws = format!("{}{}", "AKIA", "Z9".repeat(8));
         let leaks = [
             ("ghp_abcdef123", "ghp_"),
-            ("ghs_16C7e42F292c6912E7710c838347Ae178B4a", "ghs_"),
-            ("gho_16C7e42F292c6912E7710c838347Ae178B4a", "gho_"),
-            ("hf_abcdefghijklmnopqrstuvwxyz0123456789", "hf_"),
-            ("AKIAIOSFODNN7EXAMPLE", "AKIA"),
+            (ghs.as_str(), "ghs_"),
+            (gho.as_str(), "gho_"),
+            (hugging.as_str(), "hf_"),
+            (aws.as_str(), "AKIA"),
             (google.as_str(), "AIza"),
             ("xoxb-123456-abcdef", "xoxb-"),
             ("x-api-key: abc", "api-key"),
             ("password: hunter2", "password"),
+            ("PGPASSWORD=abc", "password"),
+            ("dbpasswd = abc", "passwd"),
             ("secret=abc", "secret"),
+            ("dbsecret=abc", "secret"),
             (
                 "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc",
                 "authorization",
