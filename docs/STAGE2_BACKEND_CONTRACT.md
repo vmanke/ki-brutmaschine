@@ -1,6 +1,6 @@
 # Stage 2 model-backend contract
 
-Version: contract-v1, 2026-10-21. This document is normative for the model backend
+Version: contract-v2, 2026-10-29 (v1: 2026-10-21; v2 adds `think_tokens`). This document is normative for the model backend
 of Stage 2. It defines the interface the core already has (`src/backend.rs`) and the
 separate adapter that serves a local open model through Ollama in a Docker sandbox.
 The adapter runs only on a host the user controls; this managed container cannot run it
@@ -19,7 +19,7 @@ prompt mutator, code mutator) is specified elsewhere and is not part of this con
 ## 1. Interface (already in core, `src/backend.rs`)
 
 ```rust
-pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64 }
+pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64, think_tokens: u32 }
 pub enum StopReason { Stop, Length, Refusal, Error }
 pub struct GenResponse { text, prompt_tokens: u32, completion_tokens: u32, stop_reason, backend }
 pub trait ModelBackend { fn name(&self) -> &str; fn generate(&self, &GenRequest) -> Result<GenResponse>; }
@@ -45,8 +45,20 @@ MUST hold for the adapter:
   sandbox that runs mutated code. The sandbox never receives the Ollama URL or any
   credential, and child processes start with a cleared environment.
 - I5. **Request shape.** `generate` POSTs to `/api/generate` with `model`, `prompt`,
-  `system`, `stream: false`, `options.num_predict = max_tokens`, `options.temperature`,
-  and `options.seed`. It reads `response`, and the token counts from `prompt_eval_count`
+  `system`, `stream: false`, `options.temperature`, and `options.seed`. For a model
+  without a thinking mode, `options.num_predict = max_tokens` and `think_tokens` is
+  ignored. For a thinking model, `options.num_predict = max_tokens + think_tokens` caps
+  the sum only; the adapter enforces each part on its own. It reads the thinking text and
+  the visible answer as separate fields, measures each (exact token counts where the
+  server reports them, else a whitespace-word estimate that the adapter records as an
+  estimate), and maps a visible answer above `max_tokens` or a thinking part above
+  `think_tokens` to `StopReason::Length`, which the orchestrator never parses as an
+  answer. `think_tokens` (contract-v2, a Worker Trait of ADR 0005; serde default 0, so
+  contract-v1 records still replay) also selects the model's thinking control: 0 turns
+  thinking off where the model allows it; for gpt-oss the budget picks the reasoning
+  level (low, medium, high) by thresholds recorded in the adapter; for Qwen3 a budget
+  above 0 turns thinking on. Level and on/off switches only choose the mode; the numeric
+  caps come from `num_predict` and the two checks above. It reads `response`, and the token counts from `prompt_eval_count`
   and `eval_count`. A `done_reason` of `length` maps to `StopReason::Length`, otherwise
   `StopReason::Stop`; a transport or HTTP error maps to `StopReason::Error` and a
   `BrutError`.

@@ -7,8 +7,9 @@
 //! steps live in `scripts/`, so the core crate keeps no process or network dependency
 //! (ADR 0001).
 //!
-//! Only the genome adapter (DSL program, JSON) is implemented here. The config-and-prompt
-//! and Rust adapters are future work (ADR 0004) and are deliberately absent, not stubbed.
+//! Two adapters are implemented: the genome adapter (DSL program, JSON) and the
+//! config-and-prompt adapter for Cascades (ADR 0005), both behind `CandidateAdapter`. The
+//! Rust adapter is future work (ADR 0004) and is deliberately absent, not stubbed.
 #![forbid(unsafe_code)]
 
 use std::collections::HashSet;
@@ -17,6 +18,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::cascade::genome::{Cascade, CascadeLimits, pool_limits, seed_cascades};
 use crate::learner::dsl::reference_step_cost;
 use crate::learner::mutate::mutate;
 use crate::learner::seeds::seed_programs;
@@ -42,6 +44,28 @@ pub fn path_in_scope(path: &str) -> bool {
     }
 
     p.starts_with(CANDIDATE_DIR) && p.len() > CANDIDATE_DIR.len()
+}
+
+/// Where promoted Cascades live inside the candidate pool (ADR 0005). It is under
+/// `candidates/`, so the same scope fence covers it.
+pub const CASCADE_DIR: &str = "candidates/cascades/";
+
+/// The one interface every candidate representation implements (ADR 0004): parse,
+/// statically validate, and fingerprint by content.
+pub trait CandidateAdapter {
+    type Candidate;
+
+    /// Short name recorded in provenance.
+    fn kind(&self) -> &'static str;
+
+    /// Parse candidate JSON; unknown fields are rejected.
+    fn parse(&self, text: &str) -> Result<Self::Candidate>;
+
+    /// Static validity: structure, limits, and (for prompts) no credential look-alikes.
+    fn validate(&self, c: &Self::Candidate) -> Result<()>;
+
+    /// Content id, which is also the candidate's file name.
+    fn fingerprint(&self, c: &Self::Candidate) -> String;
 }
 
 /// Adapter for the genome representation: a DSL program stored as JSON at
@@ -97,6 +121,78 @@ impl GenomeAdapter {
             g.render()
         )
     }
+}
+
+impl CandidateAdapter for GenomeAdapter {
+    type Candidate = LearnerGenome;
+
+    fn kind(&self) -> &'static str {
+        GenomeAdapter::kind(self)
+    }
+
+    fn parse(&self, text: &str) -> Result<LearnerGenome> {
+        GenomeAdapter::parse(self, text)
+    }
+
+    fn validate(&self, g: &LearnerGenome) -> Result<()> {
+        GenomeAdapter::validate(self, g)
+    }
+
+    fn fingerprint(&self, g: &LearnerGenome) -> String {
+        GenomeAdapter::fingerprint(self, g)
+    }
+}
+
+/// Adapter for the config-and-prompt representation (ADR 0004, second adapter): a
+/// Cascade stored as JSON at `candidates/cascades/<content-id>.json`. Validity is the
+/// Cascade check against the pool allow-list, which also rejects credential look-alikes
+/// in prompt text. No model runs during review.
+pub struct CascadeAdapter {
+    pub limits: CascadeLimits,
+}
+
+impl Default for CascadeAdapter {
+    fn default() -> Self {
+        CascadeAdapter {
+            limits: pool_limits(),
+        }
+    }
+}
+
+impl CascadeAdapter {
+    pub fn new() -> CascadeAdapter {
+        CascadeAdapter::default()
+    }
+
+    /// Pretty JSON for a candidate file.
+    pub fn to_json(&self, c: &Cascade) -> Result<String> {
+        serde_json::to_string_pretty(c).map_err(|e| BrutError::Invalid(format!("encode: {e}")))
+    }
+}
+
+impl CandidateAdapter for CascadeAdapter {
+    type Candidate = Cascade;
+
+    fn kind(&self) -> &'static str {
+        "cascade"
+    }
+
+    fn parse(&self, text: &str) -> Result<Cascade> {
+        serde_json::from_str(text).map_err(|e| BrutError::Invalid(format!("cascade json: {e}")))
+    }
+
+    fn validate(&self, c: &Cascade) -> Result<()> {
+        c.check(&self.limits)
+    }
+
+    fn fingerprint(&self, c: &Cascade) -> String {
+        c.id()
+    }
+}
+
+/// Content ids of the seed Cascades; a promoted Cascade equal to one adds nothing.
+pub fn cascade_seed_ids() -> HashSet<String> {
+    seed_cascades().into_iter().map(|(_, c)| c.id()).collect()
 }
 
 /// step_cost and its cap at one width.
@@ -296,8 +392,8 @@ pub fn seed_ids() -> HashSet<String> {
 /// file name without `.json`, so a candidate cannot be renamed to hide its content), and
 /// its content id is not already in `known` — the seed ids plus any existing pool, so a
 /// run is never fed a duplicate of a seed or of a candidate it already holds.
-pub fn ingest_one(
-    adapter: &GenomeAdapter,
+pub fn ingest_one<A: CandidateAdapter>(
+    adapter: &A,
     path: &str,
     text: &str,
     expected_stem: &str,
@@ -428,6 +524,54 @@ mod tests {
         );
         assert!(!dup.accepted);
         assert!(dup.reason.contains("duplicate"), "{}", dup.reason);
+    }
+
+    #[test]
+    fn cascade_adapter_ingests_new_and_rejects_seeds_and_secrets() {
+        let adapter = CascadeAdapter::new();
+        let mut c = seed_cascades()[0].1.clone();
+
+        c.stages[0].workers[0].traits.think_tokens = 1024;
+        c.stages[0].workers[0].model = "gpt-oss:20b".to_string();
+
+        let id = adapter.fingerprint(&c);
+        let json = adapter.to_json(&c).expect("json");
+        let path = format!("{CASCADE_DIR}{id}.json");
+
+        assert!(path_in_scope(&path));
+
+        let ok = ingest_one(&adapter, &path, &json, &id, &cascade_seed_ids());
+
+        assert!(ok.accepted, "{}", ok.reason);
+
+        let seed = &seed_cascades()[1].1;
+        let seed_id = adapter.fingerprint(seed);
+        let dup = ingest_one(
+            &adapter,
+            "candidates/cascades/s.json",
+            &adapter.to_json(seed).expect("json"),
+            &seed_id,
+            &cascade_seed_ids(),
+        );
+
+        assert!(!dup.accepted);
+        assert!(dup.reason.contains("duplicate"), "{}", dup.reason);
+
+        let mut leaky = c.clone();
+
+        leaky.stages[0].workers[0].sections[0].text = "token ghp_abcdef".to_string();
+
+        let leaky_id = adapter.fingerprint(&leaky);
+        let rec = ingest_one(
+            &adapter,
+            "candidates/cascades/x.json",
+            &adapter.to_json(&leaky).expect("json"),
+            &leaky_id,
+            &cascade_seed_ids(),
+        );
+
+        assert!(!rec.accepted);
+        assert!(rec.reason.contains("credential"), "{}", rec.reason);
     }
 
     #[test]

@@ -108,6 +108,48 @@ _Avoid_: hall of fame, elite, lineage archive
 The state of a Learner or Candidate whose hidden score is far below its public score; it may not become a parent or be approved.
 _Avoid_: ban, blacklist
 
+### Cascade breeding (Stage 2c)
+
+**Worker**:
+One model call configured as data: a model tag from the allow-list, a system prompt made of named sections, and Traits.
+_Avoid_: agent, sub-AI, bot
+
+**Trait**:
+An inheritable setting that shapes how a Worker thinks, not what it thinks: thinking budget, temperature, answer length, self-check. Hard ceilings on Traits are code, not genes.
+_Avoid_: hyperparameter (alone), gene (for prompts)
+
+**Stage**:
+The Workers of a Cascade that answer the same input in parallel; when they disagree they judge each other blind.
+_Avoid_: layer, step
+
+**Cascade**:
+One to four Stages run in order, each seeing the task plus the answers chosen by all earlier Stages (the residual path); the unit that is bred and competes.
+_Avoid_: pipeline, chain, ensemble, agent
+
+**Judging skill**:
+How often a Cascade picks the right answer of a pair whose truth is known, with a Laplace prior; it enters fitness with a fixed weight.
+_Avoid_: judge score, reliability
+
+**Peer rating**:
+A Cascade's weighted Bradley-Terry rating from blind pairwise judgments by unrelated Cascades; it breaks fitness ties and chooses crossover partners, and never replaces the solved rate.
+_Avoid_: Elo (it is not one), reputation
+
+**Mutator**:
+The language model, normally Claude, that rewrites one parent Cascade or merges two in an LLM round; its answers are recorded and replayed, and a missing answer pauses the Run.
+_Avoid_: LLM proposer (that one writes Learners), meta-agent
+
+**Search panel**:
+The public puzzles on which Cascades are scored during breeding.
+_Avoid_: training set
+
+**Select panel**:
+Puzzles unseen during breeding, on which only finalists and seed Cascades are scored at the end; descriptive, not the Primary endpoint.
+_Avoid_: test set, hidden panel
+
+**Promotion**:
+Moving the two best finalist Cascades of a Run into `candidates/cascades/` through a human-reviewed draft pull request.
+_Avoid_: deploy, release, merge (the human merges, not the Run)
+
 ### Records and control
 
 **Run**:

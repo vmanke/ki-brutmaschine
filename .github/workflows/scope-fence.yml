@@ -46,3 +46,9 @@ jobs:
 
       - name: Validate candidates (as data)
         run: ./base/target/debug/brut-ingest --candidates pr/candidates
+
+      - name: Validate Cascades (as data, ADR 0005)
+        run: |
+          if [ -d pr/candidates/cascades ]; then
+            ./base/target/debug/brut-ingest --cascades pr/candidates/cascades
+          fi

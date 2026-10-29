@@ -40,3 +40,8 @@ path = "src/bin/brut-propose.rs"
 [[bin]]
 name = "brut-ingest"
 path = "src/bin/brut-ingest.rs"
+
+# Stage 2c: breed Cascades of model Workers (ADR 0005).
+[[bin]]
+name = "brut-breed"
+path = "src/bin/brut-breed.rs"

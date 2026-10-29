@@ -23,6 +23,12 @@ pub struct GenRequest {
     pub temperature: f32,
     /// Seed for reproducibility, where the backend supports it.
     pub seed: u64,
+    /// Budget for hidden reasoning before the answer, in tokens; 0 means answer at once.
+    /// A Worker Trait (ADR 0005). A backend whose model cannot reason maps it to nothing;
+    /// the Ollama adapter maps it to the model's `think` setting. Defaults to 0 so
+    /// requests recorded before this field existed still replay.
+    #[serde(default)]
+    pub think_tokens: u32,
 }
 
 /// Why generation stopped. Mirrors the fields the orchestrator must check before
@@ -170,6 +176,7 @@ mod tests {
             max_tokens: 64,
             temperature: 0.0,
             seed,
+            think_tokens: 0,
         }
     }
 
