@@ -48,8 +48,9 @@ then the control Traits are meant to give is lost.
 **The call budget holds across crashes.** Before a generation or the select phase makes
 its first Worker call, the run's checkpoint reserves its worst-case number of calls; a
 resume after a kill or crash counts that reservation as spent, because the real count
-died with the process. One process at a time holds the run directory. A refused resume
-changes no file, and a stopped select phase keeps the answers it already paid for.
+died with the process. One process at a time holds the run directory. A resume refused
+before its first write changes none of the run's records, and a stopped select phase
+keeps the answers it already paid for.
 
 **Two speeds, one gate.** The breeding loop runs sealed and without a human. Only its two
 best finalists are promoted, as files under `candidates/cascades/`, through a draft pull

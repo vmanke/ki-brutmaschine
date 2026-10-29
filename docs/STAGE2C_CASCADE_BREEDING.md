@@ -98,11 +98,14 @@ belongs to the resume too; `brut-breed` prints the matching command.
   real number was lost with the process. So `max_calls` holds even then. In the worst
   case, one generation counts twice.
 - Only one process at a time holds `<lauf>/LOCK`. A second one exits with code 2.
-- A refused resume changes no file. Events after the last checkpoint are dropped only by
-  the next write to the log; so is a half-written last line.
-- On resume, `report.json` and `promote/` are removed until the Select phase is finished
-  again. Earlier finalists stay in the log as history. A Run that was already finished
-  gives the same report on resume, with no new calls and no new events.
+- A resume refused before its first write (for example because the settings do not
+  match or the Select phase no longer fits the budget) changes neither the log, the
+  checkpoint, the settings, the report nor the promotion.
+- Only right before its first write does the Run take over the new settings. Then it
+  drops the events after the last checkpoint, a half-written last line included, and
+  removes `report.json` and `promote/` until the Select phase is finished again.
+  Earlier finalists stay in the log as history. A Run that was already finished gives
+  the same report on resume, with no new calls and no new events.
 - A stopped Select phase keeps its answers. The resume scores only the missing puzzles,
   so a stop never costs a second Select round.
 - After the kill switch, `<lauf>/STOP` stays in place. Delete it before resuming;

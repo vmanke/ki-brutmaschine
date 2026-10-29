@@ -99,13 +99,15 @@ Antworten mit `--llm-answers <ordner>` woanders, gehört die Option auch zum For
   verbraucht, denn die wahre Zahl ging mit dem Prozess verloren. So hält `max_calls`
   auch dann. Im schlimmsten Fall zählt eine Generation doppelt.
 - Nur ein Prozess zugleich hält `<lauf>/LOCK`. Ein zweiter endet mit Exit-Code 2.
-- Ein abgelehntes Fortsetzen ändert keine Datei. Ereignisse nach dem letzten Checkpoint
-  verwirft erst das nächste Schreiben ins Protokoll; eine halb geschriebene letzte Zeile
-  ebenso.
-- Beim Fortsetzen entfallen `report.json` und `promote/`, bis die Auswahlphase wieder
-  fertig ist. Frühere Finalisten bleiben im Protokoll als Geschichte. Ein schon fertiger
-  Lauf liefert beim Fortsetzen denselben Bericht, ohne neue Aufrufe und ohne neue
-  Ereignisse.
+- Ein Fortsetzen, das vor seinem ersten Schreiben abgelehnt wird (etwa weil die
+  Einstellungen nicht passen oder die Auswahlphase nicht mehr ins Budget passt), ändert
+  weder Protokoll noch Checkpoint, Einstellungen, Bericht oder Beförderung.
+- Erst unmittelbar vor dem ersten Schreiben übernimmt der Lauf die neuen Einstellungen.
+  Dann verwirft er die Ereignisse nach dem letzten Checkpoint, auch eine halb
+  geschriebene letzte Zeile, und entfernt `report.json` und `promote/`, bis die
+  Auswahlphase wieder fertig ist. Frühere Finalisten bleiben im Protokoll als
+  Geschichte. Ein schon fertiger Lauf liefert beim Fortsetzen denselben Bericht, ohne
+  neue Aufrufe und ohne neue Ereignisse.
 - Eine gestoppte Auswahlphase behält ihre Antworten. Das Fortsetzen bewertet nur die
   fehlenden Rätsel; ein Stopp kostet also nie eine zweite Auswahlrunde.
 - Nach dem Not-Aus bleibt `<lauf>/STOP` liegen. Löschen Sie die Datei vor dem

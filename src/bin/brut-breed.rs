@@ -197,11 +197,35 @@ impl Log {
         Ok(())
     }
 
-    /// Count only the first `len` entries, after checking the anchor; the next append
-    /// drops the rest from disk.
+    /// Count only the first `len` entries, after checking the anchor; `flush` (also the
+    /// one in `append`) drops the rest from disk.
     fn keep(&mut self, len: u64, head: &str) -> Result<()> {
         self.check_anchor(len, head)?;
         self.len = len;
+
+        Ok(())
+    }
+
+    /// Drop from disk, in one atomic step, the entries after the counted ones and a torn
+    /// last line. Nothing happens when there are none.
+    fn flush(&mut self) -> Result<()> {
+        if !self.torn && self.len == self.lines.len() as u64 {
+            return Ok(());
+        }
+
+        self.lines.truncate(self.len as usize);
+        self.events.truncate(self.len as usize);
+        self.hashes.truncate(self.len as usize);
+
+        let mut all = String::new();
+
+        for line in &self.lines {
+            all.push_str(line);
+            all.push('\n');
+        }
+
+        write_atomic(&self.path, all.as_bytes())?;
+        self.torn = false;
 
         Ok(())
     }
@@ -211,11 +235,7 @@ impl Log {
             return Ok(());
         }
 
-        let rewrite = self.torn || self.len < self.lines.len() as u64;
-
-        self.lines.truncate(self.len as usize);
-        self.events.truncate(self.len as usize);
-        self.hashes.truncate(self.len as usize);
+        self.flush()?;
 
         let mut out = String::new();
 
@@ -238,21 +258,6 @@ impl Log {
             self.len += 1;
         }
 
-        if rewrite {
-            // Drop the entries after the checkpoint (and a torn line) in one atomic step.
-            let mut all = String::new();
-
-            for line in &self.lines {
-                all.push_str(line);
-                all.push('\n');
-            }
-
-            write_atomic(&self.path, all.as_bytes())?;
-            self.torn = false;
-
-            return Ok(());
-        }
-
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -260,6 +265,40 @@ impl Log {
 
         f.write_all(out.as_bytes())?;
         f.sync_all()?;
+
+        Ok(())
+    }
+}
+
+/// What a resume changes on disk, applied once, right before its first write: it takes
+/// over the settings it was given, removes an earlier report and promotion (the run is
+/// unfinished again; a completed select phase writes the report anew), and drops the log
+/// entries after the checkpoint. A resume refused before that leaves the run's records
+/// as they were.
+struct Settle<'a> {
+    out: &'a Path,
+    cfg: &'a BreedConfig,
+    done: bool,
+}
+
+impl Settle<'_> {
+    fn now(&mut self, log: &mut Log) -> Result<()> {
+        if self.done {
+            return Ok(());
+        }
+
+        log.flush()?;
+        write_atomic(&self.out.join(CONFIG), serde_json::to_string_pretty(self.cfg)?.as_bytes())?;
+
+        if self.out.join(REPORT).exists() {
+            std::fs::remove_file(self.out.join(REPORT))?;
+        }
+
+        if self.out.join(PROMOTE).exists() {
+            std::fs::remove_dir_all(self.out.join(PROMOTE))?;
+        }
+
+        self.done = true;
 
         Ok(())
     }
@@ -343,8 +382,8 @@ fn run() -> Result<i32> {
         .unwrap_or_else(|| out.join("llm").join("answers"));
     let book = load_answers(&answers_dir)?;
 
-    // Every check runs before anything on disk changes, so a refused resume leaves the
-    // run directory as it was.
+    // Every check runs before anything on disk changes (see Settle), so a refused resume
+    // leaves the run's records as they were.
     let (mut breeder, mut log) = if resume {
         let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
         let mut log = Log::open(&out.join(EVENTS))?;
@@ -358,19 +397,7 @@ fn run() -> Result<i32> {
             );
         }
 
-        let b = Breeder::resume(cfg.clone(), &pool, Some(&book), cp.snapshot)?;
-
-        // The run is unfinished again: a report and a promotion from before would no
-        // longer describe it. A completed select phase writes the report anew.
-        if out.join(REPORT).exists() {
-            std::fs::remove_file(out.join(REPORT))?;
-        }
-
-        if out.join(PROMOTE).exists() {
-            std::fs::remove_dir_all(out.join(PROMOTE))?;
-        }
-
-        (b, log)
+        (Breeder::resume(cfg.clone(), &pool, Some(&book), cp.snapshot)?, log)
     } else {
         if out.join(EVENTS).exists() || out.join(SNAPSHOT).exists() {
             return Err(usage(&format!(
@@ -385,11 +412,16 @@ fn run() -> Result<i32> {
         (b, log)
     };
 
-    // Settings first, then the checkpoint before generation 0, so every checkpoint on
-    // disk has its settings next to it.
-    write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
+    let mut settle = Settle {
+        out: &out,
+        cfg: &cfg,
+        done: !resume,
+    };
 
     if !resume {
+        // Settings first, then the checkpoint before generation 0, so every checkpoint
+        // on disk has its settings next to it.
+        write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
         checkpoint(&out, breeder.snapshot(), &log)?;
     }
 
@@ -419,16 +451,22 @@ fn run() -> Result<i32> {
     };
 
     let reason = loop {
-        let (status, events) = breeder.step_with(&stop, &mut |snap| checkpoint(&out, snap.clone(), &log))?;
+        let (status, events) = breeder.step_with(&stop, &mut |snap| {
+            settle.now(&mut log)?;
+            checkpoint(&out, snap.clone(), &log)
+        })?;
 
         match status {
             Status::Continue => {
+                settle.now(&mut log)?;
                 log.append(&events)?;
                 checkpoint(&out, breeder.snapshot(), &log)?;
                 print_generation(&events);
             }
             Status::Done(reason) => break reason,
             Status::Pending(requests) => {
+                settle.now(&mut log)?;
+
                 let dir = out.join("llm").join("requests");
 
                 std::fs::create_dir_all(&dir)?;
@@ -456,15 +494,21 @@ fn run() -> Result<i32> {
 
     if reason == "stopped" {
         // Nothing of the interrupted generation is kept except the calls it spent.
+        settle.now(&mut log)?;
         checkpoint(&out, breeder.snapshot(), &log)?;
         stopped(&format!("before generation {} completed", breeder.next_generation()));
 
         return Ok(0);
     }
 
-    let finished = breeder.finish_with(&stop, &reason, &mut |snap| checkpoint(&out, snap.clone(), &log))?;
+    // A refusal here (the select phase does not fit the budget) comes before any write.
+    let finished = breeder.finish_with(&stop, &reason, &mut |snap| {
+        settle.now(&mut log)?;
+        checkpoint(&out, snap.clone(), &log)
+    })?;
     let Some((report, events)) = finished else {
         // The answers obtained so far are kept; a resume scores only the rest.
+        settle.now(&mut log)?;
         checkpoint(&out, breeder.snapshot(), &log)?;
         stopped("during the select phase");
 
@@ -472,7 +516,9 @@ fn run() -> Result<i32> {
     };
 
     // Log first, then the checkpoint, so it covers the finalist events: a later resume
-    // keeps them as history (a run finished before returns no new ones).
+    // keeps them as history (a run finished before returns no new ones, but its log is
+    // still cut back to the checkpoint).
+    settle.now(&mut log)?;
     log.append(&events)?;
     checkpoint(&out, breeder.snapshot(), &log)?;
     write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;

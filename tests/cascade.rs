@@ -382,10 +382,53 @@ fn a_finished_run_resumes_without_change_and_a_refused_resume_touches_nothing() 
     assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
     assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
 
-    // Promotion needs a report that matches the log.
+    // A resume refused only when the select phase meets the budget (calls are already
+    // spent, so max_calls 1 cannot fit) still changes nothing: not the report, not the
+    // promotion, not the settings.
     ok(&breed(&["--out", path, "--promote"]));
+    assert_eq!(breed(&["--out", path, "--resume", "--max-calls", "1"]).status.code(), Some(1));
+    assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
+    assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
+    assert_eq!(std::fs::read_to_string(dir.join("config.json")).expect("config"), config);
+    assert!(dir.join("promote").join("proposal.json").exists());
+
+    // Promotion needs a report that matches the log.
     tamper_report(&dir);
     assert_eq!(breed(&["--out", path, "--promote"]).status.code(), Some(1));
+}
+
+#[test]
+fn a_resume_drops_an_uncommitted_log_tail_even_without_new_events() {
+    let finished = fresh("tail-finished");
+    let longer = fresh("tail-longer");
+
+    ok(&small_run(&finished, &[]));
+    ok(&small_run(&longer, &[]));
+    ok(&breed(&["--out", longer.to_str().expect("path"), "--resume", "--generations", "4"]));
+
+    // The state a crash leaves when it hits after a generation was logged but before its
+    // checkpoint: the longer log (with a torn last line) next to the finished run's
+    // checkpoint and settings. The resume has nothing to run and its finalists are
+    // logged already, so it returns no events; it must still cut the log back.
+    let log = std::fs::read_to_string(finished.join("events.jsonl")).expect("log");
+    let tail = std::fs::read_to_string(longer.join("events.jsonl")).expect("longer log");
+
+    assert!(tail.starts_with(&log) && tail.len() > log.len());
+
+    for name in ["snapshot.json", "config.json", "report.json"] {
+        std::fs::copy(finished.join(name), longer.join(name)).expect("copy");
+    }
+
+    std::fs::write(longer.join("events.jsonl"), format!("{tail}{{\"seq\":")).expect("torn");
+
+    let path = longer.to_str().expect("path");
+
+    assert_eq!(breed(&["--out", path, "--verify"]).status.code(), Some(1), "torn line");
+    ok(&breed(&["--out", path, "--resume"]));
+    assert_eq!(std::fs::read_to_string(longer.join("events.jsonl")).expect("log"), log);
+    assert_eq!(report(&longer), report(&finished));
+    ok(&breed(&["--out", path, "--verify"]));
+    ok(&breed(&["--out", path, "--promote"]));
 }
 
 /// Wait until `cond` holds, polling every 10 ms, for at most `secs` seconds.
