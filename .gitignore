@@ -7,3 +7,6 @@ secret/
 # Only the example manifest in data/ is tracked.
 /data/*
 !/data/manifest.example.json
+
+# Agent worktrees (Claude Code); never part of the repository.
+.claude/worktrees/

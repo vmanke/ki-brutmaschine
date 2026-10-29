@@ -1,2 +1,1809 @@
-//! Placeholder; filled in by the Stage 2c build.
+//! Arena: runs Cascades on puzzles, lets them judge each other blind, rates them, and
+//! breeds new ones with Darwin-Gödel-Machine parent selection (ADR 0005).
+//!
+//! Pure: no files, no network, no clock. Workers are reached only through `ModelPool`,
+//! the LLM that writes new Cascades only through `Mutator` (normally Claude through
+//! recorded answers, ADR 0002). The binary `brut-breed` supplies both, decides when to
+//! stop, and writes the events this module returns.
+//!
+//! Every Cascade is also a judge. Inside a stage, its parallel Workers vote blind on each
+//! other's answers. Across the archive, a Cascade judges pairs of answers from two
+//! Cascades it is not related to. Judging skill is measured against the known answers of
+//! the search panel and enters fitness with a fixed weight (decisions Q2, Q12, Q13). The
+//! puzzles, their answers and the scoring never depend on a Cascade's content.
 #![forbid(unsafe_code)]
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use rand::seq::{IndexedRandom, SliceRandom};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
+use crate::cascade::genome::{Cascade, CascadeLimits, Worker, seed_cascades};
+use crate::cascade::puzzle::{
+    Grid, Puzzle, SELF_CHECK_TEXT, Verdict, generate_panel, parse_answer, parse_verdict,
+    render_judge_prompt, render_solve_prompt,
+};
+use crate::cascade::variation::{
+    Op, llm_crossover_request, llm_mutate_request, mutate, parse_llm_cascade,
+    section_crossover, stage_crossover,
+};
+use crate::util::{BrutError, Result, derive_seed, sha256_hex};
+
+/// Draws a parent or a partner gets before it gives up (each draw is cheap).
+const DRAW_ATTEMPTS: usize = 16;
+
+/// Partners drawn per crossover; the one with the best peer rating mates (Q2).
+const PARTNER_CANDIDATES: usize = 3;
+
+/// The models a run may call, by tag. Every allow-listed tag must resolve here.
+#[derive(Default)]
+pub struct ModelPool {
+    models: BTreeMap<String, Box<dyn ModelBackend>>,
+}
+
+impl ModelPool {
+    pub fn new() -> ModelPool {
+        ModelPool::default()
+    }
+
+    /// Register `backend` under `tag` (the tag Workers name in their `model` field).
+    pub fn insert(&mut self, tag: &str, backend: Box<dyn ModelBackend>) {
+        self.models.insert(tag.to_string(), backend);
+    }
+
+    /// The backend for `tag`.
+    pub fn get(&self, tag: &str) -> Result<&dyn ModelBackend> {
+        self.models
+            .get(tag)
+            .map(|b| b.as_ref())
+            .ok_or_else(|| BrutError::Invalid(format!("no backend for model {tag:?}")))
+    }
+
+    /// Error unless every allow-listed model has a backend.
+    pub fn covers(&self, limits: &CascadeLimits) -> Result<()> {
+        for m in &limits.models {
+            self.get(&m.tag)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// The models and the limits every call runs under.
+#[derive(Clone, Copy)]
+struct Ctx<'a> {
+    pool: &'a ModelPool,
+    limits: &'a CascadeLimits,
+}
+
+/// Model usage of one evaluation, summed over calls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    pub calls: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    /// Sum of the allow-list's fixed per-call costs (fitness units).
+    pub model_cost: f64,
+}
+
+impl Usage {
+    fn add(&mut self, other: &Usage) {
+        self.calls += other.calls;
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.model_cost += other.model_cost;
+    }
+}
+
+/// The request for one Worker call: its system prompt (plus the fixed self-check text
+/// when that Trait is on) and its Traits as generation limits.
+pub fn worker_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
+    let mut system = w.system_prompt();
+
+    if w.traits.self_check {
+        system.push_str("## check\n");
+        system.push_str(SELF_CHECK_TEXT);
+        system.push('\n');
+    }
+
+    GenRequest {
+        system,
+        prompt,
+        max_tokens: w.traits.answer_tokens,
+        temperature: w.traits.temperature,
+        seed,
+        think_tokens: w.traits.think_tokens,
+    }
+}
+
+/// One Worker call with usage accounting. A backend error counts no call and gives None.
+fn call_worker(
+    ctx: Ctx,
+    w: &Worker,
+    prompt: String,
+    seed: u64,
+    usage: &mut Usage,
+) -> Option<GenResponse> {
+    let backend = ctx.pool.get(&w.model).ok()?;
+    let resp = backend.generate(&worker_request(w, prompt, seed)).ok()?;
+    let cost = ctx.limits.model(&w.model).map(|m| m.cost_per_call).unwrap_or(0.0);
+
+    usage.calls += 1;
+    usage.prompt_tokens += u64::from(resp.prompt_tokens);
+    usage.completion_tokens += u64::from(resp.completion_tokens);
+    usage.model_cost += cost;
+
+    Some(resp)
+}
+
+/// Ask Worker `w` which of `a` and `b` follows the rule. The order shown is drawn from
+/// `seed`, so a judge cannot learn a position bias. Some(true) means `a` won.
+fn judge_with(
+    ctx: Ctx,
+    w: &Worker,
+    p: &Puzzle,
+    a: &Grid,
+    b: &Grid,
+    seed: u64,
+    usage: &mut Usage,
+) -> Option<bool> {
+    let swap = ChaCha8Rng::seed_from_u64(derive_seed(seed, "order")).random_bool(0.5);
+    let (first, second) = if swap { (b, a) } else { (a, b) };
+    let resp = call_worker(ctx, w, render_judge_prompt(p, first, second), seed, usage)?;
+
+    if resp.stop_reason != StopReason::Stop {
+        return None;
+    }
+
+    let first_won = match parse_verdict(&resp.text)? {
+        Verdict::A => true,
+        Verdict::B => false,
+    };
+
+    Some(first_won != swap)
+}
+
+/// Upper bound on calls one stage of `width` Workers makes on one puzzle: every Worker
+/// answers, then every Worker judges every pair of distinct answers.
+fn stage_call_bound(width: usize) -> u64 {
+    let w = width as u64;
+
+    w + w * (w * w.saturating_sub(1) / 2)
+}
+
+/// Upper bound on calls of one Cascade on one puzzle.
+pub fn cascade_call_bound(c: &Cascade) -> u64 {
+    c.stages.iter().map(|s| stage_call_bound(s.workers.len())).sum()
+}
+
+/// The result of one Cascade on one puzzle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CascadeRun {
+    /// The last answer the Cascade chose (the residual path keeps an earlier one when a
+    /// later stage produces nothing usable).
+    pub answer: Option<Grid>,
+    pub usage: Usage,
+}
+
+/// Run Cascade `c` on puzzle `p`. Stage k sees the task and the answers chosen by stages
+/// 0..k. When a stage's Workers disagree, they judge each other's answers blind, pair by
+/// pair, and the answer with the most wins goes on (ties: the earliest Worker's answer).
+pub fn run_cascade(
+    pool: &ModelPool,
+    limits: &CascadeLimits,
+    c: &Cascade,
+    p: &Puzzle,
+    seed: u64,
+) -> CascadeRun {
+    let ctx = Ctx { pool, limits };
+    let mut usage = Usage::default();
+    let mut chosen: Vec<Grid> = Vec::new();
+
+    for (k, stage) in c.stages.iter().enumerate() {
+        let prompt = render_solve_prompt(p, &chosen);
+        let mut distinct: Vec<Grid> = Vec::new();
+
+        for (j, w) in stage.workers.iter().enumerate() {
+            let s = derive_seed(seed, &format!("stage{k}/worker{j}"));
+            let resp = call_worker(ctx, w, prompt.clone(), s, &mut usage);
+            let grid = resp
+                .filter(|r| r.stop_reason == StopReason::Stop)
+                .and_then(|r| parse_answer(&r.text));
+
+            if let Some(g) = grid
+                && !distinct.contains(&g)
+            {
+                distinct.push(g);
+            }
+        }
+
+        let winner = match distinct.len() {
+            0 => None,
+            1 => Some(0),
+            _ => Some(stage_vote(
+                ctx,
+                &stage.workers,
+                p,
+                &distinct,
+                derive_seed(seed, &format!("vote{k}")),
+                &mut usage,
+            )),
+        };
+
+        if let Some(i) = winner
+            && let Some(g) = distinct.get(i)
+        {
+            chosen.push(g.clone());
+        }
+    }
+
+    CascadeRun {
+        answer: chosen.last().cloned(),
+        usage,
+    }
+}
+
+/// Blind vote among a stage's distinct answers: every Worker judges every pair. Returns
+/// the index of the answer with the most pairwise wins, ties to the lowest index.
+fn stage_vote(
+    ctx: Ctx,
+    workers: &[Worker],
+    p: &Puzzle,
+    answers: &[Grid],
+    seed: u64,
+    usage: &mut Usage,
+) -> usize {
+    let mut wins = vec![0usize; answers.len()];
+
+    for (x, ax) in answers.iter().enumerate() {
+        for (y, ay) in answers.iter().enumerate().skip(x + 1) {
+            for (j, w) in workers.iter().enumerate() {
+                let s = derive_seed(seed, &format!("{x}/{y}/{j}"));
+
+                match judge_with(ctx, w, p, ax, ay, s, usage) {
+                    Some(true) => wins[x] += 1,
+                    Some(false) => wins[y] += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+
+    let mut best = 0;
+
+    for (i, &n) in wins.iter().enumerate() {
+        if n > wins[best] {
+            best = i;
+        }
+    }
+
+    best
+}
+
+/// Weighted Bradley-Terry strengths by the MM algorithm of Hunter (2004, Annals of
+/// Statistics 32(1), 384-406). `games` holds (winner, loser, weight). Every player also
+/// plays one virtual win and one virtual loss against a fixed opponent of strength 1, so
+/// the estimate exists for every player and shrinks towards 1 with little evidence.
+/// Returns ln(strength) per player.
+pub fn bradley_terry(players: usize, games: &[(usize, usize, f64)]) -> Vec<f64> {
+    let mut wins = vec![1.0f64; players];
+    let mut pair: HashMap<(usize, usize), f64> = HashMap::new();
+
+    for &(w, l, weight) in games {
+        if w >= players || l >= players || w == l || weight <= 0.0 || !weight.is_finite() {
+            continue;
+        }
+
+        wins[w] += weight;
+        *pair.entry((w.min(l), w.max(l))).or_insert(0.0) += weight;
+    }
+
+    let mut p = vec![1.0f64; players];
+
+    for _ in 0..1000 {
+        let mut denom: Vec<f64> = p.iter().map(|&pi| 2.0 / (pi + 1.0)).collect();
+
+        for (&(i, j), &n) in &pair {
+            let d = n / (p[i] + p[j]);
+
+            denom[i] += d;
+            denom[j] += d;
+        }
+
+        let next: Vec<f64> = wins.iter().zip(&denom).map(|(w, d)| w / d).collect();
+        let change = next
+            .iter()
+            .zip(&p)
+            .map(|(a, b)| (a.ln() - b.ln()).abs())
+            .fold(0.0, f64::max);
+
+        p = next;
+
+        if change < 1e-10 {
+            break;
+        }
+    }
+
+    p.iter().map(|x| x.ln()).collect()
+}
+
+/// Darwin-Gödel-Machine selection weights (Zhang et al., ICLR 2026, appendix C.2):
+/// w_i = sigmoid(lambda (alpha_i - alpha_0)) / (1 + n_i), where alpha_i is the score and
+/// n_i the number of archived children. Members with a perfect score (alpha_i >= 1) are
+/// not eligible and get weight 0.
+pub fn dgm_weights(scores: &[f64], children: &[usize], lambda: f64, alpha0: f64) -> Vec<f64> {
+    scores
+        .iter()
+        .zip(children)
+        .map(|(&a, &n)| {
+            if a >= 1.0 || !a.is_finite() {
+                0.0
+            } else {
+                let s = 1.0 / (1.0 + (-lambda * (a - alpha0)).exp());
+
+                s / (1.0 + n as f64)
+            }
+        })
+        .collect()
+}
+
+/// One categorical draw from `weights`; uniform when they are all zero. None when empty.
+fn draw(weights: &[f64], rng: &mut ChaCha8Rng) -> Option<usize> {
+    if weights.is_empty() {
+        return None;
+    }
+
+    let total: f64 = weights.iter().sum();
+
+    if total <= 0.0 || !total.is_finite() {
+        return Some(rng.random_range(0..weights.len()));
+    }
+
+    let mut x = rng.random::<f64>() * total;
+
+    for (i, &w) in weights.iter().enumerate() {
+        if x < w {
+            return Some(i);
+        }
+
+        x -= w;
+    }
+
+    Some(weights.len() - 1)
+}
+
+/// Source of new Cascades written by a language model (normally Claude).
+pub trait Mutator: Sync {
+    /// The answer to `req`, or None when there is none yet (for example a request still
+    /// waiting for an answer file).
+    fn answer(&self, req: &GenRequest) -> Option<GenResponse>;
+}
+
+/// Stable key of a request: the first 16 hex of the SHA-256 of its JSON. Recorded
+/// answers are filed under this key (ADR 0002).
+pub fn request_key(req: &GenRequest) -> String {
+    let json = serde_json::to_string(req).unwrap_or_default();
+
+    sha256_hex(json.as_bytes())[..16].to_string()
+}
+
+/// Recorded answers keyed by `request_key`. A run replays them instead of calling a
+/// model, so it stays reproducible (ADR 0002), and a missing answer pauses the run until
+/// someone (a Claude session, a human) writes it.
+#[derive(Clone, Debug, Default)]
+pub struct AnswerBook {
+    answers: BTreeMap<String, String>,
+}
+
+impl AnswerBook {
+    pub fn new() -> AnswerBook {
+        AnswerBook::default()
+    }
+
+    /// File `text` as the answer to the request with key `key`.
+    pub fn insert(&mut self, key: &str, text: String) {
+        self.answers.insert(key.to_string(), text);
+    }
+
+    pub fn len(&self) -> usize {
+        self.answers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty()
+    }
+}
+
+impl Mutator for AnswerBook {
+    fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+        let text = self.answers.get(&request_key(req))?.clone();
+
+        Some(GenResponse {
+            prompt_tokens: approx_tokens(&req.system) + approx_tokens(&req.prompt),
+            completion_tokens: approx_tokens(&text),
+            text,
+            stop_reason: StopReason::Stop,
+            backend: "answer-book".to_string(),
+        })
+    }
+}
+
+/// Any model backend as a live Mutator (for the Broker of ADR 0001, once it exists).
+pub struct LiveMutator<'a>(pub &'a dyn ModelBackend);
+
+impl Mutator for LiveMutator<'_> {
+    fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+        self.0.generate(req).ok()
+    }
+}
+
+/// Settings of one breeding run. Recorded at the start; on resume only `generations` and
+/// `max_calls` may change, everything else defines the experiment.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BreedConfig {
+    pub seed: u64,
+    pub generations: usize,
+    pub children_per_generation: usize,
+    /// Size of the public search panel; fitness is measured here.
+    pub search_puzzles: usize,
+    /// Size of the select panel, unseen during search; only finalists and seeds meet it.
+    pub select_puzzles: usize,
+    /// Share of random children made by crossover rather than mutation.
+    pub crossover_rate: f64,
+    /// Opponents each new Cascade is compared with, and puzzles per comparison.
+    pub peer_opponents: usize,
+    pub peer_puzzles_per_pair: usize,
+    /// Weight of judging skill in fitness; the rest is the solved rate (Q13).
+    pub judge_weight: f64,
+    /// Fitness charged per 1000 completion tokens per puzzle, thinking included (Q19).
+    pub token_cost_per_1k: f64,
+    /// DGM selection sharpness and midpoint (paper values 10 and 0.5).
+    pub dgm_lambda: f64,
+    pub dgm_alpha0: f64,
+    /// Every `llm_every`-th generation is an LLM round (0: never), with up to
+    /// `llm_children` children written by the Mutator.
+    pub llm_every: usize,
+    pub llm_children: usize,
+    /// Pause the run when an LLM answer is missing, instead of falling back to random.
+    pub pause_for_llm: bool,
+    /// Hard cap on Worker calls over the whole run, select panel included (Q16).
+    pub max_calls: u64,
+    /// Best bred (non-seed) members re-scored on the select panel at the end.
+    pub finalists: usize,
+    pub limits: CascadeLimits,
+}
+
+impl Default for BreedConfig {
+    fn default() -> Self {
+        BreedConfig {
+            seed: 1,
+            generations: 10,
+            children_per_generation: 8,
+            search_puzzles: 40,
+            select_puzzles: 40,
+            crossover_rate: 0.5,
+            peer_opponents: 3,
+            peer_puzzles_per_pair: 2,
+            judge_weight: 0.2,
+            token_cost_per_1k: 0.01,
+            dgm_lambda: 10.0,
+            dgm_alpha0: 0.5,
+            llm_every: 0,
+            llm_children: 2,
+            pause_for_llm: true,
+            max_calls: 20_000,
+            finalists: 3,
+            limits: CascadeLimits::default(),
+        }
+    }
+}
+
+impl BreedConfig {
+    /// Reject settings that cannot give a meaningful run.
+    pub fn check(&self) -> Result<()> {
+        let bad = |m: &str| Err(BrutError::Invalid(format!("breed config: {m}")));
+
+        if self.children_per_generation == 0 || self.search_puzzles == 0 {
+            return bad("children_per_generation and search_puzzles must be at least 1");
+        }
+
+        if !(0.0..=1.0).contains(&self.crossover_rate) || !(0.0..=1.0).contains(&self.judge_weight) {
+            return bad("crossover_rate and judge_weight must lie in [0, 1]");
+        }
+
+        if !(self.token_cost_per_1k >= 0.0 && self.token_cost_per_1k.is_finite()) {
+            return bad("token_cost_per_1k must be finite and not negative");
+        }
+
+        if !(self.dgm_lambda > 0.0 && self.dgm_lambda.is_finite() && self.dgm_alpha0.is_finite()) {
+            return bad("dgm_lambda must be positive and dgm_alpha0 finite");
+        }
+
+        if self.limits.models.is_empty() {
+            return bad("the model allow-list is empty");
+        }
+
+        Ok(())
+    }
+
+    /// Hash of the settings that define the experiment (all but `generations` and
+    /// `max_calls`), so a resume with changed settings is refused.
+    pub fn fixed_hash(&self) -> String {
+        let mut fixed = self.clone();
+
+        fixed.generations = 0;
+        fixed.max_calls = 0;
+
+        sha256_hex(serde_json::to_string(&fixed).unwrap_or_default().as_bytes())
+    }
+}
+
+/// One Cascade in the archive with everything measured about it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub id: String,
+    pub cascade: Cascade,
+    pub parents: Vec<String>,
+    pub op: Op,
+    pub generation: usize,
+    /// Answer per search-panel puzzle (None: nothing usable).
+    pub answers: Vec<Option<Grid>>,
+    pub solved: usize,
+    pub usage: Usage,
+    /// Archived children (the n_i of DGM selection).
+    pub children: usize,
+    pub judge_correct: u32,
+    pub judge_wrong: u32,
+    pub fitness: f64,
+    pub rating: f64,
+}
+
+impl Member {
+    /// Judging skill with a Laplace prior: (correct + 1) / (judged + 2).
+    pub fn judge_skill(&self) -> f64 {
+        f64::from(self.judge_correct + 1) / f64::from(self.judge_correct + self.judge_wrong + 2)
+    }
+}
+
+/// One judged pair of answers from two Cascades on one search puzzle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comparison {
+    pub generation: usize,
+    pub puzzle: String,
+    pub first: String,
+    pub second: String,
+    pub judge: String,
+    pub winner: String,
+    /// Some when exactly one of the two answers is right: whether the judge chose it.
+    pub judge_correct: Option<bool>,
+}
+
+/// Everything the run records, in order; the binary writes these to a hash-chained log.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Event {
+    RunStart {
+        config: BreedConfig,
+        config_hash: String,
+        search: Vec<String>,
+        select: Vec<String>,
+    },
+    Born {
+        generation: usize,
+        id: String,
+        parents: Vec<String>,
+        op: Op,
+        cascade: Cascade,
+        solved: usize,
+        puzzles: usize,
+        usage: Usage,
+    },
+    LlmExchange {
+        generation: usize,
+        key: String,
+        request: GenRequest,
+        response: Option<GenResponse>,
+        accepted: bool,
+        reason: String,
+    },
+    Compared(Comparison),
+    Generation {
+        generation: usize,
+        best_id: String,
+        best_fitness: f64,
+        best_solved: usize,
+        archive_size: usize,
+        calls_used: u64,
+    },
+    Finalist(Finalist),
+}
+
+/// A member's standing, for reports.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Ranked {
+    pub id: String,
+    pub generation: usize,
+    pub op: Op,
+    pub fitness: f64,
+    pub rating: f64,
+    pub solved: usize,
+    pub puzzles: usize,
+    pub judge_skill: f64,
+    pub stages: usize,
+    pub workers: usize,
+    pub completion_tokens_per_puzzle: f64,
+}
+
+/// A finalist or seed scored on the select panel at the end.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Finalist {
+    pub id: String,
+    pub is_seed: bool,
+    pub search_solved_rate: f64,
+    pub select_solved: usize,
+    pub select_puzzles: usize,
+}
+
+/// The end-of-run summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Report {
+    pub generations_completed: usize,
+    pub archive_size: usize,
+    pub calls_used: u64,
+    pub mutator_answers_used: u64,
+    pub comparisons: usize,
+    pub stop_reason: String,
+    pub top: Vec<Ranked>,
+    pub finalists: Vec<Finalist>,
+    /// Best select-panel solved rate of a finalist and of a seed Cascade. Descriptive
+    /// only: the pre-registered endpoint runs on ARC in the sealed evaluator.
+    pub best_finalist_select_rate: f64,
+    pub best_seed_select_rate: f64,
+}
+
+/// Resumable state, written after every completed generation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub config_hash: String,
+    pub next_generation: usize,
+    pub archive: Vec<Member>,
+    pub comparisons: Vec<Comparison>,
+    pub calls: u64,
+    pub mutator_answers: u64,
+}
+
+/// What one generation step ended with.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Status {
+    /// The generation was committed; call `step` again.
+    Continue,
+    /// No more generations: the reason (generations done, budget, stopped).
+    Done(String),
+    /// An LLM round needs answers that do not exist yet; nothing was committed.
+    Pending(Vec<GenRequest>),
+}
+
+/// A child before evaluation.
+struct Draft {
+    cascade: Cascade,
+    parents: Vec<String>,
+    op: Op,
+}
+
+/// The breeding run: archive, panels, budget and the generation loop.
+pub struct Breeder<'a> {
+    cfg: BreedConfig,
+    pool: &'a ModelPool,
+    mutator: Option<&'a dyn Mutator>,
+    search: Vec<Puzzle>,
+    select: Vec<Puzzle>,
+    archive: Vec<Member>,
+    comparisons: Vec<Comparison>,
+    calls: u64,
+    mutator_answers: u64,
+    next_generation: usize,
+}
+
+impl<'a> Breeder<'a> {
+    /// A fresh run. Generation 0 (the seed Cascades) is evaluated by the first `step`.
+    pub fn new(
+        cfg: BreedConfig,
+        pool: &'a ModelPool,
+        mutator: Option<&'a dyn Mutator>,
+    ) -> Result<Breeder<'a>> {
+        cfg.check()?;
+        pool.covers(&cfg.limits)?;
+
+        let search = generate_panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+        let select = generate_panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
+
+        Ok(Breeder {
+            cfg,
+            pool,
+            mutator,
+            search,
+            select,
+            archive: Vec::new(),
+            comparisons: Vec::new(),
+            calls: 0,
+            mutator_answers: 0,
+            next_generation: 0,
+        })
+    }
+
+    /// Continue a run from `snap`. Refused when the experiment-defining settings changed.
+    pub fn resume(
+        cfg: BreedConfig,
+        pool: &'a ModelPool,
+        mutator: Option<&'a dyn Mutator>,
+        snap: Snapshot,
+    ) -> Result<Breeder<'a>> {
+        if snap.config_hash != cfg.fixed_hash() {
+            return Err(BrutError::Invalid(
+                "resume refused: settings other than generations and max_calls changed"
+                    .to_string(),
+            ));
+        }
+
+        let mut b = Breeder::new(cfg, pool, mutator)?;
+
+        b.archive = snap.archive;
+        b.comparisons = snap.comparisons;
+        b.calls = snap.calls;
+        b.mutator_answers = snap.mutator_answers;
+        b.next_generation = snap.next_generation;
+
+        Ok(b)
+    }
+
+    /// The state after the last committed generation.
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            config_hash: self.cfg.fixed_hash(),
+            next_generation: self.next_generation,
+            archive: self.archive.clone(),
+            comparisons: self.comparisons.clone(),
+            calls: self.calls,
+            mutator_answers: self.mutator_answers,
+        }
+    }
+
+    pub fn archive(&self) -> &[Member] {
+        &self.archive
+    }
+
+    pub fn comparisons(&self) -> &[Comparison] {
+        &self.comparisons
+    }
+
+    pub fn calls_used(&self) -> u64 {
+        self.calls
+    }
+
+    pub fn next_generation(&self) -> usize {
+        self.next_generation
+    }
+
+    /// Calls kept back for scoring finalists and seeds on the select panel at the end:
+    /// every seed, plus `finalists` Cascades of the widest shape in the archive or among
+    /// `drafts` (finalists can only come from there).
+    fn select_reserve(&self, drafts: &[Draft]) -> u64 {
+        let seeds: u64 = seed_cascades().iter().map(|(_, c)| cascade_call_bound(c)).sum();
+        let widest = self
+            .archive
+            .iter()
+            .map(|m| cascade_call_bound(&m.cascade))
+            .chain(drafts.iter().map(|d| cascade_call_bound(&d.cascade)))
+            .max()
+            .unwrap_or(0);
+        let per_puzzle = seeds + self.cfg.finalists as u64 * widest;
+
+        per_puzzle * self.cfg.select_puzzles as u64
+    }
+
+    /// Run one generation: draft children, evaluate them on the search panel, let them
+    /// judge and be judged, recompute fitness, and commit. Nothing is committed when the
+    /// step is stopped, out of budget, or waiting for LLM answers, so a resume repeats
+    /// exactly this generation. `stop` is polled before every puzzle.
+    pub fn step(&mut self, stop: &(dyn Fn() -> bool + Sync)) -> Result<(Status, Vec<Event>)> {
+        let g = self.next_generation;
+
+        if g > self.cfg.generations {
+            return Ok((Status::Done("all generations done".to_string()), Vec::new()));
+        }
+
+        let mut events = Vec::new();
+        let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(self.cfg.seed, &format!("gen/{g}")));
+
+        if g == 0 {
+            events.push(Event::RunStart {
+                config: self.cfg.clone(),
+                config_hash: self.cfg.fixed_hash(),
+                search: self.search.iter().map(|p| p.id.clone()).collect(),
+                select: self.select.iter().map(|p| p.id.clone()).collect(),
+            });
+        }
+
+        let (drafts, llm_events, answers_used) = if g == 0 {
+            let seeds = seed_cascades()
+                .into_iter()
+                .map(|(_, c)| Draft {
+                    cascade: c,
+                    parents: Vec::new(),
+                    op: Op::Seed,
+                })
+                .collect();
+
+            (seeds, Vec::new(), 0)
+        } else {
+            match self.draft_children(g, &mut rng)? {
+                Drafted::Ready(d, e, n) => (d, e, n),
+                Drafted::Pending(reqs) => return Ok((Status::Pending(reqs), Vec::new())),
+            }
+        };
+
+        events.extend(llm_events);
+
+        let need: u64 = drafts
+            .iter()
+            .map(|d| cascade_call_bound(&d.cascade) * self.search.len() as u64)
+            .sum::<u64>()
+            + self.peer_call_bound(drafts.len());
+
+        if self.calls + need + self.select_reserve(&drafts) > self.cfg.max_calls {
+            return Ok((Status::Done("call budget reached".to_string()), Vec::new()));
+        }
+
+        // Evaluate the children on the search panel.
+        let mut archive = self.archive.clone();
+        let mut calls = self.calls;
+        let first_new = archive.len();
+
+        for d in drafts {
+            let id = d.cascade.id();
+            let tag = format!("search/{id}");
+            let Some((answers, usage)) = self.evaluate(&d.cascade, &self.search, &tag, stop) else {
+                return Ok((Status::Done("stopped".to_string()), Vec::new()));
+            };
+            let solved = count_solved(&answers, &self.search);
+
+            calls += usage.calls;
+
+            for p in &d.parents {
+                if let Some(m) = archive.iter_mut().find(|m| &m.id == p) {
+                    m.children += 1;
+                }
+            }
+
+            events.push(Event::Born {
+                generation: g,
+                id: id.clone(),
+                parents: d.parents.clone(),
+                op: d.op,
+                cascade: d.cascade.clone(),
+                solved,
+                puzzles: self.search.len(),
+                usage,
+            });
+
+            archive.push(Member {
+                id,
+                cascade: d.cascade,
+                parents: d.parents,
+                op: d.op,
+                generation: g,
+                answers,
+                solved,
+                usage,
+                children: 0,
+                judge_correct: 0,
+                judge_wrong: 0,
+                fitness: 0.0,
+                rating: 0.0,
+            });
+        }
+
+        // Every new Cascade judges and is judged (Q12).
+        let new: Vec<usize> = (first_new..archive.len()).collect();
+        let Some((new_comparisons, peer_usage)) = self.peer_round(&archive, &new, g, &mut rng, stop)
+        else {
+            return Ok((Status::Done("stopped".to_string()), Vec::new()));
+        };
+
+        calls += peer_usage.calls;
+
+        let mut comparisons = self.comparisons.clone();
+
+        for c in &new_comparisons {
+            events.push(Event::Compared(c.clone()));
+        }
+
+        comparisons.extend(new_comparisons);
+        refresh(&mut archive, &comparisons, &self.cfg, self.search.len());
+
+        let best = rank(&archive).first().map(|&i| archive[i].clone());
+
+        if let Some(b) = best {
+            events.push(Event::Generation {
+                generation: g,
+                best_id: b.id,
+                best_fitness: b.fitness,
+                best_solved: b.solved,
+                archive_size: archive.len(),
+                calls_used: calls,
+            });
+        }
+
+        // Commit.
+        self.archive = archive;
+        self.comparisons = comparisons;
+        self.calls = calls;
+        self.mutator_answers += answers_used;
+        self.next_generation = g + 1;
+
+        Ok((Status::Continue, events))
+    }
+
+    /// Score the best bred members (finalists) and, for reference, every seed Cascade on
+    /// the unseen select panel, and summarise.
+    pub fn finish(&mut self, stop_reason: &str) -> Result<(Report, Vec<Event>)> {
+        let order = rank(&self.archive);
+        let never = || false;
+        let mut events = Vec::new();
+        let mut finalists = Vec::new();
+        let mut picked: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|&i| self.archive[i].op != Op::Seed)
+            .take(self.cfg.finalists)
+            .collect();
+
+        for (i, m) in self.archive.iter().enumerate() {
+            if m.op == Op::Seed && !picked.contains(&i) {
+                picked.push(i);
+            }
+        }
+
+        for i in picked {
+            let m = &self.archive[i];
+            let tag = format!("select/{}", m.id);
+            let Some((answers, usage)) = self.evaluate(&m.cascade, &self.select, &tag, &never) else {
+                continue;
+            };
+            let f = Finalist {
+                id: m.id.clone(),
+                is_seed: m.op == Op::Seed,
+                search_solved_rate: m.solved as f64 / self.search.len().max(1) as f64,
+                select_solved: count_solved(&answers, &self.select),
+                select_puzzles: self.select.len(),
+            };
+
+            self.calls += usage.calls;
+            events.push(Event::Finalist(f.clone()));
+            finalists.push(f);
+        }
+
+        let rate = |f: &Finalist| f.select_solved as f64 / f.select_puzzles.max(1) as f64;
+        let best_of = |seed: bool| {
+            finalists
+                .iter()
+                .filter(|f| f.is_seed == seed)
+                .map(rate)
+                .fold(0.0, f64::max)
+        };
+        let top = order
+            .iter()
+            .take(10)
+            .map(|&i| ranked(&self.archive[i], self.search.len()))
+            .collect();
+
+        let report = Report {
+            generations_completed: self.next_generation,
+            archive_size: self.archive.len(),
+            calls_used: self.calls,
+            mutator_answers_used: self.mutator_answers,
+            comparisons: self.comparisons.len(),
+            stop_reason: stop_reason.to_string(),
+            top,
+            best_finalist_select_rate: best_of(false),
+            best_seed_select_rate: best_of(true),
+            finalists,
+        };
+
+        Ok((report, events))
+    }
+
+    /// Answers and usage of `c` on `panel`; None when `stop` fired. Puzzles run in
+    /// parallel; every call's seed comes from the Cascade id and the puzzle id, so the
+    /// result does not depend on thread count or on when the Cascade is evaluated.
+    fn evaluate(
+        &self,
+        c: &Cascade,
+        panel: &[Puzzle],
+        tag: &str,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Option<(Vec<Option<Grid>>, Usage)> {
+        let runs: Vec<Option<CascadeRun>> = panel
+            .par_iter()
+            .map(|p| {
+                if stop() {
+                    return None;
+                }
+
+                let seed = derive_seed(self.cfg.seed, &format!("{tag}/{}", p.id));
+
+                Some(run_cascade(self.pool, &self.cfg.limits, c, p, seed))
+            })
+            .collect();
+
+        let mut usage = Usage::default();
+        let mut answers = Vec::with_capacity(runs.len());
+
+        for r in runs {
+            let r = r?;
+
+            usage.add(&r.usage);
+            answers.push(r.answer);
+        }
+
+        Some((answers, usage))
+    }
+
+    /// Upper bound on judge calls of one peer round with `n` new members.
+    fn peer_call_bound(&self, n: usize) -> u64 {
+        (n * self.cfg.peer_opponents * self.cfg.peer_puzzles_per_pair) as u64
+    }
+
+    /// Plan and run the cross-Cascade judgments of one generation. Each new member meets
+    /// up to `peer_opponents` unrelated members on puzzles where their answers differ; a
+    /// third member, related to neither, judges blind. New members judge first, so every
+    /// new Cascade's judging skill gets measured.
+    fn peer_round(
+        &self,
+        archive: &[Member],
+        new: &[usize],
+        g: usize,
+        rng: &mut ChaCha8Rng,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Option<(Vec<Comparison>, Usage)> {
+        let kin = Kinship::new(archive);
+        let mut plan: Vec<(usize, usize, usize, usize, u64)> = Vec::new();
+
+        for &c in new {
+            let mut opponents: Vec<usize> = (0..archive.len())
+                .filter(|&o| o != c && !kin.related(c, o))
+                .collect();
+
+            opponents.shuffle(rng);
+
+            for &o in opponents.iter().take(self.cfg.peer_opponents) {
+                let mut differ: Vec<usize> = (0..self.search.len())
+                    .filter(|&i| match (&archive[c].answers.get(i), &archive[o].answers.get(i)) {
+                        (Some(Some(a)), Some(Some(b))) => a != b,
+                        _ => false,
+                    })
+                    .collect();
+
+                differ.shuffle(rng);
+
+                for &i in differ.iter().take(self.cfg.peer_puzzles_per_pair) {
+                    let fair = |j: &usize| {
+                        *j != c && *j != o && !kin.related(*j, c) && !kin.related(*j, o)
+                    };
+                    let mut judges: Vec<usize> = new.iter().copied().filter(fair).collect();
+
+                    if judges.is_empty() {
+                        judges = (0..archive.len()).filter(fair).collect();
+                    }
+
+                    let Some(&j) = judges.choose(rng) else {
+                        continue;
+                    };
+
+                    plan.push((c, o, i, j, rng.random::<u64>()));
+                }
+            }
+        }
+
+        let outcomes: Vec<Option<(Option<Comparison>, Usage)>> = plan
+            .par_iter()
+            .map(|&(c, o, i, j, seed)| {
+                if stop() {
+                    return None;
+                }
+
+                let p = &self.search[i];
+                let (Some(Some(a)), Some(Some(b))) = (archive[c].answers.get(i), archive[o].answers.get(i))
+                else {
+                    return Some((None, Usage::default()));
+                };
+                let judge = &archive[j].cascade;
+                let mut usage = Usage::default();
+                let Some(w) = judge.stages.last().and_then(|s| s.workers.first()) else {
+                    return Some((None, usage));
+                };
+                let ctx = Ctx {
+                    pool: self.pool,
+                    limits: &self.cfg.limits,
+                };
+                let verdict = judge_with(ctx, w, p, a, b, seed, &mut usage);
+                let comparison = verdict.map(|a_won| {
+                    let (winner, chosen) = if a_won { (c, a) } else { (o, b) };
+                    let a_right = a == &p.test_output;
+                    let b_right = b == &p.test_output;
+                    let judge_correct = if a_right != b_right {
+                        Some(chosen == &p.test_output)
+                    } else {
+                        None
+                    };
+
+                    Comparison {
+                        generation: g,
+                        puzzle: p.id.clone(),
+                        first: archive[c].id.clone(),
+                        second: archive[o].id.clone(),
+                        judge: archive[j].id.clone(),
+                        winner: archive[winner].id.clone(),
+                        judge_correct,
+                    }
+                });
+
+                Some((comparison, usage))
+            })
+            .collect();
+
+        let mut comparisons = Vec::new();
+        let mut usage = Usage::default();
+
+        for out in outcomes {
+            let (c, u) = out?;
+
+            usage.add(&u);
+            comparisons.extend(c);
+        }
+
+        Some((comparisons, usage))
+    }
+
+    /// Draft the children of generation `g` (g >= 1): first the LLM round's children if
+    /// this is one, then random mutation and crossover, all distinct and new.
+    fn draft_children(&self, g: usize, rng: &mut ChaCha8Rng) -> Result<Drafted> {
+        let mut drafts: Vec<Draft> = Vec::new();
+        let mut events = Vec::new();
+        let mut answers_used = 0u64;
+        let mut seen: HashSet<String> = self.archive.iter().map(|m| m.id.clone()).collect();
+        let weights = self.selection_weights();
+
+        let llm_round = self.cfg.llm_every > 0 && g % self.cfg.llm_every == 0;
+
+        if llm_round && let Some(mutator) = self.mutator {
+            let n = self.cfg.llm_children.min(self.cfg.children_per_generation);
+            let mut planned: Vec<(GenRequest, Vec<String>, Op)> = Vec::new();
+
+            for i in 0..n {
+                let Some(a) = draw(&weights, rng) else {
+                    break;
+                };
+                let seed = derive_seed(self.cfg.seed, &format!("llm/{g}/{i}"));
+                let partner = if i % 2 == 1 { self.partner(a, &weights, rng) } else { None };
+                let pa = &self.archive[a];
+
+                match partner {
+                    Some(b) => {
+                        let pb = &self.archive[b];
+                        let req = llm_crossover_request(
+                            &pa.cascade,
+                            pa.fitness,
+                            &pb.cascade,
+                            pb.fitness,
+                            &self.cfg.limits,
+                            seed,
+                        );
+
+                        planned.push((req, vec![pa.id.clone(), pb.id.clone()], Op::LlmCrossover));
+                    }
+                    None => {
+                        let req = llm_mutate_request(&pa.cascade, pa.fitness, &self.cfg.limits, seed);
+
+                        planned.push((req, vec![pa.id.clone()], Op::LlmMutate));
+                    }
+                }
+            }
+
+            let answered: Vec<Option<GenResponse>> =
+                planned.iter().map(|(req, _, _)| mutator.answer(req)).collect();
+
+            if self.cfg.pause_for_llm && answered.iter().any(Option::is_none) {
+                let missing = planned
+                    .iter()
+                    .zip(&answered)
+                    .filter(|(_, a)| a.is_none())
+                    .map(|((req, _, _), _)| req.clone())
+                    .collect();
+
+                return Ok(Drafted::Pending(missing));
+            }
+
+            for ((req, parents, op), resp) in planned.into_iter().zip(answered) {
+                let key = request_key(&req);
+
+                if resp.is_some() {
+                    answers_used += 1;
+                }
+
+                let parsed = match &resp {
+                    None => Err("no answer".to_string()),
+                    Some(r) if !r.is_usable() => Err(format!("unusable answer ({:?})", r.stop_reason)),
+                    Some(r) => parse_llm_cascade(&r.text, &self.cfg.limits).map_err(|e| e.to_string()),
+                };
+                let (accepted, reason) = match parsed {
+                    Ok(c) if seen.contains(&c.id()) => (false, "duplicate of an archived Cascade".to_string()),
+                    Ok(c) => {
+                        seen.insert(c.id());
+                        drafts.push(Draft {
+                            cascade: c,
+                            parents: parents.clone(),
+                            op,
+                        });
+
+                        (true, "ok".to_string())
+                    }
+                    Err(e) => (false, e),
+                };
+
+                events.push(Event::LlmExchange {
+                    generation: g,
+                    key,
+                    request: req,
+                    response: resp,
+                    accepted,
+                    reason,
+                });
+            }
+        }
+
+        let mut attempts = 0;
+
+        while drafts.len() < self.cfg.children_per_generation
+            && attempts < self.cfg.children_per_generation * DRAW_ATTEMPTS
+        {
+            attempts += 1;
+
+            let Some(a) = draw(&weights, rng) else {
+                break;
+            };
+            let parent = &self.archive[a];
+            let crossover = rng.random_bool(self.cfg.crossover_rate);
+            let mut child: Option<(Cascade, Vec<String>, Op)> = None;
+
+            if crossover && let Some(b) = self.partner(a, &weights, rng) {
+                let other = &self.archive[b];
+                let by_stage = rng.random_bool(0.5);
+                let made = if by_stage {
+                    stage_crossover(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
+                        .map(|c| (c, Op::StageCrossover))
+                } else {
+                    section_crossover(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
+                        .map(|c| (c, Op::SectionCrossover))
+                };
+
+                child = made.map(|(c, op)| (c, vec![parent.id.clone(), other.id.clone()], op));
+            }
+
+            if child.is_none() {
+                child = mutate(&parent.cascade, &self.cfg.limits, rng)
+                    .map(|(c, op)| (c, vec![parent.id.clone()], op));
+            }
+
+            if let Some((c, parents, op)) = child
+                && c.check(&self.cfg.limits).is_ok()
+                && seen.insert(c.id())
+            {
+                drafts.push(Draft {
+                    cascade: c,
+                    parents,
+                    op,
+                });
+            }
+        }
+
+        Ok(Drafted::Ready(drafts, events, answers_used))
+    }
+
+    /// DGM selection weights over the archive, from fitness and children counts.
+    fn selection_weights(&self) -> Vec<f64> {
+        let scores: Vec<f64> = self.archive.iter().map(|m| m.fitness).collect();
+        let children: Vec<usize> = self.archive.iter().map(|m| m.children).collect();
+
+        dgm_weights(&scores, &children, self.cfg.dgm_lambda, self.cfg.dgm_alpha0)
+    }
+
+    /// A crossover partner for member `a`: draw a few by DGM weight and take the one the
+    /// peers rate highest (Q2: peer judgment decides who mates with whom).
+    fn partner(&self, a: usize, weights: &[f64], rng: &mut ChaCha8Rng) -> Option<usize> {
+        let mut best: Option<usize> = None;
+
+        for _ in 0..PARTNER_CANDIDATES {
+            for _ in 0..DRAW_ATTEMPTS {
+                let Some(b) = draw(weights, rng) else {
+                    return None;
+                };
+
+                if b != a {
+                    let better = best.is_none_or(|x| self.archive[b].rating > self.archive[x].rating);
+
+                    if better {
+                        best = Some(b);
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        best
+    }
+}
+
+/// Children drafted for one generation, or the requests still waiting for answers.
+enum Drafted {
+    Ready(Vec<Draft>, Vec<Event>, u64),
+    Pending(Vec<GenRequest>),
+}
+
+/// Who is related to whom: parents, children and siblings (sharing a parent).
+struct Kinship {
+    kin: Vec<HashSet<usize>>,
+}
+
+impl Kinship {
+    fn new(archive: &[Member]) -> Kinship {
+        let index: HashMap<&str, usize> = archive
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.as_str(), i))
+            .collect();
+        let mut kin: Vec<HashSet<usize>> = vec![HashSet::new(); archive.len()];
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); archive.len()];
+
+        for (i, m) in archive.iter().enumerate() {
+            for p in &m.parents {
+                if let Some(&pi) = index.get(p.as_str()) {
+                    kin[i].insert(pi);
+                    kin[pi].insert(i);
+                    children[pi].push(i);
+                }
+            }
+        }
+
+        for siblings in &children {
+            for &x in siblings {
+                for &y in siblings {
+                    if x != y {
+                        kin[x].insert(y);
+                    }
+                }
+            }
+        }
+
+        Kinship { kin }
+    }
+
+    fn related(&self, a: usize, b: usize) -> bool {
+        a == b || self.kin.get(a).is_some_and(|k| k.contains(&b))
+    }
+}
+
+/// Number of puzzles whose answer equals the ground truth.
+fn count_solved(answers: &[Option<Grid>], panel: &[Puzzle]) -> usize {
+    answers
+        .iter()
+        .zip(panel)
+        .filter(|(a, p)| a.as_ref() == Some(&p.test_output))
+        .count()
+}
+
+/// Recompute judging skill, peer ratings and fitness of every member from all
+/// comparisons so far. A judge's vote weighs ln(u / (1 - u)) for skill u > 0.5, else 0:
+/// the optimal weight of an independent voter of known accuracy (Nitzan and Paroush
+/// 1982, International Economic Review 23(2), 289-297).
+fn refresh(archive: &mut [Member], comparisons: &[Comparison], cfg: &BreedConfig, puzzles: usize) {
+    let index: HashMap<String, usize> = archive
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.id.clone(), i))
+        .collect();
+
+    for m in archive.iter_mut() {
+        m.judge_correct = 0;
+        m.judge_wrong = 0;
+    }
+
+    for c in comparisons {
+        if let (Some(&j), Some(ok)) = (index.get(&c.judge), c.judge_correct) {
+            if ok {
+                archive[j].judge_correct += 1;
+            } else {
+                archive[j].judge_wrong += 1;
+            }
+        }
+    }
+
+    let weight: Vec<f64> = archive
+        .iter()
+        .map(|m| {
+            let u = m.judge_skill();
+
+            (u / (1.0 - u)).ln().max(0.0)
+        })
+        .collect();
+
+    let games: Vec<(usize, usize, f64)> = comparisons
+        .iter()
+        .filter_map(|c| {
+            let w = *index.get(&c.winner)?;
+            let loser = if c.winner == c.first { &c.second } else { &c.first };
+            let l = *index.get(loser)?;
+            let j = *index.get(&c.judge)?;
+
+            Some((w, l, weight[j]))
+        })
+        .collect();
+
+    let ratings = bradley_terry(archive.len(), &games);
+    let n = puzzles.max(1) as f64;
+
+    for (m, r) in archive.iter_mut().zip(ratings) {
+        let solved_rate = m.solved as f64 / n;
+        let tokens = m.usage.completion_tokens as f64 / n;
+        let cost = cfg.token_cost_per_1k * tokens / 1000.0 + m.usage.model_cost / n;
+
+        m.rating = r;
+        m.fitness =
+            (1.0 - cfg.judge_weight) * solved_rate + cfg.judge_weight * m.judge_skill() - cost;
+    }
+}
+
+/// Archive indices best first: fitness, then peer rating (tie-break, Q13), then id.
+fn rank(archive: &[Member]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..archive.len()).collect();
+
+    order.sort_by(|&a, &b| {
+        let (x, y) = (&archive[a], &archive[b]);
+
+        y.fitness
+            .total_cmp(&x.fitness)
+            .then(y.rating.total_cmp(&x.rating))
+            .then(x.id.cmp(&y.id))
+    });
+
+    order
+}
+
+fn ranked(m: &Member, puzzles: usize) -> Ranked {
+    Ranked {
+        id: m.id.clone(),
+        generation: m.generation,
+        op: m.op,
+        fitness: m.fitness,
+        rating: m.rating,
+        solved: m.solved,
+        puzzles,
+        judge_skill: m.judge_skill(),
+        stages: m.cascade.stages.len(),
+        workers: m.cascade.worker_count(),
+        completion_tokens_per_puzzle: m.usage.completion_tokens as f64 / puzzles.max(1) as f64,
+    }
+}
+
+/// Run a whole breeding run to the end in memory: steps until done, then `finish`.
+/// Used by tests and by callers that need no checkpoints. A pending LLM round ends the
+/// run with reason "waiting for LLM answers".
+pub fn breed_to_end(
+    cfg: BreedConfig,
+    pool: &ModelPool,
+    mutator: Option<&dyn Mutator>,
+) -> Result<(Report, Vec<Event>)> {
+    let mut b = Breeder::new(cfg, pool, mutator)?;
+    let never = || false;
+    let mut events = Vec::new();
+
+    let reason = loop {
+        let (status, ev) = b.step(&never)?;
+
+        events.extend(ev);
+
+        match status {
+            Status::Continue => {}
+            Status::Done(r) => break r,
+            Status::Pending(_) => break "waiting for LLM answers".to_string(),
+        }
+    };
+
+    let (report, ev) = b.finish(&reason)?;
+
+    events.extend(ev);
+
+    Ok((report, events))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::StubModel;
+    use crate::cascade::sim::SimModel;
+
+    fn sim_pool() -> ModelPool {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(SimModel::small()));
+        pool.insert("sim:large", Box::new(SimModel::large()));
+
+        pool
+    }
+
+    fn small_config(seed: u64) -> BreedConfig {
+        BreedConfig {
+            seed,
+            generations: 3,
+            children_per_generation: 4,
+            search_puzzles: 12,
+            select_puzzles: 12,
+            finalists: 2,
+            ..BreedConfig::default()
+        }
+    }
+
+    #[test]
+    fn bradley_terry_orders_by_wins_and_is_symmetric() {
+        let r = bradley_terry(3, &[(0, 1, 1.0), (0, 1, 1.0), (0, 2, 1.0), (1, 2, 1.0)]);
+
+        assert!(r[0] > r[1] && r[1] > r[2], "{r:?}");
+
+        let even = bradley_terry(2, &[(0, 1, 1.0), (1, 0, 1.0)]);
+
+        assert!((even[0] - even[1]).abs() < 1e-9);
+
+        let none = bradley_terry(2, &[(0, 1, 0.0)]);
+
+        assert!(none.iter().all(|x| x.abs() < 1e-9), "zero weight changes nothing");
+    }
+
+    #[test]
+    fn dgm_weights_follow_the_paper() {
+        let w = dgm_weights(&[0.5, 0.5, 0.9, 1.0], &[0, 1, 0, 0], 10.0, 0.5);
+
+        assert!((w[0] - 0.5).abs() < 1e-12, "sigmoid(0) / 1");
+        assert!((w[1] - 0.25).abs() < 1e-12, "sigmoid(0) / 2");
+        assert!((w[2] - 1.0 / (1.0 + (-4.0f64).exp())).abs() < 1e-12);
+        assert_eq!(w[3], 0.0, "a perfect score is not eligible");
+    }
+
+    #[test]
+    fn run_cascade_is_deterministic_and_counts_calls() {
+        let pool = sim_pool();
+        let limits = CascadeLimits::default();
+        let panel = generate_panel(5, 4);
+        let (_, c) = seed_cascades().remove(0);
+
+        for p in &panel {
+            let a = run_cascade(&pool, &limits, &c, p, 9);
+            let b = run_cascade(&pool, &limits, &c, p, 9);
+
+            assert_eq!(a, b);
+            assert_eq!(a.usage.calls, 1, "one Worker, one stage, no vote");
+        }
+    }
+
+    #[test]
+    fn wide_stage_votes_within_its_call_bound() {
+        let pool = sim_pool();
+        let limits = CascadeLimits::default();
+        let panel = generate_panel(6, 6);
+        let seeds = seed_cascades();
+        let mut c = seeds[0].1.clone();
+
+        c.stages[0].workers.push(seeds[1].1.stages[0].workers[0].clone());
+        c.stages[0].workers.push(seeds[2].1.stages[0].workers[0].clone());
+
+        for p in &panel {
+            let run = run_cascade(&pool, &limits, &c, p, 3);
+
+            assert!(run.usage.calls >= 3);
+            assert!(run.usage.calls <= cascade_call_bound(&c));
+        }
+    }
+
+    #[test]
+    fn breeding_is_deterministic_and_keeps_its_budget() {
+        let pool = sim_pool();
+        let (r1, e1) = breed_to_end(small_config(7), &pool, None).expect("run 1");
+        let (r2, e2) = breed_to_end(small_config(7), &pool, None).expect("run 2");
+
+        assert_eq!(r1, r2);
+        assert_eq!(e1, e2);
+        assert!(r1.calls_used <= small_config(7).max_calls);
+        assert!(r1.archive_size > seed_cascades().len());
+        assert!(!r1.finalists.is_empty());
+    }
+
+    #[test]
+    fn judges_are_never_related_to_the_judged() {
+        let pool = sim_pool();
+        let cfg = small_config(11);
+        let mut b = Breeder::new(cfg, &pool, None).expect("breeder");
+        let never = || false;
+
+        while let (Status::Continue, _) = b.step(&never).expect("step") {}
+
+        let kin = Kinship::new(b.archive());
+        let index: HashMap<&str, usize> = b
+            .archive()
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.as_str(), i))
+            .collect();
+
+        assert!(!b.comparisons().is_empty(), "peer round ran");
+
+        for c in b.comparisons() {
+            let j = index[c.judge.as_str()];
+            let x = index[c.first.as_str()];
+            let y = index[c.second.as_str()];
+
+            assert!(!kin.related(j, x) && !kin.related(j, y) && !kin.related(x, y));
+        }
+    }
+
+    #[test]
+    fn resume_from_a_snapshot_equals_an_uninterrupted_run() {
+        let pool = sim_pool();
+        let never = || false;
+        let mut straight = Breeder::new(small_config(13), &pool, None).expect("straight");
+        let mut events_straight = Vec::new();
+
+        while let (Status::Continue, ev) = straight.step(&never).expect("step") {
+            events_straight.extend(ev);
+        }
+
+        let mut first = Breeder::new(small_config(13), &pool, None).expect("first");
+        let mut events_split = Vec::new();
+
+        for _ in 0..2 {
+            let (status, ev) = first.step(&never).expect("step");
+
+            assert_eq!(status, Status::Continue);
+            events_split.extend(ev);
+        }
+
+        let snap = first.snapshot();
+        let mut second = Breeder::resume(small_config(13), &pool, None, snap).expect("resume");
+
+        while let (Status::Continue, ev) = second.step(&never).expect("step") {
+            events_split.extend(ev);
+        }
+
+        assert_eq!(events_straight, events_split);
+        assert_eq!(straight.snapshot(), second.snapshot());
+    }
+
+    #[test]
+    fn resume_refuses_changed_settings_but_allows_more_generations() {
+        let pool = sim_pool();
+        let b = Breeder::new(small_config(2), &pool, None).expect("breeder");
+        let snap = b.snapshot();
+        let mut more = small_config(2);
+
+        more.generations = 9;
+        more.max_calls = 50_000;
+        assert!(Breeder::resume(more, &pool, None, snap.clone()).is_ok());
+
+        let mut other = small_config(2);
+
+        other.judge_weight = 0.5;
+        assert!(Breeder::resume(other, &pool, None, snap).is_err());
+    }
+
+    #[test]
+    fn stop_aborts_without_committing() {
+        let pool = sim_pool();
+        let mut b = Breeder::new(small_config(3), &pool, None).expect("breeder");
+        let always = || true;
+        let (status, events) = b.step(&always).expect("step");
+
+        assert_eq!(status, Status::Done("stopped".to_string()));
+        assert!(events.is_empty());
+        assert_eq!(b.next_generation(), 0);
+        assert!(b.archive().is_empty());
+    }
+
+    #[test]
+    fn tiny_budget_stops_before_spending() {
+        let pool = sim_pool();
+        let cfg = BreedConfig {
+            max_calls: 10,
+            ..small_config(4)
+        };
+        let (report, _) = breed_to_end(cfg, &pool, None).expect("run");
+
+        assert_eq!(report.stop_reason, "call budget reached");
+        assert_eq!(report.calls_used, 0);
+    }
+
+    #[test]
+    fn llm_round_pauses_then_replays_recorded_answers() {
+        let pool = sim_pool();
+        let cfg = BreedConfig {
+            llm_every: 1,
+            llm_children: 2,
+            ..small_config(21)
+        };
+        let empty = AnswerBook::new();
+        let mut b = Breeder::new(cfg.clone(), &pool, Some(&empty)).expect("breeder");
+        let never = || false;
+
+        assert_eq!(b.step(&never).expect("gen 0").0, Status::Continue);
+
+        let (status, events) = b.step(&never).expect("gen 1");
+        let Status::Pending(requests) = status else {
+            panic!("expected a pause for LLM answers, got {status:?}");
+        };
+
+        assert!(events.is_empty());
+        assert_eq!(requests.len(), 2);
+        assert_eq!(b.next_generation(), 1, "nothing committed");
+
+        // Answer one request with a valid Cascade and one with junk.
+        let mut book = AnswerBook::new();
+        let mut child = seed_cascades()[3].1.clone();
+
+        child.stages[0].workers[0].traits.think_tokens = 1024;
+
+        let json = serde_json::to_string_pretty(&child).expect("json");
+
+        book.insert(&request_key(&requests[0]), format!("Here you go:\n```json\n{json}\n```"));
+        book.insert(&request_key(&requests[1]), "no idea".to_string());
+
+        let snap = b.snapshot();
+        let mut resumed = Breeder::resume(cfg, &pool, Some(&book), snap).expect("resume");
+        let (status, events) = resumed.step(&never).expect("gen 1 again");
+
+        assert_eq!(status, Status::Continue);
+
+        let exchanges: Vec<&Event> = events
+            .iter()
+            .filter(|e| matches!(e, Event::LlmExchange { .. }))
+            .collect();
+
+        assert_eq!(exchanges.len(), 2);
+        assert!(resumed
+            .archive()
+            .iter()
+            .any(|m| m.id == child.id() && m.op == Op::LlmMutate));
+    }
+
+    #[test]
+    fn stub_mutator_answers_are_rejected_and_replaced_by_random_children() {
+        let pool = sim_pool();
+        let stub = StubModel::new("stub:mutator");
+        let live = LiveMutator(&stub);
+        let cfg = BreedConfig {
+            llm_every: 1,
+            pause_for_llm: false,
+            ..small_config(5)
+        };
+        let (report, events) = breed_to_end(cfg, &pool, Some(&live)).expect("run");
+        let rejected = events
+            .iter()
+            .filter(|e| matches!(e, Event::LlmExchange { accepted: false, .. }))
+            .count();
+
+        assert!(rejected > 0);
+        assert!(report.archive_size > seed_cascades().len());
+    }
+}

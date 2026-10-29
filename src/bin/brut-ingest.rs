@@ -7,6 +7,10 @@
 //!     (structure plus cost cap), have a file name equal to its content id, and not
 //!     duplicate a seed program or (with --against) a candidate already in <pool-dir>.
 //!     Prints one line per file and exits non-zero if any candidate is rejected.
+//!   brut-ingest --cascades <dir> [--against <pool-dir>]
+//!     The same gate for promoted Cascades (ADR 0005): parse, check against the pool
+//!     allow-list (credential look-alikes in prompts included), file name equals content
+//!     id, no duplicate of a seed Cascade or (with --against) of a pooled Cascade.
 //!   brut-ingest --scope-check
 //!     Read newline-separated changed paths from stdin and fail if any path is outside
 //!     `candidates/`. The one scope rule lives in the library (`hitl::path_in_scope`);
@@ -18,7 +22,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use brutmaschine::hitl::{GenomeAdapter, ingest_one, path_in_scope, seed_ids};
+use brutmaschine::hitl::{
+    CandidateAdapter, CascadeAdapter, GenomeAdapter, cascade_seed_ids, ingest_one, path_in_scope,
+    seed_ids,
+};
 use brutmaschine::util::{BrutError, Result};
 
 fn main() {
@@ -31,6 +38,7 @@ fn main() {
 fn run() -> Result<()> {
     let mut scope_check = false;
     let mut candidates: Option<String> = None;
+    let mut cascades: Option<String> = None;
     let mut against: Option<String> = None;
     let mut it = std::env::args().skip(1);
 
@@ -41,6 +49,12 @@ fn run() -> Result<()> {
                 candidates = Some(
                     it.next()
                         .ok_or_else(|| BrutError::Invalid("--candidates needs a value".into()))?,
+                );
+            }
+            "--cascades" => {
+                cascades = Some(
+                    it.next()
+                        .ok_or_else(|| BrutError::Invalid("--cascades needs a value".into()))?,
                 );
             }
             "--against" => {
@@ -57,10 +71,18 @@ fn run() -> Result<()> {
         return scope_check_stdin();
     }
 
-    match candidates {
-        Some(dir) => ingest_dir(Path::new(&dir), against.as_deref().map(Path::new)),
-        None => Err(BrutError::Invalid(
-            "give --candidates <dir> or --scope-check".into(),
+    let against = against.as_deref().map(Path::new);
+
+    match (candidates, cascades) {
+        (Some(dir), None) => ingest_dir(&GenomeAdapter::new(), seed_ids(), Path::new(&dir), against),
+        (None, Some(dir)) => ingest_dir(
+            &CascadeAdapter::new(),
+            cascade_seed_ids(),
+            Path::new(&dir),
+            against,
+        ),
+        _ => Err(BrutError::Invalid(
+            "give exactly one of --candidates <dir>, --cascades <dir>, or --scope-check".into(),
         )),
     }
 }
@@ -99,9 +121,14 @@ fn scope_check_stdin() -> Result<()> {
     }
 }
 
-/// Validate every candidate file in `dir`, deduping against the seed programs and, when
+/// Validate every candidate file in `dir`, deduping against the seeds (`known`) and, when
 /// given, an existing pool; exit non-zero if any is rejected.
-fn ingest_dir(dir: &Path, against: Option<&Path>) -> Result<()> {
+fn ingest_dir<A: CandidateAdapter>(
+    adapter: &A,
+    mut known: HashSet<String>,
+    dir: &Path,
+    against: Option<&Path>,
+) -> Result<()> {
     if !dir.exists() {
         return Err(BrutError::Invalid(format!(
             "candidate directory {} does not exist",
@@ -109,11 +136,8 @@ fn ingest_dir(dir: &Path, against: Option<&Path>) -> Result<()> {
         )));
     }
 
-    let adapter = GenomeAdapter::new();
-
-    let mut known = seed_ids();
     if let Some(pool) = against {
-        known.extend(load_pool_ids(&adapter, pool)?);
+        known.extend(load_pool_ids(adapter, pool)?);
     }
 
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -135,7 +159,7 @@ fn ingest_dir(dir: &Path, against: Option<&Path>) -> Result<()> {
             .and_then(|s| s.to_str())
             .unwrap_or_default();
         let text = std::fs::read_to_string(path)?;
-        let rec = ingest_one(&adapter, &path.display().to_string(), &text, stem, &known);
+        let rec = ingest_one(adapter, &path.display().to_string(), &text, stem, &known);
 
         if rec.accepted {
             if let Some(id) = &rec.id {
@@ -163,7 +187,7 @@ fn ingest_dir(dir: &Path, against: Option<&Path>) -> Result<()> {
 
 /// Content ids of an existing candidate pool, to dedupe incoming candidates against.
 /// Unparseable pool files are skipped with a warning (only ids are needed here).
-fn load_pool_ids(adapter: &GenomeAdapter, dir: &Path) -> Result<HashSet<String>> {
+fn load_pool_ids<A: CandidateAdapter>(adapter: &A, dir: &Path) -> Result<HashSet<String>> {
     if !dir.exists() {
         return Err(BrutError::Invalid(format!(
             "pool directory {} does not exist",

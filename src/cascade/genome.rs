@@ -115,6 +115,29 @@ impl CascadeLimits {
     }
 }
 
+/// The allow-list of the shared candidate pool (`candidates/cascades/`): the simulated
+/// models used in this container and the open models planned for host runs (decision
+/// Q20; tags as Ollama names them, to be confirmed on the host). Per-call costs here are
+/// placeholders; a run's own configuration sets the real ones. Pool checks use the tags.
+pub fn pool_limits() -> CascadeLimits {
+    let spec = |tag: &str, cost: f64| ModelSpec {
+        tag: tag.to_string(),
+        cost_per_call: cost,
+    };
+
+    CascadeLimits {
+        models: vec![
+            spec("sim:small", 0.0005),
+            spec("sim:large", 0.002),
+            spec("gpt-oss:20b", 0.001),
+            spec("qwen3:8b", 0.0005),
+            spec("qwen3:14b", 0.001),
+            spec("gpt-oss:120b", 0.004),
+        ],
+        ..CascadeLimits::default()
+    }
+}
+
 /// Traits: inheritable settings that shape *how* a Worker thinks, not *what* it thinks.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
