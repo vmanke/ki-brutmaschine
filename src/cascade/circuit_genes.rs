@@ -9,10 +9,13 @@
 //!
 //! The phrases describe methods in words and never list gates. Every family is named alone
 //! in some phrase, some phrases combine two families, and many name none. Only strategy and
-//! residual phrases name a family. So role, format, check and style genes never change what
-//! a Worker knows, and every residual phrase reviews the answer of an earlier stage. No
-//! phrase names two of Hadamard, Phase and Linear, so one phrase step never teaches a seed
-//! all three, which six of the eleven calibration targets need.
+//! residual phrases name a family, and every residual phrase reviews the answer of an
+//! earlier stage. A section's name does not limit what its text teaches, though.
+//! SectionReplace may write any pool text into any section, and a Worker knows the
+//! families of every text it holds: a strategy text written over the role teaches its
+//! family, and a neutral text written over the strategy removes one. No phrase names two of
+//! Hadamard, Phase and Linear, so one phrase step never teaches a seed all three, which six
+//! of the eleven calibration targets need.
 //!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
@@ -349,10 +352,12 @@ pub fn circuit_seed_cascades() -> Vec<(String, Cascade)> {
 ///
 /// A gate mention is a gate name or alias of the circuit protocol, in any case, followed by
 /// a qubit index such as 0 or q0. The text is split into words at every character that is
-/// not a letter or digit, as the answer parser splits a gate-like line, and a lone q joins
-/// the number after it. So "H 0;", "h(q0)", "CX 0,1" and the OpenQASM line "cx q[0],q[1];"
-/// all count once. Prose that names a gate or a qubit, or a gate on a qubit once or twice,
-/// passes. The error says where the list is.
+/// not a letter or digit, as the answer parser splits a gate-like line. A lone q joins the
+/// number after it, and so does any other register that is not a gate name when the number
+/// stands in square brackets. So "H 0;", "h(q0)", "CX 0,1", the OpenQASM lines
+/// "cx q[0],q[1];" and "cx a[0],a[1];", and the Q# call "CNOT(qs[0], qs[1])" all count
+/// once. Prose that names a gate or a qubit, or a gate on a qubit once or twice, passes.
+/// The error says where the list is.
 pub fn no_gate_lists(c: &Cascade) -> std::result::Result<(), String> {
     for (k, stage) in c.stages.iter().enumerate() {
         for (w, worker) in stage.workers.iter().enumerate() {
@@ -396,23 +401,25 @@ fn section(name: &str, text: &str) -> Section {
 }
 
 /// The gate mentions in `text`, in order, each as its two words: "H 0", "cx q1". The words
-/// are the pieces between characters that are not letters or digits. A lone q or Q joins
-/// the number after it, so the q[2] of OpenQASM and q_2 both read as the index q2.
+/// are the pieces between characters that are not letters or digits. Two kinds of word
+/// join the number after them into one qubit index:
+/// - a lone q or Q, so the q[2] of OpenQASM and q_2 both read as q2;
+/// - any other word that is not a gate name, when the number stands in square brackets
+///   right after it, as a register with its index: a[2], qr[2] and qubits[2] read as q2.
+///
+/// After a gate name the number stays a word of its own, so H[2] reads as "H 2".
 fn gate_mentions(text: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
 
-    for piece in text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-    {
+    for (gap, piece) in words_and_gaps(text) {
+        let number = piece.bytes().all(|b| b.is_ascii_digit());
+
         match words.last_mut() {
-            Some(last)
-                if matches!(last.as_str(), "q" | "Q")
-                    && piece.bytes().all(|b| b.is_ascii_digit()) =>
-            {
-                last.push_str(piece);
+            Some(last) if number && matches!(last.as_str(), "q" | "Q") => last.push_str(&piece),
+            Some(last) if number && gap.trim() == "[" && !Gate::is_name(last) => {
+                *last = format!("q{piece}");
             }
-            _ => words.push(piece.to_string()),
+            _ => words.push(piece),
         }
     }
 
@@ -422,6 +429,29 @@ fn gate_mentions(text: &str) -> Vec<String> {
         .filter(|(name, index)| Gate::is_name(name) && is_qubit_index(index))
         .map(|(name, index)| format!("{name} {index}"))
         .collect()
+}
+
+/// The words of `text` in order, each after the characters that separate it from the word
+/// before. The words are the pieces between characters that are not letters or digits.
+fn words_and_gaps(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut gap = String::new();
+    let mut word = String::new();
+
+    for ch in text.chars().chain([' ']) {
+        if ch.is_alphanumeric() {
+            word.push(ch);
+            continue;
+        }
+
+        if !word.is_empty() {
+            out.push((std::mem::take(&mut gap), std::mem::take(&mut word)));
+        }
+
+        gap.push(ch);
+    }
+
+    out
 }
 
 /// A qubit index as the circuit protocol writes it: ASCII digits that fit a u8, with or
@@ -454,7 +484,7 @@ mod tests {
     /// The section names of the pool, the same as in the grid pool.
     const NAMES: [&str; 6] = ["role", "strategy", "check", "residual", "style", "format"];
 
-    /// Sections whose phrases never name a family.
+    /// The section names under which no pool phrase names a family.
     const NEUTRAL_NAMES: [&str; 4] = ["role", "format", "check", "style"];
 
     /// The German stems of each family in `designer::FAMILY_STEMS`.
@@ -998,7 +1028,9 @@ mod tests {
             );
         }
 
-        // Role, format, check and style genes never change what a Worker knows.
+        // Phrases named role, format, check or style name no family. The name does not limit
+        // what a Worker knows, though: SectionReplace may write any pool text into any
+        // section.
         for (name, text) in CIRCUIT_PHRASES {
             if NEUTRAL_NAMES.contains(name) {
                 assert!(families(text).is_empty(), "{name}: {text}");
@@ -1349,6 +1381,13 @@ mod tests {
             ["cx q1", "h Q0"]
         );
 
+        // Any other register joins a number in square brackets after it. After a gate name
+        // the number stays a word of its own.
+        assert_eq!(
+            gate_mentions("h a[2]; cx qr [1], qr[2]; H[0]"),
+            ["h q2", "cx q1", "H 0"]
+        );
+
         // Prose may name a gate, a qubit, or a gate on a qubit once or twice.
         for text in [
             "Use one CNOT, then look at qubit 0 again.",
@@ -1358,12 +1397,14 @@ mod tests {
             "The phase is a sum over x0 xor x1 xor x2.",
             "Spend at most 7 T gates and 6 CNOT gates.",
             "Keep the register q[3] as it is.",
+            "Keep the registers a[3] and anc[1] as they are.",
         ] {
             assert_eq!(no_gate_lists(&single("strategy", text)), Ok(()), "{text}");
         }
 
         // Three mentions make a list, in any spelling the answer parser accepts and in the
-        // index spellings of OpenQASM: q[2], also as q_2.
+        // index spellings of circuit languages: q[2] or q_2, and any register with its index
+        // in square brackets, as OpenQASM, Qiskit, Q# and Cirq write it.
         for text in [
             "H 0; CNOT 0 1; T 1",
             "h q0, cx q0 q1, tdg q1",
@@ -1375,6 +1416,11 @@ mod tests {
             "OPENQASM 2.0; qreg q[3]; h q[2]; cx q[1],q[2]; tdg q[2];",
             "H(q[0]) CNOT(q[0], q[1]) T(q[1]) TDG(q[0])",
             "H q_0, CNOT q_0 q_1, T q_1",
+            "h a[2]; cx a[1],a[2]; tdg a[2];",
+            "OPENQASM 2.0; qreg a[3]; h a[2]; cx a[1],a[2]; tdg a[2]; cx a[0],a[2]; t a[2];",
+            "qc.h(qr[2]); qc.cx(qr[1], qr[2]); qc.tdg(qr[2]);",
+            "H(qs[2]); CNOT(qs[1], qs[2]); T(qs[2]);",
+            "cirq.H(qubits[2]), cirq.CNOT(qubits[1], qubits[2]), cirq.T(qubits[2])",
         ] {
             let reason = no_gate_lists(&single("strategy", text)).expect_err(text);
 

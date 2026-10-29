@@ -15,7 +15,7 @@
 //! 1. Knowledge: stems in the lower-cased system prompt name the families (`FAMILY_STEMS`),
 //!    in the order of their first mention. That order is the method order.
 //! 2. Thinking: all work costs steps, paid before the work is done. A call has 16 free
-//!    steps plus one step per `step_tokens` thinking tokens, never more than 2^20 steps in
+//!    steps plus one step per `step_tokens` thinking tokens, never more than 2^13 steps in
 //!    all. Once a payment fails, thinking stops for the rest of the call. The steps used
 //!    beyond the free ones are reported as thinking tokens.
 //! 3. Self-check: with `CIRCUIT_SELF_CHECK_TEXT` in the system prompt, a candidate is
@@ -84,16 +84,18 @@ const FREE_STEPS: u64 = 16;
 
 /// The most steps one call may use, whatever its thinking budget. With at most 4096
 /// thinking tokens (the Traits' ceiling) a call has at most 16 + 4096 / 2 = 2,064 steps, so
-/// there the ceiling never binds. It bounds the work of a direct request that asks for far
-/// more thinking than a Worker can have.
-const MAX_STEPS: u64 = 1 << 20;
+/// there the ceiling never binds. It bounds the time of a direct request that asks for far
+/// more thinking than a Worker can have, so it is set from the costliest step: verifying
+/// one column of a 256-gate circuit on six qubits. That step takes about 165 microseconds
+/// in the dev profile, so the metered work of one call takes at most about 1.4 seconds.
+const MAX_STEPS: u64 = 1 << 13;
 
 /// States a network search reaches for one step.
 const STATES_PER_STEP: usize = 16;
 
 /// The most states one network search holds, whatever the budget. It caps memory only: with
 /// at most 4096 thinking tokens (the Traits' ceiling) a search reaches at most 33,024
-/// states, so there the budget always binds first.
+/// states, and any call at most 16 * MAX_STEPS = 131,072, so the budget always binds first.
 const MAX_NETWORK_STATES: usize = 1 << 18;
 
 /// The temperature at which the method order is shuffled with probability one half: the
@@ -3727,21 +3729,23 @@ mod tests {
 
     #[test]
     fn a_call_never_uses_more_than_max_steps() {
-        // Within the Traits' ceiling of 4096 thinking tokens the budget is untouched.
-        assert_eq!(MAX_STEPS, 1 << 20);
+        // Within the Traits' ceiling of 4096 thinking tokens the budget is untouched, even at
+        // one thinking token per step.
+        assert_eq!(MAX_STEPS, 1 << 13);
         assert_eq!(Meter::new(4096, 4).budget, FREE_STEPS + 1024);
         assert_eq!(Meter::new(4096, 2).budget, FREE_STEPS + 2048);
+        assert_eq!(Meter::new(4096, 1).budget, FREE_STEPS + 4096);
 
         // An absurd budget is cut to the ceiling.
         for step_tokens in [1, 2, 4] {
             assert_eq!(Meter::new(u32::MAX, step_tokens).budget, MAX_STEPS);
         }
 
-        // A direct request whose work would take more: 20,000 earlier answers on six qubits,
-        // each verified on all 64 columns at one step per column. The ceiling pays for
-        // 16,384 of them, and the reply passes the latest one on unchecked.
+        // A direct request whose work would take more: 200 earlier answers on six qubits,
+        // each verified on all 64 columns at one step per column. The ceiling pays for 128
+        // of them, and the reply passes the latest one on unchecked.
         let target = monomial(6, |j| (((j << 1) | (j >> 5)) & 63, 0));
-        let wrong = vec![circuit("X 0"); 20_000];
+        let wrong = vec![circuit("X 0"); 200];
         let req = request(
             &format!("{PREVIOUS} {CIRCUIT_SELF_CHECK_TEXT}"),
             render_circuit_solve_prompt(&target, 256, &wrong),
