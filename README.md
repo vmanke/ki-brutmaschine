@@ -420,14 +420,27 @@ scripts/propose-pr.sh runs/k1/promote
 
 # Not-Aus: der Lauf hält vor dem nächsten Rätsel an
 touch runs/k1/STOP
+
+# Weiter nach dem Not-Aus: erst STOP löschen, dann fortsetzen
+rm runs/k1/STOP
+./target/release/brut-breed --out runs/k1 --resume
 ```
 
 Mit `--llm-every K` ist jede K-te Generation eine LLM-Runde. Fehlt eine Antwort des
 Mutators, hält der Lauf an und endet mit Exit-Code 3. Die Anfragen liegen dann unter
 `runs/k1/llm/requests/`. Schreiben Sie (oder eine Claude-Sitzung) jede Antwort als
 `runs/k1/llm/answers/<schlüssel>.txt` und setzen Sie den Lauf mit `--resume` fort.
-Exit-Codes: 0 = fertig oder sauber angehalten, 1 = Fehler, 2 = falsche Bedienung,
+Liegen die Antworten mit `--llm-answers <ordner>` woanders, geben Sie die Option auch
+beim Fortsetzen an. Exit-Codes: 0 = fertig oder sauber angehalten, 1 = Fehler,
+2 = falsche Bedienung (auch: ein anderer Prozess hält das Lauf-Verzeichnis),
 3 = wartet auf LLM-Antworten.
+
+`--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
+`--llm-answers` ändern; alles andere legt das Experiment fest. Vor jeder Generation
+legt der Checkpoint ihren schlimmsten Verbrauch an Aufrufen zurück. Endet der Prozess
+hart (Kill, Absturz), zählt das Fortsetzen diese Rücklage als verbraucht, sodass
+`--max-calls` auch dann hält. Einzelheiten stehen in
+[docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md), Abschnitt 5.
 
 ## Die sechs Komponenten
 

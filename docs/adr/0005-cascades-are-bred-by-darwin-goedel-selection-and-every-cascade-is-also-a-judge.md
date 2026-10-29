@@ -13,11 +13,13 @@ session of 2026-10-29 (questions Q1 to Q23).
 other's answers blind, pair by pair, and the answer with the most wins goes on. Across the
 archive, each new Cascade is compared with up to three unrelated Cascades on puzzles where
 their answers differ, and a third Cascade, related to neither (no parent, child or
-sibling), judges blind. Where exactly one answer is right, the judgment is scored, which
-measures each Cascade's **judging skill** u = (correct + 1) / (judged + 2). Judgments
-feed a weighted Bradley-Terry rating (Hunter 2004), each vote weighted ln(u / (1 - u))
-when u > 0.5 and 0 otherwise, the optimal weight for independent voters of known accuracy
-(Nitzan and Paroush 1982). Fitness is 0.8 x solved rate + 0.2 x judging skill - cost,
+sibling; more distant relatives may judge), judges blind. New Cascades are the preferred
+judges, the least used first. Where exactly one answer is right, the judgment is scored,
+and a reply without a usable verdict counts as wrong; this measures each Cascade's
+**judging skill** u = (correct + 1) / (judged + 2), and a Cascade whose judgments are
+never scored keeps the prior 1/2. Judgments feed a weighted Bradley-Terry rating (Hunter
+2004), each vote weighted ln(u / (1 - u)) when u > 0.5 and 0 otherwise, the optimal
+weight for independent voters of known accuracy (Nitzan and Paroush 1982). Fitness is 0.8 x solved rate + 0.2 x judging skill - cost,
 where cost charges completion tokens (thinking included) and a fixed per-call price per
 model. The peer rating breaks ties and chooses crossover partners. It never replaces the
 objective score: peers that only score each other can praise each other without solving
@@ -36,10 +38,18 @@ once someone, typically a Claude session, writes the answers, so the core gains 
 access (ADR 0001).
 
 **Hard ceilings are code, not genes.** Thinking tokens (4096), answer tokens (2048),
-depth (4) and width (3) are constants; a run configuration may tighten them, per stage
-too (a late stage may be allowed only to check, not to think anew), but never loosen
-them. Without a ceiling and a price, selection drives thinking up, because deeper
-thinking solves more; then the control Traits are meant to give is lost.
+depth (4) and width (3) are constants. A run configuration may tighten depth, width and
+the thinking ceiling, per stage too (a late stage may be allowed only to check, not to
+think anew), but never loosen them; temperature (0 to 1.5) and answer tokens (64 to
+2048) keep their fixed ranges, and unknown configuration keys are refused. Without a
+ceiling and a price, selection drives thinking up, because deeper thinking solves more;
+then the control Traits are meant to give is lost.
+
+**The call budget holds across crashes.** Before a generation or the select phase makes
+its first Worker call, the run's checkpoint reserves its worst-case number of calls; a
+resume after a kill or crash counts that reservation as spent, because the real count
+died with the process. One process at a time holds the run directory. A refused resume
+changes no file, and a stopped select phase keeps the answers it already paid for.
 
 **Two speeds, one gate.** The breeding loop runs sealed and without a human. Only its two
 best finalists are promoted, as files under `candidates/cascades/`, through a draft pull
@@ -54,8 +64,10 @@ selection fixed; we let it change only through review.
 in this container and the open models planned for the host (gpt-oss 20b and 120b, Qwen3);
 real calls need the host adapter (ADR 0003). We run single-model searches, which isolate
 what breeding adds, and mixed-model searches with per-call prices, which show whether
-evolution mixes well. Any comparison gives the baseline the same models and the same
-budget, so it measures breeding and not the model.
+evolution mixes well. Any comparison that claims a breeding effect gives the baseline
+the same models and the same budget, so it measures breeding and not the model. The
+container reports compare finalists with the hand-written seeds (one small-model call
+per puzzle); that comparison is descriptive and not compute-matched.
 
 **What counts.** Here, puzzles come from our own ARC-style generator: a public search
 panel and a select panel unseen during search. The simulated models are a positive
@@ -66,8 +78,9 @@ with the same models, one-sided sign test at p < 0.05; it is not built yet.
 
 Rejected: peer-only scoring (collusion, objective hacking); inheritable ceilings
 (unbounded thinking); auto-merging promotions (ADR 0004); Claude as a Worker now (at up to
-12 calls per puzzle, 400 puzzles, 20 Cascades and 30 generations, about 2.9 million calls,
-which a hosted frontier model prices at five figures; deferred until local runs give
+48 calls per puzzle, four stages of three answers plus three judges times three pairs,
+with 400 puzzles, 20 Cascades and 30 generations, about 11.5 million calls, far beyond
+this project's budget at hosted frontier-model prices; deferred until local runs give
 numbers).
 
 Status: accepted. Later, as a pre-registered comparison: Traits modulated at run time by

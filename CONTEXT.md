@@ -127,7 +127,7 @@ One to four Stages run in order, each seeing the task plus the answers chosen by
 _Avoid_: pipeline, chain, ensemble, agent
 
 **Judging skill**:
-How often a Cascade picks the right answer of a pair whose truth is known, with a Laplace prior; it enters fitness with a fixed weight.
+How often a Cascade picks the right answer of a pair whose truth is known, with a Laplace prior (a Cascade never judged this way keeps 1/2); a reply without a usable verdict counts as a wrong pick. It enters fitness with a fixed weight.
 _Avoid_: judge score, reliability
 
 **Peer rating**:
