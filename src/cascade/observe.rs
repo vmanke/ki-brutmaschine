@@ -8,10 +8,10 @@
 //! that is stopped and resumed logs the same states as a straight one. Wall time belongs to
 //! the binary.
 //!
-//! Every number is finite, since a NaN would reach the log as null and break it. A value
-//! that is undefined because its set is empty is None, or 0 where the field is a count, a
-//! share or a best value. Sums run in a fixed order, so the bytes do not depend on thread
-//! count.
+//! Every number is finite, since a NaN or an infinity would reach the log as null and break
+//! it. A value that is undefined because its set is empty is None, or 0 where the field is
+//! a count, a share or a best value. Sums run in a fixed order, so the bytes do not depend
+//! on thread count.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -196,6 +196,10 @@ pub fn entropy_bits<K: Ord>(counts: &BTreeMap<K, usize>) -> f64 {
 
 /// Entropy in bits of the distribution proportional to the non-negative `parts`. It is 0
 /// when they do not sum to a positive finite number.
+///
+/// Each term is computed from the share q = p / total as -q log2(q). A share lies in
+/// (0, 1], so a term stays finite even for a part far below the smallest normal number,
+/// where total / p would overflow.
 fn entropy(parts: &[f64]) -> f64 {
     let total = parts.iter().fold(0.0, |sum, &p| sum + p);
 
@@ -205,8 +209,9 @@ fn entropy(parts: &[f64]) -> f64 {
 
     parts
         .iter()
-        .filter(|&&p| p > 0.0)
-        .fold(0.0, |sum, &p| sum + p / total * (total / p).log2())
+        .map(|&p| p / total)
+        .filter(|&q| q > 0.0)
+        .fold(0.0, |sum, q| sum - q * q.log2())
 }
 
 /// Entropy in bits of a parent draw by `weights`. Weights that do not sum to a positive
@@ -308,12 +313,18 @@ fn diversity<A: Serialize>(input: &ObserveInput<'_, A>) -> Diversity {
         *shapes.entry(shape(&m.cascade)).or_default() += 1;
 
         for w in m.cascade.stages.iter().flat_map(|s| &s.workers) {
+            // Each Worker counts a block once. A Cascade from the Mutator may hold the
+            // same section twice in one Worker.
+            let carried: BTreeSet<(&str, &str)> = w
+                .sections
+                .iter()
+                .map(|s| (s.name.as_str(), s.text.as_str()))
+                .collect();
+
             *models.entry(w.model.as_str()).or_default() += 1;
 
-            for s in &w.sections {
-                *blocks
-                    .entry((s.name.as_str(), s.text.as_str()))
-                    .or_default() += 1;
+            for block in carried {
+                *blocks.entry(block).or_default() += 1;
             }
         }
 
@@ -439,8 +450,8 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::cascade::arena::Event;
-    use crate::cascade::genome::seed_cascades;
+    use crate::cascade::arena::{BreedConfig, Event, dgm_weights};
+    use crate::cascade::genome::{Section, seed_cascades};
 
     /// A member on the first seed's Cascade with one answer, its solved count, and
     /// parents by id; a member without parents is a seed.
@@ -574,6 +585,43 @@ mod tests {
         assert!((parent_entropy(&[0.0; 8]) - 3.0).abs() < 1e-12);
         assert!((parent_entropy(&[f64::NAN, 1.0]) - 1.0).abs() < 1e-12);
         assert_eq!(parent_entropy(&[]).to_bits(), 0.0f64.to_bits());
+
+        // A weight below the smallest normal number adds next to nothing; its term must
+        // not overflow to infinity.
+        let tiny = parent_entropy(&[0.5, 1.9e-309]);
+
+        assert!((parent_entropy(&[1.0, 1.0, 5e-309]) - 1.0).abs() < 1e-12);
+        assert!(tiny.is_finite() && tiny < 1e-300, "{tiny}");
+    }
+
+    #[test]
+    fn a_subnormal_parent_weight_keeps_the_state_line_readable() {
+        // Accepted settings can give a parent a weight below the smallest normal number:
+        // the sigmoid bottoms out just before exp overflows.
+        let cfg = BreedConfig {
+            dgm_lambda: 1000.0,
+            ..BreedConfig::default()
+        };
+        let fitness = [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, -0.2095];
+        let weights = dgm_weights(&fitness, &[0; 7], cfg.dgm_lambda, cfg.dgm_alpha0);
+
+        assert!(cfg.check().is_ok());
+        assert!(
+            weights[6] > 0.0 && weights[6] < f64::MIN_POSITIVE,
+            "{weights:?}"
+        );
+
+        // Six equal weights and one next to nothing give log2 6 bits, and the state reads
+        // back from its log line in canonical form (a non-finite number would be written
+        // as null).
+        let state = observe(&input(&family(), &[], &weights));
+        let event = Event::State(state.clone());
+        let json = serde_json::to_string(&event).expect("json");
+        let back: Event = serde_json::from_str(&json).expect("the line reads back");
+
+        assert!((state.diversity.parent_entropy_bits - 6f64.log2()).abs() < 1e-12);
+        assert_eq!(back, event);
+        assert_eq!(serde_json::to_string(&back).expect("json"), json);
     }
 
     #[test]
@@ -657,6 +705,27 @@ mod tests {
         // The answers 0, 1, 2, 3, 4, 1, 2 hold five behaviours.
         assert_eq!(d.behaviours, 5);
         assert!((d.parent_entropy_bits - 7f64.log2()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_block_counts_once_for_each_worker_that_carries_it() {
+        // A Worker the Mutator wrote may carry the same section twice; it still carries
+        // that block once.
+        let mut archive = vec![member("s1", &[], 0), member("s2", &[], 1)];
+        let brief = Section {
+            name: "style".to_string(),
+            text: "Be brief.".to_string(),
+        };
+
+        archive[0].cascade.stages[0].workers[0]
+            .sections
+            .extend([brief.clone(), brief]);
+
+        let d = observe(&input(&archive, &[], &[1.0; 2])).diversity;
+
+        // Both Workers carry the three seed sections, the first one the style as well.
+        assert_eq!(d.blocks, 4);
+        assert!((d.block_entropy_bits - by_definition(&[2.0, 2.0, 2.0, 1.0])).abs() < 1e-12);
     }
 
     #[test]

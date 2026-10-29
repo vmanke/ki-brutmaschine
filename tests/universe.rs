@@ -14,15 +14,17 @@
 //! record), and the options `--domain` and `--selection`.
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use brutmaschine::backend::{GenRequest, GenResponse, StopReason};
 use brutmaschine::cascade::arena::{
-    BreedConfig, Breeder, Event, ModelPool, Mutator, Status, breed_to_end, request_key,
+    BreedConfig, Breeder, Event, ModelPool, Mutator, Status, breed_to_end, breed_to_end_in,
+    request_key,
 };
-use brutmaschine::cascade::domain::{CircuitConfig, DomainConfig};
+use brutmaschine::cascade::domain::{CircuitConfig, DomainConfig, GenePool, GridDomain};
 use brutmaschine::cascade::genome::{CascadeLimits, Section, seed_cascades};
 use brutmaschine::cascade::observe::UniverseState;
 use brutmaschine::cascade::sim::SimModel;
@@ -360,6 +362,193 @@ fn the_thread_count_changes_no_byte_of_a_run() {
     };
 
     assert_eq!(run(1), run(4));
+}
+
+/// The keys of the JSON object `v`.
+fn keys(v: &serde_json::Value) -> BTreeSet<&str> {
+    v.as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// `names` as a set.
+fn set(names: &[&'static str]) -> BTreeSet<&'static str> {
+    names.iter().copied().collect()
+}
+
+/// The keys of a finalist, in its event and in the report.
+const FINALIST: [&str; 5] = [
+    "id",
+    "is_seed",
+    "search_solved_rate",
+    "select_solved",
+    "select_puzzles",
+];
+
+/// The keys each kind of event had in a grid run's log before the domain seam, besides
+/// "kind". None for the state event, which is new.
+fn stage_2c_keys(kind: &str) -> Option<&'static [&'static str]> {
+    let keys: &'static [&'static str] = match kind {
+        "run_start" => &["config", "config_hash", "search", "select"],
+        "born" => &[
+            "generation",
+            "id",
+            "parents",
+            "op",
+            "cascade",
+            "solved",
+            "puzzles",
+            "usage",
+        ],
+        "llm_exchange" => &[
+            "generation",
+            "key",
+            "request",
+            "response",
+            "accepted",
+            "reason",
+        ],
+        "compared" => &[
+            "generation",
+            "puzzle",
+            "first",
+            "second",
+            "judge",
+            "winner",
+            "judge_correct",
+        ],
+        "generation" => &[
+            "generation",
+            "best_id",
+            "best_fitness",
+            "best_solved",
+            "archive_size",
+            "calls_used",
+        ],
+        "finalist" => &FINALIST,
+        _ => return None,
+    };
+
+    Some(keys)
+}
+
+/// A grid run writes its records with the keys they had before the seam. What a graded
+/// domain adds (quality, answers as text, select quality) and the new settings stay out;
+/// the state lines are the only new record.
+#[test]
+fn a_grid_run_writes_no_field_of_a_graded_domain() {
+    let cfg = BreedConfig {
+        llm_every: 1,
+        ..small_config()
+    };
+    let (report, events, snap) =
+        breed_to_end_in::<GridDomain>(cfg, GenePool::grid(), &sim_pool(), Some(&Echo))
+            .expect("run");
+    let mut kinds = BTreeSet::new();
+
+    for event in &events {
+        let v = serde_json::to_value(event).expect("event json");
+        let kind = v["kind"].as_str().expect("kind").to_string();
+        let mut got = keys(&v);
+
+        got.remove("kind");
+
+        match stage_2c_keys(&kind) {
+            Some(expected) => assert_eq!(got, set(expected), "{kind}"),
+            None => {
+                let performance = keys(&v["performance"]);
+
+                assert_eq!(kind, "state");
+                assert!(!performance.contains("quality_best"), "{performance:?}");
+                assert!(!performance.contains("quality_median"), "{performance:?}");
+            }
+        }
+
+        kinds.insert(kind);
+    }
+
+    // Every kind occurs, so no check above was skipped.
+    let all: BTreeSet<String> = [
+        "run_start",
+        "born",
+        "llm_exchange",
+        "compared",
+        "generation",
+        "finalist",
+        "state",
+    ]
+    .iter()
+    .map(|k| k.to_string())
+    .collect();
+
+    assert_eq!(kinds, all);
+
+    // The settings, the report and the snapshot keep their keys as well.
+    let start = serde_json::to_value(&events[0]).expect("start json");
+    let config = keys(&start["config"]);
+    let report = serde_json::to_value(&report).expect("report json");
+    let snap = serde_json::to_value(&snap).expect("snapshot json");
+    let finalists = report["finalists"].as_array().expect("finalists");
+    let archive = snap["archive"].as_array().expect("archive");
+
+    assert!(!config.contains("domain") && !config.contains("selection"));
+    assert_eq!(
+        keys(&report),
+        set(&[
+            "generations_completed",
+            "archive_size",
+            "calls_used",
+            "mutator_answers_used",
+            "comparisons",
+            "stop_reason",
+            "top",
+            "finalists",
+            "best_finalist_select_rate",
+            "best_seed_select_rate",
+        ])
+    );
+    assert_eq!(
+        keys(&snap),
+        set(&[
+            "config_hash",
+            "next_generation",
+            "archive",
+            "comparisons",
+            "calls",
+            "mutator_answers",
+            "reserved",
+            "select_answers",
+            "finished",
+        ])
+    );
+    assert!(!finalists.is_empty() && !archive.is_empty());
+
+    for f in finalists {
+        assert_eq!(keys(f), set(&FINALIST));
+    }
+
+    for m in archive {
+        assert_eq!(
+            keys(m),
+            set(&[
+                "id",
+                "cascade",
+                "parents",
+                "op",
+                "generation",
+                "answers",
+                "solved",
+                "usage",
+                "children",
+                "judge_correct",
+                "judge_wrong",
+                "fitness",
+                "rating",
+            ])
+        );
+    }
 }
 
 const BREED: &str = env!("CARGO_BIN_EXE_brut-breed");

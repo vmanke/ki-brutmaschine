@@ -2887,8 +2887,10 @@ mod tests {
         let never = || false;
         let mut b = Breeder::new(small_config(47), &pool, None).expect("breeder");
         let mut committed = 0;
+        let mut judged = false;
 
         loop {
+            let before = b.calls_used();
             let (status, events) = b.step(&never).expect("step");
 
             if status != Status::Continue {
@@ -2918,10 +2920,24 @@ mod tests {
                 state.performance.born,
                 b.archive().iter().filter(|m| m.generation == g).count()
             );
+
+            // Its cost is the generation's own: every call of the step, made by the
+            // newborns on the search panel and by the peer round.
+            let newborn_calls: u64 = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Born { usage, .. } => Some(usage.calls),
+                    _ => None,
+                })
+                .sum();
+
+            assert_eq!(state.cost.calls, b.calls_used() - before, "generation {g}");
+            judged |= state.cost.calls > newborn_calls;
             committed += 1;
         }
 
         assert_eq!(committed, small_config(47).generations + 1);
+        assert!(judged, "no peer round made a call");
 
         // A stopped step commits nothing, so it logs no state.
         let mut stopped = Breeder::new(small_config(47), &pool, None).expect("breeder");
@@ -3190,8 +3206,9 @@ mod tests {
     }
 
     /// Answers `Doubling` prompts by the words of the system prompt: "overflow" gives
-    /// 5000, "exact" 2n, "over" 2n + 2, anything else n. A judge whose prompt says
-    /// "careful" picks the better answer; any other picks the first one shown.
+    /// 5000, "exact" or the domain's self-check text 2n, "over" 2n + 2, anything else n.
+    /// A judge whose prompt says "careful", or carries the self-check text, picks the
+    /// better answer; any other picks the first one shown.
     struct Scripted;
 
     impl ModelBackend for Scripted {
@@ -3206,14 +3223,16 @@ mod tests {
                 .filter_map(|t| t.parse().ok())
                 .collect();
             let n = numbers[0];
+            let checked = req.system.contains(Doubling.self_check_text());
             let text = if req.prompt.starts_with("WHICH") {
                 let (a, b) = (numbers[1], numbers[2]);
-                let first = !req.system.contains("careful") || doubled(n, a) >= doubled(n, b);
+                let careful = checked || req.system.contains("careful");
+                let first = !careful || doubled(n, a) >= doubled(n, b);
 
                 if first { "VERDICT A" } else { "VERDICT B" }.to_string()
             } else if req.system.contains("overflow") {
                 "ANSWER 5000".to_string()
-            } else if req.system.contains("exact") {
+            } else if checked || req.system.contains("exact") {
                 format!("ANSWER {}", 2 * n)
             } else if req.system.contains("over") {
                 format!("ANSWER {}", 2 * n + 2)
@@ -3456,6 +3475,43 @@ mod tests {
                 .all(|m| no_forbidden(&m.cascade).is_ok())
         );
 
+        // Random children take their texts from the domain's phrases, never the grid's.
+        let random: Vec<&str> = snap
+            .archive
+            .iter()
+            .filter(|m| !matches!(m.op, Op::Seed | Op::LlmMutate | Op::LlmCrossover))
+            .flat_map(|m| m.cascade.stages.iter().flat_map(|s| &s.workers))
+            .flat_map(|w| w.sections.iter().map(|s| s.text.as_str()))
+            .collect();
+        let grid_phrases = GenePool::grid().phrases;
+
+        assert!(
+            ["Be brief.", "Be careful when you judge."]
+                .iter()
+                .any(|t| random.contains(t))
+        );
+        assert!(
+            random
+                .iter()
+                .all(|t| grid_phrases.iter().all(|(_, g)| g != t))
+        );
+
+        // A finalist's select quality is its summed value on the select panel.
+        let select = Doubling.panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
+
+        for f in &report.finalists {
+            let got = &snap.select_answers[&f.id];
+            let values: Vec<f64> = select
+                .iter()
+                .filter_map(|t| got.get(&t.id).copied().flatten().map(|a| doubled(t.n, a)))
+                .collect();
+            let quality: f64 = values.iter().sum();
+            let solved = values.iter().filter(|&&v| v == 1.0).count();
+
+            assert_eq!(f.select_quality, Some(quality), "{}", f.id);
+            assert_eq!(f.select_solved, solved, "{}", f.id);
+        }
+
         // Every generation logs its state, with quality rates; finalists carry theirs.
         let states: Vec<&UniverseState> = events
             .iter()
@@ -3474,6 +3530,68 @@ mod tests {
         let back: Snapshot<u64> = serde_json::from_str(&json).expect("back");
 
         assert_eq!(back, snap);
+    }
+
+    #[test]
+    fn a_generic_cascade_checks_and_votes_by_its_domain() {
+        let pool = scripted_pool();
+        let limits = CascadeLimits::default();
+        let ctx = Ctx {
+            pool: &pool,
+            limits: &limits,
+        };
+        let task = Number {
+            id: "seven".to_string(),
+            n: 7,
+        };
+        let plain = doubler("Repeat the number.");
+        let mut checked = plain.clone();
+
+        checked.stages[0].workers[0].traits.self_check = true;
+
+        // The self-check Trait adds the domain's text, not the grid's. Only the domain's
+        // text makes this Worker answer the exact double.
+        let w = &checked.stages[0].workers[0];
+        let grid_request = worker_request(w, Doubling.solve_prompt(&task, &[]), 3);
+        let unchecked = run_cascade_in(&Doubling, &pool, &limits, &plain, &task, 3);
+        let run = run_cascade_in(&Doubling, &pool, &limits, &checked, &task, 3);
+        let grid_reply = Scripted.generate(&grid_request).expect("reply");
+
+        assert_eq!(grid_reply.text, "ANSWER 7");
+        assert_eq!(unchecked.answer, Some(7));
+        assert_eq!(run.answer, Some(14));
+        assert_eq!(run.usage.calls, 1);
+
+        // As a judge, the Worker gets the domain's text too, so it picks the better
+        // answer. Asked in both orders, it sees each answer first once. A verdict is true
+        // when the first answer of the pair won.
+        let (worse, better) = (7, 14);
+        let mut usage = Usage::default();
+        let verdicts = [(&worse, &better), (&better, &worse)]
+            .map(|pair| judge_in(ctx, &Doubling, w, &task, pair, 11, &mut usage));
+
+        assert_eq!(
+            verdicts,
+            [Judgment::Verdict(false), Judgment::Verdict(true)]
+        );
+
+        // Two Workers that disagree vote by the domain's judge prompt. Both judge with
+        // care, so the better answer wins, although it is not the first Worker's. That
+        // takes two answers and two votes.
+        let worker = |strategy: &str| doubler(strategy).stages[0].workers[0].clone();
+        let pair = Cascade {
+            stages: vec![Stage {
+                workers: vec![
+                    worker("Repeat it; be careful."),
+                    worker("Go over the double by two; be careful."),
+                ],
+            }],
+        };
+        let run = run_cascade_in(&Doubling, &pool, &limits, &pair, &task, 5);
+
+        assert_eq!(run.answer, Some(16));
+        assert_eq!(run.usage.calls, 4);
+        assert_eq!(run.usage.calls, cascade_call_bound(&pair));
     }
 
     #[test]
