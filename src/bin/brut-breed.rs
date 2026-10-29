@@ -739,6 +739,19 @@ fn check_report<D: Domain>(
         return Ok(false);
     }
 
+    // The report's own stop reason is not trusted. This binary finishes a run only when
+    // every generation is done or the next one no longer fits the call budget (a stop
+    // returns before the select phase), so the checkpoint tells which.
+    let reason = if cp.snapshot.next_generation > cfg.generations {
+        "all generations done"
+    } else {
+        "call budget reached"
+    };
+
+    if report.stop_reason != reason {
+        return Err(mismatch("the stop reason the checkpoint implies"));
+    }
+
     let mut breeder = Breeder::<D>::resume_from(
         cfg.clone(),
         family.genes,
@@ -753,7 +766,7 @@ fn check_report<D: Domain>(
 
     // Every answer is kept, so nothing runs; stopping at once guards that anyway.
     let at_once = || true;
-    let again = breeder.finish(&at_once, &report.stop_reason)?;
+    let again = breeder.finish(&at_once, reason)?;
 
     match again {
         Some((r, _)) if r == *report => Ok(true),
