@@ -755,10 +755,14 @@ pub struct TargetOutcome {
     /// The earliest generation of a bred member that solved one of the target's tasks.
     pub first_generation: Option<usize>,
     /// The text of the cheapest exact bred answer. It answers its own dressed task, so it
-    /// implements the dressed target of that task, not the library target as written.
+    /// implements the dressed target of that task, not the library target as written. It
+    /// need not be the invention candidate of `below_best_known`.
     pub circuit: Option<String>,
     /// Some exact answer, of a seed or of a bred member, is below a BestKnown number: an
-    /// invention candidate that needs a human literature check (Q38).
+    /// invention candidate that needs a human literature check (Q38). The outcome does not
+    /// keep that answer. It has to be found in the logged answers with
+    /// `Reference::below_best_known`. It implements its task's dressed target, so its
+    /// dressing has to be undone before the literature check.
     pub below_best_known: bool,
 }
 
@@ -779,8 +783,9 @@ impl TargetOutcome {
         }
     }
 
-    /// Count one exact answer `c`, with cost `cost`, of member `m`. On equal costs the
-    /// earlier answer stays the best.
+    /// Count one exact answer `c`, with cost `cost`, of member `m`. A hit or a candidate
+    /// needs only one answer, so a later answer never clears it. On equal costs the answer
+    /// counted first stays the best.
     fn record(&mut self, m: &Answered<'_>, c: &Circuit, cost: Cost) {
         let solved = self.reference.reached(&cost);
 
@@ -836,9 +841,10 @@ pub struct Rediscovery {
 /// seeds and the bred members solved, then |L|, |R_seed|, |R_bred \ R_seed|, the share D
 /// and the gates. A target counts as solved when an exact answer at or below its
 /// reference exists on at least one of its dressed tasks. `members` lists every archived
-/// Cascade, with answers in panel order. Err(Invalid) when a member's answer count differs
-/// from the panel's task count, or when tasks of one target carry different references.
-/// Err(Integrity) when an exact answer is below a Proven or Derived number.
+/// Cascade, with answers in panel order. Answers are counted member by member, in the
+/// given order, and each member's in panel order. Err(Invalid) when a member's answer
+/// count differs from the panel's task count, or when tasks of one target carry different
+/// references. Err(Integrity) when an exact answer is below a Proven or Derived number.
 pub fn rediscovery(panel: &[CircuitTask], members: &[Answered<'_>]) -> Result<Rediscovery> {
     if let Some(m) = members.iter().find(|m| m.answers.len() != panel.len()) {
         return Err(BrutError::Invalid(format!(
@@ -1698,58 +1704,95 @@ mod tests {
     fn rediscovery_counts_seed_and_bred_hits() {
         let panel = small_panel();
         let mut seed = vec![None; 6];
-        let mut costly = vec![None; 6];
-        let mut early = vec![None; 6];
         let mut late = vec![None; 6];
+        let mut early = vec![None; 6];
+        let mut costly = vec![None; 6];
+        let mut again = vec![None; 6];
+        // The dressed witness of task i followed by gates that change neither T nor CNOT.
+        let with = |i: usize, gates: &str| {
+            Some(circuit(&format!(
+                "{}; {gates}",
+                dressed(&panel[i]).render()
+            )))
+        };
 
-        // A seed solves swap and answers cs wrongly.
-        seed[3] = Some(dressed(&panel[3]));
+        // A seed solves swap, then answers swap's other task exactly but with CNOT 5. It
+        // answers cs wrongly, and toffoli exactly but above the reference: first with T 11,
+        // then with T 9.
+        seed[0] = Some(dressed(&panel[0]));
         seed[1] = Some(circuit("X 0"));
-        // Bred members: an exact but costly toffoli (T 9) in generation 1, toffoli and cs
-        // in generation 3, and toffoli again in generation 2, listed after generation 3.
-        costly[2] = Some(padded(&dressed(&panel[2]), 1, 0));
+        seed[2] = Some(padded(&dressed(&panel[2]), 2, 0));
+        seed[3] = Some(padded(&dressed(&panel[3]), 0, 1));
+        seed[5] = Some(padded(&dressed(&panel[5]), 1, 0));
+        // Bred members: cs and toffoli in generation 3; toffoli at the same full cost in
+        // generation 2, listed after generation 3; an exact but costly toffoli (T 9) in
+        // generation 1, listed after both hits; and in generation 4, the seed's swap again
+        // and cs with two more H gates.
         late[4] = Some(dressed(&panel[4]));
-        late[5] = Some(dressed(&panel[5]));
-        early[5] = Some(dressed(&panel[5]));
+        late[5] = with(5, "X 0; X 0");
+        early[5] = with(5, "Z 0; Z 0");
+        costly[2] = Some(padded(&dressed(&panel[2]), 1, 0));
+        again[1] = with(1, "H 0; H 0");
+        again[3] = Some(dressed(&panel[3]));
+
+        assert_eq!(
+            cost_of(&late[5]),
+            cost_of(&early[5]),
+            "a tie in the full cost"
+        );
+        assert_ne!(late[5], early[5]);
 
         let members = [
             member("seed", 0, &seed),
-            member("costly", 1, &costly),
             member("late", 3, &late),
             member("early", 2, &early),
+            member("costly", 1, &costly),
+            member("again", 4, &again),
         ];
         let found = rediscovery(&panel, &members).expect("rediscovery");
         let [swap, cs, toffoli] = &found.targets[..] else {
             panic!("three targets: {found:?}");
         };
 
+        // A later answer above the reference keeps the seed's hit.
         assert_eq!((swap.target.as_str(), swap.tasks), ("swap", 2));
         assert_eq!(swap.reference, panel[0].reference);
-        assert!(swap.reached_by_seed && !swap.reached_by_bred);
-        assert_eq!(swap.best_seed, Some(dressed(&panel[3]).cost()));
-        assert_eq!((swap.best_bred, swap.first_generation), (None, None));
-        assert_eq!(swap.circuit, None);
+        assert!(swap.reached_by_seed && swap.reached_by_bred);
+        assert_eq!(swap.best_seed, Some(cost_of(&seed[0])));
+        assert_eq!(swap.best_bred, Some(cost_of(&again[3])));
+        assert_eq!(swap.first_generation, Some(4));
+        assert_eq!(swap.circuit, Some(dressed(&panel[3]).render()));
 
+        // The cheapest bred answer comes first, and the earliest hit too.
         assert!(!cs.reached_by_seed && cs.reached_by_bred);
         assert_eq!(cs.best_seed, None, "a wrong answer is no cost");
         assert_eq!(cs.best_bred, Some(dressed(&panel[4]).cost()));
         assert_eq!(cs.first_generation, Some(3));
         assert_eq!(cs.circuit, Some(dressed(&panel[4]).render()));
 
+        // Exact seed answers above the reference are no hit, and the second, cheaper one is
+        // the best. The bred hits come before an exact miss, the earliest hit comes second,
+        // and on the tie the answer counted first stays.
         assert!(!toffoli.reached_by_seed && toffoli.reached_by_bred);
+        assert_eq!(toffoli.best_seed, Some(cost_of(&seed[5])));
         assert_eq!(toffoli.first_generation, Some(2), "the earliest bred hit");
-        assert_eq!(toffoli.best_bred, Some(dressed(&panel[5]).cost()));
-        assert_eq!(toffoli.circuit, Some(dressed(&panel[5]).render()));
+        assert_eq!(toffoli.best_bred, Some(cost_of(&late[5])));
+        assert_eq!(toffoli.circuit, late[5].as_ref().map(Circuit::render));
         assert!(!swap.below_best_known && !cs.below_best_known && !toffoli.below_best_known);
 
+        // swap counts for the seeds only, although a bred member solves it too.
         assert_eq!(found.library, 3);
         assert_eq!((found.reached_by_seeds, found.reached_by_bred_only), (1, 2));
         assert_eq!(found.share, Some(1.0));
         assert!(found.calibrated && found.passes);
 
         // An exact answer above the reference is no hit, but it is the best bred cost.
-        let found = rediscovery(&panel, &members[..2]).expect("rediscovery");
+        let found = rediscovery(&panel, &[members[0], members[3]]).expect("rediscovery");
+        let swap = &found.targets[0];
 
+        assert!(swap.reached_by_seed && !swap.reached_by_bred);
+        assert_eq!((swap.best_bred, swap.first_generation), (None, None));
+        assert_eq!(swap.circuit, None);
         assert!(!found.targets[2].reached_by_bred);
         assert_eq!(found.targets[2].best_bred, Some(cost_of(&costly[2])));
         assert_eq!(found.targets[2].first_generation, None);
@@ -1773,7 +1816,7 @@ mod tests {
         strong[4] = Some(dressed(&panel[4]));
 
         let found =
-            rediscovery(&panel, &[member("strong", 0, &strong), members[3]]).expect("rediscovery");
+            rediscovery(&panel, &[member("strong", 0, &strong), members[2]]).expect("rediscovery");
 
         assert_eq!(found.reached_by_seeds, 2);
         assert_eq!(found.share, Some(1.0));
@@ -1847,12 +1890,33 @@ mod tests {
 
         assert!(found.targets[2].below_best_known && found.targets[2].reached_by_seed);
 
-        // Answers that do not align with the panel are refused.
-        let short = vec![None; 5];
+        // A hit and candidate (T 7, CNOT 6), then an exact answer that is neither (T 7,
+        // CNOT 8): the later answer clears no flag, for seeds and bred members alike.
+        let mut then_neither = vec![None; 6];
 
-        match rediscovery(&panel, &[member("short", 2, &short)]) {
-            Err(BrutError::Invalid(text)) => assert!(text.contains("short"), "{text}"),
-            other => panic!("expected a refusal, got {other:?}"),
+        then_neither[2] = Some(dressed(&panel[2]));
+        then_neither[5] = Some(padded(&dressed(&panel[5]), 0, 1));
+
+        for generation in [0, 4] {
+            let found = rediscovery(&panel, &[member("m", generation, &then_neither)])
+                .expect("rediscovery");
+            let toffoli = &found.targets[2];
+
+            assert!(toffoli.below_best_known, "generation {generation}");
+            assert_eq!(
+                (toffoli.reached_by_seed, toffoli.reached_by_bred),
+                (generation == 0, generation > 0)
+            );
+        }
+
+        // Answers that do not align with the panel are refused, too few and too many alike.
+        for (id, count) in [("short", 5), ("long", 7)] {
+            let misaligned = vec![None; count];
+
+            match rediscovery(&panel, &[member(id, 2, &misaligned)]) {
+                Err(BrutError::Invalid(text)) => assert!(text.contains(id), "{text}"),
+                other => panic!("expected a refusal, got {other:?}"),
+            }
         }
 
         // So are tasks of one target with different references.
