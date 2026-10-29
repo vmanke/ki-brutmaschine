@@ -387,7 +387,8 @@ Archiv ist es eine Hash-Kette.
 
 ## Kaskaden-Zucht (Stufe 2c)
 
-Stand: Entwurf, beschrieben in
+Stand: gebaut mit dem simulierten Modell (PR #8); echte Modelle folgen. Englische
+Fassung: [README.en.md](README.en.md). Beschrieben in
 [docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md) und
 [ADR 0005](docs/adr/0005-cascades-are-bred-by-darwin-goedel-selection-and-every-cascade-is-also-a-judge.md).
 

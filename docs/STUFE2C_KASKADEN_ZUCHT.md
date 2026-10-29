@@ -1,5 +1,7 @@
 # Stufe 2c: Zucht von Kaskaden aus Sprachmodell-Workern
 
+Englische Fassung: [STAGE2C_CASCADE_BREEDING.md](STAGE2C_CASCADE_BREEDING.md).
+
 ## 1. Zweck
 
 Wir züchten nicht mehr einzelne Lernprogramme, sondern **Kaskaden**. Eine Kaskade
@@ -63,8 +65,9 @@ so die volle Punktzahl, ohne das Problem zu lösen (Zhang et al., Anhang H).
 | Antwortlänge | 64 bis 2048 Tokens | 2048 |
 | Selbstprüfung | an oder aus | fester Prüftext des Orchestrators |
 
-Die Grenzen sind Konstanten im Code und keine Gene. Eine Laufkonfiguration darf sie
-verengen, aber nie lockern; nur ein vom Code-Owner geprüfter Pull Request ändert sie. Wir
+Die Grenzen sind Konstanten im Code und keine Gene. Eine Laufkonfiguration darf die
+Grenzen für Stufen, Worker je Stufe und Denkbudget je Stufe verengen, aber keine Grenze
+lockern; Temperatur und Antwortlänge haben nur feste Grenzen; nur ein vom Code-Owner geprüfter Pull Request ändert sie. Wir
 nehmen an, dass die Auswahl das Denkbudget ohne Grenze und ohne Preis stetig erhöhen
 würde, da tieferes Nachdenken mehr Rätsel löst. Darum kostet jedes Token Fitness.
 
