@@ -147,15 +147,19 @@ fn breed_runs_are_reproducible_across_processes_and_verifiable() {
     // A fresh run into a used directory is refused as wrong usage.
     assert_eq!(small_run(&a, &[]).status.code(), Some(2));
 
-    // Changing one byte of the log breaks the chain.
-    let tampered = ea.replacen("\"solved\":", "\"solved\": ", 1);
+    // Any edit fails verification: a changed value breaks the hash chain, and even a
+    // whitespace-only edit breaks the canonical form.
+    let verify_fails = |text: &str| {
+        std::fs::write(a.join("events.jsonl"), text).expect("tamper");
+        breed(&["--out", a.to_str().expect("path"), "--verify"]).status.code() == Some(1)
+    };
+    let value = ea.replacen("\"puzzles\":12", "\"puzzles\":13", 1);
+    let spacing = ea.replacen("\"solved\":", "\"solved\": ", 1);
 
-    assert_ne!(tampered, ea);
-    std::fs::write(a.join("events.jsonl"), tampered).expect("tamper");
-    assert_eq!(
-        breed(&["--out", a.to_str().expect("path"), "--verify"]).status.code(),
-        Some(1)
-    );
+    assert_ne!(value, ea);
+    assert_ne!(spacing, ea);
+    assert!(verify_fails(&value), "a changed value must fail");
+    assert!(verify_fails(&spacing), "a whitespace edit must fail");
 }
 
 #[test]
@@ -165,17 +169,26 @@ fn kill_switch_then_resume_equals_a_straight_run() {
 
     ok(&small_run(&straight, &[]));
 
-    // With STOP present the run stops before committing generation 0: no log, no report.
+    // With STOP present the run stops before committing generation 0: a checkpoint
+    // exists (written before generation 0), but no event and no report.
     std::fs::create_dir_all(&split).expect("mkdir");
     std::fs::write(split.join("STOP"), "").expect("stop");
     ok(&small_run(&split, &[]));
+    assert!(split.join("snapshot.json").exists());
     assert!(!split.join("events.jsonl").exists());
     assert!(!split.join("report.json").exists());
 
-    // Nothing was committed, so the same directory starts afresh; then a short run is
-    // resumed with more generations.
+    // A fresh start into that directory is refused; resume runs a short run to its end,
+    // and a second resume continues it with more generations.
     std::fs::remove_file(split.join("STOP")).expect("unstop");
-    ok(&small_run(&split, &["--generations", "1"]));
+    assert_eq!(small_run(&split, &[]).status.code(), Some(2));
+    ok(&breed(&[
+        "--out",
+        split.to_str().expect("path"),
+        "--resume",
+        "--generations",
+        "1",
+    ]));
     ok(&breed(&[
         "--out",
         split.to_str().expect("path"),
@@ -185,9 +198,10 @@ fn kill_switch_then_resume_equals_a_straight_run() {
     ]));
 
     // Resume cut the log back to the last checkpoint (dropping the finalist lines of the
-    // short run), so every generation event matches the straight run. The run-start
-    // event differs only in the recorded number of generations.
-    let generations = |dir: &Path| -> Vec<String> {
+    // short run), so every Cascade and every judgment matches the straight run. Events
+    // that carry the cumulative call count differ: the short run's select phase really
+    // spent calls, and they stay counted.
+    let lineage = |dir: &Path| -> Vec<String> {
         std::fs::read_to_string(dir.join("events.jsonl"))
             .expect("log")
             .lines()
@@ -196,16 +210,25 @@ fn kill_switch_then_resume_equals_a_straight_run() {
 
                 v["event"].clone()
             })
-            .filter(|e| e["kind"] != "run_start")
+            .filter(|e| e["kind"] == "born" || e["kind"] == "compared" || e["kind"] == "finalist")
             .map(|e| e.to_string())
             .collect()
     };
 
-    assert_eq!(generations(&straight), generations(&split));
-    assert_eq!(
-        std::fs::read_to_string(straight.join("report.json")).expect("a"),
-        std::fs::read_to_string(split.join("report.json")).expect("b")
-    );
+    assert_eq!(lineage(&straight), lineage(&split));
+
+    let report = |dir: &Path| -> serde_json::Value {
+        let text = std::fs::read_to_string(dir.join("report.json")).expect("report");
+
+        serde_json::from_str(&text).expect("json")
+    };
+    let (mut a, mut b) = (report(&straight), report(&split));
+
+    assert!(b["calls_used"].as_u64() > a["calls_used"].as_u64());
+
+    a["calls_used"] = serde_json::Value::Null;
+    b["calls_used"] = serde_json::Value::Null;
+    assert_eq!(a, b);
 }
 
 #[test]

@@ -22,7 +22,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
-use crate::cascade::genome::{Cascade, CascadeLimits, Worker, seed_cascades};
+use crate::cascade::genome::{Cascade, CascadeLimits, Worker, seeds_for};
 use crate::cascade::puzzle::{
     Grid, Puzzle, SELF_CHECK_TEXT, Verdict, generate_panel, parse_answer, parse_verdict,
     render_judge_prompt, render_solve_prompt,
@@ -120,7 +120,10 @@ pub fn worker_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
     }
 }
 
-/// One Worker call with usage accounting. A backend error counts no call and gives None.
+/// One Worker call with usage accounting. Every attempted call counts against the budget
+/// and pays its model's fixed price, also when the backend fails, since a failed request
+/// may already have used compute; tokens count only for an answer. A model without a
+/// backend is not attempted and gives None.
 fn call_worker(
     ctx: Ctx,
     w: &Worker,
@@ -129,13 +132,15 @@ fn call_worker(
     usage: &mut Usage,
 ) -> Option<GenResponse> {
     let backend = ctx.pool.get(&w.model).ok()?;
-    let resp = backend.generate(&worker_request(w, prompt, seed)).ok()?;
     let cost = ctx.limits.model(&w.model).map(|m| m.cost_per_call).unwrap_or(0.0);
 
     usage.calls += 1;
+    usage.model_cost += cost;
+
+    let resp = backend.generate(&worker_request(w, prompt, seed)).ok()?;
+
     usage.prompt_tokens += u64::from(resp.prompt_tokens);
     usage.completion_tokens += u64::from(resp.completion_tokens);
-    usage.model_cost += cost;
 
     Some(resp)
 }
@@ -291,7 +296,8 @@ fn stage_vote(
 /// Returns ln(strength) per player.
 pub fn bradley_terry(players: usize, games: &[(usize, usize, f64)]) -> Vec<f64> {
     let mut wins = vec![1.0f64; players];
-    let mut pair: HashMap<(usize, usize), f64> = HashMap::new();
+    // Ordered map: the float sums below must run in the same order on every run.
+    let mut pair: BTreeMap<(usize, usize), f64> = BTreeMap::new();
 
     for &(w, l, weight) in games {
         if w >= players || l >= players || w == l || weight <= 0.0 || !weight.is_finite() {
@@ -718,6 +724,7 @@ impl<'a> Breeder<'a> {
     ) -> Result<Breeder<'a>> {
         cfg.check()?;
         pool.covers(&cfg.limits)?;
+        seeds_for(&cfg.limits)?;
 
         let search = generate_panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
         let select = generate_panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
@@ -793,7 +800,11 @@ impl<'a> Breeder<'a> {
     /// every seed, plus `finalists` Cascades of the widest shape in the archive or among
     /// `drafts` (finalists can only come from there).
     fn select_reserve(&self, drafts: &[Draft]) -> u64 {
-        let seeds: u64 = seed_cascades().iter().map(|(_, c)| cascade_call_bound(c)).sum();
+        let seeds: u64 = seeds_for(&self.cfg.limits)
+            .unwrap_or_default()
+            .iter()
+            .map(|(_, c)| cascade_call_bound(c))
+            .sum();
         let widest = self
             .archive
             .iter()
@@ -807,9 +818,11 @@ impl<'a> Breeder<'a> {
     }
 
     /// Run one generation: draft children, evaluate them on the search panel, let them
-    /// judge and be judged, recompute fitness, and commit. Nothing is committed when the
-    /// step is stopped, out of budget, or waiting for LLM answers, so a resume repeats
-    /// exactly this generation. `stop` is polled before every puzzle.
+    /// judge and be judged, recompute fitness, and commit. When the step is stopped, out
+    /// of budget, or waiting for LLM answers, nothing is committed except the calls that
+    /// were already made (they stay spent, so stop-and-resume cycles cannot exceed
+    /// `max_calls`); a resume repeats exactly this generation. `stop` is polled before
+    /// every puzzle and every judgment.
     pub fn step(&mut self, stop: &(dyn Fn() -> bool + Sync)) -> Result<(Status, Vec<Event>)> {
         let g = self.next_generation;
 
@@ -830,7 +843,7 @@ impl<'a> Breeder<'a> {
         }
 
         let (drafts, llm_events, answers_used) = if g == 0 {
-            let seeds = seed_cascades()
+            let seeds = seeds_for(&self.cfg.limits)?
                 .into_iter()
                 .map(|(_, c)| Draft {
                     cascade: c,
@@ -867,12 +880,16 @@ impl<'a> Breeder<'a> {
         for d in drafts {
             let id = d.cascade.id();
             let tag = format!("search/{id}");
-            let Some((answers, usage)) = self.evaluate(&d.cascade, &self.search, &tag, stop) else {
+            let (answers, usage) = self.evaluate(&d.cascade, &self.search, &tag, stop);
+
+            calls += usage.calls;
+
+            let Some(answers) = answers else {
+                self.calls = calls;
+
                 return Ok((Status::Done("stopped".to_string()), Vec::new()));
             };
             let solved = count_solved(&answers, &self.search);
-
-            calls += usage.calls;
 
             for p in &d.parents {
                 if let Some(m) = archive.iter_mut().find(|m| &m.id == p) {
@@ -910,12 +927,15 @@ impl<'a> Breeder<'a> {
 
         // Every new Cascade judges and is judged (Q12).
         let new: Vec<usize> = (first_new..archive.len()).collect();
-        let Some((new_comparisons, peer_usage)) = self.peer_round(&archive, &new, g, &mut rng, stop)
-        else {
-            return Ok((Status::Done("stopped".to_string()), Vec::new()));
-        };
+        let (new_comparisons, peer_usage) = self.peer_round(&archive, &new, g, &mut rng, stop);
 
         calls += peer_usage.calls;
+
+        let Some(new_comparisons) = new_comparisons else {
+            self.calls = calls;
+
+            return Ok((Status::Done("stopped".to_string()), Vec::new()));
+        };
 
         let mut comparisons = self.comparisons.clone();
 
@@ -950,10 +970,16 @@ impl<'a> Breeder<'a> {
     }
 
     /// Score the best bred members (finalists) and, for reference, every seed Cascade on
-    /// the unseen select panel, and summarise.
-    pub fn finish(&mut self, stop_reason: &str) -> Result<(Report, Vec<Event>)> {
+    /// the unseen select panel, and summarise. Refused with a budget error before any
+    /// call when the remaining calls cannot cover the worst case (a resume may have
+    /// lowered `max_calls`). Returns None when `stop` fires; the calls made so far stay
+    /// spent, and a later `finish` runs the select phase again.
+    pub fn finish(
+        &mut self,
+        stop: &(dyn Fn() -> bool + Sync),
+        stop_reason: &str,
+    ) -> Result<Option<(Report, Vec<Event>)>> {
         let order = rank(&self.archive);
-        let never = || false;
         let mut events = Vec::new();
         let mut finalists = Vec::new();
         let mut picked: Vec<usize> = order
@@ -969,12 +995,30 @@ impl<'a> Breeder<'a> {
             }
         }
 
+        let need = picked
+            .iter()
+            .map(|&i| cascade_call_bound(&self.archive[i].cascade))
+            .sum::<u64>()
+            * self.select.len() as u64;
+
+        if self.calls + need > self.cfg.max_calls {
+            return Err(BrutError::Budget(format!(
+                "the select phase may need {need} calls, but only {} of max_calls {} remain; resume with a larger max_calls",
+                self.cfg.max_calls.saturating_sub(self.calls),
+                self.cfg.max_calls
+            )));
+        }
+
         for i in picked {
-            let m = &self.archive[i];
-            let tag = format!("select/{}", m.id);
-            let Some((answers, usage)) = self.evaluate(&m.cascade, &self.select, &tag, &never) else {
-                continue;
+            let tag = format!("select/{}", self.archive[i].id);
+            let (answers, usage) = self.evaluate(&self.archive[i].cascade, &self.select, &tag, stop);
+
+            self.calls += usage.calls;
+
+            let Some(answers) = answers else {
+                return Ok(None);
             };
+            let m = &self.archive[i];
             let f = Finalist {
                 id: m.id.clone(),
                 is_seed: m.op == Op::Seed,
@@ -983,7 +1027,6 @@ impl<'a> Breeder<'a> {
                 select_puzzles: self.select.len(),
             };
 
-            self.calls += usage.calls;
             events.push(Event::Finalist(f.clone()));
             finalists.push(f);
         }
@@ -1015,10 +1058,11 @@ impl<'a> Breeder<'a> {
             finalists,
         };
 
-        Ok((report, events))
+        Ok(Some((report, events)))
     }
 
-    /// Answers and usage of `c` on `panel`; None when `stop` fired. Puzzles run in
+    /// Answers and usage of `c` on `panel`. The answers are None when `stop` fired before
+    /// some puzzle; the usage still counts every call that was made. Puzzles run in
     /// parallel; every call's seed comes from the Cascade id and the puzzle id, so the
     /// result does not depend on thread count or on when the Cascade is evaluated.
     fn evaluate(
@@ -1027,7 +1071,7 @@ impl<'a> Breeder<'a> {
         panel: &[Puzzle],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> Option<(Vec<Option<Grid>>, Usage)> {
+    ) -> (Option<Vec<Option<Grid>>>, Usage) {
         let runs: Vec<Option<CascadeRun>> = panel
             .par_iter()
             .map(|p| {
@@ -1043,15 +1087,19 @@ impl<'a> Breeder<'a> {
 
         let mut usage = Usage::default();
         let mut answers = Vec::with_capacity(runs.len());
+        let mut complete = true;
 
         for r in runs {
-            let r = r?;
-
-            usage.add(&r.usage);
-            answers.push(r.answer);
+            match r {
+                Some(r) => {
+                    usage.add(&r.usage);
+                    answers.push(r.answer);
+                }
+                None => complete = false,
+            }
         }
 
-        Some((answers, usage))
+        (complete.then_some(answers), usage)
     }
 
     /// Upper bound on judge calls of one peer round with `n` new members.
@@ -1062,7 +1110,8 @@ impl<'a> Breeder<'a> {
     /// Plan and run the cross-Cascade judgments of one generation. Each new member meets
     /// up to `peer_opponents` unrelated members on puzzles where their answers differ; a
     /// third member, related to neither, judges blind. New members judge first, so every
-    /// new Cascade's judging skill gets measured.
+    /// new Cascade's judging skill gets measured. The comparisons are None when `stop`
+    /// fired; the usage still counts every call that was made.
     fn peer_round(
         &self,
         archive: &[Member],
@@ -1070,7 +1119,7 @@ impl<'a> Breeder<'a> {
         g: usize,
         rng: &mut ChaCha8Rng,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> Option<(Vec<Comparison>, Usage)> {
+    ) -> (Option<Vec<Comparison>>, Usage) {
         let kin = Kinship::new(archive);
         let mut plan: Vec<(usize, usize, usize, usize, u64)> = Vec::new();
 
@@ -1159,15 +1208,19 @@ impl<'a> Breeder<'a> {
 
         let mut comparisons = Vec::new();
         let mut usage = Usage::default();
+        let mut complete = true;
 
         for out in outcomes {
-            let (c, u) = out?;
-
-            usage.add(&u);
-            comparisons.extend(c);
+            match out {
+                Some((c, u)) => {
+                    usage.add(&u);
+                    comparisons.extend(c);
+                }
+                None => complete = false,
+            }
         }
 
-        Some((comparisons, usage))
+        (complete.then_some(comparisons), usage)
     }
 
     /// Draft the children of generation `g` (g >= 1): first the LLM round's children if
@@ -1525,7 +1578,9 @@ pub fn breed_to_end(
         }
     };
 
-    let (report, ev) = b.finish(&reason)?;
+    let (report, ev) = b
+        .finish(&never, &reason)?
+        .ok_or_else(|| BrutError::Stopped("select phase stopped".to_string()))?;
 
     events.extend(ev);
 
@@ -1536,6 +1591,7 @@ pub fn breed_to_end(
 mod tests {
     use super::*;
     use crate::backend::StubModel;
+    use crate::cascade::genome::seed_cascades;
     use crate::cascade::sim::SimModel;
 
     fn sim_pool() -> ModelPool {
@@ -1720,6 +1776,78 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(b.next_generation(), 0);
         assert!(b.archive().is_empty());
+        assert_eq!(b.calls_used(), 0, "stopped before the first puzzle");
+    }
+
+    /// A backend that always fails, as a crashed model server would.
+    struct Broken;
+
+    impl ModelBackend for Broken {
+        fn name(&self) -> &str {
+            "broken"
+        }
+
+        fn generate(&self, _req: &GenRequest) -> Result<GenResponse> {
+            Err(BrutError::Eval("model server down".to_string()))
+        }
+    }
+
+    #[test]
+    fn failed_backend_calls_still_count_against_the_budget() {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Broken));
+        pool.insert("sim:large", Box::new(Broken));
+
+        let limits = CascadeLimits::default();
+        let panel = generate_panel(8, 2);
+        let (_, c) = seed_cascades().remove(0);
+        let run = run_cascade(&pool, &limits, &c, &panel[0], 1);
+
+        assert_eq!(run.answer, None);
+        assert_eq!(run.usage.calls, 1);
+        assert!(run.usage.model_cost > 0.0);
+        assert_eq!(run.usage.completion_tokens, 0);
+    }
+
+    #[test]
+    fn finish_refuses_a_budget_lowered_on_resume() {
+        let pool = sim_pool();
+        let never = || false;
+        let mut b = Breeder::new(small_config(17), &pool, None).expect("breeder");
+
+        while let (Status::Continue, _) = b.step(&never).expect("step") {}
+
+        let snap = b.snapshot();
+        let tight = BreedConfig {
+            max_calls: snap.calls + 1,
+            ..small_config(17)
+        };
+        let mut resumed = Breeder::resume(tight, &pool, None, snap).expect("resume");
+        let calls_before = resumed.calls_used();
+        let refused = resumed.finish(&never, "all generations done");
+
+        assert!(matches!(refused, Err(BrutError::Budget(_))), "{refused:?}");
+        assert_eq!(resumed.calls_used(), calls_before, "no call was made");
+    }
+
+    #[test]
+    fn seeds_adapt_to_a_host_allow_list() {
+        let mut limits = CascadeLimits::default();
+
+        limits.models = vec![crate::cascade::genome::ModelSpec {
+            tag: "sim:large".to_string(),
+            cost_per_call: 0.001,
+        }];
+        limits.think_ceiling_per_stage = vec![0];
+
+        let seeds = seeds_for(&limits).expect("adapted seeds");
+
+        for (_, c) in &seeds {
+            assert!(c.check(&limits).is_ok());
+            assert!(c.stages.iter().flat_map(|s| &s.workers).all(|w| w.model == "sim:large"));
+            assert!(c.stages.iter().flat_map(|s| &s.workers).all(|w| w.traits.think_tokens == 0));
+        }
     }
 
     #[test]

@@ -116,6 +116,16 @@ impl Log {
             let entry: LogLine = serde_json::from_str(line)?;
             let event_json = serde_json::to_string(&entry.event)?;
 
+            // Lines are written canonically, so a line that does not re-serialise to
+            // itself was edited (whitespace, reordered or unknown fields included).
+            if serde_json::to_string(&entry)? != line {
+                return Err(BrutError::Integrity(format!(
+                    "{}: entry {} is not in canonical form",
+                    path.display(),
+                    log.len
+                )));
+            }
+
             if entry.seq != log.len
                 || entry.prev != log.head
                 || entry.hash != entry_hash(&log.head, &event_json)
@@ -240,7 +250,7 @@ fn run() -> Result<i32> {
 
         (Breeder::resume(cfg.clone(), &pool, Some(&book), cp.snapshot)?, log)
     } else {
-        if out.join(EVENTS).exists() {
+        if out.join(EVENTS).exists() || out.join(SNAPSHOT).exists() {
             return Err(usage(&format!(
                 "{} already holds a run; use --resume or a fresh --out",
                 out.display()
@@ -250,8 +260,12 @@ fn run() -> Result<i32> {
         std::fs::create_dir_all(&out)?;
 
         let b = Breeder::new(cfg.clone(), &pool, Some(&book))?;
+        let log = Log::open(&out.join(EVENTS), None)?;
 
-        (b, Log::open(&out.join(EVENTS), None)?)
+        // Checkpoint before generation 0, so a crash inside it can still be resumed.
+        checkpoint(&out, &b, &log)?;
+
+        (b, log)
     };
 
     write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
@@ -303,16 +317,27 @@ fn run() -> Result<i32> {
     };
 
     if reason == "stopped" {
+        // Nothing of the interrupted generation is kept except the calls it spent.
+        checkpoint(&out, &breeder, &log)?;
         println!(
-            "brut-breed: stopped after generation {}; resume with --resume",
-            breeder.next_generation().saturating_sub(1)
+            "brut-breed: stopped before generation {} completed; resume with --resume",
+            breeder.next_generation()
         );
 
         return Ok(0);
     }
 
-    let (report, events) = breeder.finish(&reason)?;
+    let Some((report, events)) = breeder.finish(&stop, &reason)? else {
+        checkpoint(&out, &breeder, &log)?;
+        println!("brut-breed: stopped during the select phase; resume with --resume to finish");
 
+        return Ok(0);
+    };
+
+    // The checkpoint keeps the log position of the last generation, so a later resume
+    // with more generations drops these finalist lines and scores finalists afresh;
+    // it does keep the calls the select phase spent.
+    checkpoint(&out, &breeder, &log)?;
     log.append(&events)?;
     write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
     print_report(&report);
@@ -425,8 +450,15 @@ fn promote(out: &Path) -> Result<i32> {
         ));
     }
 
-    let dir = out.join("promote").join("candidates").join("cascades");
+    let promote_dir = out.join("promote");
+    let dir = promote_dir.join("candidates").join("cascades");
     let mut provenance = Vec::new();
+
+    // Generated output only: drop an earlier promotion so the pull request carries
+    // exactly this pair and its manifest.
+    if promote_dir.exists() {
+        std::fs::remove_dir_all(&promote_dir)?;
+    }
 
     std::fs::create_dir_all(&dir)?;
 

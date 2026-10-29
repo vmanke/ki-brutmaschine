@@ -45,13 +45,20 @@ MUST hold for the adapter:
   sandbox that runs mutated code. The sandbox never receives the Ollama URL or any
   credential, and child processes start with a cleared environment.
 - I5. **Request shape.** `generate` POSTs to `/api/generate` with `model`, `prompt`,
-  `system`, `stream: false`, `options.num_predict = max_tokens + think_tokens`,
-  `options.temperature`, and `options.seed`. `think_tokens` (contract-v2, a Worker Trait
-  of ADR 0005; serde default 0, so contract-v1 records still replay) maps to the model's
-  thinking control: 0 turns thinking off where the model allows it; for gpt-oss the
-  budget selects the reasoning level (low, medium, high) by thresholds recorded in the
-  adapter; for Qwen3 any budget above 0 turns thinking on. A model without a thinking
-  mode ignores it. It reads `response`, and the token counts from `prompt_eval_count`
+  `system`, `stream: false`, `options.temperature`, and `options.seed`. For a model
+  without a thinking mode, `options.num_predict = max_tokens` and `think_tokens` is
+  ignored. For a thinking model, `options.num_predict = max_tokens + think_tokens` caps
+  the sum only; the adapter enforces each part on its own. It reads the thinking text and
+  the visible answer as separate fields, measures each (exact token counts where the
+  server reports them, else a whitespace-word estimate that the adapter records as an
+  estimate), and maps a visible answer above `max_tokens` or a thinking part above
+  `think_tokens` to `StopReason::Length`, which the orchestrator never parses as an
+  answer. `think_tokens` (contract-v2, a Worker Trait of ADR 0005; serde default 0, so
+  contract-v1 records still replay) also selects the model's thinking control: 0 turns
+  thinking off where the model allows it; for gpt-oss the budget picks the reasoning
+  level (low, medium, high) by thresholds recorded in the adapter; for Qwen3 a budget
+  above 0 turns thinking on. Level and on/off switches only choose the mode; the numeric
+  caps come from `num_predict` and the two checks above. It reads `response`, and the token counts from `prompt_eval_count`
   and `eval_count`. A `done_reason` of `length` maps to `StopReason::Length`, otherwise
   `StopReason::Stop`; a transport or HTTP error maps to `StopReason::Error` and a
   `BrutError`.

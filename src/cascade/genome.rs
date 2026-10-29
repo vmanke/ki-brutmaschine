@@ -393,6 +393,37 @@ pub fn seed_cascades() -> Vec<(String, Cascade)> {
     ]
 }
 
+/// The seed Cascades adapted to `limits`, so every run starts from valid members: a
+/// Worker whose model is off the allow-list takes the first allowed model, and thinking
+/// budgets are clamped to each stage's ceiling. Errors when an adapted seed still fails
+/// the check (for example when the limits cannot hold even one Worker).
+pub fn seeds_for(limits: &CascadeLimits) -> Result<Vec<(String, Cascade)>> {
+    let first = limits
+        .models
+        .first()
+        .map(|m| m.tag.clone())
+        .ok_or_else(|| BrutError::Invalid("cascade: the model allow-list is empty".to_string()))?;
+    let mut out = Vec::new();
+
+    for (name, mut c) in seed_cascades() {
+        for (k, stage) in c.stages.iter_mut().enumerate() {
+            for w in &mut stage.workers {
+                if limits.model(&w.model).is_none() {
+                    w.model = first.clone();
+                }
+
+                w.traits.think_tokens = w.traits.think_tokens.min(limits.think_ceiling(k));
+            }
+        }
+
+        c.check(limits)
+            .map_err(|e| BrutError::Invalid(format!("seed {name}: {e}")))?;
+        out.push((name, c));
+    }
+
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +498,23 @@ mod tests {
 
         c.stages[1].workers[0].traits.think_tokens = 0;
         assert!(c.check(&limits).is_ok());
+    }
+
+    #[test]
+    fn seeds_for_default_limits_are_the_plain_seeds() {
+        let adapted = seeds_for(&CascadeLimits::default()).expect("seeds");
+
+        assert_eq!(adapted, seed_cascades());
+    }
+
+    #[test]
+    fn seeds_for_an_empty_allow_list_is_an_error() {
+        let limits = CascadeLimits {
+            models: Vec::new(),
+            ..CascadeLimits::default()
+        };
+
+        assert!(seeds_for(&limits).is_err());
     }
 
     #[test]

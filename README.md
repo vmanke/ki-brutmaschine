@@ -385,6 +385,49 @@ Das **Abfragebuch** (`ledger.jsonl`) hält jede verdeckte Abfrage fest: erst
 die Belastung des Budgets, dann genau das, was herausgegeben wurde. Wie das
 Archiv ist es eine Hash-Kette.
 
+## Kaskaden-Zucht (Stufe 2c)
+
+Stand: Entwurf, beschrieben in
+[docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md) und
+[ADR 0005](docs/adr/0005-cascades-are-bred-by-darwin-goedel-selection-and-every-cascade-is-also-a-judge.md).
+
+Hier züchtet die Brutmaschine **Kaskaden** aus Sprachmodell-**Workern**. Ein Worker
+ist ein Modell mit einem Systemprompt und mit **Traits** (Denkbudget, Temperatur,
+Antwortlänge, Selbstprüfung). Eine Kaskade hat ein bis vier Stufen mit je ein bis drei
+Workern. Jede Kaskade ist zugleich Auswerter: Sie urteilt blind über die Antworten
+anderer, nicht verwandter Kaskaden. Die Eltern wählt die Brutmaschine wie die
+Darwin-Gödel-Maschine. Claude kann als **Mutator** neue Kaskaden schreiben.
+
+Auch hier gilt: Kandidaten sind Daten. Eine Kaskade ist JSON; ihr Prompt wird an ein
+Modell geschickt, nie ausgeführt. Im Container gibt es kein Sprachmodell; die Worker
+nutzen ein simuliertes Modell als Positivkontrolle. Echte Läufe brauchen einen
+GPU-Server mit Ollama (ADR 0003).
+
+```sh
+cargo build --release
+
+# Zuchtlauf mit dem simulierten Modell
+./target/release/brut-breed --out runs/k1 --seed 1 --generations 10
+
+# Fortsetzen, auch mit mehr Generationen oder mehr Aufrufen
+./target/release/brut-breed --out runs/k1 --resume --generations 20
+
+# Protokoll prüfen und die zwei besten Kaskaden für einen PR vorbereiten
+./target/release/brut-breed --out runs/k1 --verify
+./target/release/brut-breed --out runs/k1 --promote
+scripts/propose-pr.sh runs/k1/promote
+
+# Not-Aus: der Lauf hält vor dem nächsten Rätsel an
+touch runs/k1/STOP
+```
+
+Mit `--llm-every K` ist jede K-te Generation eine LLM-Runde. Fehlt eine Antwort des
+Mutators, hält der Lauf an und endet mit Exit-Code 3. Die Anfragen liegen dann unter
+`runs/k1/llm/requests/`. Schreiben Sie (oder eine Claude-Sitzung) jede Antwort als
+`runs/k1/llm/answers/<schlüssel>.txt` und setzen Sie den Lauf mit `--resume` fort.
+Exit-Codes: 0 = fertig oder sauber angehalten, 1 = Fehler, 2 = falsche Bedienung,
+3 = wartet auf LLM-Antworten.
+
 ## Die sechs Komponenten
 
 | Komponente | Aufgabe | Dateien |
