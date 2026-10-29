@@ -2,10 +2,11 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use brutmaschine::archive::{Archive, CandidateStatus, RecordKind};
 use brutmaschine::config::{Config, Limits, ScoreWeights};
-use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup, RunSummary};
+use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup, MODELS_DIR, RunSummary};
 use brutmaschine::hidden_eval::create_secret;
 use brutmaschine::nn::Mlp;
 use brutmaschine::safety;
@@ -234,18 +235,35 @@ fn stop_file_stops_cleanly() {
     assert_eq!(summary.generations_done, 2);
 }
 
+/// Poll `ready` every few milliseconds until it holds. False if `limit` passes first.
+fn wait_until(limit: Duration, ready: impl Fn() -> bool) -> bool {
+    let started = Instant::now();
+
+    while !ready() {
+        if started.elapsed() > limit {
+            return false;
+        }
+
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    true
+}
+
 #[test]
 fn stop_file_interrupts_a_running_generation() {
     let dir = fresh_dir("stop-mid");
 
-    // One thread and large, long-trained genomes: without an in-training check, this
-    // generation would run for over a minute in a debug build (78 s measured).
+    // One thread and long-trained genomes (up to 10 000 epochs). Children train largest
+    // first, and the largest alone takes 5.5 s in a release build and 8.9 s in the dev
+    // profile (measured), so it is still training when the STOP file appears.
     let config = Config {
         population_init: 16,
         generations: 0,
         threads: 1,
         limits: Limits {
-            max_epochs: 400,
+            max_epochs: 10_000,
+            max_train_flops: 100_000_000_000,
             ..Limits::default()
         },
         ..tiny_config(6)
@@ -253,34 +271,56 @@ fn stop_file_interrupts_a_running_generation() {
 
     setup(&dir, &config);
 
-    let started = std::time::Instant::now();
+    let (summary, seconds) = std::thread::scope(|scope| {
+        let stopper = scope.spawn(|| {
+            // The run creates its models directory just before generation 0, and the first
+            // child starts training about 0.5 ms later (measured). STOP written 200 ms after
+            // the directory appears therefore lands inside that child's training, not before
+            // the generation starts.
+            let ready = wait_until(Duration::from_secs(30), || dir.join(MODELS_DIR).is_dir());
 
-    let summary = std::thread::scope(|scope| {
-        scope.spawn(|| {
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            assert!(ready, "the run did not create {MODELS_DIR} within 30 s");
+            std::thread::sleep(Duration::from_millis(200));
             safety::request_stop(&dir).expect("stop");
+
+            Instant::now()
         });
 
-        evolve::run(&dir, None).expect("a stop is not an error")
-    });
+        let summary = evolve::run(&dir, None).expect("a stop is not an error");
+        let finished = Instant::now();
+        let stopped_at = stopper.join().expect("stop writer");
 
-    let seconds = started.elapsed().as_secs_f64();
+        (
+            summary,
+            finished.saturating_duration_since(stopped_at).as_secs_f64(),
+        )
+    });
 
     assert!(seconds < 10.0, "took {seconds:.1} s after STOP");
     assert!(summary.candidates < 16, "{} candidates", summary.candidates);
     assert!(
-        summary.stop_reason.contains("kill switch"),
+        summary.stop_reason.contains("kill switch")
+            && summary.stop_reason.contains("during generation 0"),
         "{}",
         summary.stop_reason
     );
 
     let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+    let stopped: Vec<_> = archive
+        .candidates()
+        .into_iter()
+        .filter(|c| c.train.stopped_by_kill_switch)
+        .collect();
 
-    for c in archive.candidates() {
-        if c.train.stopped_by_kill_switch {
-            assert_eq!(c.status, CandidateStatus::Stopped);
-            assert!(c.model_file.is_none());
-        }
+    // The child in training when STOP came was cut short, not finished or skipped.
+    assert!(
+        !stopped.is_empty(),
+        "no candidate was stopped during training"
+    );
+
+    for c in stopped {
+        assert_eq!(c.status, CandidateStatus::Stopped);
+        assert!(c.model_file.is_none());
     }
 }
 
