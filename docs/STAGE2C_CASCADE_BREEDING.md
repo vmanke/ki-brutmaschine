@@ -29,8 +29,9 @@ The terms are defined in `CONTEXT.md`. The open work is in `.scratch/kaskaden-zu
   It improves one Cascade or merges two. Its answers are recorded and replayed
   (ADR 0002).
 - **Scoring.** Each child solves all puzzles of the Search panel. Then it is compared
-  with up to three unrelated Cascades. In each comparison, a third Cascade, related to
-  neither of the two, judges blind.
+  with up to three Cascades that are not closely related to it (no parent, child or
+  sibling). In each comparison, a third Cascade, closely related to neither of the two,
+  judges blind.
 - **Fitness.** Fitness = 0.8 · solved rate + 0.2 · judging skill − cost. The cost counts
   answer and thinking tokens (0.01 fitness per 1000 tokens per puzzle). It also counts a
   fixed price per model call.
@@ -92,19 +93,22 @@ belongs to the resume too; `brut-breed` prints the matching command.
 - `--resume` may change only `--generations`, `--max-calls`, `--max-seconds` and
   `--llm-answers`. Everything else defines the experiment; the Run refuses it with exit
   code 2.
-- Before the first call of a generation or of the Select phase, `brut-breed` writes a
-  checkpoint that reserves its worst-case number of calls. If the process ends hard
-  (kill, crash, power loss), the resume counts that reservation as spent, because the
-  real number was lost with the process. So `max_calls` holds even then. In the worst
-  case, one generation counts twice.
+- Before the first call of a generation, `brut-breed` writes a checkpoint that
+  reserves its worst-case number of calls. In the Select phase, this happens before
+  each Cascade it scores. If the process ends hard (kill, crash, power loss), the resume
+  counts the reservation of the interrupted work as spent, because the real number was
+  lost with the process. So `max_calls` holds even then.
+- Each hard end charges this reservation once more; repeated hard ends add up. If a Run
+  is close to `max_calls`, the resume after a hard end may need a larger
+  `--max-calls`.
 - Only one process at a time holds `<lauf>/LOCK`. A second one exits with code 2.
 - A resume refused before its first write (for example because the settings do not
   match or the Select phase no longer fits the budget) changes neither the log, the
   checkpoint, the settings, the report nor the promotion.
 - Only right before its first write does the Run take over the new settings. Then it
-  drops the events after the last checkpoint, a half-written last line included, and
-  removes `report.json` and `promote/` until the Select phase is finished again.
-  Earlier finalists stay in the log as history. A Run that was already finished gives
+  drops the events after the last checkpoint, a half-written last line included. It
+  removes `report.json` until the Select phase is finished again, and `promote/`, which
+  only a new `--promote` creates again. Earlier finalists stay in the log as history. A Run that was already finished gives
   the same report on resume, with no new calls and no new events.
 - A stopped Select phase keeps its answers. The resume scores only the missing puzzles,
   so a stop never costs a second Select round.
@@ -120,7 +124,9 @@ them. The CI accepts only files under `candidates/`. It checks each Cascade with
 `brut-ingest --cascades`. A human merges the pull request. Only then does the Cascade
 join the candidate pool (ADR 0004). `--promote` needs a finished Run whose `report.json`
 matches the last finalists in the verified log. `--verify` checks the hash chain, the
-checkpoint's anchor, the settings and the report.
+checkpoint's anchor and the settings. It recomputes the report of a finished Run from
+the checkpoint, without a model call; for older Runs it only compares the finalists with
+the log. `--verify` needs no write access.
 
 ## 7. Measurement in the container
 
@@ -137,7 +143,7 @@ to 1. Run time is the wall-clock time of the process, checkpoints included.
 |---|---|---|---|---|---|---|---|---|
 | 1 | 20/40 | 0.566 | 0.400 | 0.300 | +0.100 | 8 645 | 477 | 0.33 s |
 | 2 | 30/40 | 0.745 | 0.825 | 0.300 | +0.525 | 8 496 | 488 | 0.26 s |
-| 3 | 25/40 | 0.657 | 0.525 | 0.325 | +0.200 | 6 980 | 492 | 0.24 s |
+| 3 | 25/40 | 0.656 | 0.525 | 0.325 | +0.200 | 6 980 | 492 | 0.24 s |
 
 - **Lead.** In all three seeds, the best bred finalist beats the best seed Cascade on the
   Select panel. The search never saw this panel. The lead is 0.100 to 0.525 in solved

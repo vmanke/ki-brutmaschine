@@ -29,8 +29,9 @@ die Begriffe in `CONTEXT.md`, die offenen Arbeiten in `.scratch/kaskaden-zucht/`
   Kinder: Er verbessert eine Kaskade oder verbindet zwei. Seine Antworten werden
   gespeichert und wiedergegeben (ADR 0002).
 - **Bewerten.** Jedes Kind löst alle Rätsel des Such-Panels. Danach vergleicht es sich
-  mit bis zu drei nicht verwandten Kaskaden, und eine dritte, mit keiner der beiden
-  verwandte Kaskade urteilt blind.
+  mit bis zu drei Kaskaden, die nicht eng mit ihm verwandt sind (weder Elter noch Kind
+  noch Geschwister). Eine dritte, mit keiner der beiden eng verwandte Kaskade urteilt
+  blind.
 - **Fitness.** Fitness = 0.8 · Lösungsquote + 0.2 · Urteilskraft − Kosten. Die Kosten
   zählen Antwort- und Denk-Tokens (0.01 Fitness je 1000 Tokens je Rätsel) und einen
   festen Preis je Modellaufruf.
@@ -93,20 +94,24 @@ Antworten mit `--llm-answers <ordner>` woanders, gehört die Option auch zum For
 - `--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
   `--llm-answers` ändern. Alles andere legt das Experiment fest; der Lauf lehnt es mit
   Exit-Code 2 ab.
-- Vor dem ersten Aufruf einer Generation oder der Auswahlphase schreibt `brut-breed`
-  einen Checkpoint, der deren schlimmsten Verbrauch an Aufrufen zurücklegt. Endet der
-  Prozess hart (Kill, Absturz, Stromausfall), zählt das Fortsetzen diese Rücklage als
+- Vor dem ersten Aufruf einer Generation schreibt `brut-breed` einen Checkpoint, der
+  deren schlimmsten Verbrauch an Aufrufen zurücklegt. In der Auswahlphase geschieht
+  das vor jeder Kaskade, die sie bewertet. Endet der Prozess hart (Kill, Absturz,
+  Stromausfall), zählt das Fortsetzen die Rücklage der unterbrochenen Arbeit als
   verbraucht, denn die wahre Zahl ging mit dem Prozess verloren. So hält `max_calls`
-  auch dann. Im schlimmsten Fall zählt eine Generation doppelt.
+  auch dann.
+- Jedes harte Ende zählt diese Rücklage einmal mehr; mehrere harte Enden summieren
+  sich. Liegt ein Lauf nahe an `max_calls`, braucht das Fortsetzen nach einem harten
+  Ende womöglich ein größeres `--max-calls`.
 - Nur ein Prozess zugleich hält `<lauf>/LOCK`. Ein zweiter endet mit Exit-Code 2.
 - Ein Fortsetzen, das vor seinem ersten Schreiben abgelehnt wird (etwa weil die
   Einstellungen nicht passen oder die Auswahlphase nicht mehr ins Budget passt), ändert
   weder Protokoll noch Checkpoint, Einstellungen, Bericht oder Beförderung.
 - Erst unmittelbar vor dem ersten Schreiben übernimmt der Lauf die neuen Einstellungen.
   Dann verwirft er die Ereignisse nach dem letzten Checkpoint, auch eine halb
-  geschriebene letzte Zeile, und entfernt `report.json` und `promote/`, bis die
-  Auswahlphase wieder fertig ist. Frühere Finalisten bleiben im Protokoll als
-  Geschichte. Ein schon fertiger Lauf liefert beim Fortsetzen denselben Bericht, ohne
+  geschriebene letzte Zeile. Es entfernt `report.json`, bis die Auswahlphase wieder
+  fertig ist, und `promote/`, das nur ein neues `--promote` wieder anlegt. Frühere
+  Finalisten bleiben im Protokoll als Geschichte. Ein schon fertiger Lauf liefert beim Fortsetzen denselben Bericht, ohne
   neue Aufrufe und ohne neue Ereignisse.
 - Eine gestoppte Auswahlphase behält ihre Antworten. Das Fortsetzen bewertet nur die
   fehlenden Rätsel; ein Stopp kostet also nie eine zweite Auswahlrunde.
@@ -121,8 +126,10 @@ Antworten mit `--llm-answers <ordner>` woanders, gehört die Option auch zum For
 `candidates/` zu und prüft jede Kaskade mit `brut-ingest --cascades`. Ein Mensch mergt;
 erst dann gehört die Kaskade zum Topf (ADR 0004). `--promote` verlangt einen fertigen
 Lauf, dessen `report.json` zu den letzten Finalisten im geprüften Protokoll passt.
-`--verify` prüft die Hash-Kette, den Anker des Checkpoints, die Einstellungen und den
-Bericht.
+`--verify` prüft die Hash-Kette, den Anker des Checkpoints und die Einstellungen. Den
+Bericht eines fertigen Laufs rechnet es ohne Modellaufruf aus dem Checkpoint nach; bei
+älteren Läufen vergleicht es nur die Finalisten mit dem Protokoll. `--verify` braucht
+kein Schreibrecht.
 
 ## 7. Messung im Container
 
@@ -136,7 +143,7 @@ die frühere. Die Laufzeit ist die Wanduhrzeit des Prozesses samt Checkpoints.
 |---|---|---|---|---|---|---|---|---|
 | 1 | 20/40 | 0.566 | 0.400 | 0.300 | +0.100 | 8 645 | 477 | 0.33 s |
 | 2 | 30/40 | 0.745 | 0.825 | 0.300 | +0.525 | 8 496 | 488 | 0.26 s |
-| 3 | 25/40 | 0.657 | 0.525 | 0.325 | +0.200 | 6 980 | 492 | 0.24 s |
+| 3 | 25/40 | 0.656 | 0.525 | 0.325 | +0.200 | 6 980 | 492 | 0.24 s |
 
 - **Vorsprung.** In allen drei Seeds liegt der beste gezüchtete Finalist auf dem
   Auswahl-Panel, welches die Suche nie gesehen hat, vor dem besten Startprogramm, um

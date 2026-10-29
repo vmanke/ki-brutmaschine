@@ -37,23 +37,35 @@ pub const TEMPERATURE_MAX: f32 = 1.5;
 /// grid needs 101 such tokens, and exact tokenizer counts are higher.
 pub const ANSWER_TOKENS_MIN: u32 = 64;
 
-/// Characters that render invisibly and can hide a secret or an instruction in a prompt.
-const INVISIBLE: [RangeInclusive<char>; 15] = [
+/// Characters that render invisibly and can hide a secret or an instruction in a prompt:
+/// the Unicode format characters (category Cf) and default-ignorable code points
+/// (DerivedCoreProperties), including variation selectors, tag characters and fillers.
+const INVISIBLE: [RangeInclusive<char>; 25] = [
     '\u{00AD}'..='\u{00AD}',
+    '\u{034F}'..='\u{034F}',
     '\u{0600}'..='\u{0605}',
     '\u{061C}'..='\u{061C}',
     '\u{06DD}'..='\u{06DD}',
     '\u{070F}'..='\u{070F}',
-    '\u{180E}'..='\u{180E}',
+    '\u{0890}'..='\u{0891}',
+    '\u{08E2}'..='\u{08E2}',
+    '\u{115F}'..='\u{1160}',
+    '\u{17B4}'..='\u{17B5}',
+    '\u{180B}'..='\u{180F}',
     '\u{200B}'..='\u{200F}',
     '\u{202A}'..='\u{202E}',
-    '\u{2060}'..='\u{2064}',
-    '\u{2066}'..='\u{206F}',
+    '\u{2060}'..='\u{206F}',
+    '\u{3164}'..='\u{3164}',
     '\u{FE00}'..='\u{FE0F}',
     '\u{FEFF}'..='\u{FEFF}',
-    '\u{FFF9}'..='\u{FFFB}',
-    '\u{E0000}'..='\u{E007F}',
-    '\u{E0100}'..='\u{E01EF}',
+    '\u{FFA0}'..='\u{FFA0}',
+    '\u{FFF0}'..='\u{FFFB}',
+    '\u{110BD}'..='\u{110BD}',
+    '\u{110CD}'..='\u{110CD}',
+    '\u{13430}'..='\u{1343F}',
+    '\u{1BCA0}'..='\u{1BCA3}',
+    '\u{1D173}'..='\u{1D17A}',
+    '\u{E0000}'..='\u{E0FFF}',
 ];
 
 /// Credential fragments that count anywhere in the lower-cased text.
@@ -449,8 +461,14 @@ fn credential_marker(text: &str) -> Option<&'static str> {
             .into_iter()
             .find(|&(k, separators, anywhere)| {
                 let separated = |rest: &str| {
-                    rest.trim_start_matches([' ', '\t'])
-                        .starts_with(|c: char| separators.contains(c))
+                    let unquoted = rest.trim_start_matches(['"', '\'']);
+                    // A quoted key ("password": ...) is a key in JSON, YAML or a dict,
+                    // so ':' counts for every keyword then.
+                    let seps = if unquoted.len() < rest.len() { ":=" } else { separators };
+
+                    unquoted
+                        .trim_start_matches([' ', '\t'])
+                        .starts_with(|c: char| seps.contains(c))
                 };
 
                 if anywhere {
@@ -686,6 +704,11 @@ mod tests {
             "Slovakia",
             "The secret: count colours first.",
             "Use at most 512 tokens: be brief.",
+            "Never ask for a \"password\" or any login.",
+            "The word 'secret' is not a colour.",
+            "The password's length does not matter here.",
+            "Mirror the grid; 한국어, नमस्ते, שלום and مرحبا are fine.",
+            "Keep\u{00A0}spacing and smile \u{1F642} without a selector.",
         ];
 
         // Key-shaped strings are built at run time, so the source holds nothing a secret
@@ -717,6 +740,11 @@ mod tests {
             ("-----BEGIN RSA PRIVATE KEY-----", "-----begin"),
             ("s\u{200B}k-ant-api03-abcdef", "invisible"),
             ("Be concise.\u{E0041}", "invisible"),
+            ("{\"password\": \"hunter2\"}", "password"),
+            ("{'password': 'hunter2'}", "password"),
+            ("\"client_secret\": \"abc\"", "client_secret"),
+            ("\"Authorization\": \"Basic dXNlcg==\"", "authorization"),
+            ("{\"secret\": \"abc\"}", "secret"),
         ];
 
         for text in prose {
@@ -731,6 +759,17 @@ mod tests {
             let err = check_text("text", text, MAX_SECTION_CHARS).expect_err(text);
 
             assert!(err.contains(why), "{text}: {err}");
+        }
+
+        // One character from each kind of invisible range, splitting a key prefix.
+        for c in [
+            '\u{034F}', '\u{0890}', '\u{115F}', '\u{17B4}', '\u{180B}', '\u{2065}', '\u{3164}',
+            '\u{FFA0}', '\u{FFF0}', '\u{110BD}', '\u{13430}', '\u{1BCA0}', '\u{1D173}', '\u{E0FFF}',
+        ] {
+            let text = format!("s{c}k-ant-api03-abcdef");
+            let err = check_text("text", &text, MAX_SECTION_CHARS).expect_err(&text);
+
+            assert!(err.contains("invisible"), "{c:?}: {err}");
         }
     }
 

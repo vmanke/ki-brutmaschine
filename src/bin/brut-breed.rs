@@ -21,9 +21,10 @@
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
 //!
-//! Crash safety: before a generation or the select phase makes its first call, the
-//! checkpoint reserves its worst-case calls; a resume after a kill counts them as spent,
-//! so `max_calls` holds even then. One process at a time holds `<dir>/LOCK`.
+//! Crash safety: before a generation makes its first call, and before each Cascade the
+//! select phase scores, the checkpoint reserves the worst-case calls of that work; a
+//! resume after a kill counts them as spent, so `max_calls` holds even then. One writer
+//! at a time holds `<dir>/LOCK` (--verify shares it).
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
@@ -347,7 +348,9 @@ fn run() -> Result<i32> {
     }
 
     // Held until the process ends; the OS releases it even when the process is killed.
-    let _lock = lock_run(&out)?;
+    // --verify only reads, so it shares the lock (verifies run side by side, never while
+    // a writer writes) and works on a read-only run directory too.
+    let _lock = lock_run(&out, !args.contains_key("verify"))?;
 
     if args.contains_key("verify") {
         return verify(&out);
@@ -538,24 +541,50 @@ fn checkpoint(out: &Path, snapshot: Snapshot, log: &Log) -> Result<()> {
     write_atomic(&out.join(SNAPSHOT), serde_json::to_string(&cp)?.as_bytes())
 }
 
-/// Take `<out>/LOCK` exclusively for the life of the process, so two processes never
-/// write one run (or read it while it is written). The OS releases the lock when the
-/// process ends, also when it is killed.
-fn lock_run(out: &Path) -> Result<File> {
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(out.join(LOCK))?;
+/// Take `<out>/LOCK` for the life of the process, so two processes never write one run
+/// (or read it while it is written): exclusively to write, shared to read. The OS
+/// releases the lock when the process ends, also when it is killed. A reader that can
+/// neither open nor create LOCK (a read-only copy of a run) goes on without it.
+fn lock_run(out: &Path, write: bool) -> Result<Option<File>> {
+    let path = out.join(LOCK);
+    let opened = if write {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+    } else {
+        File::open(&path).or_else(|_| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+        })
+    };
+    let lock = match opened {
+        Ok(f) => f,
+        Err(_) if !write => return Ok(None),
+        Err(e) => {
+            return Err(BrutError::Invalid(format!("{}: {e}", path.display())));
+        }
+    };
+    let taken = if write {
+        lock.try_lock()
+    } else {
+        lock.try_lock_shared()
+    };
 
-    match lock.try_lock() {
-        Ok(()) => Ok(lock),
+    match taken {
+        Ok(()) => Ok(Some(lock)),
         Err(TryLockError::WouldBlock) => Err(usage(&format!(
             "another brut-breed process is using {}",
             out.display()
         ))),
-        Err(TryLockError::Error(e)) => Err(e.into()),
+        Err(TryLockError::Error(e)) => {
+            Err(BrutError::Invalid(format!("{}: {e}", path.display())))
+        }
     }
 }
 
@@ -608,29 +637,58 @@ fn logged_finalists(events: &[Event]) -> Vec<Finalist> {
         .collect()
 }
 
-/// Error unless `report` lists exactly the finalists the log holds last.
-fn check_report(report: &Report, log: &Log) -> Result<()> {
+/// Error unless `report` is what the recorded run gives. Its finalists must be the last
+/// ones in the log. When the checkpoint keeps every select-panel answer (a finished
+/// run), the whole report is recomputed from it, without a model call, and must be equal;
+/// returns whether that happened.
+fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) -> Result<bool> {
+    let mismatch = |what: &str| {
+        BrutError::Integrity(format!(
+            "report.json does not match {what}; resume the run to finish it"
+        ))
+    };
+
     if report.finalists != logged_finalists(log.events()) {
-        return Err(BrutError::Integrity(
-            "report.json does not match the finalists in the event log; resume the run to finish it"
-                .to_string(),
-        ));
+        return Err(mismatch("the finalists in the event log"));
     }
 
-    Ok(())
+    if !cp.snapshot.finished {
+        return Ok(false);
+    }
+
+    let pool = sim_pool();
+    let mut breeder = Breeder::resume(cfg.clone(), &pool, None, cp.snapshot.clone())?;
+
+    if breeder.select_need() > 0 {
+        return Ok(false);
+    }
+
+    // Every answer is kept, so nothing runs; stopping at once guards that anyway.
+    let at_once = || true;
+    let again = breeder.finish(&at_once, &report.stop_reason)?;
+
+    match again {
+        Some((r, _)) if r == *report => Ok(true),
+        _ => Err(mismatch("the report recomputed from the checkpoint")),
+    }
 }
 
 /// Check a run directory: the hash chain, the checkpoint anchor, the settings, and the
-/// report against the log.
+/// report (recomputed from the checkpoint for a finished run).
 fn verify(out: &Path) -> Result<i32> {
-    let (log, cp, _) = open_run(out)?;
-
-    if out.join(REPORT).exists() {
-        check_report(&read_json(&out.join(REPORT))?, &log)?;
-    }
+    let (log, cp, cfg) = open_run(out)?;
+    let report = if out.join(REPORT).exists() {
+        if check_report(&read_json(&out.join(REPORT))?, &log, &cp, &cfg)? {
+            "; report recomputed and equal"
+        } else {
+            "; report finalists match the log"
+        }
+    } else {
+        ""
+    };
 
     println!(
-        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match",
+        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}",
         log.len,
         log.head(),
         cp.log_len
@@ -726,7 +784,7 @@ fn promote(out: &Path) -> Result<i32> {
 
     let report: Report = read_json(&out.join(REPORT))?;
 
-    check_report(&report, &log)?;
+    check_report(&report, &log, &cp, &cfg)?;
 
     let mut finalists: Vec<_> = report.finalists.iter().filter(|f| !f.is_seed).collect();
 

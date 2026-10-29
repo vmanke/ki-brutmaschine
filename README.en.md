@@ -13,9 +13,9 @@ Status: built with the simulated model (PR #8); real models follow. Described in
 Here the Brutmaschine breeds **Cascades** of language-model **Workers**. A Worker is a
 model with a system prompt and **Traits** (thinking budget, temperature, answer length,
 self-check). A Cascade has one to four Stages, with one to three Workers each. Every
-Cascade is also a judge. It judges the answers of other, unrelated Cascades blind. The
-Brutmaschine chooses parents the way the Darwin Gödel Machine does. Claude can write new
-Cascades as the **Mutator**.
+Cascade is also a judge. It judges the answers of other Cascades blind, never those of
+a parent, child or sibling. The Brutmaschine chooses parents the way the Darwin Gödel
+Machine does. Claude can write new Cascades as the **Mutator**.
 
 The same rule holds here: candidates are data. A Cascade is JSON. Its prompt is sent to a
 model and never executed. There is no language model in the container. The Workers use a

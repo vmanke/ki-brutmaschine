@@ -396,8 +396,9 @@ Hier züchtet die Brutmaschine **Kaskaden** aus Sprachmodell-**Workern**. Ein Wo
 ist ein Modell mit einem Systemprompt und mit **Traits** (Denkbudget, Temperatur,
 Antwortlänge, Selbstprüfung). Eine Kaskade hat ein bis vier Stufen mit je ein bis drei
 Workern. Jede Kaskade ist zugleich Auswerter: Sie urteilt blind über die Antworten
-anderer, nicht verwandter Kaskaden. Die Eltern wählt die Brutmaschine wie die
-Darwin-Gödel-Maschine. Claude kann als **Mutator** neue Kaskaden schreiben.
+anderer, nicht eng verwandter Kaskaden (weder Elter noch Kind noch Geschwister). Die
+Eltern wählt die Brutmaschine wie die Darwin-Gödel-Maschine. Claude kann als
+**Mutator** neue Kaskaden schreiben.
 
 Auch hier gilt: Kandidaten sind Daten. Eine Kaskade ist JSON; ihr Prompt wird an ein
 Modell geschickt, nie ausgeführt. Im Container gibt es kein Sprachmodell; die Worker

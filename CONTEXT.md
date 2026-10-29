@@ -131,7 +131,7 @@ How often a Cascade picks the right answer of a pair whose truth is known, with 
 _Avoid_: judge score, reliability
 
 **Peer rating**:
-A Cascade's weighted Bradley-Terry rating from blind pairwise judgments by unrelated Cascades; it breaks fitness ties and chooses crossover partners, and never replaces the solved rate.
+A Cascade's weighted Bradley-Terry rating from blind pairwise judgments by Cascades that are no parent, child or sibling of either judged Cascade; it breaks fitness ties and chooses crossover partners, and never replaces the solved rate.
 _Avoid_: Elo (it is not one), reputation
 
 **Mutator**:

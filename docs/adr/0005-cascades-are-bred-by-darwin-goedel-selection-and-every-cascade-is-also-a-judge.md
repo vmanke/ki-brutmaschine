@@ -11,9 +11,9 @@ session of 2026-10-29 (questions Q1 to Q23).
 
 **Every Cascade is also a judge.** Inside a stage, Workers that disagree judge each
 other's answers blind, pair by pair, and the answer with the most wins goes on. Across the
-archive, each new Cascade is compared with up to three unrelated Cascades on puzzles where
-their answers differ, and a third Cascade, related to neither (no parent, child or
-sibling; more distant relatives may judge), judges blind. New Cascades are the preferred
+archive, each new Cascade is compared with up to three Cascades that are no parent, child
+or sibling of it, on puzzles where their answers differ, and a third Cascade, related to
+neither in that sense (more distant relatives may judge), judges blind. New Cascades are the preferred
 judges, the least used first. Where exactly one answer is right, the judgment is scored,
 and a reply without a usable verdict counts as wrong; this measures each Cascade's
 **judging skill** u = (correct + 1) / (judged + 2), and a Cascade whose judgments are
@@ -45,10 +45,12 @@ think anew), but never loosen them; temperature (0 to 1.5) and answer tokens (64
 ceiling and a price, selection drives thinking up, because deeper thinking solves more;
 then the control Traits are meant to give is lost.
 
-**The call budget holds across crashes.** Before a generation or the select phase makes
-its first Worker call, the run's checkpoint reserves its worst-case number of calls; a
-resume after a kill or crash counts that reservation as spent, because the real count
-died with the process. One process at a time holds the run directory. A resume refused
+**The call budget holds across crashes.** Before a generation makes its first Worker
+call, and before each Cascade the select phase scores, the run's checkpoint reserves the
+worst-case number of calls of that work; a resume after a kill or crash counts that
+reservation as spent, because the real count died with the process. Each hard end
+charges once more, so repeated crashes add up and a run near its cap may need a larger
+max_calls to finish. One process at a time holds the run directory. A resume refused
 before its first write changes none of the run's records, and a stopped select phase
 keeps the answers it already paid for.
 

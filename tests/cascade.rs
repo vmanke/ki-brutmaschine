@@ -234,9 +234,21 @@ fn breed_runs_are_reproducible_across_processes_and_verifiable() {
     assert!(verify_fails(&head), "a cut log must fail");
     assert!(verify_fails(&torn), "a torn last line must fail");
 
-    // A report that does not match the logged finalists fails.
+    // The report of a finished run is recomputed from the checkpoint: a changed headline
+    // number fails as well as changed finalists.
     std::fs::write(a.join("events.jsonl"), &ea).expect("restore");
-    ok(&breed(&["--out", a.to_str().expect("path"), "--verify"]));
+
+    let checked = breed(&["--out", a.to_str().expect("path"), "--verify"]);
+
+    ok(&checked);
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("report recomputed and equal"));
+
+    let mut r = report(&a);
+
+    r["best_finalist_select_rate"] = serde_json::json!(0.99);
+    std::fs::write(a.join("report.json"), serde_json::to_string_pretty(&r).expect("json")).expect("tamper");
+    assert_eq!(breed(&["--out", a.to_str().expect("path"), "--verify"]).status.code(), Some(1));
+    std::fs::write(a.join("report.json"), &ra).expect("restore report");
     tamper_report(&a);
     assert_eq!(breed(&["--out", a.to_str().expect("path"), "--verify"]).status.code(), Some(1));
 
@@ -382,19 +394,78 @@ fn a_finished_run_resumes_without_change_and_a_refused_resume_touches_nothing() 
     assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
     assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
 
-    // A resume refused only when the select phase meets the budget (calls are already
-    // spent, so max_calls 1 cannot fit) still changes nothing: not the report, not the
-    // promotion, not the settings.
-    ok(&breed(&["--out", path, "--promote"]));
-    assert_eq!(breed(&["--out", path, "--resume", "--max-calls", "1"]).status.code(), Some(1));
+    // A finished run needs no call to report again, so even max_calls 1 (below the calls
+    // already spent) gives the same report and the same log.
+    ok(&breed(&["--out", path, "--resume", "--max-calls", "1"]));
     assert_eq!(std::fs::read(dir.join("events.jsonl")).expect("log"), log);
     assert_eq!(std::fs::read(dir.join("report.json")).expect("report"), rep);
-    assert_eq!(std::fs::read_to_string(dir.join("config.json")).expect("config"), config);
-    assert!(dir.join("promote").join("proposal.json").exists());
 
     // Promotion needs a report that matches the log.
+    ok(&breed(&["--out", path, "--promote"]));
     tamper_report(&dir);
     assert_eq!(breed(&["--out", path, "--promote"]).status.code(), Some(1));
+}
+
+/// Next generation and reserved calls of the stored checkpoint.
+fn progress(dir: &Path) -> (u64, u64) {
+    std::fs::read_to_string(dir.join("snapshot.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .map(|v| {
+            let s = &v["snapshot"];
+
+            (
+                s["next_generation"].as_u64().unwrap_or(0),
+                s["reserved"].as_u64().unwrap_or(0),
+            )
+        })
+        .unwrap_or((0, 0))
+}
+
+#[test]
+fn a_resume_refused_by_the_select_budget_changes_nothing() {
+    // A short generation 0 and a long select phase, so the kill lands in the select phase.
+    let dir = fresh("select-kill");
+    let path = dir.to_str().expect("path");
+    let mut child = Command::new(BREED)
+        .args(["--out", path, "--generations", "0", "--search", "12", "--select", "20000"])
+        .args(["--max-calls", "1000000"])
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn");
+
+    assert!(
+        wait_for(120, || {
+            let (next, reserved) = progress(&dir);
+
+            next == 1 && reserved > 0
+        }),
+        "the select phase reserved its first Cascade"
+    );
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+
+    let (_, reserved) = progress(&dir);
+    let read = |name: &str| std::fs::read(dir.join(name)).expect(name);
+    let before = ["snapshot.json", "config.json", "events.jsonl"].map(read);
+    let calls = serde_json::from_slice::<serde_json::Value>(&before[0]).expect("json")["snapshot"]["calls"]
+        .as_u64()
+        .expect("calls");
+
+    assert!(reserved > 0, "killed inside the select phase");
+
+    // The cap leaves no room for the scoring still to do: refused before any write.
+    let cap = (calls + reserved).to_string();
+
+    assert_eq!(breed(&["--out", path, "--resume", "--max-calls", &cap]).status.code(), Some(1));
+    assert_eq!(["snapshot.json", "config.json", "events.jsonl"].map(read), before);
+    assert!(!dir.join("report.json").exists());
+
+    // With the recorded cap, the resume scores the rest and finishes.
+    ok(&breed(&["--out", path, "--resume"]));
+    assert!(dir.join("report.json").exists());
+    ok(&breed(&["--out", path, "--verify"]));
 }
 
 #[test]
