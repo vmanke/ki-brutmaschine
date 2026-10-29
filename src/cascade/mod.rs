@@ -8,7 +8,10 @@
 #![forbid(unsafe_code)]
 
 pub mod arena;
+pub mod circuit;
+pub mod circuit_genes;
 pub mod circuit_text;
+pub mod designer;
 pub mod domain;
 pub mod genome;
 pub mod observe;
