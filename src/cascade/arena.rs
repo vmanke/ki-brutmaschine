@@ -794,7 +794,9 @@ pub struct Snapshot<A = Grid> {
     #[serde(default)]
     pub reserved: u64,
     /// Answers on the select panel so far, so a stopped select phase never pays twice.
-    #[serde(default)]
+    /// Empty when absent. The empty map is named directly: a plain `default` would make
+    /// serde require `A: Default`, which a domain's answer type need not have.
+    #[serde(default = "BTreeMap::new")]
     pub select_answers: SelectAnswers<A>,
     /// True when the select phase finished on this archive and returned its events.
     #[serde(default)]
@@ -3556,5 +3558,65 @@ mod tests {
         assert_eq!(snap.calls, b.calls_used());
         assert_eq!(stored.len(), 1);
         assert!(stored[0].reserved >= b.calls_used());
+    }
+
+    /// An answer type without a `Default`, which the `Domain` trait allows.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Label(String);
+
+    #[test]
+    fn a_snapshot_reads_back_for_answers_without_a_default() {
+        let (_, cascade) = seed_cascades().swap_remove(0);
+        let member = Member {
+            id: cascade.id(),
+            cascade,
+            parents: Vec::new(),
+            op: Op::Seed,
+            generation: 0,
+            answers: vec![Some(Label("a".to_string())), None],
+            solved: 1,
+            quality: None,
+            usage: Usage::default(),
+            children: 0,
+            judge_correct: 0,
+            judge_wrong: 0,
+            fitness: 0.5,
+            rating: 0.0,
+        };
+        let mut snap = Snapshot {
+            config_hash: "h".to_string(),
+            next_generation: 1,
+            archive: vec![member],
+            comparisons: Vec::new(),
+            calls: 2,
+            mutator_answers: 0,
+            reserved: 0,
+            select_answers: BTreeMap::new(),
+            finished: false,
+        };
+
+        snap.select_answers
+            .entry(snap.archive[0].id.clone())
+            .or_default()
+            .insert("t".to_string(), Some(Label("b".to_string())));
+
+        // This compiles only while reading a snapshot asks nothing more of the answer
+        // type than the `Domain` trait promises.
+        let json = serde_json::to_string(&snap).expect("json");
+        let back: Snapshot<Label> = serde_json::from_str(&json).expect("back");
+
+        assert_eq!(back, snap);
+
+        // A snapshot without select answers, as written before they were kept, has none.
+        let mut old: serde_json::Value = serde_json::from_str(&json).expect("value");
+
+        old.as_object_mut()
+            .expect("object")
+            .remove("select_answers");
+
+        let back: Snapshot<Label> = serde_json::from_value(old).expect("old");
+
+        assert!(back.select_answers.is_empty());
+        assert_eq!(back.archive, snap.archive);
     }
 }
