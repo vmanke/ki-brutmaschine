@@ -27,6 +27,12 @@ lernt. Die Brutmaschine misst, wie gut so ein Programm *neue Arten* von
 Aufgaben lernt, die die Suche nie gesehen hat. Der MLP-Modus bleibt dabei
 unverändert. Einzelheiten stehen unten im Abschnitt „Lerner-Modus“.
 
+Seit Stufe 2c züchtet die Brutmaschine außerdem **Kaskaden** aus Sprachmodell-Workern,
+die einander blind bewerten. Schritt 1, der gerade entsteht, öffnet diese Zucht für eine
+zweite Aufgabenart: Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
+Beides beschreiben die Abschnitte „Kaskaden-Zucht (Stufe 2c)“ und „Universen, die
+erfinden (Schritt 1)“.
+
 ## Was die Brutmaschine nicht ist
 
 - **Kein selbstverändernder Code.** Ein Kandidat ist reine Daten (ein
@@ -387,7 +393,8 @@ Archiv ist es eine Hash-Kette.
 
 ## Kaskaden-Zucht (Stufe 2c)
 
-Stand: gebaut mit dem simulierten Modell (PR #8); echte Modelle folgen. Englische
+Stand: gebaut mit dem simulierten Modell (PR #8); die Funde zweier Gegenprüfungen sind
+behoben (PR #10 und #11); echte Modelle folgen. Englische
 Fassung: [README.en.md](README.en.md). Beschrieben in
 [docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md) und
 [ADR 0005](docs/adr/0005-cascades-are-bred-by-darwin-goedel-selection-and-every-cascade-is-also-a-judge.md).
@@ -443,6 +450,83 @@ hart (Kill, Absturz), zählt das Fortsetzen diese Rücklage als verbraucht, soda
 `--max-calls` auch dann hält. Einzelheiten stehen in
 [docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md), Abschnitt 5.
 
+Seit Schritt 1 schreibt jeder Lauf nach jeder festgeschriebenen Generation eine
+`state`-Zeile ins Protokoll. Sie enthält sechs Kennzahlen des „Universums“: Leistung,
+Vielfalt (mit der Shannon-Entropie der Bausteine), Abstammung, Ehrlichkeit, Richter und
+Kosten. Die Zeile hängt nur vom festgeschriebenen Zustand ab. Darum ist sie nach Not-Aus
+und Fortsetzen dieselbe wie bei einem durchgehenden Lauf. Die Laufzeit je Generation
+steht in `timings.jsonl`; diese Datei gehört nicht zum geprüften Protokoll.
+
+```sh
+# Kontrollarm: Eltern gleichverteilt statt nach Darwin-Gödel wählen
+./target/release/brut-breed --out runs/k2 --seed 1 --generations 10 --selection uniform
+```
+
+`--domain` und `--selection` legen das Experiment fest; ein Fortsetzen lehnt sie ab.
+`--domain grid` ist die Voreinstellung. `--domain circuits` lehnt das Programm bis zur
+Integration von Schritt 1 als Bedienfehler ab. `--verify` rechnet den Bericht eines
+fertigen Laufs ohne Modellaufruf aus dem Checkpoint nach, auch seinen Stoppgrund.
+
+## Universen, die erfinden (Schritt 1)
+
+Stand: in Arbeit. Spezifikation:
+[.scratch/universum-erfinden/spec.md](.scratch/universum-erfinden/spec.md), mit den
+Tickets in `.scratch/universum-erfinden/issues/`. Schritt 1 umfasst die Tickets 01 bis 03.
+
+Die Zucht soll vor allem **erfinden**: Artefakte, die ein exakter Prüfer als richtig
+bestätigt, die eine vorab festgelegte Referenz übertreffen und die neu sind. Das erste
+Feld sind Quantenschaltungen aus den Gattern H, S, S†, T, T†, X, Z und CNOT. Schritt 1
+misst zunächst als Positivkontrolle, ob die Zucht die bekannten besten T- und
+CNOT-Zahlen wiederentdeckt, die ihre Startprogramme verfehlen.
+
+Auf `main` liegt bereits:
+
+- **Universums-Kennzahlen** (Ticket 01): die `state`-Zeile je Generation, siehe oben.
+- **Eine Zucht für jede Aufgabenart:** Die Bewerterseite einer Aufgabenart (`Domain`)
+  sieht nie eine Kaskade; die Züchterseite (`GenePool`) liefert Startprogramme,
+  Satzbausteine, den Auftrag an den Mutator und eine Aufnahmeregel. Gitter-Rätsel und
+  Schaltungen nutzen dieselbe Zuchtschleife. Gitter-Läufe bleiben bis auf die
+  `state`-Zeile byte-gleich; ein Golden-Test hält das fest.
+- **Exakter Simulator** (Ticket 02, `src/cascade/qubit.rs`): Er speichert Amplituden
+  exakt als x/√2^k mit x in Z[ω], ω = e^(iπ/4), in 64-Bit-Ganzzahlen. „Richtig“ heißt
+  exakt gleich bis auf eine globale Phase; die Fidelity wird nur berichtet. Grenzen:
+  12 Qubits für Zustände, 6 für ganze Unitaries, 256 Gatter und 120 H-Gatter.
+- **Schaltungs-Aufgaben** (Ticket 03, `src/cascade/circuit.rs`): 11 Ziele mit T- und
+  CNOT-Zahlen aus der Literatur: CZ, SWAP, CS, CH, QFT2, CCZ, Toffoli, Peres, Fredkin,
+  RTOF und CCiX. Jede Zahl trägt ihren Status: bewiesen, abgeleitet oder bester
+  bekannter Wert.
+  - Eine Aufgabe ist ein verkleidetes Ziel: Die Qubits sind umbenannt, an Ein- und
+    Ausgängen stehen X-Gatter. Ein Prompt nennt nie den Namen eines Ziels.
+  - Bewertet wird zuerst die Richtigkeit, dann die T-Anzahl, dann die CNOT-Anzahl.
+  - Eine exakte Antwort unter einer bewiesenen oder abgeleiteten Schranke stoppt den Lauf
+    als Integritätsalarm.
+  - Eine exakte Antwort unter einem besten bekannten Wert wird als Erfindungskandidat
+    festgehalten, mit `literature_checked = false`, bis ein Mensch die Literatur geprüft
+    hat.
+- **Positivkontrolle** (`src/cascade/designer.rs`, `src/cascade/circuit_genes.rs`): ein
+  simulierter Schaltungs-Entwerfer unter den Modellnamen `sim:small` und `sim:large`.
+  Die Methoden, die ein Systemprompt nennt, schalten seine Syntheseverfahren frei; er
+  kennt keine Schaltung und keine Zielliste. Die vier Startprogramme erreichen nur SWAP
+  und CS. Ein starker Prompt erreicht alle 11 Referenzwerte. Seine Zahlen sagen nichts
+  über echte Modelle.
+- **Zweiter Simulator** (`src/quantum.rs`, PR #12): ein Gleitkomma-Simulator mit
+  Fidelity-Schwelle. Mit der Integration soll er als unabhängige Gegenprobe zum exakten
+  Simulator dienen. Bis dahin prüfen die Tests den exakten Simulator gegen einen eigenen
+  Gleitkomma-Simulator in seinem Testmodul.
+
+Noch offen ist die Integration: Schaltungs-Läufe mit `brut-breed --domain circuits`, die
+Wiederentdeckungs-Auswertung `rediscovery.json`, ADR 0006, die Vorab-Registrierung des
+Experiments und Pilotläufe. Gezählte Läufe beginnen erst, wenn die Eigentümerin bzw. der
+Eigentümer sechs Entscheidungen bestätigt hat:
+
+1. Exakte Gleichheit entscheidet über „richtig“.
+2. Bewertet wird erst nach T-Anzahl, dann nach CNOT-Anzahl.
+3. Die Kennzahlen-Zeile steht auch in Gitter-Läufen.
+4. Schaltungs-Kaskaden werden in Schritt 1 nicht befördert.
+5. Erfolg heißt: In mindestens 9 von 10 Seeds findet die Zucht mehr als die Hälfte der
+   Ziele, die die Startprogramme verfehlen.
+6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
+
 ## Die sechs Komponenten
 
 | Komponente | Aufgabe | Dateien |
@@ -473,6 +557,23 @@ Bausteine des Lerner-Modus:
 | Nachrichtenformat | Brücke zu Stufe 2 | `src/learner/wire.rs` |
 
 Alles unter `src/learner/` ist reine Rechnung ohne Datei- oder Netzzugriff.
+
+Bausteine der Kaskaden-Zucht (Stufe 2c und Schritt 1):
+
+| Baustein | Aufgabe | Dateien |
+|---|---|---|
+| Zucht | Darwin-Gödel-Auswahl, Richterrunden, Aufrufbudget, Checkpoints | `src/cascade/arena.rs` |
+| Kaskaden und Varianten | Genom und Grenzen, Mutation und Kreuzung, Aufträge an den Mutator | `src/cascade/genome.rs`, `src/cascade/variation.rs` |
+| Gitter-Rätsel | Rätselgenerator, Prompt-Protokoll, simuliertes Modell | `src/cascade/puzzle.rs`, `src/cascade/sim.rs` |
+| Naht | Aufgabenart (`Domain`) und Gene (`GenePool`) | `src/cascade/domain.rs` |
+| Kennzahlen | die `state`-Zeile je Generation | `src/cascade/observe.rs` |
+| Qubits | exakter Simulator, Textprotokoll für Schaltungen | `src/cascade/qubit.rs`, `src/cascade/circuit_text.rs` |
+| Schaltungen | Zielbibliothek, Aufgaben, Bewertung, Wiederentdeckung | `src/cascade/circuit.rs` |
+| Positivkontrolle | simulierter Entwerfer, Startprogramme, Satzbausteine | `src/cascade/designer.rs`, `src/cascade/circuit_genes.rs` |
+| Programm | Lauf-Verzeichnis, Hash-Kette, Fortsetzen, Prüfen, Beförderung | `src/bin/brut-breed.rs` |
+
+Alles unter `src/cascade/` ist reine Rechnung ohne Datei-, Netz- oder Uhrzugriff; das
+prüft `tests/cascade.rs`.
 
 Die Einzelheiten stehen in [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md).
 
@@ -556,6 +657,11 @@ Mehr dazu, und welche Lücken es gibt, steht in
   Sie begrenzen, was überhaupt lösbar ist (siehe oben).
 - Lerner-Modus: Auch hier sind die FLOP-Zahlen aus einer festen Kostentabelle
   je Befehl gerechnet, nicht gemessen.
+- Kaskaden-Zucht: Die simulierten Modelle (`sim:small`, `sim:large`) sind
+  Positivkontrollen. Ihre Zahlen zeigen, dass die Zucht funktioniert, nicht, wie gut
+  echte Modelle wären.
+- Schritt 1: Schaltungs-Läufe sind über die Kommandozeile noch nicht möglich; das kommt
+  mit der Integration.
 
 ## Aufbau eines Lauf-Verzeichnisses (MLP-Modus)
 
@@ -611,6 +717,20 @@ Die Tests des Lerner-Modus:
   mindestens 3 000 ganze Aufgaben je Sekunde auf 4 Threads.
 - Ein Test zu den ARC-Obergrenzen läuft nur, wenn die Umgebungsvariable
   `BRUT_ARC_TEST_ROOT` auf die ARC-Daten zeigt.
+
+Die Tests der Kaskaden-Zucht:
+
+- `tests/cascade.rs` prüft die Reinheit von `src/cascade/` und macht kleine echte Läufe
+  mit `brut-breed`: gleiche Ergebnisse über Prozessgrenzen, `--verify` mit
+  manipulierten Protokollen und Berichten, Not-Aus und Fortsetzen, harte Abbrüche, die
+  Sperre und LLM-Runden.
+- `tests/universe.rs` zeigt mit Golden-Fixtures aus der Zeit vor Schritt 1, dass die neue
+  Naht Gitter-Läufe nicht verändert. Dazu prüft es die `state`-Zeilen (je Generation genau
+  eine, gleich nach Abbruch und Fortsetzen, gleich bei 1 und 4 Threads) und die neuen
+  Optionen.
+- Die Schaltungs-Bausteine haben Unit-Tests in ihren eigenen Dateien. Dazu gehören die 11
+  Literatur-Schaltungen, die bei genau ihren T- und CNOT-Zahlen exakt sein müssen, und
+  ein unabhängiger Vergleichssimulator auf 500 Zufallsschaltungen.
 
 ## Schneller rechnen (freiwillig)
 
