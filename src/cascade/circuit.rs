@@ -1709,30 +1709,26 @@ mod tests {
         let mut costly = vec![None; 6];
         let mut again = vec![None; 6];
         // The dressed witness of task i followed by gates that change neither T nor CNOT.
-        let with = |i: usize, gates: &str| {
-            Some(circuit(&format!(
-                "{}; {gates}",
-                dressed(&panel[i]).render()
-            )))
-        };
+        let with =
+            |i: usize, gates: &str| circuit(&format!("{}; {gates}", dressed(&panel[i]).render()));
 
         // A seed solves swap, then answers swap's other task exactly but with CNOT 5. It
-        // answers cs wrongly, and toffoli exactly but above the reference: first with T 11,
-        // then with T 9.
+        // answers cs wrongly, and toffoli exactly but with T 9: first with two more H
+        // gates, then without them.
         seed[0] = Some(dressed(&panel[0]));
         seed[1] = Some(circuit("X 0"));
-        seed[2] = Some(padded(&dressed(&panel[2]), 2, 0));
+        seed[2] = Some(padded(&with(2, "H 0; H 0"), 1, 0));
         seed[3] = Some(padded(&dressed(&panel[3]), 0, 1));
         seed[5] = Some(padded(&dressed(&panel[5]), 1, 0));
-        // Bred members: cs and toffoli in generation 3; toffoli at the same full cost in
-        // generation 2, listed after generation 3; an exact but costly toffoli (T 9) in
-        // generation 1, listed after both hits; and in generation 4, the seed's swap again
-        // and cs with two more H gates.
-        late[4] = Some(dressed(&panel[4]));
-        late[5] = with(5, "X 0; X 0");
-        early[5] = with(5, "Z 0; Z 0");
+        // Bred members: cs with two more H gates and toffoli in generation 3; toffoli at
+        // the same full cost in generation 2, listed after generation 3; an exact but
+        // costly toffoli (T 9) in generation 1, listed after both hits; and in
+        // generation 4, the seed's swap again and cs without the two H gates.
+        late[4] = Some(with(4, "H 0; H 0"));
+        late[5] = Some(with(5, "X 0; X 0"));
+        early[5] = Some(with(5, "Z 0; Z 0"));
         costly[2] = Some(padded(&dressed(&panel[2]), 1, 0));
-        again[1] = with(1, "H 0; H 0");
+        again[1] = Some(dressed(&panel[1]));
         again[3] = Some(dressed(&panel[3]));
 
         assert_eq!(
@@ -1741,6 +1737,15 @@ mod tests {
             "a tie in the full cost"
         );
         assert_ne!(late[5], early[5]);
+
+        // The answers of each pair agree in T and CNOT, and the later one has fewer H
+        // gates. So only the full order of `Cost` makes the later answer the cheaper one.
+        for (first, later) in [(&seed[2], &seed[5]), (&late[4], &again[1])] {
+            let (a, b) = (cost_of(first), cost_of(later));
+
+            assert_eq!((a.t, a.cnot), (b.t, b.cnot));
+            assert!(b.h < a.h && b < a, "{a:?} {b:?}");
+        }
 
         let members = [
             member("seed", 0, &seed),
@@ -1763,12 +1768,12 @@ mod tests {
         assert_eq!(swap.first_generation, Some(4));
         assert_eq!(swap.circuit, Some(dressed(&panel[3]).render()));
 
-        // The cheapest bred answer comes first, and the earliest hit too.
+        // The cheapest bred answer comes last, and the earliest hit first.
         assert!(!cs.reached_by_seed && cs.reached_by_bred);
         assert_eq!(cs.best_seed, None, "a wrong answer is no cost");
-        assert_eq!(cs.best_bred, Some(dressed(&panel[4]).cost()));
+        assert_eq!(cs.best_bred, Some(cost_of(&again[1])));
         assert_eq!(cs.first_generation, Some(3));
-        assert_eq!(cs.circuit, Some(dressed(&panel[4]).render()));
+        assert_eq!(cs.circuit, again[1].as_ref().map(Circuit::render));
 
         // Exact seed answers above the reference are no hit, and the second, cheaper one is
         // the best. The bred hits come before an exact miss, the earliest hit comes second,
@@ -1795,6 +1800,10 @@ mod tests {
         assert_eq!(swap.circuit, None);
         assert!(!found.targets[2].reached_by_bred);
         assert_eq!(found.targets[2].best_bred, Some(cost_of(&costly[2])));
+        assert_eq!(
+            found.targets[2].circuit,
+            costly[2].as_ref().map(Circuit::render)
+        );
         assert_eq!(found.targets[2].first_generation, None);
         assert_eq!((found.reached_by_bred_only, found.share), (0, Some(0.0)));
         assert!(found.calibrated && !found.passes);
