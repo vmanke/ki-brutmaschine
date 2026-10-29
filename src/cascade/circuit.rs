@@ -17,7 +17,8 @@
 //! The exact checker of `qubit.rs` decides correctness, in integers. An exact answer below
 //! a Proven or Derived number means that the checker or the reference is wrong, so it
 //! raises an integrity alarm instead of earning a score. An exact answer below a BestKnown
-//! number is an invention candidate. A human checks the literature before anyone calls it
+//! number is an invention candidate. The rediscovery count keeps the cheapest one of each
+//! target, marked as not yet checked. A human checks the literature before anyone calls it
 //! new (Q38).
 //!
 //! Pure computation: no files, no network, no clock.
@@ -735,6 +736,27 @@ pub struct Answered<'a> {
     pub answers: &'a [Option<Circuit>],
 }
 
+/// An invention candidate: an exact answer below a BestKnown number. It is no claim. A
+/// human checks the literature first, and only then may `literature_checked` become true
+/// (Q38).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Candidate {
+    /// The id of the member that gave the answer.
+    pub member: String,
+    pub generation: usize,
+    /// True when the member is a seed Cascade of generation 0.
+    pub seed: bool,
+    /// The id of the panel task the answer is for. That task holds the dressing.
+    pub task: String,
+    /// The answer as text. It implements the dressed target of its task, so the task's
+    /// dressing has to be undone before the literature check.
+    pub circuit: String,
+    pub cost: Cost,
+    /// Always false when `rediscovery` writes it: only a human sets it, after checking the
+    /// literature.
+    pub literature_checked: bool,
+}
+
 /// What a run found on one library target.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TargetOutcome {
@@ -756,14 +778,16 @@ pub struct TargetOutcome {
     pub first_generation: Option<usize>,
     /// The text of the cheapest exact bred answer. It answers its own dressed task, so it
     /// implements the dressed target of that task, not the library target as written. It
-    /// need not be the invention candidate of `below_best_known`.
+    /// need not be the invention candidate.
     pub circuit: Option<String>,
-    /// Some exact answer, of a seed or of a bred member, is below a BestKnown number: an
-    /// invention candidate that needs a human literature check (Q38). The outcome does not
-    /// keep that answer. It has to be found in the logged answers with
-    /// `Reference::below_best_known`. It implements its task's dressed target, so its
-    /// dressing has to be undone before the literature check.
+    /// Some exact answer, of a seed or of a bred member, is below a BestKnown number. True
+    /// exactly when `candidate` is Some.
     pub below_best_known: bool,
+    /// The cheapest invention candidate, of a seed or of a bred member, for the human
+    /// literature check (Q38). Only T and then CNOT decide, because the reference speaks
+    /// only of these two counts. On a tie the answer counted first stays: the earlier
+    /// member, then the earlier task. None when no exact answer is below a BestKnown number.
+    pub candidate: Option<Candidate>,
 }
 
 impl TargetOutcome {
@@ -780,16 +804,20 @@ impl TargetOutcome {
             first_generation: None,
             circuit: None,
             below_best_known: false,
+            candidate: None,
         }
     }
 
-    /// Count one exact answer `c`, with cost `cost`, of member `m`. A hit or a candidate
-    /// needs only one answer, so a later answer never clears it. On equal costs the answer
-    /// counted first stays the best.
-    fn record(&mut self, m: &Answered<'_>, c: &Circuit, cost: Cost) {
+    /// Count one exact answer `c` of member `m` on `task`, with cost `cost`. A hit or a
+    /// candidate needs only one answer, so a later answer never clears it. On equal costs
+    /// the answer counted first stays the best.
+    fn record(&mut self, m: &Answered<'_>, task: &CircuitTask, c: &Circuit, cost: Cost) {
         let solved = self.reference.reached(&cost);
 
-        self.below_best_known |= self.reference.below_best_known(&cost);
+        if self.reference.below_best_known(&cost) {
+            self.below_best_known = true;
+            self.keep_candidate(m, task, c, cost);
+        }
 
         if m.seed {
             self.reached_by_seed |= solved;
@@ -816,6 +844,28 @@ impl TargetOutcome {
             self.circuit = Some(c.render());
         }
     }
+
+    /// Make the answer `c` of member `m` on `task` the candidate when it is cheaper than the
+    /// candidate so far, by T and then CNOT. The caller has checked that it is below a
+    /// BestKnown number. On a tie the candidate so far stays.
+    fn keep_candidate(&mut self, m: &Answered<'_>, task: &CircuitTask, c: &Circuit, cost: Cost) {
+        let cheaper = self
+            .candidate
+            .as_ref()
+            .is_none_or(|best| (cost.t, cost.cnot) < (best.cost.t, best.cost.cnot));
+
+        if cheaper {
+            self.candidate = Some(Candidate {
+                member: m.id.to_string(),
+                generation: m.generation,
+                seed: m.seed,
+                task: task.id.clone(),
+                circuit: c.render(),
+                cost,
+                literature_checked: false,
+            });
+        }
+    }
 }
 
 /// The pre-registered count of step 1, over the search panel.
@@ -840,7 +890,8 @@ pub struct Rediscovery {
 /// The pre-registered rediscovery count (plan (g)): per target on the panel, what the
 /// seeds and the bred members solved, then |L|, |R_seed|, |R_bred \ R_seed|, the share D
 /// and the gates. A target counts as solved when an exact answer at or below its
-/// reference exists on at least one of its dressed tasks. `members` lists every archived
+/// reference exists on at least one of its dressed tasks. Each target also keeps its
+/// cheapest invention candidate (plan decision 8). `members` lists every archived
 /// Cascade, with answers in panel order. Answers are counted member by member, in the
 /// given order, and each member's in panel order. Err(Invalid) when a member's answer
 /// count differs from the panel's task count, or when tasks of one target carry different
@@ -886,7 +937,7 @@ pub fn rediscovery(panel: &[CircuitTask], members: &[Answered<'_>]) -> Result<Re
             };
 
             if let Some(cost) = exact_cost(task, c)? {
-                targets[at].record(m, c, cost);
+                targets[at].record(m, task, c, cost);
             }
         }
     }
@@ -1791,6 +1842,7 @@ mod tests {
         assert_eq!(toffoli.best_bred, Some(cost_of(&late[5])));
         assert_eq!(toffoli.circuit, late[5].as_ref().map(Circuit::render));
         assert!(!swap.below_best_known && !cs.below_best_known && !toffoli.below_best_known);
+        assert!(found.targets.iter().all(|t| t.candidate.is_none()));
 
         // swap counts for the seeds only, although a bred member solves it too.
         assert_eq!(found.library, 3);
@@ -1900,11 +1952,23 @@ mod tests {
 
         assert!(found.targets[2].below_best_known && found.targets[2].reached_by_bred);
         assert!(!found.targets[0].below_best_known);
+        assert_eq!(found.targets[0].candidate, None);
+
+        let candidate = found.targets[2].candidate.as_ref().expect("a candidate");
+
+        assert_eq!((candidate.member.as_str(), candidate.seed), ("m", false));
+        assert_eq!(candidate.task, panel[5].id);
 
         // A seed's answer is a candidate as well.
         let found = rediscovery(&panel, &[member("s", 0, &answers)]).expect("rediscovery");
 
         assert!(found.targets[2].below_best_known && found.targets[2].reached_by_seed);
+        assert!(
+            found.targets[2]
+                .candidate
+                .as_ref()
+                .is_some_and(|k| k.seed && k.member == "s")
+        );
 
         // A hit and candidate (T 7, CNOT 6), then an exact answer that is neither (T 7,
         // CNOT 8): the later answer clears no flag, for seeds and bred members alike.
@@ -1922,6 +1986,11 @@ mod tests {
             assert_eq!(
                 (toffoli.reached_by_seed, toffoli.reached_by_bred),
                 (generation == 0, generation > 0)
+            );
+            assert_eq!(
+                toffoli.candidate.as_ref().map(|k| k.cost),
+                Some(cost_of(&then_neither[2])),
+                "generation {generation}"
             );
         }
 
@@ -1946,6 +2015,11 @@ mod tests {
                 !toffoli.reached_by_seed && !toffoli.reached_by_bred,
                 "generation {generation}"
             );
+            assert_eq!(
+                toffoli.candidate.as_ref().map(|k| (k.cost, k.seed)),
+                Some((c, generation == 0)),
+                "generation {generation}"
+            );
         }
 
         // Answers that do not align with the panel are refused, too few and too many alike.
@@ -1965,6 +2039,158 @@ mod tests {
             rediscovery(&panel, &[]),
             Err(BrutError::Invalid(_))
         ));
+    }
+
+    /// The toffoli outcome of a rediscovery over `members`. It also checks, on every target,
+    /// that the flag agrees with the candidate.
+    fn toffoli_outcome(panel: &[CircuitTask], members: &[Answered<'_>]) -> TargetOutcome {
+        let found = rediscovery(panel, members).expect("rediscovery");
+
+        for t in &found.targets {
+            assert_eq!(t.below_best_known, t.candidate.is_some(), "{}", t.target);
+        }
+
+        found
+            .targets
+            .into_iter()
+            .find(|t| t.target == "toffoli")
+            .expect("toffoli on the panel")
+    }
+
+    #[test]
+    fn rediscovery_keeps_the_cheapest_invention_candidate() {
+        let mut panel = small_panel();
+
+        // A forged, test-only toffoli reference: T 7 (Proven) and CNOT 9 (BestKnown). An
+        // exact toffoli answer with fewer than 9 CNOT gates is then an invention candidate.
+        for task in panel.iter_mut().filter(|t| t.name == "toffoli") {
+            task.reference = reference(7, Bound::Proven, 9, Bound::BestKnown);
+        }
+
+        let with =
+            |i: usize, gates: &str| circuit(&format!("{}; {gates}", dressed(&panel[i]).render()));
+        let expected = |id: &str, generation: usize, i: usize, answer: &Option<Circuit>| {
+            Some(Candidate {
+                member: id.to_string(),
+                generation,
+                seed: generation == 0,
+                task: panel[i].id.clone(),
+                circuit: answer.as_ref().expect("an answer").render(),
+                cost: cost_of(answer),
+                literature_checked: false,
+            })
+        };
+        let mut seed = vec![None; 6];
+        let mut above = vec![None; 6];
+        let mut more_cnot = vec![None; 6];
+        let mut cheap = vec![None; 6];
+        let mut tie = vec![None; 6];
+
+        // The dressed toffoli witness has T 7 and CNOT 6. The seed adds two T gates on task
+        // 5. The member "above" adds four CNOT gates on task 2: CNOT 10 is above every
+        // reference, so that answer is no candidate, although it has fewer T gates than the
+        // seed's. "more_cnot" adds two CNOT gates on task 2. "cheap" answers task 2 with
+        // two more H gates, and task 5 with the witness alone. "tie" answers task 2 with the
+        // witness alone, in an earlier generation.
+        seed[5] = Some(padded(&dressed(&panel[5]), 1, 0));
+        above[2] = Some(padded(&dressed(&panel[2]), 0, 2));
+        more_cnot[2] = Some(padded(&dressed(&panel[2]), 0, 1));
+        cheap[2] = Some(with(2, "H 0; H 0"));
+        cheap[5] = Some(dressed(&panel[5]));
+        tie[2] = Some(dressed(&panel[2]));
+
+        let counts = |answer: &Option<Circuit>| {
+            let c = cost_of(answer);
+
+            (c.t, c.cnot)
+        };
+
+        assert_eq!(
+            [&seed[5], &above[2], &more_cnot[2]].map(counts),
+            [(9, 6), (7, 10), (7, 8)]
+        );
+        assert_eq!([&cheap[2], &cheap[5], &tie[2]].map(counts), [(7, 6); 3]);
+
+        // The later answer of each tie is cheaper in the full order of Cost, so only a rule
+        // that compares T and CNOT alone keeps the earlier one.
+        assert!(cost_of(&cheap[5]) < cost_of(&cheap[2]) && cost_of(&tie[2]) < cost_of(&cheap[2]));
+
+        let members = [
+            member("seed", 0, &seed),
+            member("above", 3, &above),
+            member("more_cnot", 4, &more_cnot),
+            member("cheap", 5, &cheap),
+            member("tie", 1, &tie),
+        ];
+
+        // A seed's answer is a candidate, and so is a bred member's.
+        assert_eq!(
+            toffoli_outcome(&panel, &[members[0]]).candidate,
+            expected("seed", 0, 5, &seed[5])
+        );
+        assert_eq!(
+            toffoli_outcome(&panel, &[members[2]]).candidate,
+            expected("more_cnot", 4, 2, &more_cnot[2])
+        );
+
+        // The cheaper of two candidates wins, whichever comes first: fewer T gates against
+        // the seed, and fewer CNOT gates at equal T against "more_cnot".
+        for other in [members[0], members[2]] {
+            for pair in [[other, members[3]], [members[3], other]] {
+                assert_eq!(
+                    toffoli_outcome(&panel, &pair).candidate,
+                    expected("cheap", 5, 2, &cheap[2]),
+                    "{} first",
+                    pair[0].id
+                );
+            }
+        }
+
+        // A cheaper answer above every reference never becomes the candidate, although it is
+        // the best bred answer.
+        let alone = toffoli_outcome(&panel, &[members[1]]);
+        let after_seed = toffoli_outcome(&panel, &[members[0], members[1]]);
+
+        assert_eq!(alone.candidate, None);
+        assert_eq!(after_seed.candidate, expected("seed", 0, 5, &seed[5]));
+        assert_eq!(after_seed.best_bred, Some(cost_of(&above[2])));
+        assert_eq!(after_seed.circuit, above[2].as_ref().map(Circuit::render));
+
+        // On a tie in T and CNOT the answer counted first stays: the member listed first, and
+        // within a member the earlier task. The generation does not matter.
+        assert_eq!(
+            toffoli_outcome(&panel, &[members[3], members[4]]).candidate,
+            expected("cheap", 5, 2, &cheap[2])
+        );
+        assert_eq!(
+            toffoli_outcome(&panel, &[members[4], members[3]]).candidate,
+            expected("tie", 1, 2, &tie[2])
+        );
+
+        // Over all members, the candidate goes to rediscovery.json unchecked and comes back
+        // unchanged.
+        let found = rediscovery(&panel, &members).expect("rediscovery");
+        let toffoli = &found.targets[2];
+        let text = serde_json::to_string(toffoli).expect("json");
+
+        assert_eq!(toffoli.candidate, expected("cheap", 5, 2, &cheap[2]));
+        assert!(toffoli.below_best_known && !toffoli.reached_by_seed && toffoli.reached_by_bred);
+        assert!(
+            text.contains(r#""candidate":{"member":"cheap","generation":5,"seed":false,"#),
+            "{text}"
+        );
+        assert!(text.contains(r#""literature_checked":false"#), "{text}");
+        assert_eq!(
+            serde_json::from_str::<TargetOutcome>(&text).expect("back"),
+            *toffoli
+        );
+
+        let text = serde_json::to_string(&found).expect("json");
+
+        assert_eq!(
+            serde_json::from_str::<Rediscovery>(&text).expect("back"),
+            found
+        );
     }
 
     #[test]
