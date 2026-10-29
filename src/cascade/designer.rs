@@ -15,9 +15,9 @@
 //! 1. Knowledge: stems in the lower-cased system prompt name the families (`FAMILY_STEMS`),
 //!    in the order of their first mention. That order is the method order.
 //! 2. Thinking: all work costs steps, paid before the work is done. A call has 16 free
-//!    steps plus one step per `step_tokens` thinking tokens. Once a payment fails, thinking
-//!    stops for the rest of the call. The steps used beyond the free ones are reported as
-//!    thinking tokens.
+//!    steps plus one step per `step_tokens` thinking tokens, never more than 2^20 steps in
+//!    all. Once a payment fails, thinking stops for the rest of the call. The steps used
+//!    beyond the free ones are reported as thinking tokens.
 //! 3. Self-check: with `CIRCUIT_SELF_CHECK_TEXT` in the system prompt, a candidate is
 //!    verified on every column of the target. Without it, only the first and the last
 //!    column are checked, and a wrong circuit can pass.
@@ -43,8 +43,8 @@
 //! - Compose: conjugation by one CNOT, every ordered pair, then the methods above.
 //! - Search: breadth-first search over gate words on the target's qubits, deduplicated by
 //!   the canonical key of the checked columns. X gates on the inputs and outputs are free,
-//!   so the search compares words under every X flip. It stops at its first match, which
-//!   is short but not always the cheapest circuit. It works on up to three qubits.
+//!   so the search compares words under X flips at both ends. It stops at its first match,
+//!   which is short but not always the cheapest circuit. It works on up to three qubits.
 //! - Meet: the search grows words from both ends and matches them in the middle (Amy,
 //!   Maslov, Mosca and Roetteler 2013). Meet implies Search; there is one search per call.
 //! - Simplify: exact rewrites of the cheapest candidate so far and of the earlier answers:
@@ -81,6 +81,12 @@ const NO_CIRCUIT: &str = "I found no circuit for this target.";
 
 /// Steps every call may use without thinking tokens.
 const FREE_STEPS: u64 = 16;
+
+/// The most steps one call may use, whatever its thinking budget. With at most 4096
+/// thinking tokens (the Traits' ceiling) a call has at most 16 + 4096 / 2 = 2,064 steps, so
+/// there the ceiling never binds. It bounds the work of a direct request that asks for far
+/// more thinking than a Worker can have.
+const MAX_STEPS: u64 = 1 << 20;
 
 /// States a network search reaches for one step.
 const STATES_PER_STEP: usize = 16;
@@ -258,12 +264,12 @@ struct Meter {
 }
 
 impl Meter {
-    /// FREE_STEPS plus one step per `step_tokens` thinking tokens.
+    /// FREE_STEPS plus one step per `step_tokens` thinking tokens, at most MAX_STEPS.
     fn new(think_tokens: u32, step_tokens: u32) -> Meter {
         let paid = u64::from(think_tokens) / u64::from(step_tokens.max(1));
 
         Meter {
-            budget: FREE_STEPS + paid,
+            budget: (FREE_STEPS + paid).min(MAX_STEPS),
             used: 0,
             exhausted: false,
         }
@@ -1089,6 +1095,10 @@ enum Added {
 /// A word A meets B when A X^b equals B^-1 X^c U up to a global phase on the checked
 /// columns, for some mask b, and the circuit is then X^b, A, B, X^c. Without Meet, words grow
 /// from the input end only and meet the starting points X^c U.
+///
+/// A new word from the output end is matched under the masks b that map the checked columns
+/// onto themselves: every mask with self-check, only 0 and 2^n - 1 without it. Its match
+/// compares A with B^-1 X^c U X^b on the checked columns, which shifts them by b.
 struct WordSearch<'a> {
     n: usize,
     checked: &'a [u32],
@@ -1112,6 +1122,13 @@ impl WordSearch<'_> {
             End::Input => &mut self.input,
             End::Output => &mut self.output,
         }
+    }
+
+    /// True when X^mask maps the checked columns onto themselves.
+    fn keeps_checked(&self, mask: u32) -> bool {
+        self.checked
+            .iter()
+            .all(|&j| self.checked.contains(&(j ^ mask)))
     }
 
     /// Add a word with its columns to one side, unless its key is known there. One step
@@ -1141,7 +1158,13 @@ impl WordSearch<'_> {
             End::Input => End::Output,
             End::Output => End::Input,
         };
+
+        // A word A from the input end is compared as A X^mask, so the circuit agrees with U
+        // on the checked columns. A word from the output end is compared as B^-1 X^c U X^mask,
+        // so the circuit agrees with U on the checked columns shifted by the mask: only masks
+        // that keep them in place may match.
         let found: Vec<(u32, usize)> = (0..dim(self.n))
+            .filter(|&mask| end == End::Input || self.keeps_checked(mask))
             .filter_map(|mask| {
                 let flipped = if mask == 0 {
                     self.side(other).seen.get(&key)
@@ -3316,6 +3339,36 @@ mod tests {
     }
 
     #[test]
+    fn a_search_without_self_check_matches_on_the_checked_columns() {
+        // |a,b> -> |1 xor b, a>: SWAP, then X on qubit 0. X 1 agrees with it on |01> and
+        // |10> only, X 0 on |00> and |11>, the columns a spot check looks at.
+        let target = monomial(2, |j| ((((j & 1) ^ 1) << 1) | (j >> 1), 0));
+
+        assert!(agrees_on(&target, &circuit("X 0"), &[0, 3]).expect("spot check"));
+        assert!(!agrees_on(&target, &circuit("X 1"), &[0, 3]).expect("spot check"));
+
+        for meet in [false, true] {
+            let found = word_search(&target, &[0, 3], meet, 64, &mut plenty()).expect("a word");
+
+            assert!(
+                agrees_on(&target, &found, &[0, 3]).expect("spot check"),
+                "{}",
+                found.render()
+            );
+        }
+
+        // So a Worker without self-check answers with a spot-check fake, not with nothing.
+        let model = SimDesigner::large();
+
+        for system in [SEARCH, MEET] {
+            let fooled = answer(&model, system, solve_prompt(&target, &[]), 4096).expect("answer");
+
+            assert!(agrees_on(&target, &fooled, &[0, 3]).expect("spot check"));
+            assert!(!check(&target, &fooled).expect("check").exact);
+        }
+    }
+
+    #[test]
     fn x_flips_cost_a_word_search_nothing() {
         // X on the inputs and outputs is free, so every X dressing of CZ (qubits kept in
         // place) is found after as many words as CZ itself: one step short misses.
@@ -3670,6 +3723,35 @@ mod tests {
             reply.completion_tokens - approx_tokens(&reply.text),
             (4096 - 16) * 2
         );
+    }
+
+    #[test]
+    fn a_call_never_uses_more_than_max_steps() {
+        // Within the Traits' ceiling of 4096 thinking tokens the budget is untouched.
+        assert_eq!(MAX_STEPS, 1 << 20);
+        assert_eq!(Meter::new(4096, 4).budget, FREE_STEPS + 1024);
+        assert_eq!(Meter::new(4096, 2).budget, FREE_STEPS + 2048);
+
+        // An absurd budget is cut to the ceiling.
+        for step_tokens in [1, 2, 4] {
+            assert_eq!(Meter::new(u32::MAX, step_tokens).budget, MAX_STEPS);
+        }
+
+        // A direct request whose work would take more: 20,000 earlier answers on six qubits,
+        // each verified on all 64 columns at one step per column. The ceiling pays for
+        // 16,384 of them, and the reply passes the latest one on unchecked.
+        let target = monomial(6, |j| (((j << 1) | (j >> 5)) & 63, 0));
+        let wrong = vec![circuit("X 0"); 20_000];
+        let req = request(
+            &format!("{PREVIOUS} {CIRCUIT_SELF_CHECK_TEXT}"),
+            render_circuit_solve_prompt(&target, 256, &wrong),
+            u32::MAX,
+        );
+        let reply = SimDesigner::large().generate(&req).expect("generate");
+        let thinking = reply.completion_tokens - approx_tokens(&reply.text);
+
+        assert_eq!(reply.text, render_circuit_answer(&circuit("X 0")));
+        assert_eq!(u64::from(thinking), (MAX_STEPS - FREE_STEPS) * 2);
     }
 
     #[test]

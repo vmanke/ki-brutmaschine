@@ -8,9 +8,11 @@
 //! thinks little, so they reach few targets at their best known cost.
 //!
 //! The phrases describe methods in words and never list gates. Every family is named alone
-//! in some phrase, some phrases combine families, and many name none. Only strategy and
+//! in some phrase, some phrases combine two families, and many name none. Only strategy and
 //! residual phrases name a family. So role, format, check and style genes never change what
-//! a Worker knows, and every residual phrase reviews the answer of an earlier stage.
+//! a Worker knows, and every residual phrase reviews the answer of an earlier stage. No
+//! phrase names two of Hadamard, Phase and Linear, so one phrase step never teaches a seed
+//! all three, which six of the eleven calibration targets need.
 //!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
@@ -52,15 +54,21 @@ const MAX_GATE_MENTIONS: usize = 2;
 /// Prompt-text gene pool for circuits: (section name, text). The section operators draw
 /// section texts from here, as they draw from `variation::PHRASES` for grids.
 ///
-/// The pool holds strategies that name one method family, strategies that combine two or
-/// three, German variants, strategies and checks that name no family, residual reviews of
-/// the previous answer (some name a method to repair it with), style lines, roles and
+/// The pool holds strategies that name one method family, a strategy that combines Search
+/// and Meet, German variants, strategies and checks that name no family, residual reviews
+/// of the previous answer (some name one method to repair it with), style lines, roles and
 /// answer formats. The seeds' texts are among them. Every text passes the genome's text
 /// rules and `no_gate_lists`.
 ///
-/// The section operators keep one phrase per section name in a Worker, so its families
-/// come from one strategy and one residual phrase. Such pairs name every route of the
-/// designer's calibration.
+/// No phrase names more than two families (Previous counts as one), and none names two of
+/// Hadamard, Phase and Linear. A seed knows at most one of these three, so one phrase step
+/// (SectionReplace, SectionAdd or StageAdd) teaches it at most one more: Hadamard and
+/// Linear reach CZ, Phase and Linear reach CCZ. The targets that need all three take a
+/// second step, from such a stepping stone or from Hadamard and Phase.
+///
+/// A Worker knows the families of every section it holds, and SectionReplace may write any
+/// pool text into any section. Workers built that way name every route of the designer's
+/// calibration.
 pub const CIRCUIT_PHRASES: &[(&str, &str)] = &[
     // Roles.
     ("role", SEED_ROLE),
@@ -117,23 +125,7 @@ pub const CIRCUIT_PHRASES: &[(&str, &str)] = &[
         "strategy",
         "Simplify your best circuit: move each gate past the gates it commutes with until something cancels.",
     ),
-    // Strategies that combine two or three families.
-    (
-        "strategy",
-        "Build the parities with an XOR network of CNOTs and put the phase of each parity on a wire that carries it.",
-    ),
-    (
-        "strategy",
-        "Change the basis of a flipped bit with Hadamard gates; the rest is a network of CNOT row operations.",
-    ),
-    (
-        "strategy",
-        "After a basis change on some qubits the target may only add phases; write them as a sum over parities.",
-    ),
-    (
-        "strategy",
-        "Change the basis with Hadamard gates where bits flip, write the phases over parities, and build the parities with XOR.",
-    ),
+    // A strategy that combines two families. None pairs two of Hadamard, Phase and Linear.
     (
         "strategy",
         "Search from both ends at once and meet in the middle.",
@@ -166,10 +158,6 @@ pub const CIRCUIT_PHRASES: &[(&str, &str)] = &[
     (
         "strategy",
         "Vereinfache die Schaltung: kürze inverse Paare und fasse Phasengatter zusammen.",
-    ),
-    (
-        "strategy",
-        "Nutze einen Basiswechsel und schreibe die Phasen dann als Phasenpolynom über Paritäten.",
     ),
     // Strategies that name no family.
     (
@@ -361,9 +349,10 @@ pub fn circuit_seed_cascades() -> Vec<(String, Cascade)> {
 ///
 /// A gate mention is a gate name or alias of the circuit protocol, in any case, followed by
 /// a qubit index such as 0 or q0. The text is split into words at every character that is
-/// not a letter or digit, as the answer parser splits a gate-like line. So "H 0;", "h(q0)"
-/// and "CX 0,1" all count once. Prose that names a gate or a qubit, or a gate on a qubit
-/// once or twice, passes. The error says where the list is.
+/// not a letter or digit, as the answer parser splits a gate-like line, and a lone q joins
+/// the number after it. So "H 0;", "h(q0)", "CX 0,1" and the OpenQASM line "cx q[0],q[1];"
+/// all count once. Prose that names a gate or a qubit, or a gate on a qubit once or twice,
+/// passes. The error says where the list is.
 pub fn no_gate_lists(c: &Cascade) -> std::result::Result<(), String> {
     for (k, stage) in c.stages.iter().enumerate() {
         for (w, worker) in stage.workers.iter().enumerate() {
@@ -407,12 +396,25 @@ fn section(name: &str, text: &str) -> Section {
 }
 
 /// The gate mentions in `text`, in order, each as its two words: "H 0", "cx q1". The words
-/// are the pieces between characters that are not letters or digits.
+/// are the pieces between characters that are not letters or digits. A lone q or Q joins
+/// the number after it, so the q[2] of OpenQASM and q_2 both read as the index q2.
 fn gate_mentions(text: &str) -> Vec<String> {
-    let words: Vec<&str> = text
+    let mut words: Vec<String> = Vec::new();
+
+    for piece in text
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .collect();
+    {
+        match words.last_mut() {
+            Some(last)
+                if matches!(last.as_str(), "q" | "Q")
+                    && piece.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                last.push_str(piece);
+            }
+            _ => words.push(piece.to_string()),
+        }
+    }
 
     words
         .iter()
@@ -444,7 +446,7 @@ mod tests {
         CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_solve_prompt,
     };
     use crate::cascade::designer::{FAMILY_STEMS, SimDesigner, knowledge};
-    use crate::cascade::genome::{CascadeLimits, adapt_seeds};
+    use crate::cascade::genome::{CascadeLimits, MAX_SECTIONS, adapt_seeds};
     use crate::cascade::qubit::{Circuit, Column, Dressing, Target, check};
     use crate::cascade::variation::{llm_crossover_request_with, llm_mutate_request_with};
     use crate::util::derive_seed;
@@ -634,38 +636,36 @@ mod tests {
         })
     }
 
-    /// The first phrase of section `name` whose families are exactly `families`.
-    fn phrase_naming(name: &str, families: &[&str]) -> &'static str {
+    /// The first pool phrase, of any section, whose families are exactly `families`.
+    fn phrase_naming(families: &[&str]) -> &'static str {
         let want: BTreeSet<&str> = families.iter().copied().collect();
 
         CIRCUIT_PHRASES
             .iter()
-            .find(|(n, text)| {
-                *n == name && knowledge(text).into_iter().collect::<BTreeSet<_>>() == want
-            })
+            .find(|(_, text)| knowledge(text).into_iter().collect::<BTreeSet<_>>() == want)
             .map(|(_, text)| *text)
-            .unwrap_or_else(|| panic!("no {name} phrase names exactly {families:?}"))
+            .unwrap_or_else(|| panic!("no phrase names exactly {families:?}"))
     }
 
-    /// A Worker of pool phrases at temperature 0: the seed role, the strategy phrase that
-    /// names `strategy`, the residual phrase that names `residual` if one is asked for, and
-    /// the seed format. `traits` is (model, thinking tokens, self-check).
-    fn pool_worker(
-        strategy: &[&str],
-        residual: Option<&[&str]>,
-        traits: (&str, u32, bool),
-    ) -> Worker {
+    /// A Worker of pool phrases at temperature 0. Each slot is a section name with the
+    /// families of the phrase it holds (see `phrase_naming`), since SectionReplace may
+    /// write any pool text into any section. The seed role comes first and the seed format
+    /// last, unless a slot takes their place. `traits` is (model, thinking tokens,
+    /// self-check).
+    fn pool_worker(slots: &[(&str, &[&str])], traits: (&str, u32, bool)) -> Worker {
         let (model, think_tokens, self_check) = traits;
-        let mut sections = vec![
-            section("role", SEED_ROLE),
-            section("strategy", phrase_naming("strategy", strategy)),
-        ];
+        let mut sections: Vec<Section> = slots
+            .iter()
+            .map(|(name, families)| section(name, phrase_naming(families)))
+            .collect();
 
-        if let Some(families) = residual {
-            sections.push(section("residual", phrase_naming("residual", families)));
+        if sections.iter().all(|s| s.name != "role") {
+            sections.insert(0, section("role", SEED_ROLE));
         }
 
-        sections.push(section("format", SEED_FORMAT));
+        if sections.iter().all(|s| s.name != "format") {
+            sections.push(section("format", SEED_FORMAT));
+        }
 
         Worker {
             model: model.to_string(),
@@ -764,6 +764,131 @@ mod tests {
         out
     }
 
+    /// Every child that one phrase-drawing operator of `variation.rs` makes of `parent`
+    /// with this pool. SectionReplace writes any other pool text over one section and keeps
+    /// its name. SectionAdd writes a pool phrase over the first section of its name, or
+    /// appends it when the Worker has no section of that name and room for one. StageAdd
+    /// inserts a copy of a Worker, with a residual phrase written into it, as a later stage.
+    /// Each child counts once, and only when it passes the genome check and differs from
+    /// the parent.
+    fn one_step(parent: &Cascade, limits: &CascadeLimits) -> Vec<Cascade> {
+        let residual: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(name, _)| *name == "residual")
+            .map(|(_, text)| *text)
+            .collect();
+        let mut children: Vec<Cascade> = Vec::new();
+
+        for (s, stage) in parent.stages.iter().enumerate() {
+            for (w, worker) in stage.workers.iter().enumerate() {
+                let mut edits: Vec<Worker> = Vec::new();
+
+                for (i, current) in worker.sections.iter().enumerate() {
+                    for (_, text) in CIRCUIT_PHRASES.iter().filter(|(_, t)| *t != current.text) {
+                        let mut edit = worker.clone();
+
+                        edit.sections[i].text = text.to_string();
+                        edits.push(edit);
+                    }
+                }
+
+                for (name, text) in CIRCUIT_PHRASES {
+                    let mut edit = worker.clone();
+                    let room = edit.sections.len() < MAX_SECTIONS;
+
+                    match edit.sections.iter_mut().find(|x| x.name == *name) {
+                        Some(existing) if existing.text != *text => {
+                            existing.text = text.to_string();
+                        }
+                        None if room => edit.sections.push(section(name, text)),
+                        _ => continue,
+                    }
+
+                    edits.push(edit);
+                }
+
+                for edit in edits {
+                    let mut child = parent.clone();
+
+                    child.stages[s].workers[w] = edit;
+                    children.push(child);
+                }
+
+                for text in &residual {
+                    let mut copy = worker.clone();
+                    let room = copy.sections.len() < MAX_SECTIONS;
+
+                    match copy.sections.iter_mut().find(|x| x.name == "residual") {
+                        Some(existing) => existing.text = text.to_string(),
+                        None if room => copy.sections.push(section("residual", text)),
+                        None => continue,
+                    }
+
+                    for at in 1..=parent.stages.len() {
+                        let mut child = parent.clone();
+
+                        child.stages.insert(
+                            at,
+                            Stage {
+                                workers: vec![copy.clone()],
+                            },
+                        );
+                        children.push(child);
+                    }
+                }
+            }
+        }
+
+        let unique: BTreeMap<String, Cascade> = children
+            .into_iter()
+            .filter(|c| c.check(limits).is_ok() && c.id() != parent.id())
+            .map(|c| (c.id(), c))
+            .collect();
+
+        unique.into_values().collect()
+    }
+
+    /// Targets, each plain and under three drawn dressings, with their costs.
+    type Panel = Vec<(&'static str, Vec<Target>, (u32, u32))>;
+
+    /// The eleven targets of `targets`, each plain and under three drawn dressings.
+    fn panel() -> Panel {
+        targets()
+            .into_iter()
+            .map(|(name, base, cost)| {
+                let versions = (0..4u64)
+                    .map(|d| {
+                        if d == 0 {
+                            base.clone()
+                        } else {
+                            base.dress(&Dressing::draw(base.qubits(), &mut rng(d)))
+                        }
+                    })
+                    .collect();
+
+                (name, versions, cost)
+            })
+            .collect()
+    }
+
+    /// The targets the seeds reach together, R_seed.
+    const SEED_REACH: [&str; 2] = ["swap", "cs"];
+
+    /// The targets beyond R_seed that `c` reaches at their best known cost on at least one
+    /// version.
+    fn gained(c: &Cascade, panel: &Panel) -> BTreeSet<&'static str> {
+        panel
+            .iter()
+            .filter(|(name, _, _)| !SEED_REACH.contains(name))
+            .filter(|(_, versions, cost)| {
+                (0u64..)
+                    .zip(versions)
+                    .any(|(d, target)| reached(c, target, *cost, d))
+            })
+            .map(|(name, _, _)| *name)
+            .collect()
+    }
+
     #[test]
     fn the_target_definitions_match_published_circuits() {
         for (name, target, (t, cnot)) in targets() {
@@ -841,6 +966,19 @@ mod tests {
         assert!(combined >= 5, "{combined} combined phrases");
         assert!(neutral >= 8, "{neutral} neutral phrases");
 
+        // No phrase names more than two families, Previous included, and none names two of
+        // Hadamard, Phase and Linear: one phrase step never teaches a seed all three.
+        for (_, text) in CIRCUIT_PHRASES {
+            let named = families(text);
+            let basis = named
+                .iter()
+                .filter(|f| ["Hadamard", "Phase", "Linear"].contains(f))
+                .count();
+
+            assert!(named.len() <= 2, "{text}: {named:?}");
+            assert!(basis <= 1, "{text}: {named:?}");
+        }
+
         // A German phrase for every family. The stems listed here must be the designer's.
         for (family, stems) in GERMAN {
             let (_, known) = FAMILY_STEMS
@@ -883,55 +1021,81 @@ mod tests {
 
     #[test]
     fn pool_phrases_reach_every_target_at_its_best_known_cost() {
-        // Cascades of pool phrases only, as the section operators can build them. Each Worker
-        // has the seed role and format, one strategy and at most one residual phrase, which
-        // name the families of one route of the designer's calibration, and Traits in range.
+        // Cascades of pool phrases only, as the section operators can build them. Each section
+        // holds a pool text, written over the role or the format where a route needs a third
+        // family-bearing section, and the Traits are in range.
         let small = |think: u32, check: bool| ("sim:small", think, check);
         let large = |think: u32, check: bool| ("sim:large", think, check);
-        let hpl: &[&str] = &["Hadamard", "Phase", "Linear"];
         let basis = ["qft2", "toffoli", "peres", "rtof", "ccix"];
-        let fredkin_first = pool_worker(hpl, Some(&["Previous", "Compose"]), large(2048, true));
+        let linear_review: (&str, &[&str]) = ("residual", &["Previous", "Linear"]);
+        let fredkin_first = pool_worker(
+            &[
+                ("role", &["Hadamard"]),
+                ("strategy", &["Phase"]),
+                linear_review,
+                ("format", &["Compose"]),
+            ],
+            large(2048, true),
+        );
         let routes: Vec<(&[&str], Vec<Worker>)> = vec![
             (
                 &["swap"],
-                vec![pool_worker(&["Linear"], None, small(256, false))],
+                vec![pool_worker(&[("strategy", &["Linear"])], small(256, false))],
             ),
             (
                 &["cs"],
-                vec![pool_worker(&["Phase"], None, small(256, false))],
+                vec![pool_worker(&[("strategy", &["Phase"])], small(256, false))],
             ),
             (
                 &["cz"],
                 vec![pool_worker(
-                    &["Hadamard", "Linear"],
-                    None,
+                    &[("strategy", &["Hadamard"]), linear_review],
                     small(256, false),
                 )],
             ),
             (
                 &["ccz"],
-                vec![pool_worker(&["Phase", "Linear"], None, small(256, false))],
+                vec![pool_worker(
+                    &[("strategy", &["Phase"]), linear_review],
+                    small(256, false),
+                )],
             ),
-            (&basis, vec![pool_worker(hpl, None, small(1024, true))]),
-            // The same three families from a pair and a residual review.
+            // Hadamard, Phase and Linear from three sections, in two orders.
             (
                 &basis,
                 vec![pool_worker(
-                    &["Hadamard", "Phase"],
-                    Some(&["Previous", "Linear"]),
+                    &[
+                        ("role", &["Hadamard"]),
+                        ("strategy", &["Phase"]),
+                        linear_review,
+                    ],
+                    small(1024, true),
+                )],
+            ),
+            (
+                &basis,
+                vec![pool_worker(
+                    &[
+                        ("strategy", &["Linear"]),
+                        ("residual", &["Previous", "Hadamard"]),
+                        ("format", &["Phase"]),
+                    ],
                     small(1024, true),
                 )],
             ),
             (
                 &["ch"],
-                vec![pool_worker(&["Meet"], None, large(4096, true))],
+                vec![pool_worker(&[("strategy", &["Meet"])], large(4096, true))],
             ),
             // Two stages: the first builds (7, 8), the second simplifies it to (7, 7).
             (
                 &["fredkin"],
                 vec![
                     fredkin_first.clone(),
-                    pool_worker(&[], Some(&["Previous", "Simplify"]), large(2048, true)),
+                    pool_worker(
+                        &[("residual", &["Previous", "Simplify"])],
+                        large(2048, true),
+                    ),
                 ],
             ),
         ];
@@ -1070,12 +1234,120 @@ mod tests {
     }
 
     #[test]
+    fn one_phrase_step_from_a_seed_gains_at_most_one_target() {
+        // Every child that SectionReplace, SectionAdd or StageAdd makes of a seed with this
+        // pool, on the eleven targets plain and under three dressings. A child reaches at most
+        // one target beyond swap and cs: CZ (Hadamard and Linear) or CCZ (Phase and Linear).
+        // So no single draw unlocks the targets that need Hadamard, Phase and Linear together.
+        let limits = CascadeLimits::default();
+        let panel = panel();
+        let mut gains: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut stones: BTreeMap<&str, usize> = BTreeMap::new();
+
+        for (seed, parent) in circuit_seed_cascades() {
+            for child in one_step(&parent, &limits) {
+                let won = gained(&child, &panel);
+                let stages: Vec<Vec<&str>> = child
+                    .stages
+                    .iter()
+                    .map(|st| knowledge(&st.workers[0].system_prompt()))
+                    .collect();
+
+                assert!(won.len() <= 1, "{seed}: {won:?} from {stages:?}");
+                *gains.entry(won.len()).or_default() += 1;
+
+                for name in won {
+                    *stones.entry(name).or_default() += 1;
+                }
+            }
+        }
+
+        assert_eq!(gains, BTreeMap::from([(0, 664), (1, 40)]));
+        assert_eq!(stones, BTreeMap::from([("ccz", 20), ("cz", 20)]));
+    }
+
+    #[test]
+    fn two_phrase_steps_from_a_seed_reach_the_six_basis_targets() {
+        let limits = CascadeLimits::default();
+        let full = panel();
+        let six = ["cz", "qft2", "toffoli", "peres", "rtof", "ccix"];
+        let basis: Panel = full
+            .iter()
+            .filter(|(name, _, _)| six.contains(name))
+            .cloned()
+            .collect();
+
+        // For example the phase seed. SectionAdd of the residual review that names Linear
+        // makes a stepping stone that reaches CCZ; SectionReplace of its role by the review
+        // that names Hadamard makes a Worker that reaches the six, at the seed's Traits.
+        let (_, phase) = circuit_seed_cascades()
+            .into_iter()
+            .find(|(name, _)| name == "phase")
+            .expect("the phase seed");
+        let mut stone = phase.clone();
+
+        stone.stages[0].workers[0]
+            .sections
+            .push(section("residual", phrase_naming(&["Previous", "Linear"])));
+
+        let mut child = stone.clone();
+
+        child.stages[0].workers[0].sections[0].text =
+            phrase_naming(&["Previous", "Hadamard"]).to_string();
+
+        assert!(one_step(&phase, &limits).contains(&stone));
+        assert!(one_step(&stone, &limits).contains(&child));
+        assert_eq!(gained(&stone, &full), BTreeSet::from(["ccz"]));
+        assert_eq!(gained(&child, &basis), BTreeSet::from(six));
+
+        // In general: a stone is a one-step child whose last Worker knows two of Hadamard,
+        // Phase and Linear. Every phrase step from a stone that teaches the third reaches the
+        // six, plain or under a dressing.
+        let knows = |c: &Cascade| {
+            let last = &c.stages.last().expect("a stage").workers[0];
+            let named = knowledge(&last.system_prompt());
+
+            ["Hadamard", "Phase", "Linear"]
+                .iter()
+                .filter(|f| named.contains(f))
+                .count()
+        };
+        let mut stones = 0;
+        let mut routes = 0;
+
+        for (seed, parent) in circuit_seed_cascades() {
+            let first = one_step(&parent, &limits);
+
+            for stone in first.iter().filter(|c| knows(c) == 2) {
+                let second = one_step(stone, &limits);
+
+                stones += 1;
+
+                for child in second.iter().filter(|c| knows(c) == 3) {
+                    let won = gained(child, &basis);
+
+                    assert_eq!(won.len(), six.len(), "{seed}: {won:?}");
+                    routes += 1;
+                }
+            }
+        }
+
+        assert_eq!((stones, routes), (60, 384));
+    }
+
+    #[test]
     fn no_gate_lists_refuses_written_out_circuits_only() {
         assert_eq!(
             gate_mentions("cx q0 q1; H(2) and SDG Q3"),
             ["cx q0", "H 2", "SDG Q3"]
         );
         assert!(gate_mentions("x0 xor x1, T gates, qubit 0, H 256").is_empty());
+
+        // A lone q joins the number after it, as in OpenQASM's q[2] or in q_2.
+        assert_eq!(
+            gate_mentions("cx q[1],q[2]; h Q_0; t q x"),
+            ["cx q1", "h Q0"]
+        );
 
         // Prose may name a gate, a qubit, or a gate on a qubit once or twice.
         for text in [
@@ -1085,17 +1357,24 @@ mod tests {
             "Place T 1 before TDG 1.",
             "The phase is a sum over x0 xor x1 xor x2.",
             "Spend at most 7 T gates and 6 CNOT gates.",
+            "Keep the register q[3] as it is.",
         ] {
             assert_eq!(no_gate_lists(&single("strategy", text)), Ok(()), "{text}");
         }
 
-        // Three mentions make a list, in any spelling the answer parser accepts.
+        // Three mentions make a list, in any spelling the answer parser accepts and in the
+        // index spellings of OpenQASM: q[2], also as q_2.
         for text in [
             "H 0; CNOT 0 1; T 1",
             "h q0, cx q0 q1, tdg q1",
             "Apply CNOT(0,1), then H(2) and S(2).",
             "SDAG 1\nTDAG 2\nX 0",
             "Use T 0, T 1 and T 2.",
+            "h q[2];\ncx q[1],q[2];\ntdg q[2];\ncx q[0],q[2];\nt q[2];\ncx q[1],q[2];\n\
+             tdg q[2];\ncx q[0],q[2];\nt q[1];\nt q[2];\nh q[2];",
+            "OPENQASM 2.0; qreg q[3]; h q[2]; cx q[1],q[2]; tdg q[2];",
+            "H(q[0]) CNOT(q[0], q[1]) T(q[1]) TDG(q[0])",
+            "H q_0, CNOT q_0 q_1, T q_1",
         ] {
             let reason = no_gate_lists(&single("strategy", text)).expect_err(text);
 
