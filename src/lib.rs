@@ -28,6 +28,8 @@ pub mod lineage_store;
 pub mod meta_evolve;
 pub mod meta_report;
 pub mod nn;
+// Universes that invent (spec .scratch/universum-erfinden): exact qubit simulator.
+pub mod quantum;
 pub mod safety;
 pub mod score;
 pub mod task;
