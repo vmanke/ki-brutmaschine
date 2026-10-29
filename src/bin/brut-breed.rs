@@ -522,7 +522,7 @@ fn open_run(out: &Path) -> Result<(Log, Checkpoint, BreedConfig)> {
 
     if log.torn {
         return Err(BrutError::Integrity(format!(
-            "{}: the last line is incomplete (the process ended while writing it); --resume drops it",
+            "{}: the last line is incomplete (the process ended while writing it); a resumed run drops it with its next write to the log",
             out.join(EVENTS).display()
         )));
     }
