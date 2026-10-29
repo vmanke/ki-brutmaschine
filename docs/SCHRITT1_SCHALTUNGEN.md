@@ -133,19 +133,19 @@ cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 
 Die gezählten Seeds 1 bis 10 sind dem vorab festgelegten Experiment vorbehalten; die
 Beispiele nutzen darum den Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
-Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), am Ende die besten Kaskaden,
-den Vergleich auf dem Auswahl-Panel und eine Zeile zu `rediscovery.json`. Für Arm A auf
-Seed 101 lautet sie:
+Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu
+`rediscovery.json` und am Ende die besten Kaskaden und den Vergleich auf dem Auswahl-Panel.
+Für Arm A auf Seed 101 lautet die Zeile zu `rediscovery.json`:
 
 ```
 brut-breed: wrote runs/c101-A/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 7 of the other 9; D > 1/2: yes; calibrated
 ```
 
-`--verify` endet bei diesem Lauf mit „1362 events, hash chain intact, head e93ed521…;
-checkpoint at entry 1362 matches; settings match; report recomputed and equal; rediscovery
-recomputed and equal“. Wir haben Arm A auf Seed 101 erneut laufen lassen: `events.jsonl` und
-`rediscovery.json` sind byte-gleich mit dem Pilotlauf, und der Lauf dauerte 3.2 s
-(Release-Build, 2 Threads).
+`--verify` meldet bei diesem Lauf „brut-breed: 1362 events, hash chain intact, head
+e93ed521…; checkpoint at entry 1362 matches; settings match; report recomputed and equal;
+rediscovery recomputed and equal“. Wir haben Arm A auf Seed 101 erneut laufen lassen:
+`events.jsonl` und `rediscovery.json` sind byte-gleich mit dem Pilotlauf, und der Lauf
+dauerte 3.2 s (Release-Build, 2 Threads).
 
 **Was `--verify` prüft.** Wie in Stufe 2c prüft es die Hash-Kette, den Anker des
 Checkpoints und die Einstellungen. Bei einem fertigen Lauf baut es den Lauf aus dem
