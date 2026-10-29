@@ -87,7 +87,31 @@ erst dann gehört die Kaskade zum Topf (ADR 0004).
 
 ## 7. Messung im Container
 
-Die Zahlen dieses Abschnitts tragen wir nach dem ersten vollständigen Lauf nach.
+Wir messen drei Läufe mit den Standardwerten (`brut-breed --out <dir> --seed N
+--generations 10`: 8 Kinder je Generation, 40 Rätsel im Such-Panel, 40 im Auswahl-Panel,
+höchstens 20 000 Aufrufe), Release-Build, 4 Kerne, simuliertes Modell.
+
+| Seed | bestes Kind, Such-Panel | Fitness | bester Finalist, Auswahl-Panel | bestes Startprogramm, Auswahl-Panel | Vorsprung | Worker-Aufrufe | Peer-Urteile | Laufzeit |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 22/40 | 0.534 | 0.500 | 0.300 | +0.200 | 7 701 | 473 | 0.19 s |
+| 2 | 27/40 | 0.684 | 0.625 | 0.300 | +0.325 | 8 792 | 488 | 0.16 s |
+| 3 | 29/40 | 0.738 | 0.550 | 0.325 | +0.225 | 9 308 | 498 | 0.15 s |
+
+- **Vorsprung.** In allen drei Seeds liegt der beste gezüchtete Finalist auf dem
+  Auswahl-Panel, welches die Suche nie gesehen hat, vor dem besten Startprogramm, um
+  0.200 bis 0.325.
+- **Bauform.** Die beste Kaskade jedes Laufs hat 3 bis 4 Stufen und entstand durch eine
+  Kreuzung (Seed 1 Stufen-Kreuzung, Seeds 2 und 3 Abschnitts-Kreuzung). Unter den fünf
+  besten je Lauf stammen 2, 2 und 3 aus einer Kreuzung.
+- **Stillstand.** Das beste Ergebnis steigt nach Generation 4 bis 7 nicht mehr. Der
+  Simulator lässt mehr zu: Ein Prompt mit allen Strategien, Selbstprüfung und
+  Denkbudget 4096 löst nach der Messung beim Bau des Simulators alle 60 Rätsel eines
+  anderen Panels. Zehn Generationen sind also kurz.
+- **Urteilskraft verschiebt den Rang.** In Seed 1 löst die zweitbeste Kaskade mehr Rätsel
+  (23 statt 22), liegt aber wegen ihrer Urteilskraft von 0.20 dahinter. Das folgt aus
+  dem Gewicht 0.2 (Q13); wir beobachten es weiter.
+- **Grenzen der Aussage.** Drei Seeds ergeben keinen Signifikanztest. Der Simulator ist
+  eine Positivkontrolle; die Zahlen sagen nichts über echte Sprachmodelle.
 
 ## 8. Was der Simulator ist und was nicht
 
