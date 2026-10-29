@@ -8,7 +8,9 @@
 #![forbid(unsafe_code)]
 
 pub mod arena;
+pub mod circuit_text;
 pub mod genome;
 pub mod puzzle;
+pub mod qubit;
 pub mod sim;
 pub mod variation;
