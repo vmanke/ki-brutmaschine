@@ -522,7 +522,7 @@ mod tests {
 
     use super::*;
     use crate::backend::{GenRequest, ModelBackend, StopReason};
-    use crate::cascade::arena::worker_request;
+    use crate::cascade::arena::worker_request_with;
     use crate::cascade::circuit_text::{
         CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_solve_prompt,
     };
@@ -760,23 +760,10 @@ mod tests {
         }
     }
 
-    /// The request arena builds for `w`, with the circuit self-check text where the grid's
-    /// would stand: `worker_request` of the Worker without its self-check Trait, then the
-    /// check section in the form `worker_request` writes it.
+    /// The request arena builds for `w` on a circuit task: its self-check Trait adds the
+    /// circuit domain's self-check text.
     fn circuit_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
-        let mut plain = w.clone();
-
-        plain.traits.self_check = false;
-
-        let mut req = worker_request(&plain, prompt, seed);
-
-        if w.traits.self_check {
-            req.system.push_str("## check\n");
-            req.system.push_str(CIRCUIT_SELF_CHECK_TEXT);
-            req.system.push('\n');
-        }
-
-        req
+        worker_request_with(w, prompt, seed, CIRCUIT_SELF_CHECK_TEXT)
     }
 
     /// The circuit a Cascade of one-Worker stages chooses, as `arena::run_cascade` runs it:
