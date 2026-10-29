@@ -2146,6 +2146,18 @@ mod tests {
             }
         }
 
+        // T decides before CNOT, whichever comes first: "more_cnot" with T 7 and CNOT 8 beats
+        // the seed with T 9 and CNOT 6. The two counts disagree here, so a rule that looks at
+        // CNOT first, or at their sum, would pick the seed at least once.
+        for pair in [[members[0], members[2]], [members[2], members[0]]] {
+            assert_eq!(
+                toffoli_outcome(&panel, &pair).candidate,
+                expected("more_cnot", 4, 2, &more_cnot[2]),
+                "{} first",
+                pair[0].id
+            );
+        }
+
         // A cheaper answer above every reference never becomes the candidate, although it is
         // the best bred answer.
         let alone = toffoli_outcome(&panel, &[members[1]]);
