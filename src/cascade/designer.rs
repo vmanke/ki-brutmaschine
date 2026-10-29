@@ -41,12 +41,23 @@
 //!   becomes an affine permutation with phases that the families above can build. Without
 //!   Phase, a Z gate that the change of basis makes from an X is built as H X H.
 //! - Compose: conjugation by one CNOT, every ordered pair, then the methods above.
+//! - Search: breadth-first search over gate words on the target's qubits, deduplicated by
+//!   the canonical key of the checked columns. X gates on the inputs and outputs are free,
+//!   so the search compares words under every X flip. It stops at its first match, which
+//!   is short but not always the cheapest circuit. It works on up to three qubits.
+//! - Meet: the search grows words from both ends and matches them in the middle (Amy,
+//!   Maslov, Mosca and Roetteler 2013). Meet implies Search; there is one search per call.
+//! - Simplify: exact rewrites of the cheapest candidate so far and of the earlier answers:
+//!   peephole rules (inverse pairs cancel, phase gates on one qubit merge, gates move only
+//!   past gates they commute with), phase folding (Nam, Ross, Su, Childs and Maslov 2018),
+//!   and two-qubit Clifford windows rebuilt with fewer CNOTs from a table of Cliffords that
+//!   a breadth-first search in order of CNOT count builds within the budget. Every result is
+//!   verified like any other candidate.
 //! - Previous: verify the answers of earlier stages and keep the cheapest that passes.
-//! - Search, Meet and Simplify are recognised, but contribute no candidates yet.
 #![forbid(unsafe_code)]
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -57,7 +68,8 @@ use crate::cascade::circuit_text::{
     CIRCUIT_SELF_CHECK_TEXT, ParsedCircuitPrompt, parse_circuit_prompt, render_circuit_answer,
 };
 use crate::cascade::qubit::{
-    Circuit, ExactState, Gate, MAX_UNITARY_QUBITS, Target, agrees_on, apply_target,
+    Circuit, ExactState, Gate, MAX_UNITARY_QUBITS, Target, agrees_on, apply_target, canonical_key,
+    columns,
 };
 use crate::util::{Result, derive_seed};
 
@@ -81,6 +93,24 @@ const MAX_NETWORK_STATES: usize = 1 << 18;
 /// The temperature at which the method order is shuffled with probability one half: the
 /// ceiling of the temperature Trait.
 const TEMPERATURE_CEILING: f32 = 1.5;
+
+/// Columns of new words a word search computes for one step: 4 words on two qubits, 2 on
+/// three. A word on more qubits costs more work, since it holds more columns and is compared
+/// under more input flips.
+const COLUMNS_PER_STEP: usize = 16;
+
+/// Classes the table of two-qubit Cliffords gains for one step.
+const CLASSES_PER_STEP: usize = 4;
+
+/// The most qubits a word search works on. A node holds all 2^n columns and is compared
+/// under all 2^n input flips, so the work per node grows as 4^n; on larger targets Search
+/// and Meet contribute no candidates.
+const SEARCH_QUBITS: usize = 3;
+
+/// The most columns the words of one search hold, whatever the budget: 8,192 words on three
+/// qubits. It caps memory only: with at most 4096 thinking tokens (the Traits' ceiling) a
+/// search computes at most 33,024 columns, so there the budget always binds first.
+const MAX_SEARCH_COLUMNS: usize = 1 << 16;
 
 /// Each family's name with the stems that name it, matched in the lower-cased system
 /// prompt, in English and German.
@@ -139,12 +169,12 @@ enum Family {
     Hadamard,
     /// Conjugation by one CNOT, then the methods above.
     Compose,
-    /// Word search, one gate at a time. Recognised, but it contributes no candidates yet.
+    /// Breadth-first search over gate words, one gate at a time.
     Search,
-    /// Search from both ends. Recognised, but it contributes no candidates yet.
+    /// Search from both ends of the circuit, which meet in the middle. It implies Search.
     Meet,
-    /// Peephole rules and window resynthesis. Recognised, but it contributes no candidates
-    /// yet.
+    /// Exact rewrites of the circuits at hand: peephole rules, phase folding, and two-qubit
+    /// Clifford windows rebuilt with fewer CNOTs.
     Simplify,
     /// Verify the answers of earlier stages.
     Previous,
@@ -957,6 +987,895 @@ fn through(target: &Target, frame: Frame, skills: Skills, meter: &mut Meter) -> 
     Circuit::new(gates).ok()
 }
 
+/// Steps for `count` units of work, at one step per unit.
+fn steps(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+/// Every gate on n qubits, in a fixed order: H, S, SDG, T, TDG, X and Z on each qubit, then
+/// every CNOT.
+fn word_moves(n: usize) -> Vec<Gate> {
+    let singles: [fn(u8) -> Gate; 7] = [
+        Gate::H,
+        Gate::S,
+        Gate::Sdg,
+        Gate::T,
+        Gate::Tdg,
+        Gate::X,
+        Gate::Z,
+    ];
+    let mut moves: Vec<Gate> = qubits(n)
+        .flat_map(|q| singles.iter().map(move |make| make(q)))
+        .collect();
+
+    moves.extend(
+        pairs(n)
+            .into_iter()
+            .map(|(control, target)| Gate::Cnot { control, target }),
+    );
+    moves
+}
+
+/// The canonical key of the checked columns of U X^mask, where `columns` are those of U:
+/// column j of U X^mask is column j xor mask of U.
+fn flipped_key(columns: &[ExactState], checked: &[u32], mask: u32) -> Vec<i64> {
+    let picked: Vec<ExactState> = checked
+        .iter()
+        .filter_map(|&j| columns.get((j ^ mask) as usize).cloned())
+        .collect();
+
+    canonical_key(&picked)
+}
+
+/// The end of the circuit a side of a word search grows from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End {
+    /// Words that start at the identity and grow towards the output.
+    Input,
+    /// Words that start at the target and grow towards the input.
+    Output,
+}
+
+/// Where a word of a search hangs: its parent and its last gate (None for a root), and the X
+/// mask of its root.
+type Link = (Option<(usize, Gate)>, u32);
+
+/// One side of a word search: a tree of words, the keys it has seen, and the words of its
+/// newest layer with all their columns.
+#[derive(Default)]
+struct Words {
+    tree: Vec<Link>,
+    seen: BTreeMap<Vec<i64>, usize>,
+    layer: Vec<(usize, Vec<ExactState>)>,
+}
+
+impl Words {
+    /// The gates of word `at` in the order the search added them, from its root on.
+    fn path(&self, at: usize) -> Vec<Gate> {
+        let mut gates = Vec::new();
+        let mut at = at;
+
+        while let Some(&(Some((parent, g)), _)) = self.tree.get(at) {
+            gates.push(g);
+            at = parent;
+        }
+
+        gates.reverse();
+        gates
+    }
+
+    /// The X mask of the root of word `at`.
+    fn root(&self, at: usize) -> u32 {
+        self.tree.get(at).map_or(0, |&(_, mask)| mask)
+    }
+}
+
+/// What adding words to a search did.
+enum Added {
+    /// Nothing that fits was met: the word was known or is new, or the layer is complete.
+    Nothing,
+    /// A new word met a word of the other side: the circuit they make.
+    Met(Circuit),
+    /// The budget or the column cap stops the search.
+    Stopped,
+}
+
+/// A breadth-first search over gate words for a target U on n qubits, deduplicated by the
+/// canonical key of the checked columns.
+///
+/// X gates cost no T and no CNOT, so X on the inputs and the outputs is free. Words grow
+/// from the input end, starting at the identity, and (for Meet) from the output end,
+/// starting at X^c U for every X mask c; a word B from the output end stands for B^-1 X^c U.
+/// A word A meets B when A X^b equals B^-1 X^c U up to a global phase on the checked
+/// columns, for some mask b, and the circuit is then X^b, A, B, X^c. Without Meet, words grow
+/// from the input end only and meet the starting points X^c U.
+struct WordSearch<'a> {
+    n: usize,
+    checked: &'a [u32],
+    max_gates: usize,
+    input: Words,
+    output: Words,
+    /// Words added so far, on both sides.
+    words: usize,
+}
+
+impl WordSearch<'_> {
+    fn side(&self, end: End) -> &Words {
+        match end {
+            End::Input => &self.input,
+            End::Output => &self.output,
+        }
+    }
+
+    fn side_mut(&mut self, end: End) -> &mut Words {
+        match end {
+            End::Input => &mut self.input,
+            End::Output => &mut self.output,
+        }
+    }
+
+    /// Add a word with its columns to one side, unless its key is known there. One step
+    /// pays for every COLUMNS_PER_STEP columns of new words, the starting points included.
+    fn admit(
+        &mut self,
+        end: End,
+        link: Link,
+        columns: Vec<ExactState>,
+        meter: &mut Meter,
+    ) -> Added {
+        let key = flipped_key(&columns, self.checked, 0);
+
+        if self.side(end).seen.contains_key(&key) {
+            return Added::Nothing;
+        }
+
+        let words_per_step = (COLUMNS_PER_STEP >> self.n).max(1);
+
+        if self.words >= MAX_SEARCH_COLUMNS >> self.n
+            || (self.words.is_multiple_of(words_per_step) && !meter.pay(1))
+        {
+            return Added::Stopped;
+        }
+
+        let other = match end {
+            End::Input => End::Output,
+            End::Output => End::Input,
+        };
+        let found: Vec<(u32, usize)> = (0..dim(self.n))
+            .filter_map(|mask| {
+                let flipped = if mask == 0 {
+                    self.side(other).seen.get(&key)
+                } else {
+                    let key = flipped_key(&columns, self.checked, mask);
+
+                    self.side(other).seen.get(&key)
+                };
+
+                flipped.map(|&found| (mask, found))
+            })
+            .collect();
+        let at = self.side(end).tree.len();
+        let side = self.side_mut(end);
+
+        side.tree.push(link);
+        side.seen.insert(key, at);
+        side.layer.push((at, columns));
+        self.words += 1;
+
+        let met = found.into_iter().find_map(|(mask, found)| match end {
+            End::Input => self.circuit(at, found, mask),
+            End::Output => self.circuit(found, at, mask),
+        });
+
+        met.map_or(Added::Nothing, Added::Met)
+    }
+
+    /// The circuit X^mask, input word `input`, output word `output`, then X^c for the root c
+    /// of the output word, when it has gates and fits the gate cap. Around two empty words
+    /// the X gates merge.
+    fn circuit(&self, input: usize, output: usize, mask: u32) -> Option<Circuit> {
+        let mut first = self.input.path(input);
+        let mut second = self.output.path(output);
+        let root = self.output.root(output);
+
+        // The output word was grown backwards: its first gate is the circuit's last.
+        second.reverse();
+
+        let gates: Vec<Gate> = if first.is_empty() && second.is_empty() {
+            shift_gates(self.n, mask ^ root).collect()
+        } else {
+            let mut gates: Vec<Gate> = shift_gates(self.n, mask).collect();
+
+            gates.append(&mut first);
+            gates.append(&mut second);
+            gates.extend(shift_gates(self.n, root));
+            gates
+        };
+
+        if gates.is_empty() || gates.len() > self.max_gates {
+            return None;
+        }
+
+        Circuit::new(gates).ok()
+    }
+
+    /// Add the next layer of one side: each move after every word of its newest layer (from
+    /// the output end, before it), in order.
+    fn grow(&mut self, end: End, moves: &[Gate], meter: &mut Meter) -> Added {
+        let layer = std::mem::take(&mut self.side_mut(end).layer);
+
+        for (at, states) in layer {
+            let root = self.side(end).root(at);
+
+            for &g in moves {
+                let applied = match end {
+                    End::Input => g,
+                    End::Output => g.inverse(),
+                };
+                let mut child = states.clone();
+
+                if child.iter_mut().any(|s| s.apply(applied).is_err()) {
+                    continue;
+                }
+
+                child.iter_mut().for_each(ExactState::reduce);
+
+                match self.admit(end, (Some((at, g)), root), child, meter) {
+                    Added::Nothing => {}
+                    done => return done,
+                }
+            }
+        }
+
+        Added::Nothing
+    }
+}
+
+/// The first circuit a word search finds for `target` (see `WordSearch`). With `meet` the
+/// words grow from both ends, the side with the smaller newest layer first; otherwise from
+/// the input end only. None when the budget or the column cap runs out first, or when the
+/// target has more than SEARCH_QUBITS qubits.
+fn word_search(
+    target: &Target,
+    checked: &[u32],
+    meet: bool,
+    max_gates: usize,
+    meter: &mut Meter,
+) -> Option<Circuit> {
+    let n = target.qubits();
+
+    if n > SEARCH_QUBITS {
+        return None;
+    }
+
+    let mut search = WordSearch {
+        n,
+        checked,
+        max_gates,
+        input: Words::default(),
+        output: Words::default(),
+        words: 0,
+    };
+    let identity = (0..dim(n))
+        .map(|j| ExactState::basis(n, j).ok())
+        .collect::<Option<Vec<ExactState>>>()?;
+    let mut starts = vec![(End::Input, 0, identity)];
+
+    for mask in 0..dim(n) {
+        let mut states = target.states();
+
+        for state in &mut states {
+            for x in shift_gates(n, mask) {
+                state.apply(x).ok()?;
+            }
+        }
+
+        starts.push((End::Output, mask, states));
+    }
+
+    for (end, mask, states) in starts {
+        match search.admit(end, (None, mask), states, meter) {
+            Added::Nothing => {}
+            Added::Met(c) => return Some(c),
+            Added::Stopped => return None,
+        }
+    }
+
+    let moves = word_moves(n);
+
+    loop {
+        let (inputs, outputs) = (search.input.layer.len(), search.output.layer.len());
+        let end = match (meet, inputs, outputs) {
+            (false, _, _) => End::Input,
+            (true, 0, _) => End::Output,
+            (true, i, o) if o == 0 || i <= o => End::Input,
+            _ => End::Output,
+        };
+
+        if search.side(end).layer.is_empty() {
+            return None;
+        }
+
+        match search.grow(end, &moves, meter) {
+            Added::Nothing => {}
+            Added::Met(c) => return Some(c),
+            Added::Stopped => return None,
+        }
+    }
+}
+
+/// The qubit and the power k of a phase gate, which puts w^k on |1>: Z 4, S 2, SDG 6, T 1,
+/// TDG 7. None for H, X and CNOT.
+fn power(g: Gate) -> Option<(u8, u8)> {
+    match g {
+        Gate::Z(q) => Some((q, 4)),
+        Gate::S(q) => Some((q, 2)),
+        Gate::Sdg(q) => Some((q, 6)),
+        Gate::T(q) => Some((q, 1)),
+        Gate::Tdg(q) => Some((q, 7)),
+        Gate::H(_) | Gate::X(_) | Gate::Cnot { .. } => None,
+    }
+}
+
+/// True when two gates share a qubit.
+fn shares(a: Gate, b: Gate) -> bool {
+    let (a0, a1) = a.qubits();
+    let (b0, b1) = b.qubits();
+    let on_b = |q: u8| q == b0 || Some(q) == b1;
+
+    on_b(a0) || a1.is_some_and(on_b)
+}
+
+/// True when a then b equals b then a, up to a global phase, by a rule that is always valid:
+/// gates on different qubits, two equal gates, two phase gates, a phase gate on the control
+/// of a CNOT, an X on its target, and two CNOTs where neither one's control is the other's
+/// target.
+fn commutes(a: Gate, b: Gate) -> bool {
+    if !shares(a, b) || a == b || (power(a).is_some() && power(b).is_some()) {
+        return true;
+    }
+
+    match (a, b) {
+        (Gate::Cnot { control, target }, other) | (other, Gate::Cnot { control, target }) => {
+            match other {
+                Gate::Cnot {
+                    control: c,
+                    target: t,
+                } => control != t && target != c,
+                Gate::X(q) => q == target,
+                g => power(g).is_some_and(|(q, _)| q == control),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// What a then b on the same qubits makes when it is at most one gate: nothing for an
+/// inverse pair, one phase gate for two phase gates whose powers add up to one gate. None
+/// otherwise.
+fn combine(a: Gate, b: Gate) -> Option<Option<Gate>> {
+    if a.inverse() == b {
+        return Some(None);
+    }
+
+    let ((qa, ka), (qb, kb)) = (power(a)?, power(b)?);
+
+    if qa != qb {
+        return None;
+    }
+
+    match phase_gates(qa, ka + kb).as_slice() {
+        [] => Some(None),
+        [one] => Some(Some(*one)),
+        _ => None,
+    }
+}
+
+/// One pass of the peephole rules. Each gate moves later past the gates it commutes with
+/// until it meets one it combines with (see `combine`): an inverse pair cancels, and two
+/// phase gates on one qubit merge. Some with the new gates when anything changed.
+fn peephole_pass(gates: &[Gate]) -> Option<Vec<Gate>> {
+    let mut slots: Vec<Option<Gate>> = gates.iter().copied().map(Some).collect();
+    let mut changed = false;
+
+    for i in 0..slots.len() {
+        let Some(Some(g)) = slots.get(i).copied() else {
+            continue;
+        };
+
+        for j in i + 1..slots.len() {
+            let Some(Some(h)) = slots.get(j).copied() else {
+                continue;
+            };
+
+            if !shares(g, h) {
+                continue;
+            }
+
+            if let Some(merged) = combine(g, h) {
+                slots[i] = None;
+                slots[j] = merged;
+                changed = true;
+                break;
+            }
+
+            if !commutes(g, h) {
+                break;
+            }
+        }
+    }
+
+    changed.then(|| slots.into_iter().flatten().collect())
+}
+
+/// Peephole passes until nothing changes, at one step per gate for each pass. None when
+/// the budget runs out.
+fn peephole(gates: Vec<Gate>, meter: &mut Meter) -> Option<Vec<Gate>> {
+    let mut gates = gates;
+
+    loop {
+        if !meter.pay(steps(gates.len())) {
+            return None;
+        }
+
+        match peephole_pass(&gates) {
+            Some(next) => gates = next,
+            None => return Some(gates),
+        }
+    }
+}
+
+/// An affine parity of the path variables a wire holds: the variables as a bit set, and a
+/// constant that X gates flip.
+type Parity = (u128, bool);
+
+/// The wires' parities after `g`. A fresh path variable `fresh` starts on the wire of an H.
+fn advance(wires: &mut [Parity], g: Gate, fresh: &mut u32) -> Option<()> {
+    match g {
+        Gate::H(q) => {
+            let wire = wires.get_mut(usize::from(q))?;
+
+            *wire = (1u128.checked_shl(*fresh)?, false);
+            *fresh += 1;
+        }
+        Gate::X(q) => wires.get_mut(usize::from(q))?.1 ^= true,
+        Gate::Cnot { control, target } => {
+            let (mask, flip) = *wires.get(usize::from(control))?;
+            let wire = wires.get_mut(usize::from(target))?;
+
+            wire.0 ^= mask;
+            wire.1 ^= flip;
+        }
+        _ => {}
+    }
+
+    Some(())
+}
+
+/// Phase folding (rotation merging, Nam, Ross, Su, Childs and Maslov 2018). Written as a sum
+/// over paths, a circuit has one path variable per input and one more after each H, and
+/// every wire holds an affine parity of them. A phase gate puts w^k on the parity its wire
+/// holds, and since only the sum of these terms matters, the terms on one parity add up and
+/// the sum may sit wherever a wire holds that parity. Each sum goes to the first place where
+/// its parity is held, or the last with `last`; a parity with the constant 1 takes the
+/// negated power, up to a global phase. The other gates keep their order, so this is exact,
+/// and it never adds a T gate. None when the path variables do not fit 128 bits.
+fn fold(gates: &[Gate], n: usize, last: bool) -> Option<Vec<Gate>> {
+    let start: Vec<Parity> = (0..n)
+        .map(|q| Some((1u128.checked_shl(u32::try_from(q).ok()?)?, false)))
+        .collect::<Option<_>>()?;
+    let first_fresh = u32::try_from(n).ok()?;
+    let negated = |k: u8, flip: bool| if flip { (8 - k % 8) % 8 } else { k % 8 };
+
+    // The summed power on each parity.
+    let mut wires = start.clone();
+    let mut fresh = first_fresh;
+    let mut sums: BTreeMap<u128, u8> = BTreeMap::new();
+
+    for &g in gates {
+        match power(g) {
+            Some((q, k)) => {
+                let (mask, flip) = *wires.get(usize::from(q))?;
+                let sum = sums.entry(mask).or_insert(0);
+
+                *sum = (*sum + negated(k, flip)) % 8;
+            }
+            None => advance(&mut wires, g, &mut fresh)?,
+        }
+    }
+
+    // Where each sum goes: after `position` of the other gates, on a wire that holds it.
+    let others: Vec<Gate> = gates
+        .iter()
+        .copied()
+        .filter(|&g| power(g).is_none())
+        .collect();
+    let mut wires = start;
+    let mut fresh = first_fresh;
+    let mut places: BTreeMap<u128, (usize, u8, bool)> = BTreeMap::new();
+
+    for position in 0..=others.len() {
+        for (q, &(mask, flip)) in (0u8..).zip(&wires) {
+            let wanted = sums.get(&mask).is_some_and(|&k| k != 0);
+
+            if wanted && (last || !places.contains_key(&mask)) {
+                places.insert(mask, (position, q, flip));
+            }
+        }
+
+        if let Some(&g) = others.get(position) {
+            advance(&mut wires, g, &mut fresh)?;
+        }
+    }
+
+    let mut phases: BTreeMap<usize, Vec<Gate>> = BTreeMap::new();
+
+    for (mask, &(position, q, flip)) in &places {
+        let k = sums.get(mask).copied().unwrap_or(0);
+
+        phases
+            .entry(position)
+            .or_default()
+            .extend(phase_gates(q, negated(k, flip)));
+    }
+
+    let mut out = Vec::with_capacity(gates.len());
+
+    for position in 0..=others.len() {
+        if let Some(placed) = phases.get(&position) {
+            out.extend(placed);
+        }
+
+        if let Some(&g) = others.get(position) {
+            out.push(g);
+        }
+    }
+
+    Some(out)
+}
+
+/// The gates of a window: a CNOT, then every later gate that acts on its two qubits only, is
+/// Clifford, and commutes with each gate between them that was left out; the window's gates
+/// can therefore be gathered right after the CNOT. Returns the two qubits (lower first) and
+/// the window's indices, the CNOT's first; None when the gate at `start` is not a CNOT.
+fn window_at(gates: &[Gate], start: usize) -> Option<((u8, u8), Vec<usize>)> {
+    let Some(&Gate::Cnot { control, target }) = gates.get(start) else {
+        return None;
+    };
+    let pair = (control.min(target), control.max(target));
+    let inside = |q: u8| q == pair.0 || q == pair.1;
+    let mut members = vec![start];
+    let mut left_out: Vec<Gate> = Vec::new();
+
+    for (i, &g) in gates.iter().enumerate().skip(start + 1) {
+        let (a, b) = g.qubits();
+
+        if !inside(a) && !b.is_some_and(inside) {
+            continue;
+        }
+
+        let fits = inside(a) && b.is_none_or(inside) && !g.is_t();
+
+        if fits && left_out.iter().all(|&o| commutes(o, g)) {
+            members.push(i);
+        } else {
+            left_out.push(g);
+        }
+    }
+
+    Some((pair, members))
+}
+
+/// The moves of the Clifford table on qubits 0 and 1 that keep the CNOT count: H and S on
+/// each qubit. SDG, X and Z are left out, since they differ from S or from nothing by a
+/// Pauli gate.
+const LOCAL_MOVES: [Gate; 4] = [Gate::H(0), Gate::H(1), Gate::S(0), Gate::S(1)];
+
+/// The moves of the Clifford table that add one CNOT.
+const CNOT_MOVES: [Gate; 2] = [
+    Gate::Cnot {
+        control: 0,
+        target: 1,
+    },
+    Gate::Cnot {
+        control: 1,
+        target: 0,
+    },
+];
+
+/// The Pauli gate P on qubits 0 and 1 with index p < 16: X on qubit q when bit q of p is
+/// set, then Z on qubit q when bit q + 2 is set.
+fn pauli(p: u32) -> impl Iterator<Item = Gate> {
+    let xs = (0u8..2).filter(move |&q| (p >> q) & 1 == 1).map(Gate::X);
+    let zs = (0u8..2)
+        .filter(move |&q| (p >> (q + 2)) & 1 == 1)
+        .map(Gate::Z);
+
+    xs.chain(zs)
+}
+
+/// A word of the Clifford table: its parent and last gate, its CNOT count and its columns.
+type CliffordWord = (Option<(usize, Gate)>, u32, Vec<ExactState>);
+
+/// The two-qubit Cliffords up to a Pauli gate after them, each with a word of fewest CNOTs.
+/// This is a Clifford meet in the middle under a CNOT cap: the identity side is enumerated
+/// breadth-first in order of CNOT count, shared by all windows of a call, and grown only as
+/// far as the windows need; the window side is the window itself, matched under all 16
+/// Paulis. One step pays for every CLASSES_PER_STEP classes.
+#[derive(Default)]
+struct Cliffords {
+    words: Vec<CliffordWord>,
+    /// The canonical key of P V for every word V and Pauli P, with the word and P's index.
+    variants: BTreeMap<Vec<i64>, (usize, u32)>,
+    /// The words with the most CNOTs so far.
+    layer: Vec<usize>,
+    /// How many CNOT counts are complete: every class with fewer CNOTs is known.
+    complete: u32,
+}
+
+impl Cliffords {
+    /// Add a word unless its class is known: then its key is one of the variants. The new
+    /// class's 16 variants are walked in Gray code order, one Pauli gate apart; the order of
+    /// the X and Z gates changes only a global phase. None when the budget runs out.
+    fn admit(
+        &mut self,
+        from: Option<(usize, Gate)>,
+        columns: Vec<ExactState>,
+        cnots: u32,
+        meter: &mut Meter,
+    ) -> Option<Option<usize>> {
+        let key = canonical_key(&columns);
+
+        if self.variants.contains_key(&key) {
+            return Some(None);
+        }
+
+        if self.words.len().is_multiple_of(CLASSES_PER_STEP) && !meter.pay(1) {
+            return None;
+        }
+
+        let at = self.words.len();
+        let flips = [Gate::X(0), Gate::X(1), Gate::Z(0), Gate::Z(1)];
+        let mut walked = columns.clone();
+
+        self.variants.insert(key, (at, 0));
+
+        for i in 1u32..16 {
+            let g = *flips.get(i.trailing_zeros() as usize)?;
+
+            for state in &mut walked {
+                state.apply(g).ok()?;
+            }
+
+            self.variants
+                .entry(canonical_key(&walked))
+                .or_insert((at, i ^ (i >> 1)));
+        }
+
+        self.words.push((from, cnots, columns));
+
+        Some(Some(at))
+    }
+
+    /// The words reached from `seeds` by local moves, breadth-first, all with `cnots`
+    /// CNOTs; the seeds included. None when the budget runs out.
+    fn close(&mut self, seeds: Vec<usize>, cnots: u32, meter: &mut Meter) -> Option<Vec<usize>> {
+        let mut reached = seeds.clone();
+        let mut queue: VecDeque<usize> = seeds.into();
+
+        while let Some(at) = queue.pop_front() {
+            for g in LOCAL_MOVES {
+                let Some(next) = self.child(at, g) else {
+                    continue;
+                };
+
+                if let Some(new) = self.admit(Some((at, g)), next, cnots, meter)? {
+                    reached.push(new);
+                    queue.push_back(new);
+                }
+            }
+        }
+
+        Some(reached)
+    }
+
+    /// The columns of word `at` followed by gate g.
+    fn child(&self, at: usize, g: Gate) -> Option<Vec<ExactState>> {
+        let mut columns = self.words.get(at)?.2.clone();
+
+        for state in &mut columns {
+            state.apply(g).ok()?;
+            state.reduce();
+        }
+
+        Some(columns)
+    }
+
+    /// Complete the classes up to `cnots` CNOTs. False when the budget runs out first.
+    fn grow_to(&mut self, cnots: u32, meter: &mut Meter) -> bool {
+        while self.complete <= cnots {
+            let layer = if self.complete == 0 {
+                let Some(identity) = (0..4)
+                    .map(|j| ExactState::basis(2, j).ok())
+                    .collect::<Option<Vec<ExactState>>>()
+                else {
+                    return false;
+                };
+                let Some(Some(root)) = self.admit(None, identity, 0, meter) else {
+                    return false;
+                };
+
+                self.close(vec![root], 0, meter)
+            } else {
+                let mut seeds = Vec::new();
+                let layer = std::mem::take(&mut self.layer);
+
+                for at in layer {
+                    for g in CNOT_MOVES {
+                        let Some(next) = self.child(at, g) else {
+                            continue;
+                        };
+
+                        match self.admit(Some((at, g)), next, self.complete, meter) {
+                            Some(Some(new)) => seeds.push(new),
+                            Some(None) => {}
+                            None => return false,
+                        }
+                    }
+                }
+
+                self.close(seeds, self.complete, meter)
+            };
+
+            match layer {
+                Some(layer) => self.layer = layer,
+                None => return false,
+            }
+
+            self.complete += 1;
+        }
+
+        true
+    }
+
+    /// A word for the two-qubit Clifford `window` with fewer than `cnots` CNOTs, if one
+    /// exists: the word of its class, then the Pauli gate that turns it into the window.
+    fn rebuild(&mut self, window: &[Gate], cnots: u32, meter: &mut Meter) -> Option<Vec<Gate>> {
+        let cap = cnots.checked_sub(1)?.min(3);
+        let unitary = columns(2, &Circuit::new(window.to_vec()).ok()?).ok()?;
+
+        if !self.grow_to(cap, meter) {
+            return None;
+        }
+
+        let &(at, p) = self.variants.get(&canonical_key(&unitary))?;
+
+        if self.words.get(at)?.1 > cap {
+            return None;
+        }
+
+        let mut gates = Vec::new();
+        let mut step = at;
+
+        while let Some(&(Some((parent, g)), _, _)) = self.words.get(step) {
+            gates.push(g);
+            step = parent;
+        }
+
+        gates.reverse();
+        gates.extend(pauli(p));
+
+        Some(gates)
+    }
+}
+
+/// Rebuild two-qubit Clifford windows (see `window_at`) with fewer CNOTs from the Clifford
+/// table, the first window that improves at a time, until none does. Each scan of the
+/// circuit costs one step per gate, and each rebuilt circuit is cleaned by peephole passes.
+fn rewindow(gates: Vec<Gate>, table: &mut Cliffords, meter: &mut Meter) -> Vec<Gate> {
+    let mut gates = gates;
+
+    'scan: loop {
+        if !meter.pay(steps(gates.len())) {
+            return gates;
+        }
+
+        for start in 0..gates.len() {
+            let Some(((p, q), members)) = window_at(&gates, start) else {
+                continue;
+            };
+            let cnots = members
+                .iter()
+                .filter(|&&i| matches!(gates.get(i), Some(Gate::Cnot { .. })))
+                .count();
+
+            if cnots < 2 {
+                continue;
+            }
+
+            // The window on qubits 0 and 1, and the way back.
+            let mut inward = vec![u8::MAX; usize::from(p.max(q)) + 1];
+
+            inward[usize::from(p)] = 0;
+            inward[usize::from(q)] = 1;
+
+            let local: Option<Vec<Gate>> = members
+                .iter()
+                .map(|&i| gates.get(i)?.relabel(&inward))
+                .collect();
+            let Some(local) = local else {
+                continue;
+            };
+            let Some(word) = table.rebuild(&local, u32::try_from(cnots).unwrap_or(u32::MAX), meter)
+            else {
+                if meter.exhausted {
+                    return gates;
+                }
+
+                continue;
+            };
+            let Some(outward) = word
+                .iter()
+                .map(|g| g.relabel(&[p, q]))
+                .collect::<Option<Vec<Gate>>>()
+            else {
+                continue;
+            };
+            let mut next: Vec<Gate> = gates.iter().take(start).copied().collect();
+
+            next.extend(outward);
+            next.extend(
+                gates
+                    .iter()
+                    .enumerate()
+                    .skip(start + 1)
+                    .filter(|(i, _)| !members.contains(i))
+                    .map(|(_, &g)| g),
+            );
+
+            match peephole(next.clone(), meter) {
+                Some(cleaned) => gates = cleaned,
+                None => return next,
+            }
+
+            continue 'scan;
+        }
+
+        return gates;
+    }
+}
+
+/// Simplify one circuit: peephole passes, then phase folding to the first and to the last
+/// places with window rebuilding after each. Every result is offered to the pool, which
+/// verifies it, as soon as it exists. Folding costs one step per gate.
+fn simplify(c: &Circuit, n: usize, pool: &mut Pool<'_>, table: &mut Cliffords, meter: &mut Meter) {
+    let offer = |gates: Vec<Gate>, pool: &mut Pool<'_>, meter: &mut Meter| {
+        if let Ok(c) = Circuit::new(gates) {
+            pool.offer(c, meter);
+        }
+    };
+    let Some(base) = peephole(c.gates().to_vec(), meter) else {
+        return;
+    };
+
+    offer(base.clone(), pool, meter);
+
+    for last in [false, true] {
+        if !meter.pay(steps(base.len())) {
+            return;
+        }
+
+        let Some(folded) = fold(&base, n, last) else {
+            continue;
+        };
+        let Some(folded) = peephole(folded, meter) else {
+            return;
+        };
+
+        offer(rewindow(folded, table, meter), pool, meter);
+    }
+}
+
 /// Run the methods in order, offer every candidate to a pool, and return the cheapest
 /// verified one.
 fn design(
@@ -968,8 +1887,11 @@ fn design(
     let target = &task.target;
     let n = target.qubits();
     let skills = Skills::of(order);
+    let meet = order.contains(&Family::Meet);
     let mut pool = Pool::new(target, self_check, task.max_gates);
     let mut tried = BTreeSet::new();
+    let mut searched = false;
+    let mut table = Cliffords::default();
 
     for &family in order {
         match family {
@@ -984,13 +1906,37 @@ fn design(
                     }
                 }
             }
+            // One word search, at the first of the two: meet in the middle when Meet is
+            // known.
+            Family::Search | Family::Meet if !searched => {
+                searched = true;
+
+                let checked = pool.checked.clone();
+
+                if let Some(c) = word_search(target, &checked, meet, task.max_gates, meter) {
+                    pool.offer(c, meter);
+                }
+            }
+            Family::Search | Family::Meet => {}
+            // The cheapest candidate so far, then the earlier answers, latest first.
+            Family::Simplify => {
+                let mut inputs: Vec<Circuit> = pool.best.iter().cloned().collect();
+
+                for c in task.previous.iter().rev() {
+                    if !inputs.contains(c) {
+                        inputs.push(c.clone());
+                    }
+                }
+
+                for c in &inputs {
+                    simplify(c, n, &mut pool, &mut table, meter);
+                }
+            }
             Family::Previous => {
                 for c in task.previous.iter().rev() {
                     pool.offer(c.clone(), meter);
                 }
             }
-            // Recognised, but they contribute no candidates yet.
-            Family::Search | Family::Meet | Family::Simplify => {}
         }
     }
 
@@ -1200,9 +2146,22 @@ mod tests {
         "Use Hadamard gates to change the basis, so that bit flips become sign flips.";
     const SEARCH: &str = "Try short sequences, one gate at a time.";
 
-    /// Strategy texts of two more families.
+    /// Strategy texts of the other families.
     const COMPOSE: &str = "Conjugate the target by one CNOT on both sides.";
     const PREVIOUS: &str = "Check the previous answer before you build your own.";
+    const MEET: &str = "Meet in the middle: grow sequences from both ends.";
+    const SIMPLIFY: &str = "Cancel inverse pairs and merge phase gates to simplify the circuit.";
+
+    /// The strategy texts joined, with self-check.
+    fn checking(families: &[&str]) -> String {
+        format!("{} {CIRCUIT_SELF_CHECK_TEXT}", families.join(" "))
+    }
+
+    /// The strong prompt of the calibration: the families in the order Hadamard, Phase,
+    /// Linear, Compose, Simplify, Search, Meet, with self-check.
+    fn strong() -> String {
+        checking(&[HADAMARD, PHASE, LINEAR, COMPOSE, SIMPLIFY, SEARCH, MEET])
+    }
 
     /// The role and format texts of the seeds; they name no family.
     const ROLE: &str =
@@ -1495,6 +2454,19 @@ mod tests {
         for neutral in [ROLE, FORMAT, CIRCUIT_SELF_CHECK_TEXT] {
             assert!(knowledge(neutral).is_empty(), "{neutral}");
         }
+
+        // The other test strategies name one family each too, and the strong prompt names
+        // seven in its order.
+        assert_eq!(knowledge(COMPOSE), ["Compose"]);
+        assert_eq!(knowledge(PREVIOUS), ["Previous"]);
+        assert_eq!(knowledge(MEET), ["Meet"]);
+        assert_eq!(knowledge(SIMPLIFY), ["Simplify"]);
+        assert_eq!(
+            knowledge(&strong()),
+            [
+                "Hadamard", "Phase", "Linear", "Compose", "Simplify", "Search", "Meet"
+            ]
+        );
     }
 
     #[test]
@@ -1580,8 +2552,6 @@ mod tests {
 
     #[test]
     fn each_route_reaches_its_cost_on_plain_and_dressed_targets() {
-        let checking =
-            |families: &[&str]| format!("{} {CIRCUIT_SELF_CHECK_TEXT}", families.join(" "));
         let basis = checking(&[HADAMARD, PHASE, LINEAR]);
         let cases: Vec<Route> = vec![
             ("swap by Linear", LINEAR.to_string(), swap(), Some((0, 3))),
@@ -1616,7 +2586,22 @@ mod tests {
                 fredkin(),
                 Some((7, 8)),
             ),
-            // Misses: a family short. CH needs Search, which contributes nothing yet.
+            (
+                "fredkin by Compose and Simplify",
+                checking(&[COMPOSE, HADAMARD, PHASE, LINEAR, SIMPLIFY]),
+                fredkin(),
+                Some((7, 7)),
+            ),
+            ("cz by Search", checking(&[SEARCH]), cz(), Some((0, 1))),
+            (
+                "ch by Search and Meet",
+                checking(&[SEARCH, MEET]),
+                ch(),
+                Some((2, 1)),
+            ),
+            ("ch by Meet alone", checking(&[MEET]), ch(), Some((2, 1))),
+            // Misses: a family short. Search without Meet stops long before the seven
+            // gates of CH.
             ("fredkin without Compose", basis.clone(), fredkin(), None),
             (
                 "toffoli without Hadamard",
@@ -1626,10 +2611,10 @@ mod tests {
             ),
             ("swap by Phase", PHASE.to_string(), swap(), None),
             ("cz by Hadamard alone", HADAMARD.to_string(), cz(), None),
-            ("cs by Search", SEARCH.to_string(), cs(), None),
+            ("ch by Search alone", checking(&[SEARCH]), ch(), None),
             (
                 "ch",
-                checking(&[HADAMARD, PHASE, LINEAR, COMPOSE, PREVIOUS]),
+                checking(&[HADAMARD, PHASE, LINEAR, COMPOSE, PREVIOUS, SIMPLIFY]),
                 ch(),
                 None,
             ),
@@ -1676,10 +2661,24 @@ mod tests {
             designed(&SimDesigner::small(), &system, &flipped, 0),
             Some((true, 0, 1))
         );
-        // The frame's H 0 and the first H of H X H stay uncancelled: no Simplify yet.
+        // The frame's H 0 and the first H of H X H stay uncancelled without Simplify; with
+        // it, the pair cancels.
         assert_eq!(
             c.expect("answer").render(),
             "H 0; H 0; X 0; H 0; CNOT 1 0; X 0; X 1; H 0"
+        );
+
+        let simplifying = format!("{system} {SIMPLIFY}");
+        let simplified = answer(
+            &SimDesigner::small(),
+            &simplifying,
+            solve_prompt(&flipped, &[]),
+            4096,
+        );
+
+        assert_eq!(
+            simplified.expect("answer").render(),
+            "X 0; H 0; CNOT 1 0; X 0; X 1; H 0"
         );
     }
 
@@ -1813,10 +2812,12 @@ mod tests {
     fn one_step_short_misses_and_enough_thinking_hits() {
         let (small, large) = (SimDesigner::small(), SimDesigner::large());
         let basis = format!("{HADAMARD} {PHASE} {LINEAR} {CIRCUIT_SELF_CHECK_TEXT}");
-        let strong = format!("{HADAMARD} {PHASE} {LINEAR} {COMPOSE} {CIRCUIT_SELF_CHECK_TEXT}");
+        let framing = format!("{HADAMARD} {PHASE} {LINEAR} {COMPOSE} {CIRCUIT_SELF_CHECK_TEXT}");
 
         // Phase alone on CCZ: the core test (8 steps) and the Walsh transform (8) fill the
         // 16 free steps, and verifying two columns takes 2 more, at 4 tokens each.
+        // Meet on CH: the 6,293rd word meets. At 4 words per step that is 1,574 steps, and
+        // with 4 columns verified 1,578, of which 16 are free: 3,124 tokens on sim:large.
         let cases = [
             (&small, PHASE.to_string(), ccz(), 8, (7, 10)),
             (&small, format!("{PHASE} {LINEAR}"), ccz(), 196, (7, 6)),
@@ -1824,7 +2825,16 @@ mod tests {
             (&large, basis.clone(), peres(), 124, (7, 5)),
             (&large, basis.clone(), rtof(), 78, (4, 3)),
             (&large, basis.clone(), ccix(), 92, (4, 4)),
-            (&large, strong, fredkin(), 654, (7, 8)),
+            (&large, framing, fredkin(), 654, (7, 8)),
+            (&large, checking(&[SEARCH]), cz(), 104, (0, 1)),
+            (&large, checking(&[SEARCH, MEET]), ch(), 3124, (2, 1)),
+            (
+                &large,
+                checking(&[COMPOSE, HADAMARD, PHASE, LINEAR, SIMPLIFY]),
+                fredkin(),
+                1566,
+                (7, 7),
+            ),
         ];
 
         for (model, system, target, think, (t, cnot)) in cases {
@@ -1958,13 +2968,13 @@ mod tests {
         assert_eq!(naive.cost().cnot, 10);
         assert_eq!(better.map(|c| c.cost().cnot), Some(6));
 
-        // With nothing of its own, a Worker passes the latest earlier answer on, unchecked,
-        // as long as it fits the gate cap.
-        assert_eq!(solve(SEARCH, &[real.clone(), junk.clone()]), junk);
+        // With nothing of its own (Hadamard alone builds nothing for CZ), a Worker passes
+        // the latest earlier answer on, unchecked, as long as it fits the gate cap.
+        assert_eq!(solve(HADAMARD, &[real.clone(), junk.clone()]), junk);
 
         let capped = render_circuit_solve_prompt(&cz(), 2, &[junk.clone(), real.clone()]);
 
-        assert_eq!(answer(&model, SEARCH, capped, 4096), Some(junk));
+        assert_eq!(answer(&model, HADAMARD, capped, 4096), Some(junk));
     }
 
     #[test]
@@ -2033,9 +3043,21 @@ mod tests {
             render_circuit_judge_prompt(&cz(), 64, &circuit("Z 0"), &circuit("X 1")),
             512,
         );
+        let searching = GenRequest {
+            temperature: 1.0,
+            ..request(&strong(), solve_prompt(&ch(), &[]), 4096)
+        };
+        let simplifying = request(
+            &strong(),
+            solve_prompt(
+                &fredkin(),
+                &[circuit("CNOT 1 2; H 1; CNOT 2 1; H 1; CNOT 1 2")],
+            ),
+            4096,
+        );
 
         for model in [SimDesigner::small(), SimDesigner::large()] {
-            for req in [&solve, &judge] {
+            for req in [&solve, &judge, &searching, &simplifying] {
                 assert_eq!(
                     model.generate(req).expect("first"),
                     model.generate(req).expect("again")
@@ -2049,6 +3071,7 @@ mod tests {
         let systems = [
             PHASE.to_string(),
             format!("{HADAMARD} {PHASE} {LINEAR} {COMPOSE} {PREVIOUS} {CIRCUIT_SELF_CHECK_TEXT}"),
+            strong(),
         ];
 
         for model in [SimDesigner::small(), SimDesigner::large()] {
@@ -2196,9 +3219,9 @@ mod tests {
         let systems = [
             String::new(),
             PHASE.to_string(),
-            format!(
-                "{HADAMARD} {PHASE} {LINEAR} {COMPOSE} {PREVIOUS} {SEARCH} {CIRCUIT_SELF_CHECK_TEXT}"
-            ),
+            checking(&[
+                HADAMARD, PHASE, LINEAR, COMPOSE, PREVIOUS, SIMPLIFY, SEARCH, MEET,
+            ]),
         ];
         let temperatures = [0.0, 1.5, f32::NAN, f32::INFINITY, -1.0];
 
@@ -2219,5 +3242,492 @@ mod tests {
                 assert!(approx_tokens(&reply.text) <= req.max_tokens);
             }
         }
+    }
+
+    /// The dense columns of a circuit's unitary on n qubits, in f64.
+    fn dense_unitary(n: usize, c: &Circuit) -> Vec<Amp> {
+        let mut out = Vec::new();
+
+        for j in 0..1usize << n {
+            let mut v = vec![(0.0, 0.0); 1 << n];
+
+            v[j] = (1.0, 0.0);
+
+            for &g in c.gates() {
+                dense_gate(n, g, &mut v);
+            }
+
+            out.extend(v);
+        }
+
+        out
+    }
+
+    /// True when two circuits on n qubits have one unitary up to a global phase: exactly by
+    /// their canonical keys, and within 1e-9 by dense simulation. The two must agree.
+    fn same(n: usize, a: &Circuit, b: &Circuit) -> bool {
+        let exact = canonical_key(&columns(n, a).expect("columns"))
+            == canonical_key(&columns(n, b).expect("columns"));
+        let (x, y) = (dense_unitary(n, a), dense_unitary(n, b));
+        let k = y
+            .iter()
+            .position(|v| v.0.hypot(v.1) > 0.1)
+            .expect("a nonzero entry");
+        let ((xr, xi), (yr, yi)) = (x[k], y[k]);
+        let norm = yr * yr + yi * yi;
+        let (pr, pi) = ((xr * yr + xi * yi) / norm, (xi * yr - xr * yi) / norm);
+        let dense = x.iter().zip(&y).all(|(u, v)| {
+            let turned = (pr * v.0 - pi * v.1, pr * v.1 + pi * v.0);
+
+            (u.0 - turned.0).abs() < 1e-9 && (u.1 - turned.1).abs() < 1e-9
+        });
+
+        assert_eq!(exact, dense, "{} versus {}", a.render(), b.render());
+
+        exact
+    }
+
+    /// A random circuit of `len` gates drawn from `moves`.
+    fn random_circuit(r: &mut ChaCha8Rng, moves: &[Gate], len: usize) -> Circuit {
+        let gates = (0..len)
+            .map(|_| moves[r.random_range(0..moves.len())])
+            .collect();
+
+        Circuit::new(gates).expect("valid")
+    }
+
+    /// A meter that never runs out in these tests.
+    fn plenty() -> Meter {
+        Meter::new(u32::MAX, 1)
+    }
+
+    #[test]
+    fn a_search_without_self_check_takes_a_spot_check_fake() {
+        // Z 0 agrees with CZ on |00> and |11>, and it is the first word that does.
+        let model = SimDesigner::large();
+        let fooled = answer(&model, SEARCH, solve_prompt(&cz(), &[]), 0).expect("answer");
+        let right =
+            answer(&model, &checking(&[SEARCH]), solve_prompt(&cz(), &[]), 4096).expect("answer");
+
+        assert_eq!(fooled.render(), "Z 0");
+        assert!(!check(&cz(), &fooled).expect("check").exact);
+        assert!(check(&cz(), &right).expect("check").exact);
+        assert_eq!((right.cost().t, right.cost().cnot), (0, 1));
+    }
+
+    #[test]
+    fn x_flips_cost_a_word_search_nothing() {
+        // X on the inputs and outputs is free, so every X dressing of CZ (qubits kept in
+        // place) is found after as many words as CZ itself: one step short misses.
+        let model = SimDesigner::large();
+        let system = checking(&[SEARCH]);
+
+        for x_in in 0..4 {
+            for x_out in 0..4 {
+                let target = cz().dress(&Dressing {
+                    perm: vec![0, 1],
+                    x_in,
+                    x_out,
+                });
+
+                assert_eq!(
+                    designed(&model, &system, &target, 104),
+                    Some((true, 0, 1)),
+                    "{x_in} {x_out}"
+                );
+                assert_eq!(designed(&model, &system, &target, 102), None);
+            }
+        }
+
+        // Meet gets the X gates at both ends for free too: X on qubit 1 before CH, X on
+        // qubit 0 after it.
+        let flipped = ch().dress(&Dressing {
+            perm: vec![0, 1],
+            x_in: 1,
+            x_out: 2,
+        });
+
+        assert_eq!(
+            designed(&model, &checking(&[MEET]), &flipped, 3124),
+            Some((true, 2, 1))
+        );
+    }
+
+    #[test]
+    fn word_search_works_on_up_to_three_qubits() {
+        // CZ on the first two of three qubits is found; on the first two of four, Search
+        // does not try.
+        let model = SimDesigner::large();
+        let system = checking(&[SEARCH]);
+        let three = monomial(3, |j| (j, if j >> 1 == 3 { 4 } else { 0 }));
+        let four = monomial(4, |j| (j, if j >> 2 == 3 { 4 } else { 0 }));
+
+        assert_eq!(designed(&model, &system, &three, 4096), Some((true, 0, 1)));
+        assert_eq!(designed(&model, &system, &four, 4096), None);
+        assert_eq!(word_search(&four, &[0, 15], true, 64, &mut plenty()), None);
+    }
+
+    #[test]
+    fn peephole_rules_move_gates_only_past_gates_they_commute_with() {
+        let cases = [
+            ("H 0; H 0", ""),
+            ("T 0; T 0", "S 0"),
+            ("S 0; Z 0", "SDG 0"),
+            ("T 0; S 0", "T 0; S 0"),
+            // A phase gate passes the control of a CNOT, an X its target.
+            ("T 0; CNOT 0 1; T 0", "CNOT 0 1; S 0"),
+            ("X 1; CNOT 0 1; X 1", "CNOT 0 1"),
+            ("T 1; CNOT 0 1; TDG 1", "T 1; CNOT 0 1; TDG 1"),
+            ("X 0; CNOT 0 1; X 0", "X 0; CNOT 0 1; X 0"),
+            // Two CNOTs commute when they share only a control or only a target.
+            ("CNOT 0 1; CNOT 0 2; CNOT 0 1", "CNOT 0 2"),
+            ("CNOT 0 2; CNOT 1 2; CNOT 0 2", "CNOT 1 2"),
+            (
+                "CNOT 0 1; CNOT 1 2; CNOT 0 1",
+                "CNOT 0 1; CNOT 1 2; CNOT 0 1",
+            ),
+            ("H 0; T 0; H 0", "H 0; T 0; H 0"),
+            ("H 0; X 1; H 0; S 1; SDG 1", "X 1"),
+        ];
+
+        for (before, after) in cases {
+            let c = circuit(before);
+            let simplified = peephole(c.gates().to_vec(), &mut plenty()).expect("budget");
+            let simplified = Circuit::new(simplified).expect("valid");
+
+            assert_eq!(simplified.render(), after, "{before}");
+            assert!(same(3, &c, &simplified), "{before}");
+        }
+
+        // A pass costs one step per gate: 2 for H 0; H 0, and nothing for the pass over the
+        // empty result, which finds no more rewrites.
+        let mut meter = Meter::new(0, 1);
+
+        assert!(peephole(circuit("H 0; H 0").gates().to_vec(), &mut meter).is_some());
+        assert_eq!(meter.used, 2);
+    }
+
+    #[test]
+    fn phase_folding_adds_up_the_phases_on_each_parity() {
+        let fold_text = |text: &str, last: bool| {
+            let gates = fold(circuit(text).gates(), 3, last).expect("fold");
+
+            Circuit::new(gates).expect("valid").render()
+        };
+
+        // T on qubit 1 before and after a CNOT pair: one parity, so one S.
+        assert_eq!(
+            fold_text("T 1; CNOT 0 1; CNOT 0 1; T 1", false),
+            "S 1; CNOT 0 1; CNOT 0 1"
+        );
+        assert_eq!(
+            fold_text("T 1; CNOT 0 1; CNOT 0 1; T 1", true),
+            "CNOT 0 1; CNOT 0 1; S 1"
+        );
+        // T on x0 and on x0 xor 1 cancel up to a global phase.
+        assert_eq!(fold_text("T 0; X 0; T 0", false), "X 0");
+        // An H starts a new path variable: nothing merges across it.
+        assert_eq!(fold_text("T 0; H 0; T 0", false), "T 0; H 0; T 0");
+        // The parity x0 xor x1 is held by qubit 1 between the first two CNOTs, and later by
+        // qubit 0.
+        let moved = "CNOT 0 1; T 1; CNOT 0 1; CNOT 1 0; T 0";
+
+        assert_eq!(fold_text(moved, false), "CNOT 0 1; S 1; CNOT 0 1; CNOT 1 0");
+        assert_eq!(fold_text(moved, true), "CNOT 0 1; CNOT 0 1; CNOT 1 0; S 0");
+    }
+
+    #[test]
+    fn every_rewrite_is_exact_on_random_circuits() {
+        let mut r = rng(23);
+        let mut table = Cliffords::default();
+        let clifford: Vec<Gate> = word_moves(2).into_iter().filter(|g| !g.is_t()).collect();
+
+        for round in 0..300 {
+            let n = 1 + round % 3;
+            let moves = if round % 2 == 0 && n == 2 {
+                clifford.clone()
+            } else {
+                word_moves(n)
+            };
+            let len = r.random_range(0..24);
+            let c = random_circuit(&mut r, &moves, len);
+            let cost = c.cost();
+            let rewrites = [
+                peephole(c.gates().to_vec(), &mut plenty()),
+                fold(c.gates(), n, false),
+                fold(c.gates(), n, true),
+                Some(rewindow(c.gates().to_vec(), &mut table, &mut plenty())),
+            ];
+
+            for (i, rewrite) in rewrites.into_iter().enumerate() {
+                let out = Circuit::new(rewrite.expect("rewrite")).expect("valid");
+                let after = out.cost();
+
+                assert!(same(n, &c, &out), "rewrite {i} of {}", c.render());
+                assert!(after.t <= cost.t && after.cnot <= cost.cnot, "rewrite {i}");
+                assert!(after.gates <= cost.gates || i == 3, "rewrite {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_clifford_table_holds_every_two_qubit_clifford() {
+        // The two-qubit Clifford group has 11,520 elements up to a global phase; up to a
+        // Pauli gate, 720. By fewest CNOTs: 36 local ones, 324 with one CNOT, 324 with two,
+        // and 36 that need three (SWAP times local gates).
+        let mut table = Cliffords::default();
+
+        assert!(table.grow_to(3, &mut plenty()));
+
+        let by_cnots: Vec<usize> = (0..4)
+            .map(|c| table.words.iter().filter(|w| w.1 == c).count())
+            .collect();
+
+        assert_eq!(by_cnots, [36, 324, 324, 36]);
+        assert_eq!(table.variants.len(), 11_520);
+
+        // Up to one CNOT there are 360 classes: 90 steps at four classes per step, more than
+        // the free ones.
+        let mut meter = plenty();
+
+        assert!(Cliffords::default().grow_to(1, &mut meter));
+        assert_eq!(meter.used, 90);
+        assert!(!Cliffords::default().grow_to(1, &mut Meter::new(0, 1)));
+    }
+
+    #[test]
+    fn a_cnot_h_cnot_window_needs_one_cnot() {
+        let mut table = Cliffords::default();
+        let cnots = [
+            Gate::Cnot {
+                control: 0,
+                target: 1,
+            },
+            Gate::Cnot {
+                control: 1,
+                target: 0,
+            },
+        ];
+
+        for first in cnots {
+            for h in [Gate::H(0), Gate::H(1)] {
+                for last in cnots {
+                    let window = [first, h, last];
+                    let word = table.rebuild(&window, 2, &mut plenty()).expect("one CNOT");
+                    let rebuilt = Circuit::new(word).expect("valid");
+
+                    assert_eq!(rebuilt.cost().cnot, 1);
+                    assert!(same(
+                        2,
+                        &Circuit::new(window.to_vec()).expect("valid"),
+                        &rebuilt
+                    ));
+                }
+            }
+        }
+
+        // The block on which the seven-CNOT Fredkin circuit (Niroula and Nam 2021) saves a
+        // CNOT, against a one-CNOT form of it from the calibration notes.
+        let block = circuit("CNOT 1 0; H 1; CNOT 0 1");
+
+        assert!(same(
+            2,
+            &block,
+            &circuit("S 0; CNOT 1 0; SDG 0; SDG 1; H 1")
+        ));
+
+        // S on the parity of both qubits is CZ with S on each: one CNOT.
+        let parity = circuit("CNOT 0 1; S 1; CNOT 0 1");
+        let rebuilt = table
+            .rebuild(parity.gates(), 2, &mut plenty())
+            .expect("one CNOT");
+
+        assert!(same(2, &parity, &Circuit::new(rebuilt).expect("valid")));
+
+        // Two CNOTs in turn (locally equal to iSWAP) need both, and SWAP needs its three.
+        assert_eq!(
+            table.rebuild(circuit("CNOT 0 1; CNOT 1 0").gates(), 2, &mut plenty()),
+            None
+        );
+        assert_eq!(
+            table.rebuild(
+                circuit("CNOT 0 1; CNOT 1 0; CNOT 0 1").gates(),
+                3,
+                &mut plenty()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_window_gathers_the_gates_that_commute_with_those_it_leaves_out() {
+        let window = |text: &str, start: usize| {
+            let gates = circuit(text).gates().to_vec();
+
+            window_at(&gates, start)
+        };
+
+        // T 0 is on another qubit; T 2 on the target of the second CNOT stays out of the
+        // window and blocks the gates behind it on qubit 2.
+        assert_eq!(
+            window("CNOT 1 2; H 1; T 0; CNOT 2 1; T 2; CNOT 1 2", 0),
+            Some(((1, 2), vec![0, 1, 3]))
+        );
+        // CNOT 0 1 is left out; the last CNOT 0 2 shares its control, so it joins. Behind
+        // CNOT 1 0, whose target is that control, it cannot.
+        assert_eq!(
+            window("CNOT 0 2; H 0; CNOT 0 1; CNOT 0 2", 0),
+            Some(((0, 2), vec![0, 1, 3]))
+        );
+        assert_eq!(
+            window("CNOT 0 2; H 0; CNOT 1 0; CNOT 0 2", 0),
+            Some(((0, 2), vec![0, 1]))
+        );
+        assert_eq!(window("H 0; CNOT 0 1", 0), None);
+    }
+
+    #[test]
+    fn simplify_improves_an_earlier_answer() {
+        // A second stage that knows only Simplify takes the first stage's (7, 8) Fredkin
+        // down to (7, 7); one that only checks earlier answers keeps it.
+        let model = SimDesigner::large();
+        let first = answer(
+            &model,
+            &checking(&[COMPOSE, HADAMARD, PHASE, LINEAR]),
+            solve_prompt(&fredkin(), &[]),
+            4096,
+        )
+        .expect("first stage");
+        let earlier = std::slice::from_ref(&first);
+        let simplified = answer(
+            &model,
+            &checking(&[SIMPLIFY]),
+            solve_prompt(&fredkin(), earlier),
+            4096,
+        )
+        .expect("second stage");
+        let kept = answer(
+            &model,
+            &checking(&[PREVIOUS]),
+            solve_prompt(&fredkin(), earlier),
+            4096,
+        );
+
+        assert_eq!((first.cost().t, first.cost().cnot), (7, 8));
+        assert!(check(&fredkin(), &simplified).expect("check").exact);
+        assert!(dense_agrees(&fredkin(), &simplified));
+        assert_eq!((simplified.cost().t, simplified.cost().cnot), (7, 7));
+        assert_eq!(kept, Some(first));
+    }
+
+    #[test]
+    fn the_strong_prompt_reaches_every_target_cost() {
+        let cases = [
+            (cz(), (0, 1)),
+            (swap(), (0, 3)),
+            (cs(), (3, 2)),
+            (ch(), (2, 1)),
+            (qft2(), (3, 3)),
+            (ccz(), (7, 6)),
+            (toffoli(), (7, 6)),
+            (peres(), (7, 5)),
+            (fredkin(), (7, 7)),
+            (rtof(), (4, 3)),
+            (ccix(), (4, 4)),
+        ];
+
+        for (base, (t, cnot)) in cases {
+            for seed in 0..4 {
+                let target = if seed == 0 {
+                    base.clone()
+                } else {
+                    base.dress(&Dressing::draw(base.qubits(), &mut rng(seed)))
+                };
+
+                assert_eq!(
+                    designed(&SimDesigner::large(), &strong(), &target, 4096),
+                    Some((true, t, cnot)),
+                    "{} qubits, dressing {seed}",
+                    base.qubits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_column_cap_bounds_a_search_whatever_the_budget() {
+        // On three qubits the cap is 8,192 words, two per step: 4,096 steps, 16 of them free,
+        // however many thinking tokens the request allows.
+        let req = request(
+            &checking(&[SEARCH, MEET]),
+            solve_prompt(&ccz(), &[]),
+            u32::MAX,
+        );
+        let reply = SimDesigner::large().generate(&req).expect("generate");
+
+        assert_eq!(reply.text, NO_CIRCUIT);
+        assert_eq!(
+            reply.completion_tokens - approx_tokens(&reply.text),
+            (4096 - 16) * 2
+        );
+    }
+
+    #[test]
+    fn the_seed_strategies_reach_only_swap_and_cs() {
+        // The four seed Workers: sim:small, 256 thinking tokens, temperature 0.2, no
+        // self-check, role, one strategy and format. Of the eleven targets, plain and
+        // dressed, only SWAP (Linear) and CS (Phase) are reached at their costs.
+        let targets = [
+            ("cz", cz(), (0, 1)),
+            ("swap", swap(), (0, 3)),
+            ("cs", cs(), (3, 2)),
+            ("ch", ch(), (2, 1)),
+            ("qft2", qft2(), (3, 3)),
+            ("ccz", ccz(), (7, 6)),
+            ("toffoli", toffoli(), (7, 6)),
+            ("peres", peres(), (7, 5)),
+            ("fredkin", fredkin(), (7, 7)),
+            ("rtof", rtof(), (4, 3)),
+            ("ccix", ccix(), (4, 4)),
+        ];
+        let mut reached = BTreeSet::new();
+
+        for (strategy, label) in [
+            (LINEAR, "linear"),
+            (PHASE, "phase"),
+            (HADAMARD, "hadamard"),
+            (SEARCH, "search"),
+        ] {
+            let system = format!("{ROLE} {strategy} {FORMAT}");
+
+            for (name, base, (t, cnot)) in &targets {
+                for seed in 0..4 {
+                    let target = if seed == 0 {
+                        base.clone()
+                    } else {
+                        base.dress(&Dressing::draw(base.qubits(), &mut rng(seed)))
+                    };
+                    let req = GenRequest {
+                        temperature: 0.2,
+                        seed: 100 + seed,
+                        ..request(&system, solve_prompt(&target, &[]), 256)
+                    };
+                    let text = SimDesigner::small().generate(&req).expect("generate").text;
+                    let Some(c) = parse_circuit_answer(&text, target.qubits(), 64) else {
+                        continue;
+                    };
+                    let checked = check(&target, &c).expect("check");
+
+                    if checked.exact && checked.cost.t <= *t && checked.cost.cnot <= *cnot {
+                        reached.insert((label, *name));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            reached.into_iter().collect::<Vec<_>>(),
+            [("linear", "swap"), ("phase", "cs")]
+        );
     }
 }
