@@ -27,7 +27,7 @@ models on a rented GPU host.
 | Q9 | The host pushes results to a `runs/` branch with a deploy key kept in a `.env` on the host. |
 | Q10 | Claude may change the breeder only through code-owner-reviewed PRs; the evaluator never. |
 | Q11 | Depth 1-4, width 1-3, residual path, blind in-stage vote. |
-| Q12 | Blind pairwise judging across Cascades, never by relatives; Bradley-Terry; judging skill weights votes. |
+| Q12 | Blind pairwise judging across Cascades, never by a parent, child or sibling of either judged Cascade (more distant relatives may judge); Bradley-Terry; judging skill weights votes. |
 | Q13 | Fitness = 0.8 solved + 0.2 judging skill - cost; peer rating breaks ties; DGM parent selection. |
 | Q14 | Stage crossover, section crossover, Claude crossover (LLM rounds only, recorded). |
 | Q15 | Endpoint: best Cascade vs compute-matched single Worker on ARC-AGI-1 eval, pass@2, sign test p < 0.05. |

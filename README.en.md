@@ -13,9 +13,9 @@ Status: built with the simulated model (PR #8); real models follow. Described in
 Here the Brutmaschine breeds **Cascades** of language-model **Workers**. A Worker is a
 model with a system prompt and **Traits** (thinking budget, temperature, answer length,
 self-check). A Cascade has one to four Stages, with one to three Workers each. Every
-Cascade is also a judge. It judges the answers of other, unrelated Cascades blind. The
-Brutmaschine chooses parents the way the Darwin Gödel Machine does. Claude can write new
-Cascades as the **Mutator**.
+Cascade is also a judge. It judges the answers of other Cascades blind, never those of
+a parent, child or sibling. The Brutmaschine chooses parents the way the Darwin Gödel
+Machine does. Claude can write new Cascades as the **Mutator**.
 
 The same rule holds here: candidates are data. A Cascade is JSON. Its prompt is sent to a
 model and never executed. There is no language model in the container. The Workers use a
@@ -37,11 +37,24 @@ scripts/propose-pr.sh runs/k1/promote
 
 # Kill switch: the Run stops before the next puzzle
 touch runs/k1/STOP
+
+# Going on after the kill switch: delete STOP first, then resume
+rm runs/k1/STOP
+./target/release/brut-breed --out runs/k1 --resume
 ```
 
 With `--llm-every K`, every K-th generation is an LLM round. If an answer from the
 Mutator is missing, the Run pauses and exits with exit code 3. The requests are then in
 `runs/k1/llm/requests/`. Write each answer as `runs/k1/llm/answers/<schlüssel>.txt`, or
 let a Claude session do it. Here `<schlüssel>` is the key from the request's file name.
-Then continue the Run with `--resume`. Exit codes: 0 = done or stopped cleanly,
-1 = error, 2 = wrong usage, 3 = waiting for LLM answers.
+Then continue the Run with `--resume`. If `--llm-answers <dir>` puts the answers
+elsewhere, give that option on resume too. Exit codes: 0 = done or stopped cleanly,
+1 = error, 2 = wrong usage (also: another process holds the run directory),
+3 = waiting for LLM answers.
+
+`--resume` may change only `--generations`, `--max-calls`, `--max-seconds` and
+`--llm-answers`; everything else defines the experiment. Before each generation, the
+checkpoint reserves its worst-case number of calls. If the process ends hard (kill,
+crash), the resume counts that reservation as spent, so `--max-calls` holds even then.
+Details are in [docs/STAGE2C_CASCADE_BREEDING.md](docs/STAGE2C_CASCADE_BREEDING.md),
+section 5.

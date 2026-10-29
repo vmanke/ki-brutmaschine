@@ -17,7 +17,9 @@ use crate::util::{Result, sha256_hex};
 pub struct GenRequest {
     pub system: String,
     pub prompt: String,
-    /// Upper bound on generated tokens. A backend stops at this many.
+    /// Upper bound on the visible answer, in tokens. Reasoning is bounded separately by
+    /// `think_tokens` (contract v2, I5: a thinking model gets num_predict = max_tokens +
+    /// think_tokens).
     pub max_tokens: u32,
     /// 0.0 means greedy and as deterministic as the backend allows; higher is more random.
     pub temperature: f32,
@@ -38,7 +40,7 @@ pub struct GenRequest {
 pub enum StopReason {
     /// The model ended on its own.
     Stop,
-    /// The model hit `max_tokens`.
+    /// The answer hit `max_tokens`, or the reasoning hit `think_tokens`.
     Length,
     /// The model declined to answer.
     Refusal,

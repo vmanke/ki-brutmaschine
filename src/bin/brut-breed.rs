@@ -18,11 +18,17 @@
 //!   brut-breed --out <dir> --promote
 //!   brut-breed --out <dir> --verify
 //!
-//! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage, 3 waiting for LLM
-//! answers (see <dir>/llm/requests/).
+//! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
+//! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
+//!
+//! Crash safety: before a generation makes its first call, and before each Cascade the
+//! select phase scores, the checkpoint reserves the worst-case calls of that work; a
+//! resume after a kill counts them as spent, so `max_calls` holds even then. One writer
+//! at a time holds `<dir>/LOCK` (--verify shares it).
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::fs::{File, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -31,7 +37,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use brutmaschine::cascade::arena::{
-    AnswerBook, BreedConfig, Breeder, Event, ModelPool, Report, Snapshot, Status, request_key,
+    AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, Report, Snapshot, Status,
+    request_key,
 };
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
@@ -41,7 +48,14 @@ const SNAPSHOT: &str = "snapshot.json";
 const CONFIG: &str = "config.json";
 const REPORT: &str = "report.json";
 const STOP: &str = "STOP";
+const LOCK: &str = "LOCK";
+const PROMOTE: &str = "promote";
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Options each mode accepts. A resume may change only what `BreedConfig::fixed_hash`
+/// leaves out, plus the per-process wall-clock limit and the answers directory.
+const RESUME_KEYS: [&str; 6] = ["out", "resume", "generations", "max-calls", "max-seconds", "llm-answers"];
+const READ_KEYS: [&str; 3] = ["out", "promote", "verify"];
 
 /// Exit code: the run waits for LLM answers.
 const EXIT_PENDING: i32 = 3;
@@ -84,78 +98,137 @@ fn entry_hash(prev: &str, event_json: &str) -> String {
     sha256_hex(format!("{prev}\n{event_json}").as_bytes())
 }
 
-/// Append-only, hash-chained event log.
+/// Append-only, hash-chained event log. Opening it only reads and verifies; entries a
+/// resume drops (those after its checkpoint) leave the file with the next append.
 struct Log {
     path: PathBuf,
+    /// Every verified entry on disk: its line (without the newline) and its event.
+    lines: Vec<String>,
+    events: Vec<Event>,
+    /// Hash of each entry, in order.
+    hashes: Vec<String>,
+    /// Entries that count; the rest are dropped from disk by the next append.
     len: u64,
-    head: String,
+    /// True when the file ends in an incomplete line (a write the process did not finish).
+    torn: bool,
 }
 
 impl Log {
-    /// Read and verify the log at `path`; keep only its first `keep` entries when given
-    /// (dropping events of a generation that never reached its checkpoint).
-    fn open(path: &Path, keep: Option<u64>) -> Result<Log> {
+    /// Read and verify the whole log at `path`; an absent file is an empty log. Any
+    /// complete line that is not canonical or breaks the chain is an error. Nothing on
+    /// disk changes.
+    fn open(path: &Path) -> Result<Log> {
         let mut log = Log {
             path: path.to_path_buf(),
+            lines: Vec::new(),
+            events: Vec::new(),
+            hashes: Vec::new(),
             len: 0,
-            head: GENESIS.to_string(),
+            torn: false,
         };
 
         if !path.exists() {
             return Ok(log);
         }
 
-        let text = std::fs::read_to_string(path)?;
-        let mut kept = String::new();
+        let bytes = std::fs::read(path)?;
 
-        for line in text.lines() {
-            if keep.is_some_and(|k| log.len >= k) {
+        for piece in bytes.split_inclusive(|&b| b == b'\n') {
+            let Some(raw) = piece.strip_suffix(b"\n") else {
+                // Only the last piece can lack its newline: a write cut short.
+                log.torn = true;
                 break;
-            }
-
-            let entry: LogLine = serde_json::from_str(line)?;
+            };
+            let bad = |what: &str| {
+                BrutError::Integrity(format!("{}: entry {} {what}", path.display(), log.lines.len()))
+            };
+            let line = std::str::from_utf8(raw).map_err(|_| bad("is not UTF-8"))?;
+            let entry: LogLine = serde_json::from_str(line).map_err(|_| bad("is not a log entry"))?;
             let event_json = serde_json::to_string(&entry.event)?;
+            let head = log.head().to_string();
 
             // Lines are written canonically, so a line that does not re-serialise to
             // itself was edited (whitespace, reordered or unknown fields included).
             if serde_json::to_string(&entry)? != line {
-                return Err(BrutError::Integrity(format!(
-                    "{}: entry {} is not in canonical form",
-                    path.display(),
-                    log.len
-                )));
+                return Err(bad("is not in canonical form"));
             }
 
-            if entry.seq != log.len
-                || entry.prev != log.head
-                || entry.hash != entry_hash(&log.head, &event_json)
-            {
-                return Err(BrutError::Integrity(format!(
-                    "{}: entry {} breaks the hash chain",
-                    path.display(),
-                    log.len
-                )));
+            if entry.seq != log.len || entry.prev != head || entry.hash != entry_hash(&head, &event_json) {
+                return Err(bad("breaks the hash chain"));
             }
 
-            log.head = entry.hash;
+            log.lines.push(line.to_string());
+            log.events.push(entry.event);
+            log.hashes.push(entry.hash);
             log.len += 1;
-            kept.push_str(line);
-            kept.push('\n');
-        }
-
-        if let Some(k) = keep {
-            if log.len != k {
-                return Err(BrutError::Integrity(format!(
-                    "{}: has {} entries, the checkpoint expects {k}",
-                    path.display(),
-                    log.len
-                )));
-            }
-
-            write_atomic(path, kept.as_bytes())?;
         }
 
         Ok(log)
+    }
+
+    /// Hash of the last counted entry (GENESIS for none).
+    fn head(&self) -> &str {
+        match self.len {
+            0 => GENESIS,
+            n => &self.hashes[n as usize - 1],
+        }
+    }
+
+    /// The counted events.
+    fn events(&self) -> &[Event] {
+        &self.events[..self.len as usize]
+    }
+
+    /// Error unless the log holds at least `len` entries and the hash of entry `len - 1`
+    /// is `head` (GENESIS for `len` 0): the anchor a checkpoint records.
+    fn check_anchor(&self, len: u64, head: &str) -> Result<()> {
+        let at = match len {
+            0 => Some(GENESIS),
+            n => self.hashes.get(n as usize - 1).map(String::as_str),
+        };
+
+        if at != Some(head) {
+            return Err(BrutError::Integrity(format!(
+                "{}: holds {} entries and does not match the checkpoint (entry {len}, head {head})",
+                self.path.display(),
+                self.hashes.len()
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Count only the first `len` entries, after checking the anchor; `flush` (also the
+    /// one in `append`) drops the rest from disk.
+    fn keep(&mut self, len: u64, head: &str) -> Result<()> {
+        self.check_anchor(len, head)?;
+        self.len = len;
+
+        Ok(())
+    }
+
+    /// Drop from disk, in one atomic step, the entries after the counted ones and a torn
+    /// last line. Nothing happens when there are none.
+    fn flush(&mut self) -> Result<()> {
+        if !self.torn && self.len == self.lines.len() as u64 {
+            return Ok(());
+        }
+
+        self.lines.truncate(self.len as usize);
+        self.events.truncate(self.len as usize);
+        self.hashes.truncate(self.len as usize);
+
+        let mut all = String::new();
+
+        for line in &self.lines {
+            all.push_str(line);
+            all.push('\n');
+        }
+
+        write_atomic(&self.path, all.as_bytes())?;
+        self.torn = false;
+
+        Ok(())
     }
 
     fn append(&mut self, events: &[Event]) -> Result<()> {
@@ -163,21 +236,26 @@ impl Log {
             return Ok(());
         }
 
+        self.flush()?;
+
         let mut out = String::new();
 
         for event in events {
             let event_json = serde_json::to_string(event)?;
-            let hash = entry_hash(&self.head, &event_json);
-            let line = LogLine {
+            let prev = self.head().to_string();
+            let hash = entry_hash(&prev, &event_json);
+            let line = serde_json::to_string(&LogLine {
                 seq: self.len,
-                prev: self.head.clone(),
+                prev,
                 hash: hash.clone(),
                 event: event.clone(),
-            };
+            })?;
 
-            out.push_str(&serde_json::to_string(&line)?);
+            out.push_str(&line);
             out.push('\n');
-            self.head = hash;
+            self.lines.push(line);
+            self.events.push(event.clone());
+            self.hashes.push(hash);
             self.len += 1;
         }
 
@@ -193,26 +271,95 @@ impl Log {
     }
 }
 
+/// What a resume changes on disk, applied once, right before its first write: it takes
+/// over the settings it was given, removes an earlier report and promotion (the run is
+/// unfinished again; a completed select phase writes the report anew), and drops the log
+/// entries after the checkpoint. A resume refused before that leaves the run's records
+/// as they were.
+struct Settle<'a> {
+    out: &'a Path,
+    cfg: &'a BreedConfig,
+    done: bool,
+}
+
+impl Settle<'_> {
+    fn now(&mut self, log: &mut Log) -> Result<()> {
+        if self.done {
+            return Ok(());
+        }
+
+        log.flush()?;
+        write_atomic(&self.out.join(CONFIG), serde_json::to_string_pretty(self.cfg)?.as_bytes())?;
+
+        if self.out.join(REPORT).exists() {
+            std::fs::remove_file(self.out.join(REPORT))?;
+        }
+
+        if self.out.join(PROMOTE).exists() {
+            std::fs::remove_dir_all(self.out.join(PROMOTE))?;
+        }
+
+        self.done = true;
+
+        Ok(())
+    }
+}
+
 fn run() -> Result<i32> {
     let args = parse_args()?;
     let out = PathBuf::from(
         args.get("out")
             .ok_or_else(|| usage("--out <dir> is required"))?,
     );
+    let modes = ["resume", "promote", "verify"].iter().filter(|m| args.contains_key(**m)).count();
+
+    if modes > 1 {
+        return Err(usage("use at most one of --resume, --promote and --verify"));
+    }
+
+    let resume = args.contains_key("resume");
+    let read_only = args.contains_key("verify") || args.contains_key("promote");
+
+    // A resume may change only what fixed_hash leaves out; anything else would silently
+    // be ignored, so it is refused.
+    let allowed: Option<(&[&str], &str)> = if resume {
+        Some((
+            &RESUME_KEYS,
+            "a resume may change only --generations, --max-calls, --max-seconds and --llm-answers; the rest defines the experiment",
+        ))
+    } else if read_only {
+        Some((&READ_KEYS, "--verify and --promote take only --out"))
+    } else {
+        None
+    };
+
+    if let Some((keys, why)) = allowed
+        && let Some(key) = args.keys().find(|k| !keys.contains(&k.as_str()))
+    {
+        return Err(usage(&format!("--{key} cannot be given here: {why}")));
+    }
+
+    if read_only || resume {
+        if !out.join(SNAPSHOT).exists() {
+            return Err(usage(&format!("{} is not a run directory (no {SNAPSHOT})", out.display())));
+        }
+    } else {
+        std::fs::create_dir_all(&out)?;
+    }
+
+    // Held until the process ends; the OS releases it even when the process is killed.
+    // --verify only reads, so it shares the lock (verifies run side by side, never while
+    // a writer writes) and works on a read-only run directory too.
+    let _lock = lock_run(&out, !args.contains_key("verify"))?;
 
     if args.contains_key("verify") {
-        let log = Log::open(&out.join(EVENTS), None)?;
-
-        println!("brut-breed: {} events, hash chain intact, head {}", log.len, log.head);
-
-        return Ok(0);
+        return verify(&out);
     }
 
     if args.contains_key("promote") {
         return promote(&out);
     }
 
-    let resume = args.contains_key("resume");
     let cfg = if resume {
         let mut cfg: BreedConfig = read_json(&out.join(CONFIG))?;
 
@@ -238,14 +385,19 @@ fn run() -> Result<i32> {
         .unwrap_or_else(|| out.join("llm").join("answers"));
     let book = load_answers(&answers_dir)?;
 
+    // Every check runs before anything on disk changes (see Settle), so a refused resume
+    // leaves the run's records as they were.
     let (mut breeder, mut log) = if resume {
         let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
-        let log = Log::open(&out.join(EVENTS), Some(cp.log_len))?;
+        let mut log = Log::open(&out.join(EVENTS))?;
 
-        if log.head != cp.log_head {
-            return Err(BrutError::Integrity(
-                "event log head does not match the checkpoint".to_string(),
-            ));
+        log.keep(cp.log_len, &cp.log_head)?;
+
+        if cp.snapshot.reserved > 0 {
+            println!(
+                "brut-breed: the last process ended inside generation {} or the select phase; its {} reserved call(s) count as spent",
+                cp.snapshot.next_generation, cp.snapshot.reserved
+            );
         }
 
         (Breeder::resume(cfg.clone(), &pool, Some(&book), cp.snapshot)?, log)
@@ -257,18 +409,24 @@ fn run() -> Result<i32> {
             )));
         }
 
-        std::fs::create_dir_all(&out)?;
-
         let b = Breeder::new(cfg.clone(), &pool, Some(&book))?;
-        let log = Log::open(&out.join(EVENTS), None)?;
-
-        // Checkpoint before generation 0, so a crash inside it can still be resumed.
-        checkpoint(&out, &b, &log)?;
+        let log = Log::open(&out.join(EVENTS))?;
 
         (b, log)
     };
 
-    write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
+    let mut settle = Settle {
+        out: &out,
+        cfg: &cfg,
+        done: !resume,
+    };
+
+    if !resume {
+        // Settings first, then the checkpoint before generation 0, so every checkpoint
+        // on disk has its settings next to it.
+        write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
+        checkpoint(&out, breeder.snapshot(), &log)?;
+    }
 
     if !book.is_empty() {
         println!("brut-breed: {} recorded LLM answer(s) loaded", book.len());
@@ -278,18 +436,40 @@ fn run() -> Result<i32> {
     let limit = max_seconds.map(Duration::from_secs);
     let stop_file = out.join(STOP);
     let stop = || stop_file.exists() || limit.is_some_and(|l| start.elapsed() >= l);
+    let resume_cmd = format!(
+        "brut-breed --out {} --resume{}",
+        out.display(),
+        args.get("llm-answers").map(|d| format!(" --llm-answers {d}")).unwrap_or_default()
+    );
+    let stopped = |phase: &str| {
+        if stop_file.exists() {
+            println!(
+                "brut-breed: stopped by {} {phase}; delete {}, then run: {resume_cmd}",
+                stop_file.display(),
+                stop_file.display()
+            );
+        } else {
+            println!("brut-breed: stopped at the time limit {phase}; run: {resume_cmd}");
+        }
+    };
 
     let reason = loop {
-        let (status, events) = breeder.step(&stop)?;
+        let (status, events) = breeder.step_with(&stop, &mut |snap| {
+            settle.now(&mut log)?;
+            checkpoint(&out, snap.clone(), &log)
+        })?;
 
         match status {
             Status::Continue => {
+                settle.now(&mut log)?;
                 log.append(&events)?;
-                checkpoint(&out, &breeder, &log)?;
+                checkpoint(&out, breeder.snapshot(), &log)?;
                 print_generation(&events);
             }
             Status::Done(reason) => break reason,
             Status::Pending(requests) => {
+                settle.now(&mut log)?;
+
                 let dir = out.join("llm").join("requests");
 
                 std::fs::create_dir_all(&dir)?;
@@ -303,12 +483,11 @@ fn run() -> Result<i32> {
                 println!(
                     "brut-breed: generation {} waits for {} LLM answer(s).\n\
                      Requests: {}\n\
-                     Write each answer as {}/<key>.txt, then run: brut-breed --out {} --resume",
+                     Write each answer as {}/<key>.txt, then run: {resume_cmd}",
                     breeder.next_generation(),
                     requests.len(),
                     dir.display(),
-                    answers_dir.display(),
-                    out.display()
+                    answers_dir.display()
                 );
 
                 return Ok(EXIT_PENDING);
@@ -318,42 +497,204 @@ fn run() -> Result<i32> {
 
     if reason == "stopped" {
         // Nothing of the interrupted generation is kept except the calls it spent.
-        checkpoint(&out, &breeder, &log)?;
-        println!(
-            "brut-breed: stopped before generation {} completed; resume with --resume",
-            breeder.next_generation()
-        );
+        settle.now(&mut log)?;
+        checkpoint(&out, breeder.snapshot(), &log)?;
+        stopped(&format!("before generation {} completed", breeder.next_generation()));
 
         return Ok(0);
     }
 
-    let Some((report, events)) = breeder.finish(&stop, &reason)? else {
-        checkpoint(&out, &breeder, &log)?;
-        println!("brut-breed: stopped during the select phase; resume with --resume to finish");
+    // A refusal here (the select phase does not fit the budget) comes before any write.
+    let finished = breeder.finish_with(&stop, &reason, &mut |snap| {
+        settle.now(&mut log)?;
+        checkpoint(&out, snap.clone(), &log)
+    })?;
+    let Some((report, events)) = finished else {
+        // The answers obtained so far are kept; a resume scores only the rest.
+        settle.now(&mut log)?;
+        checkpoint(&out, breeder.snapshot(), &log)?;
+        stopped("during the select phase");
 
         return Ok(0);
     };
 
-    // The checkpoint keeps the log position of the last generation, so a later resume
-    // with more generations drops these finalist lines and scores finalists afresh;
-    // it does keep the calls the select phase spent.
-    checkpoint(&out, &breeder, &log)?;
+    // Log first, then the checkpoint, so it covers the finalist events: a later resume
+    // keeps them as history (a run finished before returns no new ones, but its log is
+    // still cut back to the checkpoint).
+    settle.now(&mut log)?;
     log.append(&events)?;
+    checkpoint(&out, breeder.snapshot(), &log)?;
     write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
     print_report(&report);
 
     Ok(0)
 }
 
-/// Write the checkpoint for the generation just committed.
-fn checkpoint(out: &Path, breeder: &Breeder, log: &Log) -> Result<()> {
+/// Write the checkpoint: `snapshot` plus where the log stands.
+fn checkpoint(out: &Path, snapshot: Snapshot, log: &Log) -> Result<()> {
     let cp = Checkpoint {
-        snapshot: breeder.snapshot(),
+        snapshot,
         log_len: log.len,
-        log_head: log.head.clone(),
+        log_head: log.head().to_string(),
     };
 
     write_atomic(&out.join(SNAPSHOT), serde_json::to_string(&cp)?.as_bytes())
+}
+
+/// Take `<out>/LOCK` for the life of the process, so two processes never write one run
+/// (or read it while it is written): exclusively to write, shared to read. The OS
+/// releases the lock when the process ends, also when it is killed. A reader that can
+/// neither open nor create LOCK (a read-only copy of a run) goes on without it.
+fn lock_run(out: &Path, write: bool) -> Result<Option<File>> {
+    let path = out.join(LOCK);
+    let opened = if write {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+    } else {
+        File::open(&path).or_else(|_| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+        })
+    };
+    let lock = match opened {
+        Ok(f) => f,
+        Err(_) if !write => return Ok(None),
+        Err(e) => {
+            return Err(BrutError::Invalid(format!("{}: {e}", path.display())));
+        }
+    };
+    let taken = if write {
+        lock.try_lock()
+    } else {
+        lock.try_lock_shared()
+    };
+
+    match taken {
+        Ok(()) => Ok(Some(lock)),
+        Err(TryLockError::WouldBlock) => Err(usage(&format!(
+            "another brut-breed process is using {}",
+            out.display()
+        ))),
+        Err(TryLockError::Error(e)) => {
+            Err(BrutError::Invalid(format!("{}: {e}", path.display())))
+        }
+    }
+}
+
+/// A run as recorded: the log verified in full and against the checkpoint's anchor, and
+/// the settings checked against the checkpoint and the log's start.
+fn open_run(out: &Path) -> Result<(Log, Checkpoint, BreedConfig)> {
+    let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
+    let cfg: BreedConfig = read_json(&out.join(CONFIG))?;
+    let log = Log::open(&out.join(EVENTS))?;
+
+    if log.torn {
+        return Err(BrutError::Integrity(format!(
+            "{}: the last line is incomplete (the process ended while writing it); a resumed run drops it with its next write to the log",
+            out.join(EVENTS).display()
+        )));
+    }
+
+    log.check_anchor(cp.log_len, &cp.log_head)?;
+
+    let hash = cfg.fixed_hash();
+    let started = log.events().iter().find_map(|e| match e {
+        Event::RunStart { config_hash, .. } => Some(config_hash),
+        _ => None,
+    });
+
+    if hash != cp.snapshot.config_hash || started.is_some_and(|h| *h != hash) {
+        return Err(BrutError::Integrity(format!(
+            "{} does not match the recorded run",
+            out.join(CONFIG).display()
+        )));
+    }
+
+    Ok((log, cp, cfg))
+}
+
+/// The Finalist events after the last Generation event: the select phase of the archive
+/// as it stands (earlier sets stay in the log as history).
+fn logged_finalists(events: &[Event]) -> Vec<Finalist> {
+    let start = events
+        .iter()
+        .rposition(|e| matches!(e, Event::Generation { .. }))
+        .map_or(0, |i| i + 1);
+
+    events[start..]
+        .iter()
+        .filter_map(|e| match e {
+            Event::Finalist(f) => Some(f.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Error unless `report` is what the recorded run gives. Its finalists must be the last
+/// ones in the log. When the checkpoint keeps every select-panel answer (a finished
+/// run), the whole report is recomputed from it, without a model call, and must be equal;
+/// returns whether that happened.
+fn check_report(report: &Report, log: &Log, cp: &Checkpoint, cfg: &BreedConfig) -> Result<bool> {
+    let mismatch = |what: &str| {
+        BrutError::Integrity(format!(
+            "report.json does not match {what}; resume the run to finish it"
+        ))
+    };
+
+    if report.finalists != logged_finalists(log.events()) {
+        return Err(mismatch("the finalists in the event log"));
+    }
+
+    if !cp.snapshot.finished {
+        return Ok(false);
+    }
+
+    let pool = sim_pool();
+    let mut breeder = Breeder::resume(cfg.clone(), &pool, None, cp.snapshot.clone())?;
+
+    if breeder.select_need() > 0 {
+        return Ok(false);
+    }
+
+    // Every answer is kept, so nothing runs; stopping at once guards that anyway.
+    let at_once = || true;
+    let again = breeder.finish(&at_once, &report.stop_reason)?;
+
+    match again {
+        Some((r, _)) if r == *report => Ok(true),
+        _ => Err(mismatch("the report recomputed from the checkpoint")),
+    }
+}
+
+/// Check a run directory: the hash chain, the checkpoint anchor, the settings, and the
+/// report (recomputed from the checkpoint for a finished run).
+fn verify(out: &Path) -> Result<i32> {
+    let (log, cp, cfg) = open_run(out)?;
+    let report = if out.join(REPORT).exists() {
+        if check_report(&read_json(&out.join(REPORT))?, &log, &cp, &cfg)? {
+            "; report recomputed and equal"
+        } else {
+            "; report finalists match the log"
+        }
+    } else {
+        ""
+    };
+
+    println!(
+        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}",
+        log.len,
+        log.head(),
+        cp.log_len
+    );
+
+    Ok(0)
 }
 
 /// Every allow-listed simulated model; a real model tag fails `ModelPool::covers`.
@@ -429,11 +770,22 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
 }
 
 /// Write the two best non-seed finalists (by select panel, then search panel) as
-/// candidate files plus a provenance manifest, ready for `scripts/propose-pr.sh`.
+/// candidate files plus a provenance manifest, ready for `scripts/propose-pr.sh`. Only
+/// a finished run whose report matches its verified log is promoted.
 fn promote(out: &Path) -> Result<i32> {
+    let (log, cp, cfg) = open_run(out)?;
+
+    if !out.join(REPORT).exists() {
+        return Err(BrutError::Invalid(format!(
+            "{} has no report: the run is not finished; resume it first",
+            out.display()
+        )));
+    }
+
     let report: Report = read_json(&out.join(REPORT))?;
-    let cfg: BreedConfig = read_json(&out.join(CONFIG))?;
-    let cp: Checkpoint = read_json(&out.join(SNAPSHOT))?;
+
+    check_report(&report, &log, &cp, &cfg)?;
+
     let mut finalists: Vec<_> = report.finalists.iter().filter(|f| !f.is_seed).collect();
 
     finalists.sort_by(|a, b| {
@@ -450,7 +802,7 @@ fn promote(out: &Path) -> Result<i32> {
         ));
     }
 
-    let promote_dir = out.join("promote");
+    let promote_dir = out.join(PROMOTE);
     let dir = promote_dir.join("candidates").join("cascades");
     let mut provenance = Vec::new();
 
@@ -490,13 +842,13 @@ fn promote(out: &Path) -> Result<i32> {
         "config_hash": cfg.fixed_hash(),
         "candidates": provenance,
     });
-    let path = out.join("promote").join("proposal.json");
+    let path = out.join(PROMOTE).join("proposal.json");
 
     write_atomic(&path, serde_json::to_string_pretty(&manifest)?.as_bytes())?;
     println!(
         "wrote {}\nnext: scripts/propose-pr.sh {}",
         path.display(),
-        out.join("promote").display()
+        out.join(PROMOTE).display()
     );
 
     Ok(0)

@@ -29,8 +29,9 @@ die Begriffe in `CONTEXT.md`, die offenen Arbeiten in `.scratch/kaskaden-zucht/`
   Kinder: Er verbessert eine Kaskade oder verbindet zwei. Seine Antworten werden
   gespeichert und wiedergegeben (ADR 0002).
 - **Bewerten.** Jedes Kind löst alle Rätsel des Such-Panels. Danach vergleicht es sich
-  mit bis zu drei nicht verwandten Kaskaden, und eine dritte, mit keiner der beiden
-  verwandte Kaskade urteilt blind.
+  mit bis zu drei Kaskaden, die nicht eng mit ihm verwandt sind (weder Elter noch Kind
+  noch Geschwister). Eine dritte, mit keiner der beiden eng verwandte Kaskade urteilt
+  blind.
 - **Fitness.** Fitness = 0.8 · Lösungsquote + 0.2 · Urteilskraft − Kosten. Die Kosten
   zählen Antwort- und Denk-Tokens (0.01 Fitness je 1000 Tokens je Rätsel) und einen
   festen Preis je Modellaufruf.
@@ -42,9 +43,13 @@ die Begriffe in `CONTEXT.md`, die offenen Arbeiten in `.scratch/kaskaden-zucht/`
   beiden Antworten zieht ein Zufallsgenerator. Die Antwort mit den meisten Siegen geht
   weiter. Hier zahlt sich Urteilskraft im Einsatz aus, da dort keine Lösung bekannt ist.
 - **Im Archiv.** Ein Urteil zählt nur, wenn der Richter weder Elter noch Kind noch
-  Geschwister der beiden Beurteilten ist. So kann sich keine Linie selbst hochloben.
+  Geschwister der beiden Beurteilten ist. Entferntere Verwandte (Großeltern, Enkel,
+  Vettern) dürfen urteilen. Als Richter kommen zuerst die neuen Kaskaden der Generation
+  dran, und unter ihnen die, die bisher am seltensten geurteilt haben.
 - **Urteilskraft.** Ist genau eine der beiden Antworten richtig, sehen wir, ob der Richter
-  sie gewählt hat. Die Urteilskraft ist (richtig + 1) / (geurteilt + 2).
+  sie gewählt hat. Antwortet er dann ohne gültiges Urteil, zählt das als falsch. Die
+  Urteilskraft ist (richtig + 1) / (geurteilt + 2). Wurde eine Kaskade nie so gewertet,
+  behält sie den Startwert 1/2.
 - **Peer-Wertung.** Aus allen Urteilen schätzen wir eine Bradley-Terry-Wertung nach dem
   MM-Verfahren von Hunter (2004). Eine Stimme wiegt ln(u / (1 − u)) bei Urteilskraft
   u > 0.5, sonst 0; das ist das optimale Gewicht unabhängiger Wähler bekannter
@@ -67,9 +72,11 @@ so die volle Punktzahl, ohne das Problem zu lösen (Zhang et al., Anhang H).
 
 Die Grenzen sind Konstanten im Code und keine Gene. Eine Laufkonfiguration darf die
 Grenzen für Stufen, Worker je Stufe und Denkbudget je Stufe verengen, aber keine Grenze
-lockern; Temperatur und Antwortlänge haben nur feste Grenzen; nur ein vom Code-Owner geprüfter Pull Request ändert sie. Wir
-nehmen an, dass die Auswahl das Denkbudget ohne Grenze und ohne Preis stetig erhöhen
-würde, da tieferes Nachdenken mehr Rätsel löst. Darum kostet jedes Token Fitness.
+lockern. Temperatur und Antwortlänge haben nur feste Grenzen. Unbekannte Schlüssel in
+der Konfiguration lehnt der Lauf ab. Nur ein vom Code-Owner geprüfter Pull Request
+ändert die Grenzen. Wir nehmen an, dass die Auswahl das Denkbudget ohne Grenze und ohne
+Preis stetig erhöhen würde, da tieferes Nachdenken mehr Rätsel löst. Darum kostet jedes
+Token Fitness.
 
 ## 5. Claude als Mutator, ohne Netz im Kern
 
@@ -78,7 +85,38 @@ Anfragen nach `<lauf>/llm/requests/<schlüssel>.json` und endet mit Exit-Code 3.
 Claude-Sitzung oder ein Mensch schreibt je Anfrage die Antwort nach
 `<lauf>/llm/answers/<schlüssel>.txt`. Danach setzt `brut-breed --out <lauf> --resume`
 den Lauf an derselben Stelle fort und spielt die Antworten ein. Der Kern bekommt so
-keinen Netzzugang (ADR 0001), und jeder Lauf bleibt wiederholbar (ADR 0002).
+keinen Netzzugang (ADR 0001), und jeder Lauf bleibt wiederholbar (ADR 0002). Liegen die
+Antworten mit `--llm-answers <ordner>` woanders, gehört die Option auch zum Fortsetzen;
+`brut-breed` druckt den passenden Befehl.
+
+**Fortsetzen, Abstürze und Sperre.**
+
+- `--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
+  `--llm-answers` ändern. Alles andere legt das Experiment fest; der Lauf lehnt es mit
+  Exit-Code 2 ab.
+- Vor dem ersten Aufruf einer Generation schreibt `brut-breed` einen Checkpoint, der
+  deren schlimmsten Verbrauch an Aufrufen zurücklegt. In der Auswahlphase geschieht
+  das vor jeder Kaskade, die sie bewertet. Endet der Prozess hart (Kill, Absturz,
+  Stromausfall), zählt das Fortsetzen die Rücklage der unterbrochenen Arbeit als
+  verbraucht, denn die wahre Zahl ging mit dem Prozess verloren. So hält `max_calls`
+  auch dann.
+- Jedes harte Ende zählt diese Rücklage einmal mehr; mehrere harte Enden summieren
+  sich. Liegt ein Lauf nahe an `max_calls`, braucht das Fortsetzen nach einem harten
+  Ende womöglich ein größeres `--max-calls`.
+- Nur ein Prozess zugleich hält `<lauf>/LOCK`. Ein zweiter endet mit Exit-Code 2.
+- Ein Fortsetzen, das vor seinem ersten Schreiben abgelehnt wird (etwa weil die
+  Einstellungen nicht passen oder die Auswahlphase nicht mehr ins Budget passt), ändert
+  weder Protokoll noch Checkpoint, Einstellungen, Bericht oder Beförderung.
+- Erst unmittelbar vor dem ersten Schreiben übernimmt der Lauf die neuen Einstellungen.
+  Dann verwirft er die Ereignisse nach dem letzten Checkpoint, auch eine halb
+  geschriebene letzte Zeile. Es entfernt `report.json`, bis die Auswahlphase wieder
+  fertig ist, und `promote/`, das nur ein neues `--promote` wieder anlegt. Frühere
+  Finalisten bleiben im Protokoll als Geschichte. Ein schon fertiger Lauf liefert beim Fortsetzen denselben Bericht, ohne
+  neue Aufrufe und ohne neue Ereignisse.
+- Eine gestoppte Auswahlphase behält ihre Antworten. Das Fortsetzen bewertet nur die
+  fehlenden Rätsel; ein Stopp kostet also nie eine zweite Auswahlrunde.
+- Nach dem Not-Aus bleibt `<lauf>/STOP` liegen. Löschen Sie die Datei vor dem
+  Fortsetzen; `brut-breed` sagt das beim Anhalten auch.
 
 ## 6. Beförderung über einen Pull Request
 
@@ -86,33 +124,58 @@ keinen Netzzugang (ADR 0001), und jeder Lauf bleibt wiederholbar (ADR 0002).
 `<lauf>/promote/candidates/cascades/` und dazu die Herkunft. `scripts/propose-pr.sh
 <lauf>/promote` öffnet daraus einen Entwurfs-Pull-Request. Die CI lässt nur Dateien unter
 `candidates/` zu und prüft jede Kaskade mit `brut-ingest --cascades`. Ein Mensch mergt;
-erst dann gehört die Kaskade zum Topf (ADR 0004).
+erst dann gehört die Kaskade zum Topf (ADR 0004). `--promote` verlangt einen fertigen
+Lauf, dessen `report.json` zu den letzten Finalisten im geprüften Protokoll passt.
+`--verify` prüft die Hash-Kette, den Anker des Checkpoints und die Einstellungen. Den
+Bericht eines fertigen Laufs rechnet es ohne Modellaufruf aus dem Checkpoint nach; bei
+älteren Läufen vergleicht es nur die Finalisten mit dem Protokoll. `--verify` braucht
+kein Schreibrecht.
 
 ## 7. Messung im Container
 
 Wir messen drei Läufe mit den Standardwerten (`brut-breed --out <dir> --seed N
 --generations 10`: 8 Kinder je Generation, 40 Rätsel im Such-Panel, 40 im Auswahl-Panel,
-höchstens 20 000 Aufrufe), Release-Build, 4 Kerne, simuliertes Modell.
+höchstens 20 000 Aufrufe), Release-Build, 4 Kerne, simuliertes Modell. Die Messung lief
+nach den Korrekturen aus der Gegenprüfung (Richterwahl, Budget, Fortsetzen) und ersetzt
+die frühere. Die Laufzeit ist die Wanduhrzeit des Prozesses samt Checkpoints.
 
 | Seed | bestes Kind, Such-Panel | Fitness | bester Finalist, Auswahl-Panel | bestes Startprogramm, Auswahl-Panel | Vorsprung | Worker-Aufrufe | Peer-Urteile | Laufzeit |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 22/40 | 0.534 | 0.500 | 0.300 | +0.200 | 7 701 | 473 | 0.19 s |
-| 2 | 27/40 | 0.684 | 0.625 | 0.300 | +0.325 | 8 792 | 488 | 0.16 s |
-| 3 | 29/40 | 0.738 | 0.550 | 0.325 | +0.225 | 9 308 | 498 | 0.15 s |
+| 1 | 20/40 | 0.566 | 0.400 | 0.300 | +0.100 | 8 645 | 477 | 0.33 s |
+| 2 | 30/40 | 0.745 | 0.825 | 0.300 | +0.525 | 8 496 | 488 | 0.26 s |
+| 3 | 25/40 | 0.656 | 0.525 | 0.325 | +0.200 | 6 980 | 492 | 0.24 s |
 
 - **Vorsprung.** In allen drei Seeds liegt der beste gezüchtete Finalist auf dem
   Auswahl-Panel, welches die Suche nie gesehen hat, vor dem besten Startprogramm, um
-  0.200 bis 0.325.
-- **Bauform.** Die beste Kaskade jedes Laufs hat 3 bis 4 Stufen und entstand durch eine
-  Kreuzung (Seed 1 Stufen-Kreuzung, Seeds 2 und 3 Abschnitts-Kreuzung). Unter den fünf
-  besten je Lauf stammen 2, 2 und 3 aus einer Kreuzung.
-- **Stillstand.** Das beste Ergebnis steigt nach Generation 4 bis 7 nicht mehr. Der
+  0.100 bis 0.525 (4 bis 21 der 40 Rätsel).
+- **Nicht rechenmäßig abgeglichen.** Die Startprogramme sind einzelne sim:small-Worker
+  mit einem Aufruf je Rätsel. Der beste Finalist von Seed 1 nutzt sim:small und sim:large
+  mit 2 Aufrufen je Rätsel, der von Seed 2 drei sim:small-Worker mit 3 Aufrufen. In
+  Seed 3 ist der beste Finalist ein einzelner sim:small-Worker mit einem Aufruf je Rätsel
+  wie die Startprogramme; er denkt aber länger (300 statt 80 Tokens je Rätsel). Der
+  Vorsprung mischt also Zucht mit Modell und Rechenaufwand. Für eine Aussage über die
+  Zucht verlangt ADR 0005 gleiche Modelle und gleiches Budget (Q22); das leistet erst der
+  vorab festgelegte Hauptwert (Ticket 02).
+- **Bauform.** Die beste Kaskade hat 2, 3 und 1 Stufe(n). In Seed 1 entstand sie durch
+  eine Stufen-Kreuzung, in Seed 3 durch eine Abschnitts-Kreuzung, in Seed 2 durch das
+  Ersetzen eines Abschnitts. Unter den fünf besten je Lauf stammen 3, 2 und 4 aus einer
+  Kreuzung.
+- **Stillstand.** Das beste Ergebnis steigt nach Generation 5, 6 und 3 nicht mehr. Der
   Simulator lässt mehr zu: Ein Prompt mit allen Strategien, Selbstprüfung und
   Denkbudget 4096 löst nach der Messung beim Bau des Simulators alle 60 Rätsel eines
   anderen Panels. Zehn Generationen sind also kurz.
 - **Urteilskraft verschiebt den Rang.** In Seed 1 löst die zweitbeste Kaskade mehr Rätsel
-  (23 statt 22), liegt aber wegen ihrer Urteilskraft von 0.20 dahinter. Das folgt aus
-  dem Gewicht 0.2 (Q13); wir beobachten es weiter.
+  (21 statt 20), liegt aber wegen ihrer Urteilskraft von 0.71 (4 von 5 gewerteten
+  Urteilen richtig) hinter der besten mit 0.86 (5 von 5). In Seed 2 löst die drittbeste
+  Kaskade 32 statt 30 Rätsel und ist auf dem Auswahl-Panel der beste Finalist (0.825);
+  sie liegt zurück, weil sie nur eines von zwei gewerteten Urteilen richtig hatte (0.50).
+  So wenige Urteile messen die Urteilskraft nur grob. Das folgt aus dem Gewicht 0.2
+  (Q13); wir beobachten es weiter.
+- **Wer urteilt.** Seit die am seltensten genutzten neuen Kaskaden zuerst urteilen, haben
+  8, 6 und 3 der 84 Kaskaden kein gewertetes Urteil (vor der Korrektur 13, 15 und 3). Die
+  beste Kaskade jedes Laufs ist gemessen (5, 2 und 3 gewertete Urteile, alle richtig).
+  44, 68 und 63 Urteile stammen von entfernteren Vorfahren oder Nachkommen (Großeltern,
+  Enkel und weiter) eines der Beurteilten; die Regel erlaubt das (Abschnitt 3).
 - **Grenzen der Aussage.** Drei Seeds ergeben keinen Signifikanztest. Der Simulator ist
   eine Positivkontrolle; die Zahlen sagen nichts über echte Sprachmodelle.
 
