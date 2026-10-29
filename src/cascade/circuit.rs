@@ -1215,6 +1215,13 @@ mod tests {
         assert!(fredkin.below_best_known(&cost(9, 6)), "each count alone");
         assert!(!fredkin.below_best_known(&cost(7, 7)) && !fredkin.below_best_known(&cost(6, 7)));
 
+        // A BestKnown T count is looked at alone too. T 7 is a candidate and no alarm. T 8 is
+        // no candidate, and CNOT 4 below the Proven 5 is still an alarm.
+        let open_t = reference(8, Bound::BestKnown, 5, Bound::Proven);
+
+        assert!(open_t.below_best_known(&cost(7, 9)) && !open_t.below_lower_bound(&cost(7, 9)));
+        assert!(!open_t.below_best_known(&cost(8, 4)) && open_t.below_lower_bound(&cost(8, 4)));
+
         let derived = reference(4, Bound::Derived, 3, Bound::Derived);
 
         assert!(derived.below_lower_bound(&cost(3, 9)) && derived.below_lower_bound(&cost(9, 2)));
@@ -1915,6 +1922,29 @@ mod tests {
             assert_eq!(
                 (toffoli.reached_by_seed, toffoli.reached_by_bred),
                 (generation == 0, generation > 0)
+            );
+        }
+
+        // A candidate needs no hit. An exact answer with T 9 and CNOT 6 misses the reference,
+        // but its CNOT count is below the BestKnown 7. It flags the target for seeds and bred
+        // members alike.
+        let mut no_hit = vec![None; 6];
+
+        no_hit[2] = Some(padded(&dressed(&panel[2]), 1, 0));
+
+        let c = cost_of(&no_hit[2]);
+
+        assert_eq!((c.t, c.cnot), (9, 6));
+
+        for generation in [0, 4] {
+            let found =
+                rediscovery(&panel, &[member("m", generation, &no_hit)]).expect("rediscovery");
+            let toffoli = &found.targets[2];
+
+            assert!(toffoli.below_best_known, "generation {generation}");
+            assert!(
+                !toffoli.reached_by_seed && !toffoli.reached_by_bred,
+                "generation {generation}"
             );
         }
 
