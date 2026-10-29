@@ -32,8 +32,9 @@
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
 //! calibration gate, and any invention candidate (plan (g)). It is written before the
-//! report, so a run with a report has it too. --verify recomputes it from the checkpoint.
-//! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1.
+//! report, so a run with a report has it too, and --verify recomputes it from the
+//! checkpoint whenever it recomputes the report. --promote refuses circuit runs:
+//! promotion of circuit Cascades is not part of step 1.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -134,8 +135,8 @@ struct Family<D: Domain> {
     /// is written, so an error here leaves no report.
     after_finish: fn(&Path, &Breeder<'_, D>) -> Result<()>,
     /// For --verify: error unless what `after_finish` wrote is what the finished run,
-    /// rebuilt from its checkpoint, gives (None for an unfinished run). Returns the words
-    /// the verify line adds.
+    /// rebuilt from its checkpoint, gives. None when the run is not finished: --verify did
+    /// not recompute a report. Returns the words the verify line adds.
     check_finish: fn(&Path, Option<&Breeder<'_, D>>) -> Result<&'static str>,
 }
 
@@ -344,6 +345,7 @@ impl Settle<'_> {
         log.flush()?;
         write_atomic(&self.out.join(CONFIG), serde_json::to_string_pretty(self.cfg)?.as_bytes())?;
 
+        // The report goes first, so a run that still has one has the rest too.
         for name in [REPORT, REDISCOVERY] {
             if self.out.join(name).exists() {
                 std::fs::remove_file(self.out.join(name))?;
@@ -832,16 +834,20 @@ fn check_report<D: Domain>(
 /// recomputed). `timings.jsonl` is not part of the record.
 fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Result<i32> {
     let (log, cp) = open_run::<D>(out, cfg)?;
-    let report = if out.join(REPORT).exists() {
+    let (report, recomputed) = if out.join(REPORT).exists() {
         if check_report(&read_json(&out.join(REPORT))?, &log, &cp, cfg, family)? {
-            "; report recomputed and equal"
+            ("; report recomputed and equal", true)
         } else {
-            "; report finalists match the log"
+            ("; report finalists match the log", false)
         }
     } else {
-        ""
+        ("", false)
     };
-    let finished = if cp.snapshot.finished {
+    // The rest of what a finished run writes is checked exactly when its report is: the
+    // report comes last, so a run with one has the rest too. The checkpoint alone does not
+    // tell: a resume to more generations removes these files before its first commit,
+    // and until then its checkpoint still holds the finished archive.
+    let finished = if recomputed {
         let rebuilt = Breeder::<D>::resume_from(
             cfg.clone(),
             family.genes,
@@ -970,8 +976,8 @@ fn write_rediscovery(out: &Path, breeder: &Breeder<'_, CircuitDomain>) -> Result
 }
 
 /// --verify on a circuit run: error unless `<out>/rediscovery.json` holds, byte for byte,
-/// what the finished run (rebuilt from its checkpoint) gives. An unfinished run's file is
-/// not checked.
+/// what the finished run (rebuilt from its checkpoint) gives; a missing file is an error
+/// too. An unfinished run's file is not checked.
 fn check_rediscovery(
     out: &Path,
     finished: Option<&Breeder<'_, CircuitDomain>>,

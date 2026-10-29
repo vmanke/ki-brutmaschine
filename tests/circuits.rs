@@ -501,6 +501,34 @@ fn rediscovery_json_is_the_count_of_the_logged_answers_and_verify_guards_it() {
     assert_eq!(read(&dir, "rediscovery.json"), text.as_bytes());
     assert_eq!(read(&dir, "events.jsonl"), log);
     ok(&verify(&dir));
+
+    // A resume to more generations that STOP halts before it commits one: the run is
+    // unfinished again, so its report and count are gone and --verify checks neither,
+    // although the archive of the checkpoint is still the finished one.
+    std::fs::write(dir.join("STOP"), "").expect("stop");
+    ok(&breed(&["--out", path, "--resume", "--generations", "21"]));
+    assert!(!dir.join("report.json").exists());
+    assert!(!dir.join("rediscovery.json").exists());
+
+    let unfinished = verify(&dir);
+
+    ok(&unfinished);
+    assert!(
+        stdout(&unfinished).contains("rediscovery.json not checked"),
+        "{}",
+        stdout(&unfinished)
+    );
+    std::fs::remove_file(dir.join("STOP")).expect("unstop");
+    ok(&breed(&["--out", path, "--resume"]));
+
+    let finished = verify(&dir);
+
+    ok(&finished);
+    assert!(
+        stdout(&finished).contains("rediscovery recomputed and equal"),
+        "{}",
+        stdout(&finished)
+    );
 }
 
 /// Paths into the crate that `text` names: the module after `crate::`, or after
