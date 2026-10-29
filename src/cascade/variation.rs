@@ -343,6 +343,27 @@ const LLM_CROSSOVER_TASK: &str = "Task: merge Parent A and Parent B into one chi
 that keeps what works in each, so that it solves more grid puzzles at lower cost. You may \
 take stages, Workers, sections and Traits from either parent and change them. ";
 
+/// The words that tell the Mutator what it breeds, one set per task family (grid puzzles;
+/// quantum circuits in step 1). The Cascade format's limits and `LLM_RULES` stay shared.
+#[derive(Debug)]
+pub struct MutatorBrief {
+    pub system: &'static str,
+    pub context: &'static str,
+    pub format: &'static str,
+    pub mutate_task: &'static str,
+    pub crossover_task: &'static str,
+}
+
+/// The brief of the grid puzzles: the Stage 2c texts, byte for byte, so recorded answer
+/// keys stay valid.
+pub static GRID_BRIEF: MutatorBrief = MutatorBrief {
+    system: LLM_SYSTEM,
+    context: LLM_CONTEXT,
+    format: LLM_FORMAT,
+    mutate_task: LLM_MUTATE_TASK,
+    crossover_task: LLM_CROSSOVER_TASK,
+};
+
 /// The rules every request ends with.
 const LLM_RULES: &str = "Every model call and every thinking token costs fitness, so spend \
 them only where they pay off. Keep the result valid under the format and the limits above. \
@@ -503,13 +524,25 @@ pub fn llm_mutate_request(
     limits: &CascadeLimits,
     seed: u64,
 ) -> GenRequest {
+    llm_mutate_request_with(&GRID_BRIEF, parent, fitness, limits, seed)
+}
+
+/// `llm_mutate_request` for the task family that `brief` describes.
+pub fn llm_mutate_request_with(
+    brief: &MutatorBrief,
+    parent: &Cascade,
+    fitness: f64,
+    limits: &CascadeLimits,
+    seed: u64,
+) -> GenRequest {
     let prompt = llm_prompt(
+        brief,
         &[("Parent Cascade", parent, fitness)],
         limits,
-        LLM_MUTATE_TASK,
+        brief.mutate_task,
     );
 
-    llm_request(prompt, seed)
+    llm_request(brief, prompt, seed)
 }
 
 /// Request to merge two parents into one child (semantic crossover), with both fitness
@@ -522,13 +555,26 @@ pub fn llm_crossover_request(
     limits: &CascadeLimits,
     seed: u64,
 ) -> GenRequest {
+    llm_crossover_request_with(&GRID_BRIEF, (a, fa), (b, fb), limits, seed)
+}
+
+/// `llm_crossover_request` for the task family that `brief` describes; each parent comes
+/// with its fitness.
+pub fn llm_crossover_request_with(
+    brief: &MutatorBrief,
+    (a, fa): (&Cascade, f64),
+    (b, fb): (&Cascade, f64),
+    limits: &CascadeLimits,
+    seed: u64,
+) -> GenRequest {
     let prompt = llm_prompt(
+        brief,
         &[("Parent A", a, fa), ("Parent B", b, fb)],
         limits,
-        LLM_CROSSOVER_TASK,
+        brief.crossover_task,
     );
 
-    llm_request(prompt, seed)
+    llm_request(brief, prompt, seed)
 }
 
 /// Extract the JSON object from an LLM answer (from the first `{` to the `}` that closes
@@ -976,9 +1022,9 @@ fn cross_worker(child: &mut Worker, other: &Worker, rng: &mut ChaCha8Rng) {
 }
 
 /// A request to the LLM mutator with the fixed generation settings.
-fn llm_request(prompt: String, seed: u64) -> GenRequest {
+fn llm_request(brief: &MutatorBrief, prompt: String, seed: u64) -> GenRequest {
     GenRequest {
-        system: LLM_SYSTEM.to_string(),
+        system: brief.system.to_string(),
         prompt,
         max_tokens: LLM_MAX_TOKENS,
         temperature: LLM_TEMPERATURE,
@@ -989,11 +1035,16 @@ fn llm_request(prompt: String, seed: u64) -> GenRequest {
 
 /// The user prompt: context, format, limits, each parent as pretty JSON with its public
 /// search fitness, then the task and the rules.
-fn llm_prompt(parents: &[(&str, &Cascade, f64)], limits: &CascadeLimits, task: &str) -> String {
+fn llm_prompt(
+    brief: &MutatorBrief,
+    parents: &[(&str, &Cascade, f64)],
+    limits: &CascadeLimits,
+    task: &str,
+) -> String {
     let mut p = String::new();
 
-    p.push_str(LLM_CONTEXT);
-    p.push_str(LLM_FORMAT);
+    p.push_str(brief.context);
+    p.push_str(brief.format);
     p.push_str(&describe_limits(limits));
     p.push('\n');
 

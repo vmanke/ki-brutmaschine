@@ -22,6 +22,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
+use crate::cascade::domain::{Domain, DomainConfig, GridDomain};
 use crate::cascade::genome::{Cascade, CascadeLimits, Worker, seeds_for};
 use crate::cascade::puzzle::{
     Grid, Puzzle, SELF_CHECK_TEXT, Verdict, generate_panel, parse_answer, parse_verdict,
@@ -507,6 +508,10 @@ pub struct BreedConfig {
     /// Best bred (non-seed) members re-scored on the select panel at the end.
     pub finalists: usize,
     pub limits: CascadeLimits,
+    /// The task family (step 1). Grid runs leave it out, so their configs and fixed
+    /// hashes are unchanged.
+    #[serde(default, skip_serializing_if = "DomainConfig::is_grid")]
+    pub domain: DomainConfig,
 }
 
 impl Default for BreedConfig {
@@ -530,6 +535,7 @@ impl Default for BreedConfig {
             max_calls: 20_000,
             finalists: 3,
             limits: CascadeLimits::default(),
+            domain: DomainConfig::Grid,
         }
     }
 }
@@ -775,6 +781,7 @@ impl<'a> Breeder<'a> {
         mutator: Option<&'a dyn Mutator>,
     ) -> Result<Breeder<'a>> {
         cfg.check()?;
+        GridDomain::from_config(&cfg)?;
         pool.covers(&cfg.limits)?;
         seeds_for(&cfg.limits)?;
 
@@ -2310,6 +2317,21 @@ mod tests {
 
         cfg.limits.models[0].cost_per_call = 0.0;
         assert!(cfg.check().is_ok());
+    }
+
+    #[test]
+    fn a_grid_breeder_refuses_another_domain() {
+        let pool = sim_pool();
+        let mut cfg = small_config(1);
+
+        cfg.domain = DomainConfig::Circuits(Default::default());
+
+        let refused = Breeder::new(cfg, &pool, None).err().map(|e| e.to_string());
+
+        assert!(
+            refused.as_deref().is_some_and(|e| e.contains("another domain")),
+            "{refused:?}"
+        );
     }
 
     /// Solves like the small simulated model but never gives a verdict when judging.

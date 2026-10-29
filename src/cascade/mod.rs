@@ -9,6 +9,7 @@
 
 pub mod arena;
 pub mod circuit_text;
+pub mod domain;
 pub mod genome;
 pub mod puzzle;
 pub mod qubit;

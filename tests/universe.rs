@@ -178,7 +178,9 @@ fn a_grid_run_with_llm_rounds_is_unchanged_by_the_domain_seam() {
     let (_, events) = breed_to_end(cfg, &sim_pool(), Some(&Echo)).expect("run");
 
     assert!(
-        events.iter().any(|e| matches!(e, Event::LlmExchange { accepted: true, .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::LlmExchange { accepted: true, .. })),
         "the LLM rounds must admit children, or the fixture tests nothing"
     );
 
