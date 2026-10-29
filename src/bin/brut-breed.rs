@@ -1,12 +1,15 @@
-//! brut-breed: breed Cascades of model Workers on grid puzzles (Stage 2c, ADR 0005).
+//! brut-breed: breed Cascades of model Workers on grid puzzles (Stage 2c, ADR 0005) or on
+//! quantum circuits (step 1, ADR 0006).
 //!
 //! The library (`brutmaschine::cascade`) does all computation; this binary does the I/O:
 //! the run directory, the hash-chained event log, checkpoints after every generation,
 //! the kill switch, the wall-clock limit, the files that carry LLM requests and answers,
 //! and the promotion of the best Cascades into a pull-request draft (ADR 0004).
 //!
-//! Only the simulated models are built in. Real models (Ollama on a rented host) come
-//! through the separate adapter crate of docs/STAGE2_BACKEND_CONTRACT.md (ADR 0003).
+//! Only the simulated models are built in, under the tags sim:small and sim:large: the
+//! simulated solvers on grid puzzles, the simulated circuit designer on circuits. Real
+//! models (Ollama on a rented host) come through the separate adapter crate of
+//! docs/STAGE2_BACKEND_CONTRACT.md (ADR 0003).
 //!
 //! Usage:
 //!   brut-breed --out <dir> [--config <json>] [--seed N] [--generations G]
@@ -18,10 +21,19 @@
 //!   brut-breed --out <dir> --promote
 //!   brut-breed --out <dir> --verify
 //!
-//! --domain names the task family a run breeds on (step 1, ADR 0006); grid is the default.
-//! The integration step of step 1 wires the circuit domain in; until then it is refused.
-//! --selection says how parents are drawn: dgm (the default) or uniform, the control arm.
-//! Both define the experiment, so a resume cannot change them.
+//! --domain names the task family a run breeds on (step 1, ADR 0006): grid (the default) or
+//! circuits. A circuit run takes its circuit settings (targets, dressing, gate cap) from
+//! --config; --domain circuits alone uses the defaults: every verified library target,
+//! dressed, with at most 64 gates per answer. --selection says how parents are drawn: dgm
+//! (the default) or uniform, the control arm. Both define the experiment, so a resume
+//! cannot change them.
+//!
+//! A finished circuit run also writes `<dir>/rediscovery.json`, the pre-registered count
+//! of step 1: per library target, what the seed Cascades and the bred ones solved on the
+//! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
+//! calibration gate, and any invention candidate (plan (g)). It is written before the
+//! report, so a run with a report has it too. --verify recomputes it from the checkpoint.
+//! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -43,29 +55,32 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{Duration, Instant};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use brutmaschine::cascade::arena::{
     AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, ParentSelection, Report,
     Snapshot, Status, request_key,
 };
+use brutmaschine::cascade::circuit::{Answered, CircuitDomain, Rediscovery, rediscovery};
+use brutmaschine::cascade::circuit_genes::circuit_pool;
+use brutmaschine::cascade::designer::SimDesigner;
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
 use brutmaschine::cascade::puzzle::Grid;
 use brutmaschine::cascade::sim::SimModel;
+use brutmaschine::cascade::variation::Op;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
 
 const EVENTS: &str = "events.jsonl";
 const SNAPSHOT: &str = "snapshot.json";
 const CONFIG: &str = "config.json";
 const REPORT: &str = "report.json";
+const REDISCOVERY: &str = "rediscovery.json";
 const TIMINGS: &str = "timings.jsonl";
 const STOP: &str = "STOP";
 const LOCK: &str = "LOCK";
 const PROMOTE: &str = "promote";
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
-
-/// Why a circuit run is refused for now.
-const CIRCUITS_LATER: &str = "the integration step of step 1 wires the circuit domain into brut-breed; until then a run breeds on grid puzzles only";
 
 /// Options each mode accepts. A resume may change only what `BreedConfig::fixed_hash`
 /// leaves out, plus the per-process wall-clock limit and the answers directory.
@@ -115,8 +130,13 @@ struct Checkpoint<A = Grid> {
 struct Family<D: Domain> {
     genes: GenePool,
     pool: ModelPool,
-    /// Called right after the report of a completed select phase is written.
+    /// Called once a completed select phase is logged and checkpointed, before its report
+    /// is written, so an error here leaves no report.
     after_finish: fn(&Path, &Breeder<'_, D>) -> Result<()>,
+    /// For --verify: error unless what `after_finish` wrote is what the finished run,
+    /// rebuilt from its checkpoint, gives (None for an unfinished run). Returns the words
+    /// the verify line adds.
+    check_finish: fn(&Path, Option<&Breeder<'_, D>>) -> Result<&'static str>,
 }
 
 /// One line of `timings.jsonl`: the wall time of one committed generation.
@@ -305,10 +325,10 @@ impl Log {
 }
 
 /// What a resume changes on disk, applied once, right before its first write: it takes
-/// over the settings it was given, removes an earlier report and promotion (the run is
-/// unfinished again; a completed select phase writes the report anew), and drops the log
-/// entries after the checkpoint. A resume refused before that leaves the run's records
-/// as they were.
+/// over the settings it was given, removes an earlier report, rediscovery count and
+/// promotion (the run is unfinished again; a completed select phase writes them anew), and
+/// drops the log entries after the checkpoint. A resume refused before that leaves the
+/// run's records as they were.
 struct Settle<'a> {
     out: &'a Path,
     cfg: &'a BreedConfig,
@@ -324,8 +344,10 @@ impl Settle<'_> {
         log.flush()?;
         write_atomic(&self.out.join(CONFIG), serde_json::to_string_pretty(self.cfg)?.as_bytes())?;
 
-        if self.out.join(REPORT).exists() {
-            std::fs::remove_file(self.out.join(REPORT))?;
+        for name in [REPORT, REDISCOVERY] {
+            if self.out.join(name).exists() {
+                std::fs::remove_file(self.out.join(name))?;
+            }
         }
 
         if self.out.join(PROMOTE).exists() {
@@ -408,10 +430,13 @@ fn run() -> Result<i32> {
         return promote(&out, &cfg);
     }
 
+    let verifying = args.contains_key("verify");
+
     match cfg.domain {
-        DomainConfig::Grid if args.contains_key("verify") => verify(&out, &cfg, &grid_family()),
+        DomainConfig::Grid if verifying => verify(&out, &cfg, &grid_family()),
         DomainConfig::Grid => drive(cfg, &grid_family(), &args, &out, resume),
-        DomainConfig::Circuits(_) => Err(usage(CIRCUITS_LATER)),
+        DomainConfig::Circuits(_) if verifying => verify(&out, &cfg, &circuit_family()),
+        DomainConfig::Circuits(_) => drive(cfg, &circuit_family(), &args, &out, resume),
     }
 }
 
@@ -435,7 +460,7 @@ fn drive<D: Domain>(
     // Every check runs before anything on disk changes (see Settle), so a refused resume
     // leaves the run's records as they were.
     let (mut breeder, mut log) = if resume {
-        let cp: Checkpoint<D::Answer> = read_json(&out.join(SNAPSHOT))?;
+        let cp: Checkpoint<D::Answer> = read_checkpoint(out, &cfg)?;
         let mut log = Log::open(&out.join(EVENTS))?;
 
         log.keep(cp.log_len, &cp.log_head)?;
@@ -579,12 +604,13 @@ fn drive<D: Domain>(
 
     // Log first, then the checkpoint, so it covers the finalist events: a later resume
     // keeps them as history (a run finished before returns no new ones, but its log is
-    // still cut back to the checkpoint).
+    // still cut back to the checkpoint). The report comes last, so a run that has one has
+    // everything else a finished run writes.
     settle.now(&mut log)?;
     log.append(&events)?;
     checkpoint(out, breeder.snapshot(), &log)?;
-    write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
     (family.after_finish)(out, &breeder)?;
+    write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
     print_report(&report);
 
     Ok(0)
@@ -665,11 +691,37 @@ fn lock_run(out: &Path, write: bool) -> Result<Option<File>> {
     }
 }
 
+/// The checkpoint in `out`, its answers read as `A`. When it does not read, and the
+/// settings it records are not those of `cfg`, it is refused for that reason: the settings
+/// name the domain, so a checkpoint of another domain (whose answers do not read as `A`)
+/// is a run whose recorded settings were changed.
+fn read_checkpoint<A: DeserializeOwned>(out: &Path, cfg: &BreedConfig) -> Result<Checkpoint<A>> {
+    let path = out.join(SNAPSHOT);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| BrutError::Invalid(format!("{}: {e}", path.display())))?;
+    let typed = serde_json::from_str::<Checkpoint<A>>(&text);
+
+    if typed.is_err() {
+        let recorded = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["snapshot"]["config_hash"].as_str().map(str::to_string));
+
+        if recorded.is_some_and(|h| h != cfg.fixed_hash()) {
+            return Err(BrutError::Integrity(format!(
+                "{} does not match the recorded run",
+                out.join(CONFIG).display()
+            )));
+        }
+    }
+
+    Ok(typed?)
+}
+
 /// A run on the domain `D` as recorded: the log verified in full and against the
 /// checkpoint's anchor, and the settings `cfg` from the run directory checked against
 /// the checkpoint and the log's start.
 fn open_run<D: Domain>(out: &Path, cfg: &BreedConfig) -> Result<(Log, Checkpoint<D::Answer>)> {
-    let cp: Checkpoint<D::Answer> = read_json(&out.join(SNAPSHOT))?;
+    let cp: Checkpoint<D::Answer> = read_checkpoint(out, cfg)?;
     let log = Log::open(&out.join(EVENTS))?;
 
     if log.torn {
@@ -775,8 +827,9 @@ fn check_report<D: Domain>(
 }
 
 /// Check a run directory on the domain `D` with the settings `cfg` read from it: the hash
-/// chain, the checkpoint anchor, the settings, and the report (recomputed from the
-/// checkpoint for a finished run). `timings.jsonl` is not part of the record.
+/// chain, the checkpoint anchor, the settings, the report (recomputed from the checkpoint
+/// for a finished run), and what else a finished run of the family writes (also
+/// recomputed). `timings.jsonl` is not part of the record.
 fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Result<i32> {
     let (log, cp) = open_run::<D>(out, cfg)?;
     let report = if out.join(REPORT).exists() {
@@ -788,9 +841,23 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
     } else {
         ""
     };
+    let finished = if cp.snapshot.finished {
+        let rebuilt = Breeder::<D>::resume_from(
+            cfg.clone(),
+            family.genes,
+            &family.pool,
+            None,
+            cp.snapshot.clone(),
+        )?;
+
+        Some(rebuilt)
+    } else {
+        None
+    };
+    let extra = (family.check_finish)(out, finished.as_ref())?;
 
     println!(
-        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}",
+        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}{extra}",
         log.len,
         log.head(),
         cp.log_len
@@ -819,7 +886,110 @@ fn grid_family() -> Family<GridDomain> {
         genes: GenePool::grid(),
         pool: sim_pool(),
         after_finish: |_, _| Ok(()),
+        check_finish: |_, _| Ok(""),
     }
+}
+
+/// Every allow-listed simulated circuit designer; a real model tag fails
+/// `ModelPool::covers`.
+fn designer_pool() -> ModelPool {
+    let mut pool = ModelPool::new();
+
+    for m in [SimDesigner::small(), SimDesigner::large()] {
+        let tag = m.tag().to_string();
+
+        pool.insert(&tag, Box::new(m));
+    }
+
+    pool
+}
+
+/// The quantum circuits of step 1 (ADR 0006): the circuit gene pool and the simulated
+/// designers. A finished circuit run also writes `rediscovery.json`.
+fn circuit_family() -> Family<CircuitDomain> {
+    Family {
+        genes: circuit_pool(),
+        pool: designer_pool(),
+        after_finish: write_rediscovery,
+        check_finish: check_rediscovery,
+    }
+}
+
+/// The rediscovery count of a circuit run (plan (g)): every archived Cascade with its
+/// search-panel answers, in archive order, the hand-written seeds of generation 0 marked.
+/// Err(Integrity) when an exact answer is below a Proven or Derived reference.
+fn rediscovery_of(breeder: &Breeder<'_, CircuitDomain>) -> Result<Rediscovery> {
+    let members: Vec<Answered<'_>> = breeder
+        .archive()
+        .iter()
+        .map(|m| Answered {
+            id: &m.id,
+            seed: m.op == Op::Seed && m.generation == 0,
+            generation: m.generation,
+            answers: &m.answers,
+        })
+        .collect();
+
+    rediscovery(breeder.search_panel(), &members)
+}
+
+/// Write `<out>/rediscovery.json` for a finished circuit run, as pretty JSON, and print its
+/// headline. An integrity alarm fails the run before its report is written.
+fn write_rediscovery(out: &Path, breeder: &Breeder<'_, CircuitDomain>) -> Result<()> {
+    let found = rediscovery_of(breeder)?;
+    let path = out.join(REDISCOVERY);
+
+    write_atomic(&path, serde_json::to_string_pretty(&found)?.as_bytes())?;
+
+    let open = found.library.saturating_sub(found.reached_by_seeds);
+    let gate = if found.calibrated {
+        "calibrated"
+    } else {
+        "not calibrated: the seeds solve more than a third of the targets"
+    };
+
+    println!(
+        "brut-breed: wrote {}: the seeds solve {} of {} targets, bred Cascades {} of the other {open}; D > 1/2: {}; {gate}",
+        path.display(),
+        found.reached_by_seeds,
+        found.library,
+        found.reached_by_bred_only,
+        if found.passes { "yes" } else { "no" }
+    );
+
+    for t in &found.targets {
+        if let Some(c) = &t.candidate {
+            println!(
+                "  invention candidate on {}: T {}, CNOT {} below a best known count; the literature is not checked yet",
+                t.target, c.cost.t, c.cost.cnot
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// --verify on a circuit run: error unless `<out>/rediscovery.json` holds, byte for byte,
+/// what the finished run (rebuilt from its checkpoint) gives. An unfinished run's file is
+/// not checked.
+fn check_rediscovery(
+    out: &Path,
+    finished: Option<&Breeder<'_, CircuitDomain>>,
+) -> Result<&'static str> {
+    let Some(breeder) = finished else {
+        return Ok("; rediscovery.json not checked: the run is not finished");
+    };
+    let expected = serde_json::to_string_pretty(&rediscovery_of(breeder)?)?;
+    let path = out.join(REDISCOVERY);
+
+    if std::fs::read(&path).ok().as_deref() != Some(expected.as_bytes()) {
+        return Err(BrutError::Integrity(format!(
+            "{} does not match the rediscovery count recomputed from the checkpoint; resume the run to write it anew",
+            path.display()
+        )));
+    }
+
+    Ok("; rediscovery recomputed and equal")
 }
 
 /// Recorded LLM answers: every `<key>.txt` in `dir`.

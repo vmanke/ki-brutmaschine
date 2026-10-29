@@ -906,38 +906,12 @@ fn run_recorded_as_circuits(name: &str) -> PathBuf {
     dir
 }
 
-/// Until the integration step of step 1 wires the circuit domain in, every way to a
-/// circuit run is wrong usage. That step replaces this test with real circuit runs.
+/// The integration step of step 1 wired the circuit domain in, so a fresh circuit run, by
+/// the option or by a config file, now runs (tests/circuits.rs). A grid run whose recorded
+/// settings were edited to name the circuit domain is still refused by --resume and
+/// --verify, which read its settings first, and nothing of it changes.
 #[test]
-fn the_circuit_domain_is_refused_until_the_integration_step() {
-    // A fresh run, asked for by the option or by a config file: nothing of a run is
-    // written.
-    let flag = fresh("circuits-flag");
-    let files = fresh("circuits-file");
-    let file = circuit_config_file(&files);
-    let from_file = files.join("run");
-    let refused = [
-        small_run(&flag, "1", &["--domain", "circuits"]),
-        breed(&[
-            "--out",
-            from_file.to_str().expect("path"),
-            "--config",
-            file.to_str().expect("path"),
-        ]),
-    ];
-
-    for out in &refused {
-        assert_eq!(out.status.code(), Some(2));
-        assert!(stderr(out).contains("integration step"), "{}", stderr(out));
-    }
-
-    for dir in [&flag, &from_file] {
-        for name in ["config.json", "snapshot.json", "events.jsonl"] {
-            assert!(!dir.join(name).exists(), "{name} was written");
-        }
-    }
-
-    // A recorded run: --resume and --verify read its settings first and change nothing.
+fn a_grid_run_recorded_as_circuits_is_refused_and_left_unchanged() {
     let dir = run_recorded_as_circuits("circuits-recorded");
     let path = dir.to_str().expect("path");
     let before = record(&dir);
@@ -945,9 +919,9 @@ fn the_circuit_domain_is_refused_until_the_integration_step() {
     for mode in ["--resume", "--verify"] {
         let refused = breed(&["--out", path, mode]);
 
-        assert_eq!(refused.status.code(), Some(2), "{mode}");
+        assert_eq!(refused.status.code(), Some(1), "{mode}");
         assert!(
-            stderr(&refused).contains("integration step"),
+            stderr(&refused).contains("does not match the recorded run"),
             "{mode}: {}",
             stderr(&refused)
         );
