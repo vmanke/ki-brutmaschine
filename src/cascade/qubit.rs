@@ -17,7 +17,9 @@
 //! so it maps x to a vector of norm 2^(k/2). A coefficient c is the mean of four embedded
 //! values times roots of unity, so |c| <= 2^(k/2). Only H raises k, by one, and a circuit
 //! has at most MAX_H of them, so |c| <= 2^60 < i64::MAX. The sum inside H is a
-//! coefficient of the next state, so the bound covers it too. All arithmetic is checked
+//! coefficient of the next state, so the bound covers it too. The guarantee needs the
+//! starting k plus the number of H gates to stay at most MAX_H; that holds from a basis
+//! state, but not from a target column that already carries a k. All arithmetic is checked
 //! anyway: an overflow is an error, never a panic.
 //!
 //! Circuits and targets are data, never executed as code. The caps are constants in code,
@@ -478,7 +480,10 @@ pub struct Cost {
     pub gates: u32,
     /// Layers when every gate starts as soon as its qubits are free; a CNOT holds both.
     pub depth: u32,
-    /// The same layering with only T and TDG layers counted (Amy et al. 2013).
+    /// T-stages (Amy et al. 2013): the most T and TDG gates on any path along the qubit
+    /// wires, where a CNOT joins its two wires and other gates take no time. This is the
+    /// fewest T layers over all layerings with Clifford gates free, not the count of T
+    /// layers in the depth layering: "T 0; H 1; T 1" has t_depth 1 and depth 2.
     pub t_depth: u32,
 }
 
@@ -802,7 +807,11 @@ impl Target {
     }
 
     /// The dressed target X^out . P U P^-1 . X^in. A dressing that does not fit this target
-    /// leaves it unchanged (and `Dressing::dress_circuit` refuses it).
+    /// (perm is not a permutation of its n qubits, or a mask has a bit at n or above)
+    /// leaves it unchanged. `Dressing::dress_circuit` cannot see the target: it refuses a
+    /// dressing that does not fit on its own terms, or a circuit that uses a qubit outside
+    /// perm, but it still dresses a circuit when the dressing has another size. Callers
+    /// must match `d.perm.len()` to `qubits()`.
     pub fn dress(&self, d: &Dressing) -> Target {
         if d.perm.len() != self.qubits || !d.fits() {
             return self.clone();
@@ -1022,7 +1031,9 @@ impl ExactState {
     }
 
     /// Run a whole circuit. On an error the state stays as it was before the run. A valid
-    /// circuit run from a basis state never overflows (see the module comment).
+    /// circuit run from a basis state never overflows (see the module comment); from a
+    /// state that already carries a k, such as a target column, the starting k counts
+    /// against the MAX_H budget, so an overflow error is possible.
     pub fn run(&mut self, c: &Circuit) -> Result<(), QError> {
         let mut next = self.clone();
 
@@ -1133,6 +1144,14 @@ pub fn apply_target(target: &Target, state: &ExactState) -> Result<ExactState, Q
     if target.qubits != state.qubits {
         return Err(QError::QubitIndex);
     }
+
+    // Work on the reduced input: an unreduced state near the H cap (k up to MAX_H) plus
+    // the target's own sqrt2 powers could pass 2^63, while the reduced one cannot.
+    let mut reduced = state.clone();
+
+    reduced.reduce();
+
+    let state = &reduced;
 
     // Every column is brought to the common denominator sqrt2^top.
     let top = target.columns.iter().map(Column::m).max().unwrap_or(0);
@@ -2704,5 +2723,45 @@ mod tests {
         assert_eq!(QError::TooManyGates.to_string(), "more than 256 gates");
         assert!(QError::TooManyQubits.to_string().contains("12"));
         assert!(QError::Overflow.to_string().contains("i64"));
+    }
+
+    #[test]
+    fn apply_target_reduces_an_unreduced_input_first() {
+        // H on all six qubits: every column has 64 terms, so the target adds sqrt2^6.
+        let columns = (0..64u32)
+            .map(|j| {
+                let terms = (0..64u32)
+                    .map(|x| (x, if (j & x).count_ones() % 2 == 1 { 4 } else { 0 }))
+                    .collect();
+
+                Column::new(terms).expect("column")
+            })
+            .collect();
+        let h6 = Target::new(6, columns).expect("unitary");
+
+        // Six H, then 57 cancelling pairs: 120 H, k = 120 unreduced, amplitudes 2^57.
+        let mut text = "H 0; H 1; H 2; H 3; H 4; H 5".to_string();
+
+        for _ in 0..57 {
+            text.push_str("; H 0; H 0");
+        }
+
+        let c: Circuit = text.parse().expect("circuit");
+        let mut state = ExactState::basis(6, 0).expect("basis");
+
+        state.run(&c).expect("run");
+        assert_eq!(state.k(), 120);
+
+        let out = apply_target(&h6, &state).expect("no overflow");
+
+        assert_eq!(out.as_unit(), Some((0, 0)));
+    }
+
+    #[test]
+    fn t_depth_counts_t_stages_not_t_layers() {
+        let c: Circuit = "T 0; H 1; T 1".parse().expect("circuit");
+        let cost = c.cost();
+
+        assert_eq!((cost.t_depth, cost.depth), (1, 2));
     }
 }

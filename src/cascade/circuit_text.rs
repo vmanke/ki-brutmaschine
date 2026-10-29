@@ -266,9 +266,11 @@ fn parse_row(line: &str, j: u32, qubits: usize) -> Option<Column> {
     Column::new(terms).ok()
 }
 
-/// Read a solve or judge prompt back. Lines are trimmed, blank lines between lines are
-/// skipped, the instruction text up to `QUBITS` is free, and text after `END` is ignored, as
-/// in the grid protocol. Any other deviation gives None: a qubit count outside
+/// Read a solve or judge prompt back. Lines are trimmed. Blank lines are skipped before the
+/// header, between header lines, between target rows and around a gate block; a blank line
+/// inside a gate block ends that block, so gates after it make the prompt None. The
+/// instruction text up to `QUBITS` is free, and text after `END` is ignored, as in the grid
+/// protocol. Any other deviation gives None: a qubit count outside
 /// 1..=MAX_UNITARY_QUBITS, a gate cap above MAX_GATES, a row that is out of order or not
 /// well formed, a target that is not exactly unitary, or a block with a gate outside the
 /// register.
@@ -345,29 +347,28 @@ pub enum GateLine {
     Malformed,
 }
 
-/// A word that reads as a qubit index, whatever its size: digits, optionally after q or Q.
-fn index_like(word: &str) -> bool {
-    let digits = word.strip_prefix(['q', 'Q']).unwrap_or(word);
-
-    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-}
-
 /// Classify one line. A line that `Gate::parse` reads is a gate. Otherwise the line is
+/// split into words at every character that is not a letter or digit, and it is
 /// gate-like, and so malformed, when its first word begins with a gate name or alias that
-/// no other letter follows (H0, S† 1, CNOT(0,1)), or when a later word is a qubit index
-/// (Y 0, CZ 0 1, 2. CNOT 0 1). A blank line or any other line is not a gate.
+/// no other letter follows (H0, S† 1, CNOT(0,1)), or when any word holds a digit (Y(0),
+/// CZ 0 1, `X 0`, 2. CNOT 0 1, This uses 1 CNOT.). A blank line or a line of words
+/// without digits is not a gate. Prose after the gates must therefore follow a blank line
+/// or hold no digit; otherwise the answer is refused rather than cut.
 pub fn parse_gate_line(line: &str) -> GateLine {
     if let Some(g) = Gate::parse(line) {
         return GateLine::Gate(g);
     }
 
-    let mut words = line.split_whitespace();
+    let mut words = line
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty());
     let Some(first) = words.next() else {
         return GateLine::NotAGate;
     };
     let lead: String = first.chars().take_while(|c| c.is_alphabetic()).collect();
+    let numeric = |w: &str| w.chars().any(char::is_numeric);
 
-    if Gate::is_name(&lead) || words.any(index_like) {
+    if Gate::is_name(&lead) || numeric(first) || words.any(numeric) {
         GateLine::Malformed
     } else {
         GateLine::NotAGate
@@ -811,6 +812,17 @@ mod tests {
             ("2. CNOT 0 1", GateLine::Malformed),
             ("- H 0", GateLine::Malformed),
             ("Step 1", GateLine::Malformed),
+            ("Y(0)", GateLine::Malformed),
+            ("CZ(0,1)", GateLine::Malformed),
+            ("SWAP(0,1)", GateLine::Malformed),
+            ("(X 0)", GateLine::Malformed),
+            ("`T 1`", GateLine::Malformed),
+            ("**T 1**", GateLine::Malformed),
+            ("cz q[0],q[1];", GateLine::Malformed),
+            ("Rz(pi/4) q[0];", GateLine::Malformed),
+            ("Ｔ １", GateLine::Malformed),
+            ("0 X", GateLine::Malformed),
+            ("(Note: the answer is final.)", GateLine::NotAGate),
         ];
 
         for (line, expected) in cases {
@@ -845,6 +857,11 @@ mod tests {
             ("ANSWER\nH 0\nCZ 0 1\nH 0", None),
             ("ANSWER\nH 0\n2. CNOT 0 1", None),
             ("ANSWER\nH 0\nThis uses 1 CNOT.", None),
+            ("ANSWER\nH 1\nCNOT 0 1\nH 1\n(X 0)", None),
+            ("ANSWER\nH 1\nCNOT 0 1\nH 1\nY(0)", None),
+            ("ANSWER\nH 1\nCNOT 0 1\nH 1\nCZ(0,1)", None),
+            ("ANSWER\nH 1\nCNOT 0 1\nH 1\n`X 0`", None),
+            ("ANSWER\nH 1\nCNOT 0 1\nH 1\n(Note: the answer is final.)", some("H 1; CNOT 0 1; H 1")),
             ("ANSWER\nDone.", None),
             ("ANSWER", None),
             ("ANSWER\n\n\n", None),
