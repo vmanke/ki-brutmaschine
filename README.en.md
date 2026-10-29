@@ -117,7 +117,9 @@ Already on `main`:
   no target list. The four seed Cascades reach only SWAP and CS. A strong prompt reaches
   all 11 references. Its numbers say nothing about real models.
 - **Second simulator** (`src/quantum.rs`, PR #12): a floating-point simulator with a
-  fidelity threshold. It serves as an independent cross-check of the exact simulator.
+  fidelity threshold. The integration is to make it an independent cross-check of the
+  exact simulator. Until then, the tests check the exact simulator against a separate
+  floating-point simulator in its own test module.
 
 Still open is the integration: circuit Runs with `brut-breed --domain circuits`, the
 rediscovery evaluation `rediscovery.json`, ADR 0006, the pre-registration of the

@@ -510,7 +510,9 @@ Auf `main` liegt bereits:
   und CS. Ein starker Prompt erreicht alle 11 Referenzwerte. Seine Zahlen sagen nichts
   über echte Modelle.
 - **Zweiter Simulator** (`src/quantum.rs`, PR #12): ein Gleitkomma-Simulator mit
-  Fidelity-Schwelle. Er dient als unabhängige Gegenprobe zum exakten Simulator.
+  Fidelity-Schwelle. Mit der Integration soll er als unabhängige Gegenprobe zum exakten
+  Simulator dienen. Bis dahin prüfen die Tests den exakten Simulator gegen einen eigenen
+  Gleitkomma-Simulator in seinem Testmodul.
 
 Noch offen ist die Integration: Schaltungs-Läufe mit `brut-breed --domain circuits`, die
 Wiederentdeckungs-Auswertung `rediscovery.json`, ADR 0006, die Vorab-Registrierung des
