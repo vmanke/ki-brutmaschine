@@ -412,12 +412,12 @@ But we claim the second result, that among pairs without a tie arm A passes firs
 often than arm R, only if the primary claim is proven. The experiment ends as soon as the
 primary claim fails, as soon as it is proven and E2 has reached a threshold, or after 60
 pairs. However it ends, it reports a false claim with probability at most 1/20; for the
-primary claim the worst case is exactly 0.0385. The old rule "9 of 10" had 11/1024 =
-0.0107. So the new bound is weaker; it matches the 5 % bound of the project's other
-tests. It holds only if the seed order is fixed, no seed is skipped or replaced, and
-nothing changes after seed 1.
+primary claim the worst case is exactly 0.0385. The old rule "9 of 10" had
+11/1024 = 0.0107. So the new bound is weaker; it matches the 5 % bound of the project's
+other tests. It holds only if the seed order is fixed, no seed is skipped or replaced,
+and nothing changes after seed 1.
 
-After each pair the analysis computes and names the next seed or the verdict. Right after
+After each pair the analysis runs and names the next seed or gives the verdict. Right after
 pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
 `timings.jsonl` must be byte-equal. Before the report,
 `python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
