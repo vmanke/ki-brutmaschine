@@ -12,7 +12,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::FRAC_PI_4;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -317,6 +318,150 @@ fn a_stopped_and_resumed_circuit_run_equals_a_straight_one() {
     assert_eq!(lineage(&straight), lineage(&split));
     assert_eq!(of_kind(&a, "state").len(), 21);
     assert_eq!(of_kind(&a, "state"), of_kind(&b, "state"));
+    assert_eq!(
+        read(&straight, "rediscovery.json"),
+        read(&split, "rediscovery.json")
+    );
+
+    let (mut ra, mut rb) = (json(&straight, "report.json"), json(&split, "report.json"));
+
+    assert!(rb["calls_used"].as_u64() >= ra["calls_used"].as_u64());
+    ra["calls_used"] = serde_json::Value::Null;
+    rb["calls_used"] = serde_json::Value::Null;
+    assert_eq!(ra, rb);
+
+    let checked = verify(&split);
+
+    ok(&checked);
+    assert!(
+        stdout(&checked).contains("rediscovery recomputed and equal"),
+        "{}",
+        stdout(&checked)
+    );
+}
+
+/// Wait until `cond` holds, polling every 10 ms, for at most `secs` seconds.
+fn wait_for(secs: u64, mut cond: impl FnMut() -> bool) -> bool {
+    let end = Instant::now() + Duration::from_secs(secs);
+
+    while Instant::now() < end {
+        if cond() {
+            return true;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    false
+}
+
+/// The checkpoint's next generation, and the calls it reserves for work in flight (0
+/// when there is none); (0, 0) while there is no checkpoint.
+fn progress(dir: &Path) -> (u64, u64) {
+    std::fs::read_to_string(dir.join("snapshot.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .map(|v| {
+            let s = &v["snapshot"];
+
+            (
+                s["next_generation"].as_u64().unwrap_or(0),
+                s["reserved"].as_u64().unwrap_or(0),
+            )
+        })
+        .unwrap_or((0, 0))
+}
+
+#[test]
+fn rediscovery_json_comes_only_with_a_completed_select_phase() {
+    // A run that waits for LLM answers has committed generations 0 and 1 but no select
+    // phase: it has neither a report nor a count, and --verify checks neither.
+    let paused = fresh("paused");
+    let waiting = run(&paused, &[&SMALL[..], &["--llm-every", "2"]].concat());
+
+    assert_eq!(waiting.status.code(), Some(3), "{}", stdout(&waiting));
+    assert_eq!(progress(&paused), (2, 0));
+
+    for name in ["report.json", "rediscovery.json"] {
+        assert!(!paused.join(name).exists(), "{name}");
+    }
+
+    let unchecked = verify(&paused);
+
+    ok(&unchecked);
+    assert!(
+        stdout(&unchecked).contains("rediscovery.json not checked: the run is not finished"),
+        "{}",
+        stdout(&unchecked)
+    );
+
+    // Generation 0 alone, then a long select phase. STOP lands in it once the checkpoint
+    // reserves the calls of its first Cascade.
+    let long = [
+        "--domain",
+        "circuits",
+        "--seed",
+        "31",
+        "--generations",
+        "0",
+        "--search",
+        "11",
+        "--select",
+        "20000",
+        "--max-calls",
+        "1000000",
+    ];
+    let straight = fresh("select-straight");
+    let split = fresh("select-split");
+    let path = split.to_str().expect("path");
+    let child = Command::new(BREED)
+        .args(["--out", path])
+        .args(long)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+
+    assert!(
+        wait_for(120, || {
+            let (next, reserved) = progress(&split);
+
+            next == 1 && reserved > 0
+        }),
+        "the select phase reserved the calls of its first Cascade"
+    );
+    std::fs::write(split.join("STOP"), "").expect("stop");
+
+    let stopped = child.wait_with_output().expect("wait");
+
+    ok(&stopped);
+    assert!(
+        stdout(&stopped).contains("during the select phase"),
+        "{}",
+        stdout(&stopped)
+    );
+
+    // The select phase is not complete: neither a report nor a count, and --verify checks
+    // neither.
+    for name in ["report.json", "rediscovery.json"] {
+        assert!(!split.join(name).exists(), "{name}");
+    }
+
+    std::fs::remove_file(split.join("STOP")).expect("unstop");
+
+    let unfinished = verify(&split);
+
+    ok(&unfinished);
+    assert!(
+        stdout(&unfinished).contains("rediscovery.json not checked: the run is not finished"),
+        "{}",
+        stdout(&unfinished)
+    );
+
+    // The resume scores the rest of the select panel and writes both. They equal those of
+    // a straight run, apart from the calls the stopped attempt spent.
+    ok(&breed(&["--out", path, "--resume"]));
+    ok(&run(&straight, &long));
+    assert_eq!(lineage(&straight), lineage(&split));
     assert_eq!(
         read(&straight, "rediscovery.json"),
         read(&split, "rediscovery.json")
