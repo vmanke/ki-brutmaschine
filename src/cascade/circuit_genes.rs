@@ -1,6 +1,6 @@
 //! The genes of circuit breeding (step 1, ticket 03): the seed Cascades, the phrase pool
 //! the section operators draw from, the Mutator's brief, and the admission rule that keeps
-//! written-out circuits out of genomes.
+//! a written-out circuit out of every single section.
 //!
 //! The genes speak to the simulated designer (`designer.rs`) only through words. A Worker
 //! knows a method family when its system prompt names one of the family's stems
@@ -14,8 +14,8 @@
 //! SectionReplace may write any pool text into any section, and a Worker knows the
 //! families of every text it holds: a strategy text written over the role teaches its
 //! family, and a neutral text written over the strategy removes one. No phrase names two of
-//! Hadamard, Phase and Linear, so one phrase step never teaches a seed all three, which six
-//! of the eleven calibration targets need.
+//! Hadamard, Phase and Linear, so one phrase step never teaches a seed all three, and no
+//! one-step child of a seed reaches QFT2, Toffoli, Peres, RTOF, CCiX or Fredkin.
 //!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
@@ -66,8 +66,8 @@ const MAX_GATE_MENTIONS: usize = 2;
 /// No phrase names more than two families (Previous counts as one), and none names two of
 /// Hadamard, Phase and Linear. A seed knows at most one of these three, so one phrase step
 /// (SectionReplace, SectionAdd or StageAdd) teaches it at most one more: Hadamard and
-/// Linear reach CZ, Phase and Linear reach CCZ. The targets that need all three take a
-/// second step, from such a stepping stone or from Hadamard and Phase.
+/// Linear reach CZ, Phase and Linear reach CCZ. QFT2, Toffoli, Peres, RTOF and CCiX take a
+/// second step that teaches the third, from such a stepping stone or from Hadamard and Phase.
 ///
 /// A Worker knows the families of every section it holds, and SectionReplace may write any
 /// pool text into any section. Workers built that way name every route of the designer's
@@ -522,7 +522,7 @@ mod tests {
 
     use super::*;
     use crate::backend::{GenRequest, ModelBackend, StopReason};
-    use crate::cascade::arena::worker_request;
+    use crate::cascade::arena::worker_request_with;
     use crate::cascade::circuit_text::{
         CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_solve_prompt,
     };
@@ -760,23 +760,10 @@ mod tests {
         }
     }
 
-    /// The request arena builds for `w`, with the circuit self-check text where the grid's
-    /// would stand: `worker_request` of the Worker without its self-check Trait, then the
-    /// check section in the form `worker_request` writes it.
+    /// The request arena builds for `w` on a circuit task: its self-check Trait adds the
+    /// circuit domain's self-check text.
     fn circuit_request(w: &Worker, prompt: String, seed: u64) -> GenRequest {
-        let mut plain = w.clone();
-
-        plain.traits.self_check = false;
-
-        let mut req = worker_request(&plain, prompt, seed);
-
-        if w.traits.self_check {
-            req.system.push_str("## check\n");
-            req.system.push_str(CIRCUIT_SELF_CHECK_TEXT);
-            req.system.push('\n');
-        }
-
-        req
+        worker_request_with(w, prompt, seed, CIRCUIT_SELF_CHECK_TEXT)
     }
 
     /// The circuit a Cascade of one-Worker stages chooses, as `arena::run_cascade` runs it:

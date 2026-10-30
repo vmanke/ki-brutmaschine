@@ -73,13 +73,17 @@ part of the verified record.
 ```
 
 `--domain` and `--selection` define the experiment; a resume refuses them. `--domain grid`
-is the default. Until the integration of step 1, the program refuses `--domain circuits`
-as wrong usage. `--verify` recomputes the report of a finished Run from the checkpoint,
-without a model call, including its stop reason.
+is the default; `--domain circuits` starts a circuit Run (step 1, below). `--verify`
+recomputes the report of a finished Run from the checkpoint, without a model call,
+including its stop reason.
 
 ## Universes that invent (step 1)
 
-Status: in progress. Specification:
+Status: built, with pilot Runs; counted Runs wait for the sign-off (below). Described in
+[docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
+[ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
+the experiment is pre-registered in
+[docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md). Specification:
 [.scratch/universum-erfinden/spec.md](.scratch/universum-erfinden/spec.md), with the
 tickets in `.scratch/universum-erfinden/issues/`. Step 1 covers tickets 01 to 03.
 
@@ -89,14 +93,15 @@ field is quantum circuits over the gates H, S, S†, T, T†, X, Z and CNOT. As 
 control, step 1 first measures whether breeding rediscovers the best known T and CNOT
 counts that its seed Cascades miss.
 
-Already on `main`:
+Built:
 
 - **Universe observables** (ticket 01): the `state` line per generation, see above.
 - **One breeder for every kind of task:** the evaluator side of a task kind (`Domain`)
   never sees a Cascade; the breeder side (`GenePool`) supplies the seeds, the phrase
   pool, the Mutator's brief and an admission rule. Grid puzzles and circuits share one
-  breeding loop. Grid Runs stay byte-identical except for the `state` line; a golden test
-  pins that.
+  breeding loop. Golden tests, recorded on the grid code before the change, pin a grid Run
+  and a Run with LLM rounds (without floating-point numbers), the Mutator's request keys
+  and the settings hashes; the only new line in a grid log is the `state` line.
 - **Exact simulator** (ticket 02, `src/cascade/qubit.rs`): it holds amplitudes exactly as
   x/√2^k with x in Z[ω], ω = e^(iπ/4), in 64-bit integers. "Correct" means exactly equal
   up to one global phase; the fidelity is only reported. Caps: 12 qubits for states, 6
@@ -117,14 +122,15 @@ Already on `main`:
   no target list. The four seed Cascades reach only SWAP and CS. A strong prompt reaches
   all 11 references. Its numbers say nothing about real models.
 - **Second simulator** (`src/quantum.rs`, PR #12): a floating-point simulator with a
-  fidelity threshold. The integration is to make it an independent cross-check of the
-  exact simulator. Until then, the tests check the exact simulator against a separate
-  floating-point simulator in its own test module.
+  fidelity threshold that shares no code with the exact simulator. It is the independent
+  cross-check: on 900 pairs of random circuits and the 15 witness circuits of the
+  library it decides as the exact simulator does (`tests/circuits.rs`).
+- **Circuit Runs** (`src/bin/brut-breed.rs`): `brut-breed --domain circuits`. A finished
+  Run writes `rediscovery.json`, the pre-registered count, and `--verify` recomputes it
+  from the checkpoint. The frozen analysis is `examples/circuit_positive_control.rs`.
 
-Still open is the integration: circuit Runs with `brut-breed --domain circuits`, the
-rediscovery evaluation `rediscovery.json`, ADR 0006, the pre-registration of the
-experiment and pilot Runs. Counted Runs start only after the owner has confirmed six
-decisions:
+The pilot Runs on seeds 101 and 102 are in [docs/pilot-step1/](docs/pilot-step1/README.md).
+Counted Runs start only after the owner has confirmed six decisions:
 
 1. Exact equality decides what is correct.
 2. Scoring goes by T count first, then by CNOT count.
@@ -161,12 +167,17 @@ access; `tests/cascade.rs` checks that.
   generation, equal after a stop and resume, equal with 1 and 4 threads) and the new
   options.
 - The circuit building blocks have unit tests in their own files. Among them: the 11
-  circuits from the literature must be exact at exactly their T and CNOT counts, and an
-  independent reference simulator agrees on 500 random circuits.
+  witness circuits of the verified targets, most of them from the literature, must be
+  exact at exactly their T and CNOT counts, and an independent reference simulator agrees
+  on 500 random circuits.
+- `tests/circuits.rs` makes real circuit Runs with `brut-breed` (equal results across
+  processes and with 1 and 4 threads, stop and resume, `--verify` against a changed
+  `rediscovery.json`, refused promotion), pins the calibration of the positive control
+  and compares the exact simulator with `src/quantum.rs`.
 
 ## Limits
 
 - The simulated models (`sim:small`, `sim:large`) are positive controls. Their numbers
   show that breeding works, not how good real models would be.
-- Step 1: circuit Runs are not yet possible from the command line; they come with the
-  integration.
+- Step 1: two pilot seeds estimate no pass rate; what the pilot shows and what it does
+  not is in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 7.

@@ -150,6 +150,56 @@ _Avoid_: test set, hidden panel
 Moving the two best finalist Cascades of a Run into `candidates/cascades/` through a human-reviewed draft pull request.
 _Avoid_: deploy, release, merge (the human merges, not the Run)
 
+### Universes and invention (step 1)
+
+**Domain**:
+A kind of task Cascades are bred on, seen from the evaluator side: it makes the panels, renders and reads prompts, grades answers and says which of two answers is better. It never sees a Cascade. Grid puzzles and circuits are Domains; a Run names its Domain with `--domain`.
+_Avoid_: task family (that means Learner tasks; doc comments in `src/cascade/` still use it loosely for a Domain), environment
+
+**Gene pool**:
+The breeder side of a Domain: the seed Cascades, the phrase pool of the section operators, the Mutator's brief and the admission rule every new Cascade must pass.
+_Avoid_: genome (that is one Cascade), library
+
+**Universe state**:
+The per-generation record of a Run's six observables (performance, diversity, lineage, honesty, judging, cost), logged as one `state` event after every committed generation. It is computed from committed state only, so a resumed Run writes the same records as a straight one.
+_Avoid_: metrics, stats, telemetry
+
+**Target**:
+A unitary that a circuit must implement exactly, given by its action on every basis state and built from its definition, never from a circuit. Only Targets with a verified Reference enter a panel.
+_Avoid_: goal, spec
+
+**Reference**:
+A Target's sourced T and CNOT counts, which one circuit reaches together, each with a bound status: Proven (a published lower bound), Derived (our argument from published results) or BestKnown (a published construction only).
+_Avoid_: optimum (unless Proven), baseline
+
+**Dressing**:
+The disguise drawn per task: a relabelling of the qubits and X gates on inputs and outputs. It keeps the optimal T and CNOT counts, so the Reference still holds, while a memorised circuit no longer fits.
+_Avoid_: augmentation, noise
+
+**Exact check**:
+Deciding a circuit's correctness by exact equality with the Target up to one global phase, in integer arithmetic over Z[omega]; the fidelity is only reported.
+_Avoid_: fidelity test, tolerance
+
+**Integrity alarm**:
+The stop raised when an exact answer goes below a Proven or Derived Reference: then the checker or the Reference is wrong, and the generation is not committed.
+_Avoid_: discovery
+
+**Invention candidate**:
+An exact answer below a BestKnown Reference. `rediscovery.json` records the cheapest one per Target, with `literature_checked = false`; any others are in the logged answers. It is called new only after a human has checked the literature (Q38).
+_Avoid_: invention, discovery, record
+
+**Designer**:
+The simulated model that writes circuits in circuit Runs, under the tags sim:small and sim:large. It is a positive control: the method families a system prompt names switch its synthesis on, and its thinking budget bounds its search.
+_Avoid_: oracle, solver
+
+**Rediscovery**:
+A bred Cascade solving a Target that the seed Cascades miss, exactly and at Reference cost. The share D of such Targets, counted in `rediscovery.json`, is the pre-registered result of step 1.
+_Avoid_: invention, success rate
+
+**Arm**:
+One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice.
+_Avoid_: condition, group
+
 ### Records and control
 
 **Run**:

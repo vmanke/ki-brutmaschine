@@ -28,8 +28,8 @@ Aufgaben lernt, die die Suche nie gesehen hat. Der MLP-Modus bleibt dabei
 unverändert. Einzelheiten stehen unten im Abschnitt „Lerner-Modus“.
 
 Seit Stufe 2c züchtet die Brutmaschine außerdem **Kaskaden** aus Sprachmodell-Workern,
-die einander blind bewerten. Schritt 1, der gerade entsteht, öffnet diese Zucht für eine
-zweite Aufgabenart: Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
+die einander blind bewerten. Schritt 1 öffnet diese Zucht für eine zweite Aufgabenart:
+Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
 Beides beschreiben die Abschnitte „Kaskaden-Zucht (Stufe 2c)“ und „Universen, die
 erfinden (Schritt 1)“.
 
@@ -463,13 +463,17 @@ steht in `timings.jsonl`; diese Datei gehört nicht zum geprüften Protokoll.
 ```
 
 `--domain` und `--selection` legen das Experiment fest; ein Fortsetzen lehnt sie ab.
-`--domain grid` ist die Voreinstellung. `--domain circuits` lehnt das Programm bis zur
-Integration von Schritt 1 als Bedienfehler ab. `--verify` rechnet den Bericht eines
-fertigen Laufs ohne Modellaufruf aus dem Checkpoint nach, auch seinen Stoppgrund.
+`--domain grid` ist die Voreinstellung; `--domain circuits` startet einen Schaltungslauf
+(Schritt 1, unten). `--verify` rechnet den Bericht eines fertigen Laufs ohne Modellaufruf
+aus dem Checkpoint nach, auch seinen Stoppgrund.
 
 ## Universen, die erfinden (Schritt 1)
 
-Stand: in Arbeit. Spezifikation:
+Stand: gebaut, mit Pilotläufen; gezählte Läufe warten auf die Freigabe (unten).
+Beschrieben in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md) und
+[ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
+das Experiment ist in [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md)
+vorab festgelegt. Spezifikation:
 [.scratch/universum-erfinden/spec.md](.scratch/universum-erfinden/spec.md), mit den
 Tickets in `.scratch/universum-erfinden/issues/`. Schritt 1 umfasst die Tickets 01 bis 03.
 
@@ -479,14 +483,16 @@ Feld sind Quantenschaltungen aus den Gattern H, S, S†, T, T†, X, Z und CNOT.
 misst zunächst als Positivkontrolle, ob die Zucht die bekannten besten T- und
 CNOT-Zahlen wiederentdeckt, die ihre Startprogramme verfehlen.
 
-Auf `main` liegt bereits:
+Gebaut sind:
 
 - **Universums-Kennzahlen** (Ticket 01): die `state`-Zeile je Generation, siehe oben.
 - **Eine Zucht für jede Aufgabenart:** Die Bewerterseite einer Aufgabenart (`Domain`)
   sieht nie eine Kaskade; die Züchterseite (`GenePool`) liefert Startprogramme,
   Satzbausteine, den Auftrag an den Mutator und eine Aufnahmeregel. Gitter-Rätsel und
-  Schaltungen nutzen dieselbe Zuchtschleife. Gitter-Läufe bleiben bis auf die
-  `state`-Zeile byte-gleich; ein Golden-Test hält das fest.
+  Schaltungen nutzen dieselbe Zuchtschleife. Golden-Tests, aufgenommen auf dem
+  Gitter-Code vor dem Umbau, halten einen Gitter-Lauf und einen Lauf mit LLM-Runden (ohne
+  Gleitkommazahlen), die Schlüssel der Mutator-Anfragen und die Prüfsummen der
+  Einstellungen fest; einzig neu im Protokoll eines Gitter-Laufs ist die `state`-Zeile.
 - **Exakter Simulator** (Ticket 02, `src/cascade/qubit.rs`): Er speichert Amplituden
   exakt als x/√2^k mit x in Z[ω], ω = e^(iπ/4), in 64-Bit-Ganzzahlen. „Richtig“ heißt
   exakt gleich bis auf eine globale Phase; die Fidelity wird nur berichtet. Grenzen:
@@ -510,14 +516,18 @@ Auf `main` liegt bereits:
   und CS. Ein starker Prompt erreicht alle 11 Referenzwerte. Seine Zahlen sagen nichts
   über echte Modelle.
 - **Zweiter Simulator** (`src/quantum.rs`, PR #12): ein Gleitkomma-Simulator mit
-  Fidelity-Schwelle. Mit der Integration soll er als unabhängige Gegenprobe zum exakten
-  Simulator dienen. Bis dahin prüfen die Tests den exakten Simulator gegen einen eigenen
-  Gleitkomma-Simulator in seinem Testmodul.
+  Fidelity-Schwelle, der keinen Code mit dem exakten Simulator teilt. Er dient als
+  unabhängige Gegenprobe: Auf 900 Paaren zufälliger Schaltungen und den 15
+  Beleg-Schaltungen der Bibliothek entscheidet er wie der exakte Simulator
+  (`tests/circuits.rs`).
+- **Schaltungs-Läufe** (`src/bin/brut-breed.rs`): `brut-breed --domain circuits`. Ein
+  fertiger Lauf schreibt `rediscovery.json`, die vorab festgelegte Zählung, und `--verify`
+  rechnet sie aus dem Checkpoint nach. Die eingefrorene Auswertung ist
+  `examples/circuit_positive_control.rs`.
 
-Noch offen ist die Integration: Schaltungs-Läufe mit `brut-breed --domain circuits`, die
-Wiederentdeckungs-Auswertung `rediscovery.json`, ADR 0006, die Vorab-Registrierung des
-Experiments und Pilotläufe. Gezählte Läufe beginnen erst, wenn die Eigentümerin bzw. der
-Eigentümer sechs Entscheidungen bestätigt hat:
+Die Pilotläufe auf den Seeds 101 und 102 liegen in
+[docs/pilot-step1/](docs/pilot-step1/README.md). Gezählte Läufe beginnen erst, wenn die
+Eigentümerin bzw. der Eigentümer sechs Entscheidungen bestätigt hat:
 
 1. Exakte Gleichheit entscheidet über „richtig“.
 2. Bewertet wird erst nach T-Anzahl, dann nach CNOT-Anzahl.
@@ -660,8 +670,9 @@ Mehr dazu, und welche Lücken es gibt, steht in
 - Kaskaden-Zucht: Die simulierten Modelle (`sim:small`, `sim:large`) sind
   Positivkontrollen. Ihre Zahlen zeigen, dass die Zucht funktioniert, nicht, wie gut
   echte Modelle wären.
-- Schritt 1: Schaltungs-Läufe sind über die Kommandozeile noch nicht möglich; das kommt
-  mit der Integration.
+- Schritt 1: Zwei Pilot-Seeds schätzen keine Erfolgsquote; was der Pilot zeigt und was
+  nicht, steht in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md),
+  Abschnitt 7.
 
 ## Aufbau eines Lauf-Verzeichnisses (MLP-Modus)
 
@@ -729,8 +740,13 @@ Die Tests der Kaskaden-Zucht:
   eine, gleich nach Abbruch und Fortsetzen, gleich bei 1 und 4 Threads) und die neuen
   Optionen.
 - Die Schaltungs-Bausteine haben Unit-Tests in ihren eigenen Dateien. Dazu gehören die 11
-  Literatur-Schaltungen, die bei genau ihren T- und CNOT-Zahlen exakt sein müssen, und
-  ein unabhängiger Vergleichssimulator auf 500 Zufallsschaltungen.
+  Beleg-Schaltungen der geprüften Ziele, die meisten aus der Literatur, die bei genau
+  ihren T- und CNOT-Zahlen exakt sein müssen, und ein unabhängiger Vergleichssimulator auf
+  500 Zufallsschaltungen.
+- `tests/circuits.rs` macht echte Schaltungs-Läufe mit `brut-breed` (gleiche Ergebnisse
+  über Prozesse und bei 1 und 4 Threads, Stopp und Fortsetzen, `--verify` gegen eine
+  veränderte `rediscovery.json`, abgelehnte Beförderung), legt die Kalibrierung der
+  Positivkontrolle fest und vergleicht den exakten Simulator mit `src/quantum.rs`.
 
 ## Schneller rechnen (freiwillig)
 
