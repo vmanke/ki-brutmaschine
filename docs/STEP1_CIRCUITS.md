@@ -107,7 +107,7 @@ known count is only the best published construction.
 | QFT2 | 2 | quantum Fourier transform on two qubits | 3 (proven) | 3 (proven) | Gheorghiu et al. 2022; Shende, Bullock, Markov 2004 |
 | CCZ | 3 | diag(1, …, 1, −1) | 7 (proven) | 6 (proven) | Gosset et al. 2014; Shende, Markov 2009 |
 | Toffoli | 3 | flips c when a = b = 1 | 7 (proven) | 6 (proven) | Gosset et al. 2014; Shende, Markov 2009; Maslov 2016 |
-| Peres | 3 | Toffoli, then CNOT from a to b | 7 (proven) | 5 (proven) | Shende, Markov 2009 |
+| Peres | 3 | Toffoli, then CNOT from a to b | 7 (proven) | 5 (proven) | Shende, Markov 2009; Mosca, Mukhopadhyay 2022; Di Matteo, Mosca 2016 |
 | Fredkin | 3 | a = 1 swaps b and c | 7 (proven) | 7 (best known) | Gosset et al. 2014; Niroula, Nam 2021 |
 | RTOF | 3 | Toffoli up to relative phases (Maslov) | 4 (derived) | 3 (proven) | Maslov 2016 |
 | CCiX | 3 | doubly controlled iX (Selinger) | 4 (derived) | 4 (best known) | Selinger 2013; Maslov 2016 |
@@ -406,6 +406,11 @@ them; `src/cascade/circuit.rs` lists them per target.
   9(5–6), 2009, pp. 461–486. [arXiv:0803.2316](https://arxiv.org/abs/0803.2316)
 - Gosset, Kliuchnikov, Mosca, Russo: An algorithm for the T-count. Quantum Information and
   Computation 14(15–16), 2014, pp. 1261–1276. [arXiv:1308.4134](https://arxiv.org/abs/1308.4134)
+- Mosca, Mukhopadhyay: A polynomial time and space heuristic algorithm for T-count.
+  Quantum Science and Technology 7, 015003, 2022.
+  [arXiv:2006.12440](https://arxiv.org/abs/2006.12440)
+- Di Matteo, Mosca: Parallelizing quantum circuit synthesis. Quantum Science and
+  Technology 1, 015003, 2016. [arXiv:1606.07413](https://arxiv.org/abs/1606.07413)
 - Gheorghiu, Mosca, Mukhopadhyay: T-count and T-depth of any multi-qubit unitary. npj
   Quantum Information 8, 141, 2022.
   [doi:10.1038/s41534-022-00651-y](https://doi.org/10.1038/s41534-022-00651-y)
