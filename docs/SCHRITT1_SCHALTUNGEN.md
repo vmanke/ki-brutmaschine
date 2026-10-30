@@ -45,8 +45,7 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   das höchste; die Tests bilden darum Qubit q auf n − 1 − q ab. In `tests/circuits.rs`
   entscheiden beide Simulatoren 900 Paare zufälliger Schaltungen auf 1 bis 4 Qubits gleich:
   300 Paare sind nach Bauart gleich, 300 verschieden und 300 unabhängig gezogen. Für die
-  15 Beleg-Schaltungen der Bibliothek, je eine Schaltung aus der Literatur zu jedem
-  Eintrag, liefern beide dieselbe Matrix bis auf 1e-12.
+  15 Beleg-Schaltungen der Bibliothek liefern beide dieselbe Matrix bis auf 1e-12.
 - **Zielbibliothek und Aufgaben** (Ticket 03, `src/cascade/circuit.rs`). 11 Ziele tragen T-
   und CNOT-Zahlen, welche die Recherche in der Literatur nachgelesen hat (Tabelle 1). Vier
   weitere (W-Gatter, √SWAP, Quanten-OR, 1-Bit-Addierer) haben keine geprüfte Referenz; sie
@@ -392,7 +391,8 @@ gezählten Lauf vorzeitig beendet.
   Antwort eine solche Zahl, stoppt der Lauf mit einem Integritätsalarm.
 - **Gemeinsame Fehlerquelle.** Entwerfer und Prüfer nutzen beide `qubit.rs`; ein Fehler dort
   könnte beide gleich täuschen. Dagegen stehen die Gegenprobe mit `quantum.rs`, die aus ihren
-  Definitionen gebauten Ziele und die Beleg-Schaltungen aus der Literatur.
+  Definitionen gebauten Ziele und die Beleg-Schaltungen, die meisten aus der Literatur, die
+  übrigen von der Recherche zu Schritt 1 gebaut und geprüft.
 - **Plattform.** Die Prüfsummen der Pilotläufe gelten für rustc 1.97.0 auf x86_64 Linux.
   Anderswo kann eine Gleitkomma-Funktion ihr letztes Bit anders runden; dann weichen die
   Läufe ab.

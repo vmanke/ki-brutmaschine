@@ -1571,9 +1571,11 @@ fn the_exact_checker_agrees_with_quantum_rs_on_random_pairs() {
 const TOFFOLI_NC: &str = "H 2; CNOT 1 2; TDG 2; CNOT 0 2; T 2; CNOT 1 2; TDG 2; CNOT 0 2; \
                           T 1; T 2; H 2; CNOT 0 1; T 0; TDG 1; CNOT 0 1";
 
-/// The witness circuits of the WP3 tests in `circuit.rs`: one per library entry, from the
-/// literature, with the T and CNOT counts its sources state. Gates are in time order, and
-/// qubit 0 is the most significant bit.
+/// The witness circuits of the WP3 tests in `circuit.rs`, one per library entry, with
+/// their T and CNOT counts. Most come from the literature; the research for step 1 built
+/// and checked the others: QFT2, the W gate, sqrt(SWAP), the quantum OR, the 1-bit adder
+/// and the explicit form of the Fredkin circuit. Gates are in time order, and qubit 0 is
+/// the most significant bit.
 fn witnesses() -> Vec<(&'static str, Circuit, (u32, u32))> {
     let parse = |text: &str| -> Circuit { text.parse().expect("circuit text") };
     let nc: Vec<&str> = TOFFOLI_NC.split(';').map(str::trim).collect();

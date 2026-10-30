@@ -370,7 +370,8 @@ generations needs at most 2 547 412 calls, so the cap ends no counted Run early.
   the Run stops with an integrity alarm.
 - **Common-mode error.** The designer and the checker both use `qubit.rs`; an error there
   could fool both alike. Against it stand the cross-check with `quantum.rs`, the targets
-  built from their definitions, and the witness circuits from the literature.
+  built from their definitions, and the witness circuits, most of them from the
+  literature, the others built and checked by the research for step 1.
 - **Platform.** The hashes of the pilot Runs hold for rustc 1.97.0 on x86_64 Linux.
   Elsewhere a floating-point function may round its last bit differently; then the Runs
   differ.
