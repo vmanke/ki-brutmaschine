@@ -29,7 +29,7 @@
 //! is proven and E2 has crossed, and at the latest after 60 pairs. A claim still open then
 //! is undecided.
 //!
-//! It prints, per seed s, R_seed(s), D_A(s), D_R(s) and the calibration gate
+//! It prints, per counted seed s, R_seed(s), D_A(s), D_R(s) and the calibration gate
 //! |R_seed(s)| <= |L| / 3, and then T_A, T_R, X, the first arm, E1 and E2. Pairs after the
 //! stop are listed as not counted. Then it prints E1 and E2 after the counted pairs, and
 //! either the verdicts on both claims at the stop or the next seed to run. The void
@@ -37,8 +37,8 @@
 //! descriptive lines carry no verdict. Over the counted pairs they give the median of D_A;
 //! the T-only variant, where a target counts when an exact answer has at most the
 //! reference's T count, and also at most its CNOT count for a Clifford target whose
-//! reference has no T, with D_A, D_R and the number of seeds with D_A > 1/2 under it; the
-//! first generation in which a bred Cascade solved each target; and the cheapest
+//! reference has no T, with the same table and the number of seeds with D_A > 1/2 under
+//! it; the first generation in which a bred Cascade solved each target; and the cheapest
 //! invention candidate per target and run. They also name the runs that ended at the call
 //! cap.
 //!

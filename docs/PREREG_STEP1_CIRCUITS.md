@@ -499,9 +499,9 @@ unlock exact, reference-cost syntheses for most library targets the seed Cascade
 more than half of all seeds within 1000 generations. If the secondary claim is proven
 too: Darwin Gödel selection gets there sooner than a uniform choice of parents with the
 same number of children; among untied pairs, arm A passes first more often than arm R.
-Both are claims about the breeder as a positive control, not about real models,
-and not about inventions: an answer below a BestKnown count is only an invention
-candidate until a human has checked the literature (Q38).
+Both are claims about the breeder as a positive control, not about real models, and not
+about inventions: an answer below a BestKnown count is only an invention candidate until
+a human has checked the literature (Q38).
 
 If the primary claim fails, we report that it fails: the data then speak against a pass
 rate of 3/4 or more, which is no proof of a rate of 1/2 or less. A claim that is not
