@@ -184,8 +184,9 @@ needs at most 2 547 412 calls, so the cap cannot end a counted Run early. The
 
 **Procedure.**
 
-1. Build the program at the frozen commit with the frozen toolchain. Run the calibration
-   tests of section 5 there; all must pass.
+1. Build the program at the frozen commit with the frozen toolchain. Run
+   `cargo test --lib` and `cargo test --test circuits` there, which hold every test named
+   in sections 3 and 5; all must pass.
 2. Run the 20 counted Runs, one at a time, each into a fresh directory.
 3. Thread check: run seed 1 of each arm twice more, once with `RAYON_NUM_THREADS=1` and
    once with `RAYON_NUM_THREADS=4`, into fresh directories. In each arm, `config.json`,
