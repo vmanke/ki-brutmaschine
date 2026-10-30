@@ -152,14 +152,18 @@ rediscovery recomputed and equal“. Wir haben Arm A auf Seed 101 erneut laufen 
 dauerte 3.2 s (Release-Build, 2 Threads).
 
 **Was `--verify` prüft.** Wie in Stufe 2c prüft es die Hash-Kette, den Anker des
-Checkpoints und die Einstellungen. Bei einem fertigen Lauf baut es den Lauf aus dem
-Checkpoint neu auf, rechnet den Bericht nach und leitet den Stoppgrund aus dem Checkpoint ab,
-statt ihn dem Bericht zu glauben („all generations done“ oder „call budget reached“). Bei
-einem fertigen Schaltungslauf verlangt es zudem, dass `rediscovery.json` Byte für Byte der
-Neuberechnung gleicht. Fehlt die Datei oder wurde sie verändert, endet `--verify` mit
-Exit-Code 1 und einer Meldung „integrity: …“. Bei einem unfertigen Lauf meldet es
-„rediscovery.json not checked: the run is not finished“. `timings.jsonl` gehört nicht zum
-geprüften Protokoll.
+Checkpoints und die Einstellungen. Bei einem fertigen Lauf mit seiner `report.json` baut es
+den Lauf aus dem Checkpoint neu auf, rechnet den Bericht nach und leitet den Stoppgrund aus
+dem Checkpoint ab, statt ihn dem Bericht zu glauben („all generations done“ oder „call
+budget reached“). Bei einem solchen Schaltungslauf verlangt es zudem, dass das Archiv des
+Checkpoints genau die Kaskaden und Antworten enthält, welche die `born`-Ereignisse des
+Protokolls festhalten, da keine Prüfsumme den Checkpoint deckt, und dass `rediscovery.json`
+Byte für Byte der Neuberechnung aus diesem Archiv gleicht. Weicht das Archiv oder die Datei
+ab oder fehlt die Datei, endet `--verify` mit Exit-Code 1 und einer Meldung „integrity: …“.
+Sonst nennt es, warum es die Datei nicht geprüft hat: „rediscovery.json not checked: the
+run is not finished“ oder, bei einem fertigen Lauf ohne seinen Bericht, „… there is no
+report.json; resume the run to write it“. `timings.jsonl` gehört nicht zum geprüften
+Protokoll.
 
 **Einstellungen.** Ohne `--config` nimmt `--domain circuits` alle 11 Ziele, verkleidet, mit
 höchstens 64 Gattern je Antwort. Andere Schaltungs-Einstellungen kommen über

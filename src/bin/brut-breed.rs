@@ -32,9 +32,10 @@
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
 //! calibration gate, and any invention candidate (plan (g)). It is written before the
-//! report, so a run with a report has it too, and --verify recomputes it from the
-//! checkpoint whenever it recomputes the report. --promote refuses circuit runs:
-//! promotion of circuit Cascades is not part of step 1.
+//! report, so a run with a report has it too. Whenever --verify recomputes the report, it
+//! also checks that the checkpoint's archive holds the Cascades and answers the Born
+//! events of the log record, and recomputes the count from that archive. --promote
+//! refuses circuit runs: promotion of circuit Cascades is not part of step 1.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -134,10 +135,19 @@ struct Family<D: Domain> {
     /// Called once a completed select phase is logged and checkpointed, before its report
     /// is written, so an error here leaves no report.
     after_finish: fn(&Path, &Breeder<'_, D>) -> Result<()>,
-    /// For --verify: error unless what `after_finish` wrote is what the finished run,
-    /// rebuilt from its checkpoint, gives. None when the run is not finished: --verify did
-    /// not recompute a report. Returns the words the verify line adds.
-    check_finish: fn(&Path, Option<&Breeder<'_, D>>) -> Result<&'static str>,
+    /// For --verify: error unless what `after_finish` wrote is what the finished run gives,
+    /// rebuilt from its checkpoint, and that checkpoint's archive is the one the logged
+    /// events it covers record. Returns the words the verify line adds.
+    check_finish: fn(&Path, &[Event], Finish<'_, '_, D>) -> Result<String>,
+}
+
+/// What --verify hands a family's check of the files a finished run writes.
+enum Finish<'r, 'a, D: Domain> {
+    /// The report was recomputed from the checkpoint and is equal: the run rebuilt from
+    /// that checkpoint.
+    Rebuilt(&'r Breeder<'a, D>),
+    /// The report was not recomputed, for this reason.
+    Unchecked(&'static str),
 }
 
 /// One line of `timings.jsonl`: the wall time of one committed generation.
@@ -831,10 +841,12 @@ fn check_report<D: Domain>(
 /// Check a run directory on the domain `D` with the settings `cfg` read from it: the hash
 /// chain, the checkpoint anchor, the settings, the report (recomputed from the checkpoint
 /// for a finished run), and what else a finished run of the family writes (also
-/// recomputed). `timings.jsonl` is not part of the record.
+/// recomputed, from an archive checked against the log). `timings.jsonl` is not part of
+/// the record.
 fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Result<i32> {
     let (log, cp) = open_run::<D>(out, cfg)?;
-    let (report, recomputed) = if out.join(REPORT).exists() {
+    let has_report = out.join(REPORT).exists();
+    let (report, recomputed) = if has_report {
         if check_report(&read_json(&out.join(REPORT))?, &log, &cp, cfg, family)? {
             ("; report recomputed and equal", true)
         } else {
@@ -860,7 +872,20 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
     } else {
         None
     };
-    let extra = (family.check_finish)(out, finished.as_ref())?;
+    let finish = match &finished {
+        Some(rebuilt) => Finish::Rebuilt(rebuilt),
+        None if !cp.snapshot.finished => Finish::Unchecked("the run is not finished"),
+        // A process that ended between its checkpoint and its report leaves this, and so
+        // does a resume to more generations that stopped before its first commit.
+        None if !has_report => {
+            Finish::Unchecked("there is no report.json; resume the run to write it")
+        }
+        None => Finish::Unchecked("the checkpoint lacks select-panel answers"),
+    };
+    // The archive of the checkpoint stands for the events up to its anchor; the log may
+    // hold more (a process that ended after logging a generation, before its checkpoint).
+    let covered = log.events().get(..cp.log_len as usize).unwrap_or_default();
+    let extra = (family.check_finish)(out, covered, finish)?;
 
     println!(
         "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}{extra}",
@@ -892,7 +917,7 @@ fn grid_family() -> Family<GridDomain> {
         genes: GenePool::grid(),
         pool: sim_pool(),
         after_finish: |_, _| Ok(()),
-        check_finish: |_, _| Ok(""),
+        check_finish: |_, _, _| Ok(String::new()),
     }
 }
 
@@ -975,16 +1000,22 @@ fn write_rediscovery(out: &Path, breeder: &Breeder<'_, CircuitDomain>) -> Result
     Ok(())
 }
 
-/// --verify on a circuit run: error unless `<out>/rediscovery.json` holds, byte for byte,
-/// what the finished run (rebuilt from its checkpoint) gives; a missing file is an error
-/// too. An unfinished run's file is not checked.
+/// --verify on a circuit run. For a finished run, rebuilt from its checkpoint: error unless
+/// the checkpoint's archive is the one the `events` it covers record (`check_archive`),
+/// and `<out>/rediscovery.json` holds, byte for byte, what that archive gives; a missing
+/// file is an error too. Otherwise the file is not checked, and the line says why.
 fn check_rediscovery(
     out: &Path,
-    finished: Option<&Breeder<'_, CircuitDomain>>,
-) -> Result<&'static str> {
-    let Some(breeder) = finished else {
-        return Ok("; rediscovery.json not checked: the run is not finished");
+    events: &[Event],
+    finish: Finish<'_, '_, CircuitDomain>,
+) -> Result<String> {
+    let breeder = match finish {
+        Finish::Rebuilt(b) => b,
+        Finish::Unchecked(why) => return Ok(format!("; {REDISCOVERY} not checked: {why}")),
     };
+
+    check_archive(out, breeder, events)?;
+
     let expected = serde_json::to_string_pretty(&rediscovery_of(breeder)?)?;
     let path = out.join(REDISCOVERY);
 
@@ -995,7 +1026,61 @@ fn check_rediscovery(
         )));
     }
 
-    Ok("; rediscovery recomputed and equal")
+    Ok("; rediscovery recomputed and equal".to_string())
+}
+
+/// Error unless the archive of `breeder`, rebuilt from the checkpoint, holds the Cascades
+/// that the Born events among `events` record, in their order, each with the same id,
+/// generation, operator and answers. These are what `rediscovery` counts. No hash covers
+/// the checkpoint, so only this ties the count to the hash-chained log: an answer edited
+/// in the checkpoint would otherwise enter the count with the next resume. A Born event
+/// without answers logged no answer text.
+fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Event]) -> Result<()> {
+    let tasks = breeder.search_panel().len();
+    let born: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Born {
+                generation,
+                id,
+                op,
+                answers,
+                ..
+            } => Some((*generation, id, *op, answers)),
+            _ => None,
+        })
+        .collect();
+    let archive = breeder.archive();
+    let differs = |what: String| {
+        BrutError::Integrity(format!(
+            "{}: {what} differs from what the Born events of {} record",
+            out.join(SNAPSHOT).display(),
+            out.join(EVENTS).display()
+        ))
+    };
+
+    if born.len() != archive.len() {
+        return Err(differs(format!(
+            "the archive of {} Cascades ({} Born events)",
+            archive.len(),
+            born.len()
+        )));
+    }
+
+    for (m, (generation, id, op, answers)) in archive.iter().zip(born) {
+        let logged = answers.clone().unwrap_or_else(|| vec![None; tasks]);
+        let kept: Vec<Option<String>> = m
+            .answers
+            .iter()
+            .map(|a| a.as_ref().and_then(|c| breeder.domain().artefact(c)))
+            .collect();
+
+        if m.id != *id || m.generation != generation || m.op != op || kept != logged {
+            return Err(differs(format!("archive member {}", m.id)));
+        }
+    }
+
+    Ok(())
 }
 
 /// Recorded LLM answers: every `<key>.txt` in `dir`.

@@ -225,8 +225,9 @@ generations.
   analysis refuses a pair where it differs.
 
 `rediscovery()` in `src/cascade/circuit.rs` computes these sets and writes them to each
-Run's `rediscovery.json`; `--verify` recomputes the file from the checkpoint, and the
-analysis recounts it from its own target list. Every decision is made in integers: D > 1/2
+Run's `rediscovery.json`; `--verify` checks the checkpoint's archive against the logged
+`born` events and recomputes the file from that archive, and the analysis recounts it
+from its own target list. Every decision is made in integers: D > 1/2
 means 2 · |R_bred \ R_seed| > |L \ R_seed|, and D_A > D_R compares exact fractions.
 
 ## 8. Results

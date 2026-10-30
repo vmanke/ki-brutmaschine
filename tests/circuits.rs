@@ -531,6 +531,105 @@ fn rediscovery_json_is_the_count_of_the_logged_answers_and_verify_guards_it() {
     );
 }
 
+#[test]
+fn verify_ties_the_counted_archive_to_the_logged_answers() {
+    let dir = fresh("forged-archive");
+    let path = dir.to_str().expect("path");
+
+    ok(&run(&dir, &RICH));
+
+    // Give a bred member, on a task it left unanswered, the answer another member gave
+    // there. No hash covers the checkpoint, and the member's Born event still logs no
+    // answer for that task.
+    let mut cp = json(&dir, "snapshot.json");
+    let archive = cp["snapshot"]["archive"]
+        .as_array()
+        .expect("archive")
+        .clone();
+    let (member, task, answer) = archive
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m["op"] != "seed")
+        .find_map(|(i, m)| {
+            let answers = m["answers"].as_array().expect("answers");
+
+            answers.iter().enumerate().find_map(|(j, a)| {
+                let given = archive
+                    .iter()
+                    .map(|other| &other["answers"][j])
+                    .find(|other| !other.is_null());
+
+                given.filter(|_| a.is_null()).map(|g| (i, j, g.clone()))
+            })
+        })
+        .expect("a bred member without an answer that another member gave");
+
+    cp["snapshot"]["archive"][member]["answers"][task] = answer;
+    std::fs::write(
+        dir.join("snapshot.json"),
+        serde_json::to_string(&cp).expect("json"),
+    )
+    .expect("forge");
+
+    // --verify refuses the checkpoint. A resume writes the count anew from it, without a
+    // new event, and --verify still refuses: the archive is not the logged one.
+    assert_eq!(verify(&dir).status.code(), Some(1));
+
+    let log = read(&dir, "events.jsonl");
+
+    ok(&breed(&["--out", path, "--resume"]));
+    assert_eq!(read(&dir, "events.jsonl"), log);
+
+    let refused = verify(&dir);
+
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        stderr(&refused).contains("integrity") && stderr(&refused).contains("Born events"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn verify_says_why_it_skips_the_count_of_a_finished_run() {
+    let dir = fresh("no-report");
+    let path = dir.to_str().expect("path");
+
+    ok(&run(&dir, &SMALL));
+
+    // A finished run without its report (a process that ended between its checkpoint and
+    // its report leaves this): --verify does not check the count, and it does not call
+    // the run unfinished.
+    std::fs::remove_file(dir.join("report.json")).expect("remove");
+
+    let skipped = verify(&dir);
+
+    ok(&skipped);
+    assert!(
+        stdout(&skipped)
+            .contains("rediscovery.json not checked: there is no report.json; resume the run"),
+        "{}",
+        stdout(&skipped)
+    );
+    assert!(
+        !stdout(&skipped).contains("not finished"),
+        "{}",
+        stdout(&skipped)
+    );
+
+    // A resume writes both files again, and then both are checked.
+    ok(&breed(&["--out", path, "--resume"]));
+
+    let checked = verify(&dir);
+
+    ok(&checked);
+    assert!(
+        stdout(&checked).contains("report recomputed and equal; rediscovery recomputed and equal"),
+        "{}",
+        stdout(&checked)
+    );
+}
+
 /// Paths into the crate that `text` names: the module after `crate::`, or after
 /// `crate::cascade::` for the cascade modules, with grouped paths opened.
 fn crate_modules(text: &str) -> BTreeSet<String> {

@@ -144,13 +144,17 @@ rediscovery recomputed and equal". We ran arm A on seed 101 again: `events.jsonl
 build, 2 threads).
 
 **What `--verify` checks.** As in Stage 2c, it checks the hash chain, the checkpoint's
-anchor and the settings. For a finished Run it rebuilds the Run from the checkpoint,
-recomputes the report, and derives the stop reason from the checkpoint instead of
-trusting the report ("all generations done" or "call budget reached"). For a finished
-circuit Run it also requires `rediscovery.json` to equal the recomputation byte for byte.
-If the file is missing or changed, `--verify` ends with exit code 1 and a message
-"integrity: …". For an unfinished Run it says "rediscovery.json not checked: the run is
-not finished". `timings.jsonl` is not part of the verified record.
+anchor and the settings. For a finished Run with its `report.json` it rebuilds the Run
+from the checkpoint, recomputes the report, and derives the stop reason from the
+checkpoint instead of trusting the report ("all generations done" or "call budget
+reached"). For such a circuit Run it also requires the checkpoint's archive to hold
+exactly the Cascades and answers that the `born` events of the log record, because no
+hash covers the checkpoint, and `rediscovery.json` to equal the recomputation from that
+archive byte for byte. If the archive or the file differs, or the file is missing,
+`--verify` ends with exit code 1 and a message "integrity: …". Otherwise it says why it
+did not check the file: "rediscovery.json not checked: the run is not finished", or, for
+a finished Run whose report is missing, "… there is no report.json; resume the run to
+write it". `timings.jsonl` is not part of the verified record.
 
 **Settings.** Without `--config`, `--domain circuits` takes all 11 targets, disguised,
 with at most 64 gates per answer. Other circuit settings come with `--config <file>`: a

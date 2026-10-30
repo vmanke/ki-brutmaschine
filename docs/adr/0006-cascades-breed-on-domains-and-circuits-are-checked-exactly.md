@@ -131,13 +131,18 @@ prompts.
 `rediscovery.json`: per target, the cheapest exact answer of the seed Cascades and of the
 bred ones, whether each reached the reference, the first generation of a bred hit and the
 cheapest invention candidate; then |L|, |R_seed|, |R_bred \ R_seed|, D and the
-calibration gate. `--verify` rebuilds a finished Run from its checkpoint without a model
-call, requires the recomputed report to be equal and `rediscovery.json` to match byte for
-byte; a missing or edited file is an integrity error. It also derives a finished Run's
-stop reason from the checkpoint ("all generations done" or "call budget reached") instead
-of trusting the report. A resume removes both files until the select phase is complete
-again. Since `--verify` refuses an edited file, `literature_checked` stays false in the
-Run, and a human's literature check is recorded outside it.
+calibration gate. For a finished Run with its `report.json`, `--verify` rebuilds the Run
+from its checkpoint without a model call and requires the recomputed report to be equal.
+No hash covers the checkpoint, so it also requires the checkpoint's archive to hold
+exactly the Cascades, generations, operators and answers that the hash-chained `born`
+events record, and `rediscovery.json` to match its recomputation from that archive byte
+for byte; an edited archive and a missing or edited file are integrity errors. It also
+derives a finished Run's stop reason from the checkpoint ("all generations done" or "call
+budget reached") instead of trusting the report. Without `report.json` it does not check
+`rediscovery.json` and says why: the Run is not finished, or its report is missing. A
+resume removes both files until the select phase is complete again. Since `--verify`
+refuses an edited file, `literature_checked` stays false in the Run, and a human's
+literature check is recorded outside it.
 
 **The experiment is fixed before it runs.** `docs/PREREG_STEP1_CIRCUITS.md` freezes the
 commit, the target list, the designer's constants, the calibration, the configuration,
