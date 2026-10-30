@@ -179,17 +179,20 @@ with probability at most 1/100 (exact worst case 0.0079); the fixed rule "9 of 1
 11/1024 = 0.0107. The threshold 100 bounds false claims at a one-sided level of 1 %,
 stricter by a factor of 2.5 than the one-sided 2.5 % that the guideline ICH E9 (1998,
 section 5.5) prefers in regulatory settings. On Jeffreys's scale an evidence value above
-100 is "decisive" (Kass and Raftery 1995; Vovk and Wang 2021). With at most 120 pairs,
-the primary claim is proven with probability 0.86 at the most conservative pilot estimate
-of the pass rate, the Kaplan-Meier rate 0.710; the conventional power is 0.80 (Cohen
-1992). The former threshold 20 with at most 60 pairs proves the primary claim more often
-below a pass rate of about 0.67. Averaged over the uncertainty of the pilot rate, both
-designs give about the same chance of a true proof. The change buys a false success about
-five times less likely (0.0079 instead of 0.0385), at more computing time. If the primary
-claim is proven, the claim is only this: breeding assembles prompts and Traits that unlock
-exact, reference-cost syntheses for most targets the seeds miss, in more than half of all
-seeds within 1000 generations; with the secondary, selection gets there sooner than
-uniform search. It is a positive control of the breeder.
+100 is "decisive" (Kass and Raftery 1995; Vovk and Wang 2021). On Kass and Raftery's own,
+slightly modified scale, 20 to 150 is "strong", which holds both 20 and every evidence
+value at a proof (100 to 150). With at most 120 pairs, the primary claim is proven with
+probability 0.86 at the most conservative pilot estimate of the pass rate, the
+Kaplan-Meier rate 0.710; the conventional power is 0.80 (Cohen 1992). The former threshold
+20 with at most 60 pairs proves the primary claim more often below a pass rate of about
+0.67. Averaged over the uncertainty of the pilot rate (Beta(10, 3): 9 passes in 11 Runs
+with a uniform prior), both designs give about the same chance of a true proof: 0.827 with
+the threshold 100, 0.829 with 20. The change buys a false success about five times less
+likely (0.0079 instead of 0.0385), at more computing time. If the primary claim is proven,
+the claim is only this: breeding assembles prompts and Traits that unlock exact,
+reference-cost syntheses for most targets the seeds miss, in more than half of all seeds
+within 1000 generations; with the secondary, selection gets there sooner than uniform
+search. It is a positive control of the breeder.
 
 **The pilots set the length.** The first pilot seeds 101 and 102 ran in both arms for 60
 generations and again for 200 (`docs/pilot-step1/pilot.json`). Every run passed

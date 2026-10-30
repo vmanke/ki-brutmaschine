@@ -469,10 +469,11 @@ aus dem Checkpoint nach, auch seinen Stoppgrund.
 
 ## Universen, die erfinden (Schritt 1)
 
-Stand: gebaut, mit Pilotläufen. Die sechs Entscheidungen unten sind am 2026-10-30
-freigegeben. Am selben Tag bekam Entscheidung 5 ihre wissenschaftlich tragende Fassung:
-Nachweisschwelle 100, höchstens 120 Seed-Paare. Gezählte Läufe beginnen, sobald die
-Vorab-Registrierung eingefroren ist.
+Stand: gebaut, mit Pilotläufen. Die sechs Entscheidungen unten wurden am 2026-10-30
+freigegeben, Entscheidung 5 zuerst mit der Schwelle 20 und höchstens 60 Paaren. Ihre
+wissenschaftlich tragende Fassung (Nachweisschwelle 100, höchstens 120 Seed-Paare), deren
+Zahlen Claude wählte, wird mit dem Zusammenführen bestätigt, das die Vorab-Registrierung
+einfriert. Gezählte Läufe beginnen, sobald die Vorab-Registrierung eingefroren ist.
 Beschrieben in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md) und
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 das Experiment ist in [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md)
@@ -548,7 +549,7 @@ das die Vorab-Registrierung einfriert. Entscheidung 5 steht hier in dieser Fassu
    Experiment endet spätestens nach 120 Paaren. Gleich wann es endet, meldet es einen
    falschen Erfolg höchstens mit Wahrscheinlichkeit 1/100; der ungünstigste Fall liegt bei
    rund 0.0079. Das ist etwas strenger als die alte Regel „9 von 10“, deren Schranke bei
-   11/1024 = 0.0107 lag; diese Regel ersetzt sie.
+   11/1024 = 0.0107 lag; die sequenzielle Regel ersetzt sie.
 6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
 
 ## Die sechs Komponenten

@@ -143,13 +143,13 @@ cargo build --release
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
-Arm A wählt die Eltern wie die Darwin-Gödel-Maschine (Zhang et al., ICLR 2026,
-Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die Seeds 1 bis 100 und
-111 bis 130 sind dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum
-den Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
-Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu
-`rediscovery.json` und am Ende die besten Kaskaden und den Vergleich auf dem Auswahl-Panel.
-Für Arm A auf Seed 101 lautet die Zeile zu `rediscovery.json`:
+Arm A wählt die Eltern wie die Darwin-Gödel-Maschine (Zhang et al., ICLR 2026, Anhang
+C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die Seeds 1 bis 100 und 111
+bis 130 sind dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum den
+Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste Kaskade, Fitness, gelöste
+Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu `rediscovery.json` und am Ende
+die besten Kaskaden und den Vergleich auf dem Auswahl-Panel. Für Arm A auf Seed 101 lautet
+die Zeile zu `rediscovery.json`:
 
 ```
 brut-breed: wrote runs/c101-A/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 7 of the other 9; D > 1/2: yes; calibrated
@@ -410,11 +410,11 @@ in Klammern die Bestehenszeiten.
 Aus den Pilotläufen folgen die Einstellungen der gezählten Läufe: `--generations 1000` und
 `--max-calls 13000000`. Bei einer Quote von 0.30, wie bis Generation 200, scheitert die
 Regel unten mit Wahrscheinlichkeit 1.000, nach 9.1 Paaren im Mittel; die Obergrenze konnte
-also nicht bei 200 Generationen bleiben. 1000 ist der längste Horizont mit Pilotdaten in
-beiden Armen. Nach unserer Rechnung aus den Aufrufgrenzen in `arena.rs` braucht ein Lauf
-mit 1000 Generationen höchstens 12 723 412 Aufrufe, sodass die Grenze keinen gezählten
-Lauf vorzeitig beendet; die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738
-Aufrufe.
+also nicht bei 200 Generationen bleiben. 1000 ist der längste Horizont, den die meisten
+Pilotläufe in beiden Armen erreichten; nur drei liefen bis 2000 weiter. Nach unserer
+Rechnung aus den Aufrufgrenzen in `arena.rs` braucht ein Lauf mit 1000 Generationen
+höchstens 12 723 412 Aufrufe, sodass die Grenze keinen gezählten Lauf vorzeitig beendet;
+die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738 Aufrufe.
 
 **Die Regel.** Das Experiment entscheidet selbst, wie viele Seeds es braucht. Die Regel,
 ihre Begründung und ihre Quellen stehen in der Vorab-Registrierung, Abschnitt 8. Die
@@ -452,30 +452,49 @@ und 100 mit 120. Ein Gegenprüfer rechnete die Zahlen nach und hielt 1024/11 mit
 Claude wählte die Schwelle 100 mit 120 Paaren und die Liste der Seeds oben. Die
 Eigentümerin bzw. der Eigentümer bestätigt diese Wahl mit dem Zusammenführen des
 Pull-Requests, das die Vorab-Registrierung einfriert; bis dahin ist nichts eingefroren,
-und kein gezählter Seed läuft. Statistisch sind dieser Entwurf und 1024/11 mit 120 Paaren
-fast gleich: Ein falscher Hauptnachweis hat höchstens die Wahrscheinlichkeit 0.0079
-gegenüber 0.0086, und bei der Kaplan-Meier-Quote gelingt der Hauptnachweis mit
-Wahrscheinlichkeit 0.8605 gegenüber 0.8620. Von beiden ist die Schwelle 100 etwas
-strenger, und nur ihre Schranke ist rund. Die Schranke von 1 % ist einseitig, wie die
-Nachweise. Für bestätigende Nachweise wie diese ist eine einseitige Grenze von 5 %
-großzügig: Nach der regulatorischen Leitlinie ICH E9 (1998, Abschnitt 5.5) ist es in
-regulatorischen Verfahren vorzuziehen, den Fehler erster Art eines einseitigen Tests auf
-die Hälfte des üblichen zweiseitigen zu setzen, also auf 2.5 %. Die Schranke von 1 % ist
-um den Faktor 2.5 strenger; nach derselben Halbierung entspricht sie einem zweiseitigen
-Test zu 2 %. Die übrigen Tests des Projekts behalten ihre vorab festgelegte einseitige
-Grenze von 5 %. Auf Jeffreys' Skala in der Fassung von Kass und Raftery (1995) sowie Vovk
-und Wang (2021) gilt ein Belegwert über 100 als „entscheidend“ (decisive), einer von 20
-nur als „stark“ (strong). Bei der vorsichtigsten Schätzung aus dem Pilot, der
-Kaplan-Meier-Quote 0.710, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.86, über der
-üblichen Teststärke von 0.80 nach Cohen (1992). Bei der Kaplan-Meier-Quote wägt dieser
-Entwurf unter den 16 die beiden Fehler am besten ab, wenn ein falscher Erfolg um den
-Faktor 4 schwerer zählt als ein verpasster Nachweis; dieses Verhältnis von 4 zu 1 leitet
-Cohen (1992) aus seinen Konventionen ab. Der frühere Entwurf hätte den Hauptnachweis bei
-dieser Quote mit Wahrscheinlichkeit 0.82 erbracht. Der Gewinn hat eine Grenze: Häufiger
-als der frühere Entwurf gelingt der neue nur oberhalb einer Quote von etwa 0.67. Über die
-Unsicherheit der Pilotquote gemittelt ist die Chance auf einen wahren Nachweis etwa
-gleich. Was die Änderung bringt, ist ein um etwa den Faktor 5 seltenerer falscher Erfolg,
-um den Preis von mehr Rechenzeit.
+und kein gezählter Seed läuft.
+
+Drei der 16 Entwürfe im Vergleich, nach
+`.scratch/universum-erfinden/sequential-rule/designs.txt`; die letzten drei Spalten geben
+den Hauptnachweis bei der Kaplan-Meier-Quote 0.710:
+
+| Nachweisschwelle, Höchstzahl | Falscher Nachweis, ungünstigster Fall | Erbracht bei 0.710 | Gescheitert bei 0.710 | Ohne Urteil bei 0.710 |
+|---|---|---|---|---|
+| 100, 120 Paare (gewählt) | 0.0079 | 0.8605 | 0.1144 | 0.0252 |
+| 1024/11, 120 Paare | 0.0086 | 0.8620 | 0.1142 | 0.0238 |
+| 20, 60 Paare (zuerst freigegeben) | 0.0385 | 0.8211 | 0.0988 | 0.0801 |
+
+Statistisch sind der gewählte Entwurf und 1024/11 mit 120 Paaren fast gleich. Von beiden
+ist die Schwelle 100 etwas strenger, und nur ihre Schranke ist rund. Vier weitere Gründe
+tragen die Wahl:
+
+- **Das Niveau.** Die Schranke von 1 % ist einseitig, wie die Nachweise. Für bestätigende
+  Nachweise wie diese ist eine einseitige Grenze von 5 % großzügig: Nach der
+  regulatorischen Leitlinie ICH E9 (1998, Abschnitt 5.5) ist es in regulatorischen
+  Verfahren vorzuziehen, den Fehler erster Art eines einseitigen Tests auf die Hälfte des
+  üblichen zweiseitigen zu setzen, also auf 2.5 %. Die Schranke von 1 % ist um den Faktor
+  2.5 strenger; nach derselben Halbierung entspricht sie einem zweiseitigen Test zu 2 %.
+  Die übrigen Tests des Projekts behalten ihre vorab festgelegte einseitige Grenze von
+  5 %.
+- **Die Belege.** Auf Jeffreys' Skala in der Fassung von Kass und Raftery (1995) sowie
+  Vovk und Wang (2021) gilt ein Belegwert über 100 als „entscheidend“ (decisive), einer
+  von 20 nur als „stark“ (strong). Die leicht abgewandelte eigene Skala von Kass und
+  Raftery nennt 20 bis 150 „stark“; auf ihr fallen 20 und jeder Belegwert bei einem
+  Nachweis in eine Klasse, da ein solcher Wert zwischen 100 und 150 liegt.
+- **Die Teststärke.** Bei der vorsichtigsten Schätzung aus dem Pilot, der
+  Kaplan-Meier-Quote 0.710, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.86, über
+  der üblichen Teststärke von 0.80 nach Cohen (1992).
+- **Die Abwägung der Fehler.** Bei der Kaplan-Meier-Quote gibt dieser Entwurf unter den 16
+  das kleinste 4 · alpha + beta, wobei alpha der falsche Nachweis im ungünstigsten Fall
+  ist und beta = 1 - Teststärke. Das Gewicht 4 ist das Verhältnis beta : alpha von 4 zu 1
+  (0.20 zu 0.05), das Cohen (1992) aus seinen Konventionen alpha = 0.05 und Teststärke
+  0.80 ableitet.
+
+Der Gewinn hat eine Grenze: Häufiger als der frühere Entwurf gelingt der neue nur oberhalb
+einer Quote von etwa 0.67. Über die Unsicherheit der Pilotquote gemittelt (Beta(10, 3): 9
+Erfolge in 11 Läufen mit gleichverteilter Vorannahme) ist die Chance auf einen wahren
+Nachweis etwa gleich: 0.827 gegenüber 0.829. Was die Änderung bringt, ist ein um etwa den
+Faktor 5 seltenerer falscher Erfolg, um den Preis von mehr Rechenzeit.
 
 Nach jedem Paar rechnet die Auswertung und nennt den nächsten Seed oder das Urteil. Gleich
 nach Paar 1 lassen wir Seed 1 in beiden Armen noch einmal mit 1 und mit 4 Threads laufen;
@@ -524,8 +543,8 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
   Quote 0.710 endet die Regel mit Wahrscheinlichkeit 0.114 als gescheitert und mit 0.025
   ohne Urteil; ein gescheiterter Hauptnachweis beweist keine Quote von höchstens 1/2.
   Liegt die wahre Quote nur bei 0.6, gelingt der Hauptnachweis mit Wahrscheinlichkeit
-  0.18. Mit den jetzigen Genen kann das gezählte Experiment also scheitern. Die Gene
-  bleiben, wie sie sind; jede Änderung verlangte neue Pilotläufe und eine neue
+  0.18. Mit den jetzigen Genen kann das gezählte Experiment also durchaus scheitern. Die
+  Gene bleiben, wie sie sind; jede Änderung verlangte neue Pilotläufe und eine neue
   Vorab-Registrierung.
 - **CH und Fredkin.** Kein Pilotlauf löste sie. Die Wege, welche die Tests zu ihnen
   festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf `sim:large`,
@@ -552,7 +571,10 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
 ## 9. Quellen
 
 Die Quellen der Zielbibliothek und ihre Fundstellen hat die Recherche zu Schritt 1
-zusammengetragen; je Ziel stehen sie in `src/cascade/circuit.rs`.
+zusammengetragen; je Ziel stehen sie in `src/cascade/circuit.rs`. Zhang et al. beschreiben
+die Elternwahl von Arm A (Abschnitt 3). Die letzten vier Einträge sind die Quellen, die
+Abschnitt 7 für die Schwellen nennt; die übrigen Quellen der Regel nennt die
+Vorab-Registrierung in Abschnitt 8.
 
 - Amy, Maslov, Mosca, Roetteler: A meet-in-the-middle algorithm for fast synthesis of
   depth-optimal quantum circuits. IEEE TCAD 32(6), 2013, S. 818–830.
@@ -586,3 +608,13 @@ zusammengetragen; je Ziel stehen sie in `src/cascade/circuit.rs`.
   [doi:10.1038/s41534-021-00369-3](https://doi.org/10.1038/s41534-021-00369-3)
 - Zhang, Hu, Lu, Lange, Clune: Darwin Gödel Machine: Open-Ended Evolution of
   Self-Improving Agents. ICLR 2026. [arXiv:2505.22954](https://arxiv.org/abs/2505.22954)
+- International Conference on Harmonisation: ICH Harmonised Tripartite Guideline E9,
+  Statistical Principles for Clinical Trials. Step-4-Fassung, 5. Februar 1998. Eine
+  regulatorische Leitlinie, nicht begutachtet.
+- Kass, Raftery: Bayes factors. Journal of the American Statistical Association 90(430),
+  1995, S. 773–795.
+  [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572)
+- Vovk, Wang: E-values: Calibration, combination and applications. Annals of Statistics
+  49(3), 2021, S. 1736–1754. [doi:10.1214/20-AOS2020](https://doi.org/10.1214/20-AOS2020)
+- Cohen: A power primer. Psychological Bulletin 112(1), 1992, S. 155–159.
+  [doi:10.1037/0033-2909.112.1.155](https://doi.org/10.1037/0033-2909.112.1.155)

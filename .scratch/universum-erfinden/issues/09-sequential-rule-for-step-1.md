@@ -437,7 +437,7 @@ Added 2026-10-30 for the thresholds of the Comments; each was verified against i
 
 20. Kass & Raftery (1995). Bayes factors. Journal of the American Statistical Association 90(430):773-795, doi:10.1080/01621459.1995.10476572.
    - Supports reason (b), §3.2, p. 777: Jeffreys's categories call a Bayes factor from 10 to 100 'strong' and above 100 'decisive'.
-   - Caveat: Kass & Raftery's own, coarser scale calls 20 to 150 'strong' and above 150 'very strong'. They call the categories "a rough descriptive statement about standards of evidence", not a calibration.
+   - Caveat: Kass & Raftery say of Jeffreys's categories that they "are not a calibration of the Bayes factor, but rather a rough descriptive statement about standards of evidence in scientific investigation" (p. 777). Their own slight modification calls 20 to 150 'strong' and above 150 'very strong'; on it, 20 and every E at a proof (100 to 150) fall in one class.
 
 21. Cohen (1992). A power primer. Psychological Bulletin 112(1):155-159, doi:10.1037/0033-2909.112.1.155.
    - Supports reason (c), p. 156: power .80 as "a convention proposed for general use".
@@ -477,8 +477,9 @@ seed list below. This design is a statistical twin of U = 1024/11 with cap 120 (
 0.0079 against 0.0086, Kaplan-Meier power 0.8605 against 0.8620), and 100 is the round 1 %
 level; the other reasons are (a) to (d) below. The owner confirms point 5 in this version
 with the squash merge of the pull request, which freezes the pre-registration. Until that
-merge nothing is frozen and no counted seed runs. This version replaces U = 20 and the cap
-of 60; everything else of the rule stays:
+merge nothing is frozen and no counted seed runs. This version replaces U = 20, the cap of
+60 and the open seed sequence 1, 2, 3, ... (now a fixed list of 120 seeds); everything
+else of the rule stays:
 
 - Proof threshold U = 100 for both claims. A claim is proven at the first pair with
   E >= 100, in integers 3^w >= 100 · 2^n.
@@ -491,7 +492,7 @@ of 60; everything else of the rule stays:
   order without gaps; pair i is the i-th seed of the list.
 - The seeds of the list are fresh. A scan of the 729 events.jsonl files on this machine
   found no circuit Run with the counted settings on any seed of the list. The only circuit
-  Runs on seeds of the list are test Runs on 31, 33 and 57, with 9 or 11 search tasks.
+  Runs on seeds of the list are test Runs on 5, 31, 33 and 57, with 9 to 12 search tasks.
 - Unchanged: 1000 generations, the call cap of 13 000 000, the three stop rules, the fixed
   sequence (the secondary only after the primary is proven), the first crossing as final,
   E2 unchanged on ties, the thread check after pair 1, the void rules and the T-only
@@ -509,7 +510,9 @@ Reasons:
   5 % (source 18).
 - (b) E >= 100 is 'decisive' evidence on Jeffreys's scale (Kass & Raftery 1995, source 20;
   Vovk & Wang 2021, §7, source 7), whereas 20 is only 'strong'. E1 and E2 are powers of 3
-  over powers of 2 and never equal 100, so a proof means E above 100.
+  over powers of 2 and never equal 100, so a proof means E above 100. On Kass & Raftery's
+  own, slightly modified scale, 20 and every E at a proof (100 to 150) are both 'strong'
+  (see the caveat of source 20).
 - (c) The power is at least 0.80 at the most conservative pilot estimate, the
   Kaplan-Meier rate 22/31: 0.8605 (Cohen 1992, source 21). P(undecided) is at most 5 %
   there (0.0252), at p = 1/2 (0.0014) and at p = 3/4 (0.0031).
@@ -518,12 +521,16 @@ Reasons:
   conventions.
 
 Caveat, stated honestly: the gain in power over U = 20 with cap 60 holds only above a pass
-rate of about 0.67 (0.666 by bisection with oc.py). Averaged over the uncertainty of the
-pilot rate, the chance of a true proof is about the same. What the change buys is a
+rate of about 0.67 (0.666 by bisection, designs.txt). Averaged over the uncertainty of the
+pilot rate, the chance of a true proof is about the same: 0.8272 against 0.8287 under
+Beta(10, 3), the 9/11 count with a uniform prior (designs.txt). What the change buys is a
 false-success probability about five times smaller, at more compute.
 
-Numbers. They come from the exact DP of oc.py and were checked twice. The evidence files
-are `.scratch/universum-erfinden/sequential-rule/designs.py` and `designs.txt`.
+Numbers. They come from the DP of oc.py, which runs in exact fractions for the primary
+claim and in floats for the joint rule, and were checked twice. The evidence files are
+`.scratch/universum-erfinden/sequential-rule/designs.py` with its output `designs.txt`,
+`own_check.py` with `own_check.txt` for the primary claim alone, and `reference_rule.txt`
+for the pilot illustration.
 
 - Count form, proven: 12, 14, 15, 17, 19, 20, 22 or 24 passes with 0 to 7 failures, so at
   least 12 pairs to prove. Failed, unchanged: 5, 5, 6, 7, 7, 8, 8 or 9 failures with 0 to

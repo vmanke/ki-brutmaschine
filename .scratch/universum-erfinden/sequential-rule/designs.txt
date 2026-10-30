@@ -42,3 +42,33 @@ exact alpha:
   U=100      cap  80: 4616264895629042824589/2^79
   U=100      cap 100: 4948329471467988348939384303/2^99
   U=100      cap 120: 5230783465047250584069050481905459/2^119  <- chosen
+
+The joint rule of oc.py: P(claim 1), P(both), E[N], N90, hours as above, and the
+probability of the claim that is false in a null scenario.
+design          scenario                                         claim1     both   E[N]  N90  hours    false
+U=100, cap 120  both nulls (0.5, 0.5, 0.5)                     0.007870 0.000989  22.76   44   5.23 0.007870
+U=100, cap 120  primary null, R much worse (0.5, 0.1, 0.8)     0.007870 0.007870  22.57   44   5.19 0.007870
+U=100, cap 120  selection irrelevant (0.75, 0.75, 0.5)         0.960145 0.007847  40.98   67   9.08 0.007847
+U=100, cap 120  selection irrelevant (0.85, 0.85, 0.5)         0.998915 0.007863  28.91   46   6.53 0.007863
+U=100, cap 120  the 10 long pilot pairs as observed            0.992675 0.992675  25.61   42   5.83
+U=100, cap 120  largest probability of a false claim over the four null scenarios: 0.007870
+U=20, cap 60    both nulls (0.5, 0.5, 0.5)                     0.038547 0.008736  21.50   43   4.96 0.038547
+U=20, cap 60    primary null, R much worse (0.5, 0.1, 0.8)     0.038547 0.038547  20.87   41   4.83 0.038547
+U=20, cap 60    selection irrelevant (0.75, 0.75, 0.5)         0.937860 0.038035  30.49   54   6.86 0.038035
+U=20, cap 60    selection irrelevant (0.85, 0.85, 0.5)         0.998834 0.038417  23.91   42   5.47 0.038417
+U=20, cap 60    the 10 long pilot pairs as observed            0.989752 0.989752  16.99   30   4.01
+U=20, cap 60    largest probability of a false claim over the four null scenarios: 0.038547
+
+The primary at p = 0.3, the arm A rate by generation 200:
+  U=100, cap 120: P(proven) 0.0000023, P(failed) 0.9999977, E[N] 9.12, N90 14
+  U=20, cap 60: P(proven) 0.0001734, P(failed) 0.9998262, E[N] 9.12, N90 14
+
+The chosen design proves the primary more often than U=20, cap 60 above p = 0.6660 (bisection).
+
+The chance of a true proof averaged over the uncertainty of the pilot rate, exact:
+  Beta(10, 3), 9 of 11 passes with a uniform prior: U=100, cap 120 0.8272, U=20, cap 60 0.8287
+  Beta(9, 2), 8 of 9 passes with a uniform prior: U=100, cap 120 0.8982, U=20, cap 60 0.8980
+
+Worst case without the thread check, at 14.31 min per pair (the slowest pilot pair) and at 14.69 min (the slowest run of each arm):
+  U=100, cap 120: 28.62 h and 29.37 h
+  U=20, cap 60: 14.31 h and 14.69 h

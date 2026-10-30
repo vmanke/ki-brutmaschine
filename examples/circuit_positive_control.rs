@@ -88,6 +88,9 @@ const FAILURE: u32 = 20;
 /// How a run ends when it completes every generation.
 const ALL_GENERATIONS: &str = "all generations done";
 
+/// How a run ends when the call budget stops it first.
+const CALL_BUDGET: &str = "call budget reached";
+
 /// The counted seeds in their fixed order, MAX_PAIRS of them: 1 to 100, then 111 to 130.
 /// Pair i runs the i-th. The pilot seeds 101 to 110 lie in this range and never count, so
 /// the list skips them; the other pilot seeds lie beyond it.
@@ -955,7 +958,8 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
 
     out.push_str(
         "Checked elsewhere: integrity alarms (a run with one has no rediscovery.json and is refused here), \
-         equal logs at 1 and 4 threads (seed 1, both arms), and the calibration test at the frozen commit.\n\n",
+         brut-breed --verify on every run, equal logs at 1 and 4 threads (seed 1, both arms), \
+         and the calibration test at the frozen commit.\n\n",
     );
     out.push_str(
         "Pre-registered rule: a target counts when an exact answer reaches its T and CNOT reference.\n",
@@ -1087,12 +1091,18 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
 
 /// Ok when a run bred exactly the generations its config plans (generation 0 included),
 /// or fewer when the call budget ended it. A resume may lower --generations below what a
-/// run had already bred; such a run still verifies, but it is not a run of its config.
+/// run had already bred; such a run still verifies, but it is not a run of its config. A
+/// run that stopped for any other reason is refused.
 fn bred_as_planned(stop_reason: &str, completed: usize, generations: usize) -> Result<(), String> {
     let planned = generations + 1;
     let fits = match stop_reason {
-        "all generations done" => completed == planned,
-        _ => completed < planned,
+        ALL_GENERATIONS => completed == planned,
+        CALL_BUDGET => completed < planned,
+        _ => {
+            return Err(format!(
+                "it stopped with {stop_reason:?}, neither {ALL_GENERATIONS:?} nor {CALL_BUDGET:?}"
+            ));
+        }
     };
 
     if fits {
@@ -2210,6 +2220,31 @@ mod tests {
         );
         assert!(text.contains("  NO\n"), "{text}");
         assert!(!text.contains("PROVEN"), "{text}");
+
+        // The stop pair counts too: the pilot order stops at pair 6, and in pair 6 the seed
+        // Cascades solve four targets.
+        let mut times = vec![(Some(32), None)];
+
+        times.extend([(None, None); 5]);
+        times.extend([(Some(40), None); 4]);
+
+        let mut stopped = timed_pairs(&times);
+
+        stopped[5].a = found(&wide, &[]);
+        stopped[5].r = found(&wide, &[]);
+
+        assert_eq!(sequential(&rows(&stopped)).stop, Some(6));
+        assert_eq!(claim(&rows(&stopped)), Claim::Void(vec![6]));
+
+        // While the rule goes on, so does the last pair: E1 = 3^10 / 2^10 is open after ten
+        // pairs that arm A passes, and in pair 10 the seed Cascades solve four targets.
+        let mut open = pairs(&counted(10), &[7; 10], &[0; 10]);
+
+        open[9].a = found(&wide, &bred(7));
+        open[9].r = found(&wide, &[]);
+
+        assert_eq!(sequential(&rows(&open)).stop, None);
+        assert_eq!(claim(&rows(&open)), Claim::Void(vec![10]));
     }
 
     #[test]
@@ -2332,6 +2367,159 @@ mod tests {
         assert!(longer.contains("bred 202 generations"), "{longer}");
         assert!(bred_as_planned("all generations done", 150, 200).is_err());
         assert!(bred_as_planned("call budget reached", 201, 200).is_err());
+
+        // A run that stopped short for any reason but the call budget.
+        let other = bred_as_planned("interrupted", 150, 200).expect_err("interrupted");
+
+        assert!(other.contains("stopped with \"interrupted\""), "{other}");
+    }
+
+    /// A fresh, empty directory for one test.
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("brut-cpc-{name}-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        dir
+    }
+
+    fn write_json<T: serde::Serialize>(path: &Path, value: &T) {
+        std::fs::write(path, serde_json::to_string(value).expect("json")).expect("write");
+    }
+
+    /// A finished run in `dir` with the files this program reads: `cfg`, a report that
+    /// stopped with `stop` after `completed` generations (generation 0 included), a
+    /// finished snapshot and `found`.
+    fn write_run(dir: &Path, cfg: &BreedConfig, stop: &str, completed: usize, found: &Rediscovery) {
+        let report = Report {
+            generations_completed: completed,
+            archive_size: 4,
+            calls_used: 0,
+            mutator_answers_used: 0,
+            comparisons: 0,
+            stop_reason: stop.to_string(),
+            top: Vec::new(),
+            finalists: Vec::new(),
+            best_finalist_select_rate: 0.0,
+            best_seed_select_rate: 0.0,
+        };
+
+        std::fs::create_dir_all(dir).expect("run dir");
+        write_json(&dir.join("config.json"), cfg);
+        write_json(&dir.join("report.json"), &report);
+        write_json(
+            &dir.join("snapshot.json"),
+            &serde_json::json!({"snapshot": {"finished": true}}),
+        );
+        write_json(&dir.join("rediscovery.json"), found);
+    }
+
+    /// The arguments --a `a`... --r `r`...
+    fn arm_args(a: &[&PathBuf], r: &[&PathBuf]) -> Vec<String> {
+        let mut args = vec!["--a".to_string()];
+
+        args.extend(a.iter().map(|d| d.display().to_string()));
+        args.push("--r".to_string());
+        args.extend(r.iter().map(|d| d.display().to_string()));
+
+        args
+    }
+
+    #[test]
+    fn the_run_directories_must_share_the_pre_registered_settings() {
+        let root = tmp_dir("runs");
+        // A finished run with the settings `cfg` in the folder `name`. Arm A passes, arm R
+        // does not. It completes its generations, unless `stop` gives another end.
+        let run_dir = |name: &str, cfg: BreedConfig, stop: Option<(&str, usize)>| {
+            let dir = root.join(name);
+            let rediscovery = match cfg.selection {
+                ParentSelection::Dgm => found(&SEEDS_HIT, &bred(7)),
+                ParentSelection::Uniform => found(&SEEDS_HIT, &[]),
+            };
+            let (reason, completed) = stop.unwrap_or((ALL_GENERATIONS, cfg.generations + 1));
+
+            write_run(&dir, &cfg, reason, completed, &rediscovery);
+            dir
+        };
+        let a1 = run_dir("A-1", arm_config(Arm::A, 1, 1000, 13_000_000), None);
+        let r1 = run_dir("R-1", arm_config(Arm::R, 1, 1000, 13_000_000), None);
+
+        // The pre-registered settings: the rule decides.
+        let text = run(arm_args(&[&a1], &[&r1])).expect("run");
+
+        assert!(
+            text.contains("1 seed pair(s); every run: --generations 1000, --max-calls 13000000.\n"),
+            "{text}"
+        );
+        assert!(text.contains("brut-breed --verify on every run"), "{text}");
+        assert!(text.contains("OPEN: run seed 2 next.\n"), "{text}");
+
+        // The generations and the cap the runs share, here those of a pilot batch, decide
+        // whether a claim is made.
+        let a_short = run_dir("A-1-200", arm_config(Arm::A, 1, 200, 2_600_000), None);
+        let r_short = run_dir("R-1-200", arm_config(Arm::R, 1, 200, 2_600_000), None);
+        let text = run(arm_args(&[&a_short], &[&r_short])).expect("run");
+
+        assert!(
+            text.contains(
+                "No claim: the runs have --generations 200 and --max-calls 2600000, not the pre-registered 1000 and 13000000.\n"
+            ),
+            "{text}"
+        );
+
+        // A run that the call budget ended.
+        let a_capped = run_dir(
+            "A-1-capped",
+            arm_config(Arm::A, 1, 1000, 13_000_000),
+            Some((CALL_BUDGET, 500)),
+        );
+        let text = run(arm_args(&[&a_capped], &[&r1])).expect("run");
+
+        assert!(
+            text.contains(
+                "No claim: 1 run(s) ended at the call cap, which the pre-registered cap rules out.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("Run of seed 1, arm A ended at the call cap after 500 generation(s).\n"),
+            "{text}"
+        );
+
+        // Refused: runs of different lengths, a run that stopped for another reason, other
+        // settings, a seed with two runs in one arm, and arms with different seeds.
+        let a_interrupted = run_dir(
+            "A-1-interrupted",
+            arm_config(Arm::A, 1, 1000, 13_000_000),
+            Some(("interrupted", 500)),
+        );
+        let wider = BreedConfig {
+            search_puzzles: 9,
+            ..arm_config(Arm::A, 1, 1000, 13_000_000)
+        };
+        let a_wider = run_dir("A-1-wider", wider, None);
+        let r2 = run_dir("R-2", arm_config(Arm::R, 2, 1000, 13_000_000), None);
+
+        for (a, r, why) in [
+            (&a1, &r_short, "differ in --generations or --max-calls"),
+            (&a_interrupted, &r1, "stopped with \"interrupted\""),
+            (&a_wider, &r1, "not the pre-registered ones of arm A"),
+        ] {
+            let refused = run(arm_args(&[a], &[r])).expect_err(why);
+
+            assert!(refused.contains(why), "{refused}");
+        }
+
+        let twice = run(arm_args(&[&a1, &a_capped], &[&r1])).expect_err("two runs");
+
+        assert!(twice.contains("seed 1 has two runs in arm A"), "{twice}");
+
+        let more = run(arm_args(&[&a1], &[&r1, &r2])).expect_err("an extra seed");
+
+        assert!(more.contains("the arms have different seeds"), "{more}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

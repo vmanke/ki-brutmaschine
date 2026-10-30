@@ -1,24 +1,28 @@
 # Pre-registration of step 1: does breeding rediscover circuit references?
 
-Status: implements the decisions the owner approved on 2026-10-30; frozen at the commit
-that the squash merge of its pull request creates on the main branch.
+Status: implements the decisions the owner approved on 2026-10-30, with decision 5 in the
+version whose numbers Claude, the AI assistant, chose later that day (section 8). The
+owner confirms that version with the squash merge of its pull request; this document is
+frozen at the commit that the merge creates on the main branch.
 
 This document fixes the step 1 experiment of plan (g) and
 [ADR 0006](adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md) before
 any counted Run. Of this experiment, only pilot seeds have run
 ([docs/pilot-step1/](pilot-step1/README.md)); no counted seed has run in either arm. The
-owner approved the six decisions of ADR 0006 and the changes of issue 09 on 2026-10-30;
-this version implements them. Decision 5 is the sequential rule of section 8, which
-replaced the fixed rule "9 of 10" on the same day. Later that day the owner asked for the
-scientifically load-bearing version of the rule, and this version implements that too:
-the proof threshold 100, at most 120 pairs and a fixed list of counted seeds (sections 2,
-6 and 8). The frozen commit is the one commit that the pull request with this version
-creates on the main branch. The pull request is merged as one squashed commit, so none of
-the intermediate commits of its branch reaches the main branch. A commit cannot hold its
-own hash, so we record the hash with the results and in the pull request. From that
-commit on nothing below changes, and above all nothing changes after seed 1 has started:
-a change then makes a new experiment on seeds not used before. Every deviation is
-reported with the results, with its reason.
+owner approved the six decisions of ADR 0006 and the changes of issue 09 as first designed
+on 2026-10-30. Decision 5 is the sequential rule of section 8, which replaced the fixed
+rule "9 of 10" on the same day. Later that day the owner asked for the scientifically
+load-bearing version of the rule and named no numbers. Claude, the AI assistant, chose
+them after a review of 16 designs: the proof threshold 100, at most 120 pairs and a fixed
+list of counted seeds (sections 2, 6 and 8). This version implements the six decisions
+with that choice, and the owner confirms it with the squash merge (section 8). The frozen
+commit is the one commit that the pull request with this version creates on the main
+branch. The pull request is merged as one squashed commit, so none of the intermediate
+commits of its branch reaches the main branch. A commit cannot hold its own hash, so we
+record the hash with the results and in the pull request. From that commit on nothing
+below changes, and above all nothing changes after seed 1 has started: a change then makes
+a new experiment on seeds not used before. Every deviation is reported with the results,
+with its reason.
 The report on step 1 is [SCHRITT1_SCHALTUNGEN.md](SCHRITT1_SCHALTUNGEN.md) (English:
 [STEP1_CIRCUITS.md](STEP1_CIRCUITS.md)).
 
@@ -221,12 +225,16 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
 
 1. Build the program at the frozen commit with the frozen toolchain. Run
    `cargo test --lib` and `cargo test --test circuits` there, which hold every test named
-   in sections 3 and 5; all must pass.
+   in sections 3 and 5, and `cargo test --example circuit_positive_control`, which holds
+   the tests of the analysis; all must pass.
 2. Acceptance check, before seed 1 and not counted: run the frozen analysis on the pilot
    pairs 301 to 309 of section 10. It must withhold the claim, give the pass times
-   T_A = never, 7, 75, 97, 349, 143, 33, 180, 810 and T_R = never, 380, then never for
-   the rest, and end open with E1 = 6561/512 and E2 = 6561/256: neither has reached 100
-   or fallen to 1/20. `reference_rule.py --pilots` gives the same values.
+   T_A = never, 7, 75, 97, 349, 143, 33, 180, 810 and T_R = never, 380, then never for the
+   rest, and end open with E1 = 6561/512 and E2 = 6561/256: neither has reached 100 or
+   fallen to 1/20. `reference_rule.py --pilots <dir>`, with `<dir>` holding the pilot
+   folders `pilot-1000` and `pilot10`, gives the same values. The pilot Runs are not in
+   the repository; if their folders are gone, we first run the pairs 301 to 309 and 101 to
+   110 again at the frozen commit, with the settings of section 10.
 3. Run the counted pairs in the order of the list. For the pair of seed S, run arm A and
    arm R of seed S, one process at a time, each into a fresh directory. A Run that is
    stopped, killed or otherwise interrupted before it finishes is not resumed: we delete
@@ -269,10 +277,11 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
    its seed, arm, generations, call cap, children per generation, two panel sizes, stop
    reason and calibration gate; the analysis checks every other setting of this section.
    It refuses a seed that is not on the list 1 to 100, then 111 to 130, and a gap in the
-   order of the list, so also more than 120 pairs. It reports the experiment void when a
-   pair up to the stop fails the gate. Its pass times, evidence values, stop pair and
-   verdicts must equal those of the analysis; we report the recount with the results, and
-   any difference.
+   order of the list, so also more than 120 pairs. It accepts at most one unfinished pair
+   after the finished ones, so after Runs in parallel it is run once every started pair
+   has finished. It reports the experiment void when a pair up to the stop fails the gate.
+   Its pass times, evidence values, stop pair and verdicts must equal those of the
+   analysis; we report the recount with the results, and any difference.
 
 ## 7. Definitions
 
@@ -331,7 +340,7 @@ thresholds, the cap and the seed list of this version, and their operating
 characteristics, are in its Comments, entry "2026-10-30, thresholds", and in
 `designs.txt`. `own_check.py` recomputes the figures of the primary claim from the rule
 text alone, and `designs.py` compares the 16 designs from which the thresholds below were
-chosen.
+chosen and gives the joint figures of this design and of the former one.
 
 **Evidence values.** Two evidence values, E1 and E2, start at 1. They are updated strictly
 in the order of the seed list: pair i enters only after pairs 1 to i - 1, never in the
@@ -411,19 +420,23 @@ slightly stricter, and only its bound is round. Four further reasons support the
   and Wang (2021, section 7) give it, evidence above 100 is "decisive", whereas evidence
   of 20 is only "strong". E1 and E2 are powers of 3 divided by powers of 2, so they never
   equal 100, and a proof means evidence above 100. The former threshold 20 gave only
-  strong evidence.
+  strong evidence. Kass and Raftery call these categories a rough description, not a
+  calibration. Their own, slightly modified scale in the same section calls 20 to 150
+  "strong", and on it 20 and every value at a proof fall in one class: one pair multiplies
+  E by at most 3/2, so E lies between 100 and 150 at the pair of a proof.
 - **The power.** At the most conservative pilot estimate, the Kaplan-Meier rate 22/31,
   the primary claim is proven with probability 0.8605, above the conventional power of
   0.80 (Cohen 1992). The probability of ending undecided is at most 5 % there (0.0252),
   at a pass rate of 1/2 (0.0014) and at 3/4 (0.0031).
 - **The balance of errors.** Among the 16 designs this one gives the smallest
   4 · alpha + beta at the Kaplan-Meier rate, where alpha is the exact worst case of a
-  false proof and beta = 1 - power. The weight 4 is the ratio of 4 to 1 between the two
-  kinds of error that Cohen (1992) derives from his conventions.
+  false proof and beta = 1 - power. The weight 4 is the ratio beta : alpha of 4 to 1 (0.20
+  to 0.05) that Cohen (1992) derives from his conventions alpha = 0.05 and power 0.80.
 
 One caveat holds. The new design proves the primary claim more often than the former one
-only above a pass rate of about 0.67. Averaged over the uncertainty of the pilot rate, the
-chance of a true proof is about the same. What the change buys is a probability of a false
+only above a pass rate of about 0.67. Averaged over the uncertainty of the pilot rate
+(Beta(10, 3): 9 passes in 11 Runs with a uniform prior), the chance of a true proof is
+about the same: 0.827 against 0.829. What the change buys is a probability of a false
 success about five times smaller (0.0079 instead of 0.0385), at the price of more
 computing time (section 10).
 
@@ -431,8 +444,12 @@ computing time (section 10).
 seed of the list is skipped or replaced, that the updates go by the order of the list and
 never by completion order, and that the settings, the ceiling, the definitions of T, X and
 Y and the thresholds do not change after seed 1. A breach voids the bounds. The bounds
-also rest on one assumption that cannot be checked: under the null hypothesis, each new
-seed passes with probability at most 1/2, given the earlier seeds. We assume this because
+also rest on assumptions that cannot be checked, each about a new pair given the earlier
+pairs. For a false proof of the primary claim: under its null hypothesis, the seed passes
+with probability at most 1/2. For a false proof of the secondary claim: under its null
+hypothesis, "A first" is at most as likely as "R first". For a wrong "failed" of the
+primary claim: when the pass rate is 3/4 or more, the seed passes with probability at
+least 3/4. All three hold when the seeds act as independent draws, which we assume because
 the random streams of a Run are derived from a hash of its seed. In this container we run
 one process at a time; elsewhere Runs may run in parallel as long as the updates stay in
 the order of the list.
@@ -532,8 +549,9 @@ invention candidate or solved ch or fredkin.
   to 210: a rate of 0.30, with a 95 % confidence interval of 0.119 to 0.543. At that rate
   the rule of section 8 fails with probability 1.000, after 9.1 pairs on average, so the
   ceiling cannot stay at 200. Passes came as late as generation 810 in arm A (seed 309)
-  and 720 in arm R (seed 401). 1000 is the longest horizon with pilot data in both arms:
-  11 Runs of arm A and 10 of arm R reached it.
+  and 720 in arm R (seed 401). 1000 is the longest horizon that most pilot Runs reached in
+  both arms: 11 Runs of arm A and 10 of arm R reached it, and only A-401, A-402 and R-401
+  went on to 2000.
 - **The call cap.** 13 000 000 lies above the bound of 12 723 412 calls of section 6. The
   pilot Runs used at most 1 161 738 calls by generation 1000.
 - **Pass rates at 1000 generations.** Arm A passed in 9 of the 11 Runs that reached
@@ -546,7 +564,7 @@ invention candidate or solved ch or fredkin.
   took 10.57 to 14.31 min (mean 12.68 min, 10 pairs).
 
 **Planning figures** (not part of the rule). At the pilot rates the primary claim is
-proven with probability 0.86 to 0.99, and both claims with 0.857 to 0.993: the low end
+proven with probability 0.860 to 0.993, and both claims with 0.857 to 0.993: the low end
 draws pairs from the Kaplan-Meier curves of both arms, the high end from the 10 long pilot
 pairs as observed. The experiment then needs 45.9 to 25.6 pairs on average; 90 % of such
 experiments need at most 82 to 42 pairs. At 12.68 min per pair, that is 10.1 to 5.8 hours

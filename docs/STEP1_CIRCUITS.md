@@ -138,13 +138,13 @@ cargo build --release
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
-Arm A chooses parents as the Darwin Gödel Machine does (Zhang et al., ICLR 2026,
-appendix C.2), arm R uniformly; otherwise both arms are the same. The seeds 1 to 100 and
-111 to 130 are reserved for the pre-registered experiment, so the examples use the pilot
-seed 101. A Run prints one line per generation (best Cascade, fitness,
-solved search tasks, archive size, calls), then one line about `rediscovery.json`, and at
-the end the best Cascades and the comparison on the select panel. For arm A on seed 101
-the line about `rediscovery.json` reads:
+Arm A chooses parents as the Darwin Gödel Machine does (Zhang et al., ICLR 2026, appendix
+C.2), arm R uniformly; otherwise both arms are the same. The seeds 1 to 100 and 111 to 130
+are reserved for the pre-registered experiment, so the examples use the pilot seed 101. A
+Run prints one line per generation (best Cascade, fitness, solved search tasks, archive
+size, calls), then one line about `rediscovery.json`, and at the end the best Cascades and
+the comparison on the select panel. For arm A on seed 101 the line about
+`rediscovery.json` reads:
 
 ```
 brut-breed: wrote runs/c101-A/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 7 of the other 9; D > 1/2: yes; calibrated
@@ -394,10 +394,10 @@ pass times are in brackets.
 The settings of the counted Runs follow from the pilot Runs: `--generations 1000` and
 `--max-calls 13000000`. At a pass rate of 0.30, as by generation 200, the rule below fails
 with probability 1.000, after 9.1 pairs on average; so the ceiling could not stay at 200
-generations. 1000 is the longest horizon with pilot data in both arms. By our count from
-the call bounds in `arena.rs`, a Run of 1000 generations needs at most 12 723 412 calls,
-so the cap ends no counted Run early; the pilot Runs used at most 1 161 738 calls by
-generation 1000.
+generations. 1000 is the longest horizon that most pilot Runs reached in both arms; only
+three went on to 2000. By our count from the call bounds in `arena.rs`, a Run of 1000
+generations needs at most 12 723 412 calls, so the cap ends no counted Run early; the
+pilot Runs used at most 1 161 738 calls by generation 1000.
 
 **The rule.** The experiment decides by itself how many seeds it needs. The rule, its
 reasons and its sources are in the pre-registration, section 8. The counted seeds are the
@@ -432,27 +432,46 @@ upheld 1024/11 with 120 pairs (bound 11/1024 = 0.0107), on the condition of a fi
 of counted seeds. Claude chose the threshold 100 with 120 pairs and the seed list above.
 The owner confirms this choice with the squash merge of the pull request, which freezes
 the pre-registration; until then nothing is frozen and no counted seed runs.
-Statistically, this design and 1024/11 with 120 pairs are almost the same: a false proof
-of the primary claim has probability at most 0.0079 against 0.0086, and at the
-Kaplan-Meier rate the primary claim is proven with probability 0.8605 against 0.8620. Of
-the two, the threshold 100 is slightly stricter, and only its bound is round. The bound of
-1 % is one-sided, as the claims are. For confirmatory claims like these, a one-sided bound
-of 5 % is lenient: the regulatory guideline ICH E9 (1998, section 5.5) holds it
-preferable, in regulatory settings, to set the type I error of a one-sided test at half
-the conventional two-sided one, that is at 2.5 %. The bound of 1 % is stricter than that
-by a factor of 2.5; by the same halving it matches a two-sided test at 2 %. The other pass
-tests of the project keep their pre-registered one-sided 5 %. On Jeffreys's scale, as Kass
-and Raftery (1995) and Vovk and Wang (2021) give it, an evidence value above 100 counts as
-"decisive", one of 20 only as "strong". At the most conservative pilot estimate, the
-Kaplan-Meier rate 0.710, the primary claim is proven with probability 0.86, above the
-conventional power of 0.80 (Cohen 1992). At the Kaplan-Meier rate, this design weighs the
-two errors best among the 16 when a false success counts four times as much as a missed
-proof; Cohen (1992) derives this ratio of 4 to 1 from his conventions. At that rate the
-former design would prove the primary claim with probability 0.82. The gain has a limit:
-the new design proves more often than the former one only above a pass rate of about 0.67.
-Averaged over the uncertainty of the pilot rate, the chance of a true proof is about the
-same. What the change buys is a false success about five times less likely, at more
-computing time.
+
+Three of the 16 designs side by side, from
+`.scratch/universum-erfinden/sequential-rule/designs.txt`; the last three columns hold the
+primary claim at the Kaplan-Meier rate 0.710:
+
+| Proof threshold, cap | False proof, worst case | Proven at 0.710 | Failed at 0.710 | Undecided at 0.710 |
+|---|---|---|---|---|
+| 100, 120 pairs (chosen) | 0.0079 | 0.8605 | 0.1144 | 0.0252 |
+| 1024/11, 120 pairs | 0.0086 | 0.8620 | 0.1142 | 0.0238 |
+| 20, 60 pairs (approved first) | 0.0385 | 0.8211 | 0.0988 | 0.0801 |
+
+Statistically, the chosen design and 1024/11 with 120 pairs are almost the same. Of the
+two, the threshold 100 is slightly stricter, and only its bound is round. Four further
+reasons support the choice:
+
+- **The level.** The bound of 1 % is one-sided, as the claims are. For confirmatory claims
+  like these, a one-sided bound of 5 % is lenient: the regulatory guideline ICH E9 (1998,
+  section 5.5) holds it preferable, in regulatory settings, to set the type I error of a
+  one-sided test at half the conventional two-sided one, that is at 2.5 %. The bound of
+  1 % is stricter than that by a factor of 2.5; by the same halving it matches a two-sided
+  test at 2 %. The other pass tests of the project keep their pre-registered one-sided
+  5 %.
+- **The evidence.** On Jeffreys's scale, as Kass and Raftery (1995) and Vovk and Wang
+  (2021) give it, an evidence value above 100 counts as "decisive", one of 20 only as
+  "strong". Kass and Raftery's own, slightly modified scale calls 20 to 150 "strong"; on
+  it, 20 and every evidence value at a proof fall in one class, since such a value lies
+  between 100 and 150.
+- **The power.** At the most conservative pilot estimate, the Kaplan-Meier rate 0.710, the
+  primary claim is proven with probability 0.86, above the conventional power of 0.80
+  (Cohen 1992).
+- **The balance of errors.** At the Kaplan-Meier rate, this design gives the smallest
+  4 · alpha + beta among the 16, where alpha is the worst-case false proof and
+  beta = 1 - power. The weight 4 is the ratio beta : alpha of 4 to 1 (0.20 to 0.05) that
+  Cohen (1992) derives from his conventions alpha = 0.05 and power 0.80.
+
+The gain has a limit: the new design proves more often than the former one only above a
+pass rate of about 0.67. Averaged over the uncertainty of the pilot rate (Beta(10, 3): 9
+passes in 11 Runs with a uniform prior), the chance of a true proof is about the same:
+0.827 against 0.829. What the change buys is a false success about five times less likely,
+at more computing time.
 
 After each pair the analysis runs and names the next seed or gives the verdict. Right after
 pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
@@ -524,7 +543,9 @@ hours.
 ## 9. Sources
 
 The research for step 1 collected the sources of the target library and the places in
-them; `src/cascade/circuit.rs` lists them per target.
+them; `src/cascade/circuit.rs` lists them per target. Zhang et al. describe the parent
+choice of arm A (section 3). The last four entries are the sources that section 7 cites
+for the thresholds; the pre-registration, section 8, gives the other sources of the rule.
 
 - Amy, Maslov, Mosca, Roetteler: A meet-in-the-middle algorithm for fast synthesis of
   depth-optimal quantum circuits. IEEE TCAD 32(6), 2013, pp. 818–830.
@@ -558,3 +579,13 @@ them; `src/cascade/circuit.rs` lists them per target.
   [doi:10.1038/s41534-021-00369-3](https://doi.org/10.1038/s41534-021-00369-3)
 - Zhang, Hu, Lu, Lange, Clune: Darwin Gödel Machine: Open-Ended Evolution of
   Self-Improving Agents. ICLR 2026. [arXiv:2505.22954](https://arxiv.org/abs/2505.22954)
+- International Conference on Harmonisation: ICH Harmonised Tripartite Guideline E9,
+  Statistical Principles for Clinical Trials. Step 4 version, 5 February 1998. A
+  regulatory guideline, not peer-reviewed.
+- Kass, Raftery: Bayes factors. Journal of the American Statistical Association 90(430),
+  1995, pp. 773–795.
+  [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572)
+- Vovk, Wang: E-values: Calibration, combination and applications. Annals of Statistics
+  49(3), 2021, pp. 1736–1754. [doi:10.1214/20-AOS2020](https://doi.org/10.1214/20-AOS2020)
+- Cohen: A power primer. Psychological Bulletin 112(1), 1992, pp. 155–159.
+  [doi:10.1037/0033-2909.112.1.155](https://doi.org/10.1037/0033-2909.112.1.155)

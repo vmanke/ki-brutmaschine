@@ -71,7 +71,7 @@ Seeds 401 and 402, 2000 generations (`pilot-2000`):
 
 What the batches set:
 
-- **The ceiling.** By generation 200, arm A passed on 6 of the 20 seeds 101 to 110 and 201 to 210. At that rate the sequential rule fails with probability 1.000, so the ceiling could not stay at 200. 1000 is the longest horizon with data in both arms: 11 runs of arm A and 10 of arm R reached it.
+- **The ceiling.** By generation 200, arm A passed on 6 of the 20 seeds 101 to 110 and 201 to 210. At that rate the sequential rule fails with probability 1.000, so the ceiling could not stay at 200. 1000 is the longest horizon that most runs reached in both arms: 11 runs of arm A and 10 of arm R reached it, and only A-401, A-402 and R-401 went on to 2000.
 - **The pass rates at 1000 generations.** Arm A passed in 9 of the 11 runs that reached generation 1000; a Kaplan-Meier estimate over all 31 complete runs of arm A gives 22/31 = 0.710. Arm R passed in 2 of 10 (Kaplan-Meier: 0.280). In the 10 pairs with both arms run to generation 1000, arm A passed first 8 times, arm R once (seed 401), and once neither passed (seed 301).
 - **Calls.** The most calls by generation 1000 were 1 161 738 (A-401), below the bound of 12 723 412 for a counted run.
 - **Wall time** at 2 threads, from `timings.jsonl`. A run to generation 1000 took 6.01 to 8.57 min in arm A (mean 7.38 min, 11 runs) and 4.54 to 6.12 min in arm R (mean 5.38 min, 10 runs). Both arms of a pair together took 10.57 to 14.31 min (mean 12.68 min):
