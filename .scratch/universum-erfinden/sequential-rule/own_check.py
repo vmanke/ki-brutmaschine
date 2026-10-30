@@ -8,6 +8,8 @@ The rule: after n pairs with k passes of arm A, the evidence is E1 = 3^k / 2^n.
 The primary claim is proven at the first pair with E1 >= upper.
 It fails at the first pair with E1 <= lower.
 After cap pairs without a crossing it is undecided.
+The chosen design has upper 100, lower 1/20 and cap 120.
+Two other designs follow for comparison.
 
 Usage: python3 -I own_check.py
 """
@@ -27,7 +29,7 @@ def verdict(k, n, upper, lower):
     return None
 
 
-def run(p, upper, lower, cap = 60):
+def run(p, upper, lower, cap):
     alive = {0: Q(1)}
     proven = Q(0)
     failed = Q(0)
@@ -98,22 +100,33 @@ RATES = [
     ("exact pilot count 9/11", Q(9, 11)),
 ]
 
-for title, upper, lower in [
-    ("recommended: upper 20, lower 1/20", Q(20), Q(1, 20)),
-    ("strict variant: upper 1024/11, lower 1/20", Q(1024, 11), Q(1, 20)),
-]:
-    print(f"== {title}, cap 60")
+DESIGNS = [
+    ("chosen", Q(100), Q(1, 20), 120),
+    ("previous design", Q(20), Q(1, 20), 60),
+    ("statistical twin", Q(1024, 11), Q(1, 20), 120),
+]
+
+for title, upper, lower, cap in DESIGNS:
+    print(f"== {title}: upper {upper}, lower {lower}, cap {cap}")
     print("count form (passes to prove, failures to fail):", count_form(upper, lower))
+    results = {}
 
     for name, p in RATES:
-        pr, fa, un, en = run(p, upper, lower)
+        pr, fa, un, en = run(p, upper, lower, cap)
+        results[p] = (pr, fa)
         print(f"  {name:32s} proven {float(pr):.4f}  failed {float(fa):.4f}  "
               f"undecided {float(un):.4f}  E[pairs] {float(en):.1f}")
 
-    pr, _, _, _ = run(Q(1, 2), upper, lower)
-    print(f"  exact P(proven | p = 1/2) = {pr.numerator}/2^{pr.denominator.bit_length() - 1}")
+    # The worst cases: p = 1/2 for a false proof, p = 3/4 for a false failure.
+    alpha = results[Q(1, 2)][0]
+    miss = results[Q(3, 4)][1]
+    print(f"  exact P(proven | p = 1/2) = {alpha.numerator}/2^{alpha.denominator.bit_length() - 1}"
+          f" = {float(alpha):.6f}; at most 1/upper = {1 / upper}: {alpha <= 1 / upper}")
+    print(f"  P(failed | p = 3/4) = {float(miss):.6f}; at most lower = {lower}: {miss <= lower}")
 
 print("== old rule, at least 9 of 10")
 
 for name, p in [("p = 1/2", Q(1, 2)), ("Kaplan-Meier 22/31", Q(22, 31)), ("exact pilot count 9/11", Q(9, 11))]:
     print(f"  {name:32s} P(pass) = {float(old_rule_passes(p)):.4f}")
+
+print(f"  exact P(pass | p = 1/2) = {old_rule_passes(Q(1, 2))}")

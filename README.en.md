@@ -79,8 +79,12 @@ including its stop reason.
 
 ## Universes that invent (step 1)
 
-Status: built, with pilot Runs; counted Runs wait for the sign-off (below). Described in
-[docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
+Status: built, with pilot Runs. The six decisions below were confirmed on 2026-10-30,
+decision 5 first with the threshold 20 and at most 60 pairs. Its scientifically
+load-bearing version (proof threshold 100, at most 120 seed pairs), whose numbers Claude
+chose, is confirmed with the merge that freezes the pre-registration. Counted Runs start
+once the pre-registration is frozen.
+Described in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 the experiment is pre-registered in
 [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md). Specification:
@@ -129,15 +133,25 @@ Built:
   Run writes `rediscovery.json`, the pre-registered count, and `--verify` recomputes it
   from the checkpoint. The frozen analysis is `examples/circuit_positive_control.rs`.
 
-The pilot Runs on seeds 101 and 102 are in [docs/pilot-step1/](docs/pilot-step1/README.md).
-Counted Runs start only after the owner has confirmed six decisions:
+The pilot Runs are in [docs/pilot-step1/](docs/pilot-step1/README.md): the first pilot on
+seeds 101 and 102 and four later batches. Pilot Runs never count. The owner confirmed six
+decisions on 2026-10-30. Later that day the owner asked for the scientifically
+load-bearing version of decision 5. Claude, the AI assistant, chose its numbers after a
+review of 16 designs; the owner confirms them with the merge of the pull request, which
+freezes the pre-registration. Decision 5 is shown in that version:
 
 1. Exact equality decides what is correct.
 2. Scoring goes by T count first, then by CNOT count.
 3. Grid Runs carry the observables line too.
 4. Circuit Cascades are not promoted in step 1.
-5. Success means: in at least 9 of 10 seeds, breeding finds more than half of the
-   targets that the seed Cascades miss.
+5. The experiment decides by itself how many seeds it needs (sequential rule). A Run
+   passes when breeding finds, by generation 1000, more than half of the targets that the
+   seed Cascades miss. Success means: more than half of all seeds pass. The counted seeds
+   are 1 to 100, then 111 to 130, in this order. After each pair of seeds the analysis
+   checks whether the evidence suffices for a verdict; the experiment ends after 120 pairs
+   at the latest. However it ends, it reports a false success with probability at most
+   1/100; the worst case is about 0.0079. That is slightly stricter than the old rule
+   "9 of 10", whose bound was 11/1024 = 0.0107; the sequential rule replaces it.
 6. The panels have 33 search and 22 select tasks.
 
 ## Building blocks
@@ -179,5 +193,7 @@ access; `tests/cascade.rs` checks that.
 
 - The simulated models (`sim:small`, `sim:large`) are positive controls. Their numbers
   show that breeding works, not how good real models would be.
-- Step 1: two pilot seeds estimate no pass rate; what the pilot shows and what it does
-  not is in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 7.
+- Step 1: the pilot Runs estimate the pass rate only roughly. By generation 1000, arm A
+  passed in 9 of 11 Runs, with a 95 % confidence interval of 0.48 to 0.98. What the pilot
+  shows and what it does not is in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md),
+  section 8.

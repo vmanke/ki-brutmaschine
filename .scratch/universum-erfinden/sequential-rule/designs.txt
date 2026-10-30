@@ -1,0 +1,74 @@
+16 designs; the lower threshold is 1/20 in each.
+alpha: exact P(proven | p = 1/2), the worst-case type I error of the primary.
+power, failed, undecided: the primary at the Kaplan-Meier rate p = 22/31.
+4a+b: 4 alpha + beta at p = 22/31, with beta = 1 - power.
+claim1, both, E[N], N90: the joint rule in the Kaplan-Meier scenario of oc.py.
+hours: E[N] x 12.68 / 60 + 0.42. worst: cap x 14.31 / 60 + 0.48.
+
+design                alpha  power failed undec.   4a+b claim1   both   E[N]  N90  hours  worst
+U=20       cap  60 0.038547 0.8211 0.0988 0.0801 0.3330 0.8211 0.8146  29.09   57   6.57  14.79
+U=20       cap  80 0.039373 0.8644 0.1037 0.0320 0.2931 0.8644 0.8608  30.19   57   6.80  19.56
+U=20       cap 100 0.039607 0.8829 0.1057 0.0114 0.2755 0.8829 0.8797  30.60   57   6.89  24.33
+U=20       cap 120 0.039657 0.8890 0.1064 0.0046 0.2697 0.8890 0.8858  30.76   57   6.92  29.10
+U=40       cap  60 0.018970 0.7613 0.1009 0.1378 0.3146 0.7613 0.7526  34.19   60   7.64  14.79
+U=40       cap  80 0.019790 0.8368 0.1070 0.0562 0.2423 0.8368 0.8328  36.11   69   8.05  19.56
+U=40       cap 100 0.019987 0.8648 0.1099 0.0253 0.2151 0.8648 0.8616  36.92   69   8.22  24.33
+U=40       cap 120 0.020047 0.8775 0.1111 0.0115 0.2027 0.8775 0.8744  37.27   69   8.30  29.10
+U=1024/11  cap  60 0.007855 0.6962 0.1019 0.2019 0.3352 0.6962 0.6831  39.69   60   8.81  14.79
+U=1024/11  cap  80 0.008333 0.7889 0.1089 0.1022 0.2444 0.7889 0.7840  42.89   80   9.48  19.56
+U=1024/11  cap 100 0.008496 0.8360 0.1126 0.0514 0.1980 0.8360 0.8327  44.42   82   9.81  24.33
+U=1024/11  cap 120 0.008555 0.8620 0.1142 0.0238 0.1722 0.8620 0.8590  45.17   82   9.97  29.10
+U=100      cap  60 0.007046 0.6660 0.1019 0.2321 0.3621 0.6660 0.6534  40.17   60   8.91  14.79
+U=100      cap  80 0.007637 0.7824 0.1090 0.1086 0.2482 0.7824 0.7774  43.53   80   9.62  19.56
+U=100      cap 100 0.007807 0.8323 0.1127 0.0549 0.1989 0.8323 0.8290  45.14   82   9.96  24.33
+U=100      cap 120 0.007870 0.8605 0.1144 0.0252 0.1710 0.8605 0.8574  45.92   82  10.12  29.10  <- chosen
+
+smallest 4 alpha + beta: U=100, cap 120
+
+exact alpha:
+  U=20       cap  60: 5555272097573807/2^57
+  U=20       cap  80: 1487483630953712931101/2^75
+  U=20       cap 100: 12552082699624530222703677961/2^98
+  U=20       cap 120: 3294580599475771884197000712543969/2^116
+  U=40       cap  60: 2733899373002359/2^57
+  U=40       cap  80: 23924233032550438552705/2^80
+  U=40       cap 100: 12668318020709923642391445263/2^99
+  U=40       cap 120: 6661772375888028879463683262216149/2^118
+  U=1024/11  cap  60: 4528381728901175/2^59
+  U=1024/11  cap  80: 5036848354602665603107/2^79
+  U=1024/11  cap 100: 336551724276030860014734539/2^95
+  U=1024/11  cap 120: 11371994393278294134027943537461513/2^120
+  U=100      cap  60: 2030937775193757/2^58
+  U=100      cap  80: 4616264895629042824589/2^79
+  U=100      cap 100: 4948329471467988348939384303/2^99
+  U=100      cap 120: 5230783465047250584069050481905459/2^119  <- chosen
+
+The joint rule of oc.py: P(claim 1), P(both), E[N], N90, hours as above, and the
+probability of the claim that is false in a null scenario.
+design          scenario                                         claim1     both   E[N]  N90  hours    false
+U=100, cap 120  both nulls (0.5, 0.5, 0.5)                     0.007870 0.000989  22.76   44   5.23 0.007870
+U=100, cap 120  primary null, R much worse (0.5, 0.1, 0.8)     0.007870 0.007870  22.57   44   5.19 0.007870
+U=100, cap 120  selection irrelevant (0.75, 0.75, 0.5)         0.960145 0.007847  40.98   67   9.08 0.007847
+U=100, cap 120  selection irrelevant (0.85, 0.85, 0.5)         0.998915 0.007863  28.91   46   6.53 0.007863
+U=100, cap 120  the 10 long pilot pairs as observed            0.992675 0.992675  25.61   42   5.83
+U=100, cap 120  largest probability of a false claim over the four null scenarios: 0.007870
+U=20, cap 60    both nulls (0.5, 0.5, 0.5)                     0.038547 0.008736  21.50   43   4.96 0.038547
+U=20, cap 60    primary null, R much worse (0.5, 0.1, 0.8)     0.038547 0.038547  20.87   41   4.83 0.038547
+U=20, cap 60    selection irrelevant (0.75, 0.75, 0.5)         0.937860 0.038035  30.49   54   6.86 0.038035
+U=20, cap 60    selection irrelevant (0.85, 0.85, 0.5)         0.998834 0.038417  23.91   42   5.47 0.038417
+U=20, cap 60    the 10 long pilot pairs as observed            0.989752 0.989752  16.99   30   4.01
+U=20, cap 60    largest probability of a false claim over the four null scenarios: 0.038547
+
+The primary at p = 0.3, the arm A rate by generation 200:
+  U=100, cap 120: P(proven) 0.0000023, P(failed) 0.9999977, E[N] 9.12, N90 14
+  U=20, cap 60: P(proven) 0.0001734, P(failed) 0.9998262, E[N] 9.12, N90 14
+
+The chosen design proves the primary more often than U=20, cap 60 above p = 0.6660 (bisection).
+
+The chance of a true proof averaged over the uncertainty of the pilot rate, exact:
+  Beta(10, 3), 9 of 11 passes with a uniform prior: U=100, cap 120 0.8272, U=20, cap 60 0.8287
+  Beta(9, 2), 8 of 9 passes with a uniform prior: U=100, cap 120 0.8982, U=20, cap 60 0.8980
+
+Worst case without the thread check, at 14.31 min per pair (the slowest pilot pair) and at 14.69 min (the slowest run of each arm):
+  U=100, cap 120: 28.62 h and 29.37 h
+  U=20, cap 60: 14.31 h and 14.69 h

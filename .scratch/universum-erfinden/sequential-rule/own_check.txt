@@ -1,4 +1,16 @@
-== recommended: upper 20, lower 1/20, cap 60
+== chosen: upper 100, lower 1/20, cap 120
+count form (passes to prove, failures to fail): ([12, 14, 15, 17, 19, 20, 22, 24], [5, 5, 6, 7, 7, 8, 8, 9])
+  p = 1/2                          proven 0.0079  failed 0.9907  undecided 0.0014  E[pairs] 22.6
+  p = 0.6                          proven 0.1828  failed 0.7488  undecided 0.0684  E[pairs] 46.0
+  p = 0.7                          proven 0.8183  failed 0.1463  undecided 0.0355  E[pairs] 46.2
+  Kaplan-Meier 22/31               proven 0.8605  failed 0.1144  undecided 0.0252  E[pairs] 44.0
+  p = 3/4                          proven 0.9601  failed 0.0367  undecided 0.0031  E[pairs] 34.4
+  Kaplan-Meier with A-310, 61/80   proven 0.9737  failed 0.0250  undecided 0.0013  E[pairs] 31.9
+  p = 0.8                          proven 0.9927  failed 0.0073  undecided 0.0000  E[pairs] 25.6
+  exact pilot count 9/11           proven 0.9962  failed 0.0038  undecided 0.0000  E[pairs] 23.3
+  exact P(proven | p = 1/2) = 5230783465047250584069050481905459/2^119 = 0.007870; at most 1/upper = 1/100: True
+  P(failed | p = 3/4) = 0.036714; at most lower = 1/20: True
+== previous design: upper 20, lower 1/20, cap 60
 count form (passes to prove, failures to fail): ([8, 10, 11, 13, 15, 16, 18, 20], [5, 5, 6, 7, 7, 8, 8, 9])
   p = 1/2                          proven 0.0385  failed 0.9366  undecided 0.0248  E[pairs] 20.9
   p = 0.6                          proven 0.2728  failed 0.5777  undecided 0.1495  E[pairs] 31.1
@@ -8,19 +20,22 @@ count form (passes to prove, failures to fail): ([8, 10, 11, 13, 15, 16, 18, 20]
   Kaplan-Meier with A-310, 61/80   proven 0.9584  failed 0.0241  undecided 0.0175  E[pairs] 20.8
   p = 0.8                          proven 0.9898  failed 0.0072  undecided 0.0030  E[pairs] 17.0
   exact pilot count 9/11           proven 0.9952  failed 0.0038  undecided 0.0010  E[pairs] 15.5
-  exact P(proven | p = 1/2) = 5555272097573807/2^57
-== strict variant: upper 1024/11, lower 1/20, cap 60
+  exact P(proven | p = 1/2) = 5555272097573807/2^57 = 0.038547; at most 1/upper = 1/20: True
+  P(failed | p = 3/4) = 0.034656; at most lower = 1/20: True
+== statistical twin: upper 1024/11, lower 1/20, cap 120
 count form (passes to prove, failures to fail): ([12, 13, 15, 17, 19, 20, 22, 24], [5, 5, 6, 7, 7, 8, 8, 9])
-  p = 1/2                          proven 0.0079  failed 0.9544  undecided 0.0378  E[pairs] 21.9
-  p = 0.6                          proven 0.1312  failed 0.6017  undecided 0.2670  E[pairs] 36.7
-  p = 0.7                          proven 0.6404  failed 0.1273  undecided 0.2324  E[pairs] 38.9
-  Kaplan-Meier 22/31               proven 0.6962  failed 0.1019  undecided 0.2019  E[pairs] 37.9
-  p = 3/4                          proven 0.8811  failed 0.0353  undecided 0.0835  E[pairs] 32.2
-  Kaplan-Meier with A-310, 61/80   proven 0.9186  failed 0.0244  undecided 0.0570  E[pairs] 30.3
-  p = 0.8                          proven 0.9804  failed 0.0073  undecided 0.0123  E[pairs] 25.0
-  exact pilot count 9/11           proven 0.9916  failed 0.0038  undecided 0.0046  E[pairs] 22.8
-  exact P(proven | p = 1/2) = 4528381728901175/2^59
+  p = 1/2                          proven 0.0086  failed 0.9901  undecided 0.0014  E[pairs] 22.5
+  p = 0.6                          proven 0.1881  failed 0.7463  undecided 0.0656  E[pairs] 45.5
+  p = 0.7                          proven 0.8205  failed 0.1459  undecided 0.0336  E[pairs] 45.4
+  Kaplan-Meier 22/31               proven 0.8620  failed 0.1142  undecided 0.0238  E[pairs] 43.2
+  p = 3/4                          proven 0.9604  failed 0.0367  undecided 0.0029  E[pairs] 33.8
+  Kaplan-Meier with A-310, 61/80   proven 0.9738  failed 0.0250  undecided 0.0012  E[pairs] 31.3
+  p = 0.8                          proven 0.9927  failed 0.0073  undecided 0.0000  E[pairs] 25.2
+  exact pilot count 9/11           proven 0.9962  failed 0.0038  undecided 0.0000  E[pairs] 22.9
+  exact P(proven | p = 1/2) = 11371994393278294134027943537461513/2^120 = 0.008555; at most 1/upper = 11/1024: True
+  P(failed | p = 3/4) = 0.036690; at most lower = 1/20: True
 == old rule, at least 9 of 10
   p = 1/2                          P(pass) = 0.0107
   Kaplan-Meier 22/31               P(pass) = 0.1650
   exact pilot count 9/11           P(pass) = 0.4332
+  exact P(pass | p = 1/2) = 11/1024

@@ -7,7 +7,7 @@ pair 5 seed 305: T_A=349 T_R=None X=1 first=A E1=81/32 (2.531) E2=81/16 (5.062) 
 pair 6 seed 306: T_A=143 T_R=None X=1 first=A E1=243/64 (3.797) E2=243/32 (7.594) [open/open]
 pair 7 seed 307: T_A=33 T_R=None X=1 first=A E1=729/128 (5.695) E2=729/64 (11.391) [open/open]
 pair 8 seed 308: T_A=180 T_R=None X=1 first=A E1=2187/256 (8.543) E2=2187/128 (17.086) [open/open]
-pair 9 seed 309: T_A=810 T_R=None X=1 first=A E1=6561/512 (12.814) E2=6561/256 (25.629) [open/proven]
+pair 9 seed 309: T_A=810 T_R=None X=1 first=A E1=6561/512 (12.814) E2=6561/256 (25.629) [open/open]
 open after 9 pairs: run the next seed
 == pilot10 (200 generations, so T > 200 is unknown); illustration only, pilot seeds never count
 pair 1 seed 101: T_A=32 T_R=None X=1 first=A E1=3/2 (1.500) E2=3/2 (1.500) [open/open]
@@ -21,5 +21,5 @@ pair 8 seed 108: after the stop, not counted
 pair 9 seed 109: after the stop, not counted
 pair 10 seed 110: after the stop, not counted
 stop at pair 6: primary failed, secondary not claimed (primary not proven; E2 itself: open)
-== synthetic path that keeps E1 between 1/2 and 3/2: stop at pair 60: primary undecided, secondary not claimed (primary not proven; E2 itself: failed)
-pair 60 seed 60: T_A=5 T_R=4 X=1 first=R E1=1350851717672992089/1152921504606846976 (1.172) E2=3486784401/281474976710656 (0.000) [open/failed]
+== synthetic path that keeps E1 between 1/2 and 3/2: stop at pair 120: primary undecided, secondary not claimed (primary not proven; E2 itself: failed)
+pair 120 seed 130: T_A=5 T_R=4 X=1 first=R E1=1824800363140073127359051977856583921/1329227995784915872903807060280344576 (1.373) E2=1350851717672992089/316912650057057350374175801344 (0.000) [open/failed]

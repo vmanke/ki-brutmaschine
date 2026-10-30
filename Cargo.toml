@@ -45,3 +45,9 @@ path = "src/bin/brut-ingest.rs"
 [[bin]]
 name = "brut-breed"
 path = "src/bin/brut-breed.rs"
+
+# The frozen analysis of step 1 (docs/PREREG_STEP1_CIRCUITS.md). `cargo test` runs its
+# unit tests too, and `cargo clippy --all-targets` checks them.
+[[example]]
+name = "circuit_positive_control"
+test = true

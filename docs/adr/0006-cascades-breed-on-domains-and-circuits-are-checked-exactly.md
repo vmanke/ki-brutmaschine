@@ -159,30 +159,60 @@ Run, and a human's literature check is recorded outside it.
 commit, the target list, the designer's constants, the calibration, the configuration,
 the seeds, the analysis code (`examples/circuit_positive_control.rs`) and the thresholds
 before any counted Run. Arm A uses Darwin Gödel selection; arm R is identical but chooses
-parents uniformly, which separates selection from the sheer number of children. Seeds 1
-to 10 are paired between the arms; seeds 101 and 102 are pilots and are not counted. For
-a seed s, D(s) is the share of the targets the seed Cascades miss that some bred Cascade
-solves. The experiment is void if the seed Cascades solve more than a third of the
-targets in any seed, if an integrity error occurs, or if the logs differ between one and
-four threads. It passes if D_A(s) > 1/2 in at least 9 of 10 seeds. Secondary: D_A(s) >
-D_R(s) in at least 9 of 10 pairs, ties counting against A (exact one-sided sign test,
-p = 11 / 1024, about 0.0107). If it passes, the claim is only this: breeding assembles
-prompts and Traits that unlock exact, reference-cost syntheses for most targets the seeds
-miss, and selection beats uniform search. It is a positive control of the breeder.
+parents uniformly, which separates selection from the sheer number of children. The
+counted seeds are the fixed list 1 to 100, then 111 to 130; they run in this order,
+paired between the arms, for at most 120 pairs. The pilot seeds 101 to 110, 201 to 210,
+301 to 310, 401 and 402 are not counted; the list skips 101 to 110, which lie in its
+range. For a seed s, D(s) is the share of the targets the seed Cascades miss that some
+bred Cascade solves. Every Run goes to generation 1000, and its pass time T is the first
+generation with D > 1/2, or never. The experiment is void if the seed Cascades solve more
+than a third of the targets in a counted seed, if an integrity error occurs, or if the
+logs differ between one and four threads. It follows the sequential rule: after each
+pair, in the order of the list, the evidence value E1 is multiplied by 3/2 when arm A
+passes and by 1/2 when it does not, and E2 by 3/2 when arm A passes first, by 1/2 when
+arm R passes first, and not at all on a tie. The primary claim is proven when E1 reaches
+100 and fails when E1 falls to 1/20; the secondary uses the same thresholds on E2 and is
+claimed only if the primary is proven. A proof takes at least 12 pairs. The experiment
+stops when the primary fails, when the primary is proven and E2 has crossed a threshold,
+or after 120 pairs. However it stops, each claim, and any claim at all, is made falsely
+with probability at most 1/100 (exact worst case 0.0079); the fixed rule "9 of 10" had
+11/1024 = 0.0107. The threshold 100 bounds false claims at a one-sided level of 1 %,
+stricter by a factor of 2.5 than the one-sided 2.5 % that the guideline ICH E9 (1998,
+section 5.5) prefers in regulatory settings. On Jeffreys's scale an evidence value above
+100 is "decisive" (Kass and Raftery 1995; Vovk and Wang 2021). On Kass and Raftery's own,
+slightly modified scale, 20 to 150 is "strong", which holds both 20 and every evidence
+value at a proof (100 to 150). With at most 120 pairs, the primary claim is proven with
+probability 0.86 at the most conservative pilot estimate of the pass rate, the
+Kaplan-Meier rate 0.710; the conventional power is 0.80 (Cohen 1992). The former threshold
+20 with at most 60 pairs proves the primary claim more often below a pass rate of about
+0.67. Averaged over the uncertainty of the pilot rate (Beta(10, 3): 9 passes in 11 Runs
+with a uniform prior), both designs give about the same chance of a true proof: 0.827 with
+the threshold 100, 0.829 with 20. The change buys a false success about five times less
+likely (0.0079 instead of 0.0385), at more computing time. If the primary claim is proven,
+the claim is only this: breeding assembles prompts and Traits that unlock exact,
+reference-cost syntheses for most targets the seeds miss, in more than half of all seeds
+within 1000 generations; with the secondary, selection gets there sooner than uniform
+search. It is a positive control of the breeder.
 
-**The pilot sets the length.** The pilot seeds 101 and 102 ran in both arms for 60
+**The pilots set the length.** The first pilot seeds 101 and 102 ran in both arms for 60
 generations and again for 200 (`docs/pilot-step1/pilot.json`). Every run passed
 `--verify`, none raised an integrity alarm or found an invention candidate, and in every
 run the seed Cascades solved SWAP and CS only, so the gate held. Arm A reached D = 7/9
 on seed 101, where five targets fell in generation 32, the first in which one Worker
 named Hadamard, Phase and Linear together, and D = 2/9 on seed 102. Arm R reached 1/9 and
-2/9 at 60 generations and 2/9 on both seeds at 200. Every first hit came by generation 90.
-The default cap of 20 000 calls stopped arm A on seed 101 after generation 20, so the
-counted Runs use `--generations 200 --max-calls 2600000`: by our count from the call
-bounds, a Run of 200 generations needs at most 2 547 412 calls, so the cap cannot end a
-Run early, and a pilot Run of 200 generations took at most 26 s. One pass in two pilot
-seeds says little about the 9-of-10 rule: by our calculation, at an independent pass rate
-of 0.5 per seed the rule holds with probability 0.0107, at 0.9 with 0.736.
+2/9 at 60 generations and 2/9 on both seeds at 200. The default cap of 20 000 calls
+stopped arm A on seed 101 after generation 20. Later uncounted batches showed that a pass
+often comes late: by generation 200 arm A passed on 6 of the 20 seeds 101 to 110 and 201
+to 210, but by generation 1000 in 9 of the 11 Runs that reached it, with passes as late
+as generation 810. At a pass rate of 0.30 the sequential rule fails with probability
+1.000, so the counted Runs use `--generations 1000 --max-calls 13000000`: by our count from
+the call bounds, a Run of 1000 generations needs at most 12 723 412 calls, so the cap
+cannot end a Run early, and a pilot pair of 1000 generations took at most 14.31 min. At
+the pilot rates the primary claim is proven with probability 0.86 to 0.99, and the
+experiment needs 26 to 46 pairs on average, at most 120: 28.6 hours at the pace of the
+slowest pilot pair. The fixed rule "9 of 10" would have passed with probability 0.165 at
+the Kaplan-Meier rate of 0.710. The pass time of every pilot Run is in
+`docs/pilot-step1/README.md`.
 
 **Promotion waits.** Circuit Cascades are not promoted in step 1; `--promote` refuses
 them. Promotion needs a reviewed candidate format for circuit Cascades, which step 1 does
@@ -197,9 +227,26 @@ Linear (one random step could then teach a seed all three, and five targets woul
 once); a designer budget without a ceiling (a direct request could then run without
 bound); a structure normal form, generated targets, Traits-only and reach-control arms,
 record and invention events and per-task reports in step 1 (deferred, to keep the step
-reviewable).
+reviewable); a fixed number of seeds such as the 9-of-10 rule (the owner asked that the
+experiment decide by itself how many seeds it needs); a fixed test checked again after
+every pair (an exact 5 % binomial test then succeeds falsely with probability 0.0987 by
+20 pairs); the threshold 1024/11 with at most 60 pairs, which keeps a bar of about 1 in
+100 (0.0079) but proves the primary only with probability 0.696 at the Kaplan-Meier rate;
+the threshold 20 with at most 60 pairs, approved first and replaced on 2026-10-30 when the
+owner asked for the scientifically load-bearing version (for confirmatory claims like
+these a one-sided 5 % level is lenient, and E = 20 is only "strong" evidence); the
+threshold 40 with at most 100 pairs (a one-sided 2.5 % level, less strict than 1 %); the
+threshold 1024/11 with at most 120 pairs (a statistical twin of the chosen design; 100 is
+the round 1 % level and slightly stricter).
 
-Status: proposed. It needs the owner's sign-off on six points before counted Runs:
-exact equality as the criterion (it tightens Q38), the lexicographic score, the `state`
-line in grid logs, no promotion of circuit Cascades in step 1, the 9-of-10 rule, and the
-panel sizes 33 and 22. The pre-registration is frozen with the same sign-off.
+Status: accepted. The owner confirmed all six points on 2026-10-30: exact equality as the
+criterion (it tightens Q38), the lexicographic score, the `state` line in grid logs, no
+promotion of circuit Cascades in step 1, the sequential rule across seeds, which replaced
+the 9-of-10 rule as point 5
+(`.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`), and the panel
+sizes 33 and 22. Later that day the owner asked for the scientifically load-bearing
+version of point 5. After a review of 16 designs, Claude, the AI assistant, chose the
+proof threshold 100, at most 120 pairs and the counted seeds 1 to 100, then 111 to 130
+(issue 09, Comments). The pre-registration implements these points. It is frozen at the
+one commit that the squash merge of its pull request creates on the main branch; with
+that merge the owner confirms point 5 in this version.

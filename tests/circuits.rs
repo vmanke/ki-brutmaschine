@@ -5,9 +5,10 @@
 //! Traits, and a cross-check of the exact checker against the floating-point simulator of
 //! `src/quantum.rs`, which shares no code with it.
 //!
-//! No test here runs a counted seed of the experiment (1 to 10) or a pilot seed (101,
-//! 102). The calibration uses the search panel the pilot seed 101 would draw, without a
-//! run.
+//! No test here makes a counted run. The seeds 31, 33 and 57 are on the list of counted
+//! seeds, 1 to 100 and then 111 to 130, but their runs have other settings (9 or 11 search
+//! tasks). No test runs a pilot seed. The calibration uses the search panel the pilot seed
+//! 101 would draw, without a run.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
