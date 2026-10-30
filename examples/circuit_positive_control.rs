@@ -6,28 +6,46 @@
 //! (`--domain circuits --search 33 --select 22 --children 8`, every other setting at its
 //! default) and arm R (the same plus `--selection uniform`). Each run must be finished and
 //! must have the settings of its arm, and all runs must share their generations and their
-//! call cap. From each run it reads `rediscovery.json` and prints, per seed s, R_seed(s),
-//! D_A(s), D_R(s) and the calibration gate |R_seed(s)| <= |L| / 3. Then it prints:
-//! - the void condition it can check: a seed that fails the calibration gate;
-//! - the primary result (ticket 03): D_A(s) > 1/2 in at least 9 of the 10 seeds, with the
-//!   median of D_A;
-//! - the secondary result: D_A(s) > D_R(s) in at least 9 of the 10 pairs, ties counting
-//!   against A, an exact one-sided sign test of size 11/1024;
-//! - both again for the T-only variant, where a target counts when an exact answer has at
-//!   most the reference's T count, and also at most its CNOT count for a Clifford target
-//!   whose reference has no T;
-//! - descriptive lines: the first generation in which a bred Cascade solved each target,
-//!   runs that ended at the call cap, and the cheapest invention candidate per target and
-//!   run.
+//! call cap. From each run it reads `rediscovery.json`.
 //!
 //! D(s) = |R_bred(s) \ R_seed(s)| / |L \ R_seed(s)|: the share of the targets the seed
 //! Cascades miss that a bred Cascade solves, exactly and at the reference cost, on at
-//! least one of the target's dressed search tasks. Every decision is made in integers.
+//! least one of the target's dressed search tasks. The pass time T of a run is the first
+//! generation in which D > 1/2: the k-th smallest first generation of the targets that
+//! only bred Cascades solve, with k = |L \ R_seed| / 2 + 1, rounded down. T is never when
+//! the run has no such generation up to generation 1000. Every decision is made in
+//! integers.
 //!
-//! It makes a claim only for the pre-registered seeds 1 to 10 in both arms, run with the
-//! pre-registered `--generations 200` and `--max-calls 2600000`, with no run ended at the
-//! call cap. For other seeds, such as the pilots 101 and 102, for fewer seeds, or for
-//! other generations or caps, it prints the numbers and says that it makes no claim. Run
+//! The sequential rule (section 8 of the pre-registration, ADR 0006 point 5) reads the
+//! pairs in seed order. In each pair X = 1 when arm A passes, and the arm with the smaller
+//! T passes first; equal T, also never in both arms, is a tie. Two evidence values start
+//! at 1. E1 is multiplied by 3/2 when X = 1 and by 1/2 when X = 0. E2 is multiplied by 3/2
+//! when arm A passes first and by 1/2 when arm R does; a tie leaves it unchanged. A claim
+//! is proven when its E first reaches 20 and fails when it first falls to 1/20, and this
+//! first crossing is final. The primary claim (ticket 03: more than half of all seeds
+//! pass) rests on E1. The secondary claim (selection: among untied pairs, arm A passes
+//! first more often than arm R) rests on E2 and counts only when the primary is proven.
+//! The rule stops after the first pair at which the primary fails, or at which the primary
+//! is proven and E2 has crossed, and at the latest after 60 pairs. A claim still open then
+//! is undecided.
+//!
+//! It prints, per seed s, R_seed(s), D_A(s), D_R(s) and the calibration gate
+//! |R_seed(s)| <= |L| / 3, and then T_A, T_R, X, the first arm, E1 and E2. Pairs after the
+//! stop are listed as not counted. Then it prints E1 and E2 after the counted pairs, and
+//! either the verdicts on both claims at the stop or the next seed to run. The void
+//! condition it can check is a seed up to the stop that fails the calibration gate. The
+//! descriptive lines carry no verdict. Over the counted pairs they give the median of D_A;
+//! the T-only variant, where a target counts when an exact answer has at most the
+//! reference's T count, and also at most its CNOT count for a Clifford target whose
+//! reference has no T, with D_A, D_R and the number of seeds with D_A > 1/2 under it; the
+//! first generation in which a bred Cascade solved each target; and the cheapest
+//! invention candidate per target and run. They also name the runs that ended at the call
+//! cap.
+//!
+//! It makes a claim only for the counted seeds 1, 2, 3, ... without gaps, at most 60, in
+//! both arms, run with the pre-registered `--generations 1000` and `--max-calls 13000000`,
+//! with no run ended at the call cap. For other seeds, such as the pilots, or for other
+//! generations or caps, it prints the numbers and says that it makes no claim. Run
 //! `brut-breed --out <dir> --verify` on every directory first: this program checks each
 //! count against its own target list, not the hash chain.
 //!
@@ -47,20 +65,20 @@ use brutmaschine::cascade::circuit::{Rediscovery, TargetOutcome, verified};
 use brutmaschine::cascade::domain::{CircuitConfig, DomainConfig};
 use brutmaschine::cascade::qubit::Cost;
 
-/// The seeds the pre-registration counts.
-const COUNTED: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-/// The generations of every counted Run (docs/PREREG_STEP1_CIRCUITS.md, section 6).
-const GENERATIONS: usize = 200;
+/// The generations of every counted Run (docs/PREREG_STEP1_CIRCUITS.md, section 6). They
+/// are also the ceiling of the pass time: a run that passes only later has not passed.
+const GENERATIONS: usize = 1000;
 
 /// The call cap of every counted Run, which no counted Run can reach (section 6).
-const MAX_CALLS: u64 = 2_600_000;
+const MAX_CALLS: u64 = 13_000_000;
 
-/// A rule holds when it holds in at least this many of the 10 pairs.
-const NEEDED: usize = 9;
+/// The most seed pairs the experiment counts, its pre-registered cap. Every evidence test
+/// fits a u128, since 20 * 3^60 < 2^128.
+const MAX_PAIRS: usize = 60;
 
-/// The most seed pairs the exact sign test handles: 2^100 still fits a u128.
-const MAX_PAIRS: usize = 100;
+/// A claim is proven when its evidence reaches EVIDENCE, and it fails when its evidence
+/// falls to 1 / EVIDENCE.
+const EVIDENCE: u128 = 20;
 
 /// How a run ends when it completes every generation.
 const ALL_GENERATIONS: &str = "all generations done";
@@ -175,15 +193,6 @@ impl Share {
     fn above_half(self) -> bool {
         self.open > 0 && 2 * self.hit > self.open
     }
-
-    /// D of `self` > D of `other`; false when either is undefined, so a tie or an
-    /// undefined pair counts against `self`.
-    fn beats(self, other: Share) -> bool {
-        match (self.ratio(), other.ratio()) {
-            (Some(a), Some(b)) => a.compare(b) == Ordering::Greater,
-            _ => false,
-        }
-    }
 }
 
 /// When a target counts as solved.
@@ -249,7 +258,9 @@ fn count(found: &Rediscovery, rule: Rule) -> Counted {
 }
 
 /// Error unless the counts of `found` agree with its own target list, and its targets are
-/// the verified library targets in library order: L of the pre-registration.
+/// the verified library targets in library order: L of the pre-registration. A target must
+/// also have a first generation exactly when a bred Cascade solved it, since the pass time
+/// is read from these.
 fn check_counts(found: &Rediscovery) -> Result<(), String> {
     let names: Vec<&str> = found.targets.iter().map(|t| t.target.as_str()).collect();
     let library: Vec<&str> = verified().iter().map(|t| t.name).collect();
@@ -268,13 +279,37 @@ fn check_counts(found: &Rediscovery) -> Result<(), String> {
         && found.reached_by_bred_only == counted.share.hit
         && found.share == counted.share.ratio().map(Ratio::value)
         && found.calibrated == counted.calibrated()
-        && found.passes == (counted.calibrated() && counted.share.above_half());
+        && found.passes == (counted.calibrated() && counted.share.above_half())
+        && found
+            .targets
+            .iter()
+            .all(|t| t.first_generation.is_some() == t.reached_by_bred);
 
     if !agrees {
         return Err("its counts disagree with its own target list".to_string());
     }
 
     Ok(())
+}
+
+/// The pass time T of a run: the first generation g with
+/// 2 |R_bred(<= g) \ R_seed| > |L \ R_seed|, that is D > 1/2. It is the k-th smallest first
+/// generation of the targets that only bred Cascades solve, with k = |L \ R_seed| / 2 + 1,
+/// rounded down. None when fewer than k such targets exist, as when the seed Cascades
+/// solve every target.
+fn pass_time(found: &Rediscovery) -> Option<usize> {
+    let open = found.targets.iter().filter(|t| !t.reached_by_seed).count();
+    let mut firsts: Vec<usize> = found
+        .targets
+        .iter()
+        .filter(|t| t.reached_by_bred && !t.reached_by_seed)
+        .filter_map(|t| t.first_generation)
+        .collect();
+
+    firsts.sort_unstable();
+
+    // The k-th smallest has the index k - 1 = open / 2.
+    firsts.get(open / 2).copied()
 }
 
 /// The two runs of one seed.
@@ -294,6 +329,12 @@ struct Row {
     seeds: BTreeSet<String>,
     a: Share,
     r: Share,
+    /// The pass time of arm A within the ceiling, None for never. The rows of both rules
+    /// carry the pass time of the pre-registered rule, since `rediscovery.json` holds first
+    /// generations only for that rule.
+    t_a: Option<usize>,
+    /// The pass time of arm R, in the same way.
+    t_r: Option<usize>,
 }
 
 impl Row {
@@ -302,24 +343,21 @@ impl Row {
     }
 }
 
-/// The statistics of one rule over all pairs.
+/// The statistics of one rule over the given pairs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Statistic {
     rows: Vec<Row>,
     /// Seeds with D_A > 1/2.
     above_half: usize,
-    /// Pairs with D_A > D_R.
-    beats: usize,
     /// The median of the defined D_A values: the middle one, or the mean of the two
     /// middle ones.
     median: Option<Ratio>,
-    /// The chance of `beats` or more wins in as many pairs under the null of a fair coin:
-    /// the exact one-sided p of the sign test.
-    p: Ratio,
 }
 
 fn statistic(pairs: &[Pair], rule: Rule) -> Result<Statistic, String> {
     let mut rows = Vec::new();
+    // A run that passes only after the ceiling has not passed.
+    let within = |t: Option<usize>| t.filter(|&g| g <= GENERATIONS);
 
     for p in pairs {
         let (a, r) = (count(&p.a, rule), count(&p.r, rule));
@@ -337,19 +375,18 @@ fn statistic(pairs: &[Pair], rule: Rule) -> Result<Statistic, String> {
             seeds: a.seeds,
             a: a.share,
             r: r.share,
+            t_a: within(pass_time(&p.a)),
+            t_r: within(pass_time(&p.r)),
         });
     }
 
     let above_half = rows.iter().filter(|r| r.a.above_half()).count();
-    let beats = rows.iter().filter(|r| r.a.beats(r.r)).count();
     let shares: Vec<Ratio> = rows.iter().filter_map(|r| r.a.ratio()).collect();
 
     Ok(Statistic {
         median: median(&shares),
-        p: upper_tail(rows.len(), beats),
         rows,
         above_half,
-        beats,
     })
 }
 
@@ -368,48 +405,214 @@ fn median(values: &[Ratio]) -> Option<Ratio> {
     }
 }
 
-/// n choose k, exactly.
-fn binomial(n: usize, k: usize) -> u128 {
-    (0..k).fold(1u128, |acc, i| acc * (n - i) as u128 / (i + 1) as u128)
+/// The arm whose run passes first in a pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum First {
+    A,
+    R,
+    /// Both runs pass in the same generation, or neither passes.
+    Tie,
 }
 
-/// P(X >= k) for X binomial with n trials of probability 1/2, as an exact fraction.
-fn upper_tail(n: usize, k: usize) -> Ratio {
-    let num: u128 = (k..=n).map(|j| binomial(n, j)).sum();
+impl fmt::Display for First {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            First::A => "A",
+            First::R => "R",
+            First::Tie => "tie",
+        })
+    }
+}
 
-    Ratio::new(num, 1u128 << n)
+/// The arm with the smaller pass time, where never comes after every generation.
+fn first(t_a: Option<usize>, t_r: Option<usize>) -> First {
+    match (t_a, t_r) {
+        (Some(a), Some(r)) => match a.cmp(&r) {
+            Ordering::Less => First::A,
+            Ordering::Greater => First::R,
+            Ordering::Equal => First::Tie,
+        },
+        (Some(_), None) => First::A,
+        (None, Some(_)) => First::R,
+        (None, None) => First::Tie,
+    }
+}
+
+/// An evidence value E = 3^up / 2^n after n steps, `up` of them by 3/2 and the rest by
+/// 1/2: the likelihood ratio of a rate of 3/4 against 1/2. The default is the start, E = 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Evidence {
+    up: u32,
+    n: u32,
+}
+
+impl Evidence {
+    /// E after one more step: by 3/2 when `up`, else by 1/2.
+    fn step(self, up: bool) -> Evidence {
+        Evidence {
+            up: self.up + u32::from(up),
+            n: self.n + 1,
+        }
+    }
+
+    /// E >= EVIDENCE, in integers: 3^up >= EVIDENCE * 2^n.
+    fn proven(self) -> bool {
+        3u128.pow(self.up) >= EVIDENCE * (1u128 << self.n)
+    }
+
+    /// E <= 1 / EVIDENCE, in integers: EVIDENCE * 3^up <= 2^n.
+    fn failed(self) -> bool {
+        EVIDENCE * 3u128.pow(self.up) <= 1u128 << self.n
+    }
+
+    /// E as an exact fraction.
+    fn ratio(self) -> Ratio {
+        Ratio::new(3u128.pow(self.up), 1u128 << self.n)
+    }
+}
+
+/// The verdict on one claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verdict {
+    /// Its E reached EVIDENCE at this pair.
+    Proven(usize),
+    /// Its E fell to 1 / EVIDENCE at this pair.
+    Failed(usize),
+    /// The rule stopped after MAX_PAIRS pairs before its E crossed: no claim.
+    Undecided,
+    /// The secondary claim when the rule stopped without the primary proven.
+    NotTested,
+    /// The rule goes on, and its E has not crossed.
+    Open,
+}
+
+impl Verdict {
+    /// The verdict after a pair at which its E is `e`. An open claim is decided at the
+    /// first crossing, and that decision is final.
+    fn update(self, e: Evidence, pair: usize) -> Verdict {
+        match self {
+            Verdict::Open if e.proven() => Verdict::Proven(pair),
+            Verdict::Open if e.failed() => Verdict::Failed(pair),
+            decided => decided,
+        }
+    }
+
+    /// The verdict at the stop: a claim still open is undecided.
+    fn at_stop(self) -> Verdict {
+        match self {
+            Verdict::Open => Verdict::Undecided,
+            decided => decided,
+        }
+    }
+}
+
+/// The sequential rule over the pairs in seed order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Sequential {
+    /// E1 and E2 after each counted pair.
+    evidence: Vec<(Evidence, Evidence)>,
+    /// The pair after which the rule stops; None while it goes on.
+    stop: Option<usize>,
+    /// The primary claim, decided by E1.
+    primary: Verdict,
+    /// The secondary claim, decided by E2. While the rule goes on it shows where E2
+    /// crossed; at the stop it is NotTested unless the primary is proven.
+    secondary: Verdict,
+}
+
+impl Sequential {
+    /// The pairs that count: those up to the stop, or all while the rule goes on.
+    fn counted(&self) -> usize {
+        self.evidence.len()
+    }
+}
+
+/// The sequential rule over `rows` in seed order. E1 and E2 start at 1. E1 is multiplied by
+/// 3/2 when arm A passes and by 1/2 when it does not. E2 is multiplied by 3/2 when arm A
+/// passes first and by 1/2 when arm R does; a tie leaves it unchanged. The rule stops after
+/// the first pair at which the primary fails, or at which the primary is proven and E2 has
+/// crossed, and at the latest after MAX_PAIRS pairs. The rows after the stop do not count.
+fn sequential(rows: &[Row]) -> Sequential {
+    let (mut e1, mut e2) = (Evidence::default(), Evidence::default());
+    let (mut primary, mut secondary) = (Verdict::Open, Verdict::Open);
+    let mut evidence = Vec::new();
+
+    for (pair, row) in (1..).zip(rows) {
+        e1 = e1.step(row.t_a.is_some());
+
+        match first(row.t_a, row.t_r) {
+            First::A => e2 = e2.step(true),
+            First::R => e2 = e2.step(false),
+            First::Tie => {}
+        }
+
+        evidence.push((e1, e2));
+        primary = primary.update(e1, pair);
+        secondary = secondary.update(e2, pair);
+
+        let stops = matches!(primary, Verdict::Failed(_))
+            || (matches!(primary, Verdict::Proven(_)) && secondary != Verdict::Open)
+            || pair == MAX_PAIRS;
+
+        if stops {
+            let primary = primary.at_stop();
+            // A fixed sequence: the secondary is tested only when the primary is proven.
+            let secondary = match primary {
+                Verdict::Proven(_) => secondary.at_stop(),
+                _ => Verdict::NotTested,
+            };
+
+            return Sequential {
+                evidence,
+                stop: Some(pair),
+                primary,
+                secondary,
+            };
+        }
+    }
+
+    Sequential {
+        evidence,
+        stop: None,
+        primary,
+        secondary,
+    }
 }
 
 /// Whether the runs may support a claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Claim {
-    /// The pre-registered seeds, all calibrated: the rules decide.
+    /// The counted seeds, calibrated up to the stop: the rule decides.
     Made,
-    /// The pre-registered seeds, but these fail the calibration gate: void.
+    /// The counted seeds, but these seeds up to the stop fail the calibration gate: void.
     Void(Vec<u64>),
-    /// Not the pre-registered seeds: why no claim is made.
+    /// Not the counted seeds: why no claim is made.
     Withheld(String),
 }
 
+/// The claim the rows support. They must be the counted seeds 1, 2, 3, ... without gaps,
+/// at most MAX_PAIRS of them; a seed up to the stop that fails the calibration gate voids
+/// the experiment.
 fn claim(rows: &[Row]) -> Claim {
     let seeds: Vec<u64> = rows.iter().map(|r| r.seed).collect();
 
-    if seeds.len() < COUNTED.len() {
+    if seeds.len() > MAX_PAIRS {
         return Claim::Withheld(format!(
-            "only {} seed pair(s), fewer than the {} pre-registered ones",
-            seeds.len(),
-            COUNTED.len()
+            "{} seed pairs, more than the {MAX_PAIRS} the pre-registration allows",
+            seeds.len()
         ));
     }
 
-    if seeds != COUNTED {
+    if !seeds.iter().copied().eq(1..=seeds.len() as u64) {
         return Claim::Withheld(format!(
-            "the seeds are {seeds:?}, not the pre-registered 1 to 10"
+            "the seeds are {seeds:?}, not the counted seeds 1, 2, 3, ... without gaps"
         ));
     }
 
+    // Only the pairs up to the stop count, so only they can void the experiment.
     let void: Vec<u64> = rows
         .iter()
+        .take(sequential(rows).counted())
         .filter(|r| !r.calibrated())
         .map(|r| r.seed)
         .collect();
@@ -448,13 +651,40 @@ fn claim_in(context: &Context, rows: &[Row]) -> Claim {
     made
 }
 
-/// The verdict of a rule that holds in `count` pairs.
-fn verdict(claim: &Claim, count: usize) -> String {
-    match claim {
-        Claim::Made if count >= NEEDED => "PASSES".to_string(),
-        Claim::Made => "FAILS".to_string(),
-        Claim::Void(_) => "No claim: the experiment is void".to_string(),
-        Claim::Withheld(why) => format!("No claim: {why}"),
+/// The verdicts on both claims at the stop, or the next seed while the rule goes on; only
+/// the reason when the runs support no claim.
+fn verdict(claim: &Claim, rule: &Sequential) -> String {
+    match (claim, rule.stop) {
+        (Claim::Void(_), _) => "No claim: the experiment is void.\n".to_string(),
+        (Claim::Withheld(why), _) => format!("No claim: {why}.\n"),
+        (Claim::Made, None) => format!("OPEN: run seed {} next.\n", rule.counted() + 1),
+        (Claim::Made, Some(_)) => {
+            let primary = verdict_line(
+                "Primary (ticket 03)",
+                rule.primary,
+                &format!("More than half of all seeds pass within {GENERATIONS} generations."),
+                "The data speak against a pass rate of 3/4 or more; they do not prove a rate of 1/2 or less.",
+            );
+            let secondary = verdict_line(
+                "Secondary (selection)",
+                rule.secondary,
+                "Among untied pairs, arm A passes first more often than arm R.",
+                "The data speak against arm A passing first in 3/4 or more of the untied pairs.",
+            );
+
+            format!("{primary}{secondary}")
+        }
+    }
+}
+
+/// The verdict on one claim at the stop, with what it means when proven or failed.
+fn verdict_line(name: &str, verdict: Verdict, proven: &str, failed: &str) -> String {
+    match verdict {
+        Verdict::Proven(pair) => format!("{name}: PROVEN at pair {pair}. {proven}\n"),
+        Verdict::Failed(pair) => format!("{name}: FAILED at pair {pair}. {failed}\n"),
+        Verdict::Undecided => format!("{name}: UNDECIDED after {MAX_PAIRS} pairs, no claim.\n"),
+        Verdict::NotTested => format!("{name}: NOT TESTED, since the primary is not proven.\n"),
+        Verdict::Open => format!("{name}: open.\n"),
     }
 }
 
@@ -491,10 +721,13 @@ fn show(share: Share) -> String {
     }
 }
 
-/// The table and the two rules of one statistic.
-fn render_rule(out: &mut String, stat: &Statistic, claim: &Claim, name: &str) {
-    let n = stat.rows.len();
+/// A pass time as text: the generation, or never.
+fn show_time(t: Option<usize>) -> String {
+    t.map_or("never".to_string(), |g| g.to_string())
+}
 
+/// The per-seed table of one statistic: R_seed, D_A, D_R and the calibration gate.
+fn render_table(out: &mut String, stat: &Statistic) {
     out.push_str(&format!(
         "{:>5}  {:>3}  {:<34}  {:<16}  {:<16}  calibrated\n",
         "seed", "|L|", "R_seed", "D_A", "D_R"
@@ -517,24 +750,65 @@ fn render_rule(out: &mut String, stat: &Statistic, claim: &Claim, name: &str) {
             if row.calibrated() { "yes" } else { "NO" }
         ));
     }
+}
 
-    let median = stat
-        .median
-        .map_or("undefined".to_string(), |m| m.to_string());
+/// Where the E of one claim stands after `pairs` counted pairs, and where it first crossed.
+fn evidence_line(name: &str, e: Evidence, verdict: Verdict, pairs: usize) -> String {
+    let crossed = match verdict {
+        Verdict::Proven(pair) => format!("; it reached {EVIDENCE} at pair {pair}"),
+        Verdict::Failed(pair) => format!("; it fell to 1/{EVIDENCE} at pair {pair}"),
+        Verdict::Open => format!("; open, it has reached neither {EVIDENCE} nor 1/{EVIDENCE}"),
+        Verdict::Undecided => format!("; it reached neither {EVIDENCE} nor 1/{EVIDENCE}"),
+        Verdict::NotTested => String::new(),
+    };
 
+    format!("{name} = {} after {pairs} pair(s){crossed}.\n", e.ratio())
+}
+
+/// The sequential rule pair by pair, the pairs after its stop, and where E1 and E2 stand.
+/// `rows` are the counted rows, `after` the pairs after the stop.
+fn render_rule(out: &mut String, rows: &[Row], rule: &Sequential, after: &[Pair]) {
     out.push_str(&format!(
-        "{name}, primary (ticket 03): D_A > 1/2 in {} of {n} seeds (needed: at least {NEEDED} of 10). Median D_A: {median}. {}\n",
-        stat.above_half,
-        verdict(claim, stat.above_half)
+        "\nSequential rule, in seed order: T is the first generation with D > 1/2, never when there is none by generation {GENERATIONS}; \
+         X = 1 when arm A passes; first is the arm with the smaller T.\n"
     ));
     out.push_str(&format!(
-        "{name}, secondary (selection): D_A > D_R in {} of {n} pairs, ties counting against A (needed: at least {NEEDED} of 10, an exact one-sided sign test of size {}). p = P(at least {} of {n} by chance) = {}. {}\n",
-        stat.beats,
-        upper_tail(COUNTED.len(), NEEDED),
-        stat.beats,
-        stat.p,
-        verdict(claim, stat.beats)
+        "E1 = 3^passes / 2^pairs and E2 = 3^(A first) / 2^(untied pairs). A claim is proven when its E first reaches {EVIDENCE} \
+         and fails when it first falls to 1/{EVIDENCE}; the secondary counts only if the primary is proven.\n"
     ));
+    out.push_str(&format!(
+        "{:>5}  {:>5}  {:>5}  {}  {:<5}  {:<22}  {}\n",
+        "seed", "T_A", "T_R", "X", "first", "E1", "E2"
+    ));
+
+    for (row, (e1, e2)) in rows.iter().zip(&rule.evidence) {
+        out.push_str(&format!(
+            "{:>5}  {:>5}  {:>5}  {}  {:<5}  {:<22}  {}\n",
+            row.seed,
+            show_time(row.t_a),
+            show_time(row.t_r),
+            u8::from(row.t_a.is_some()),
+            first(row.t_a, row.t_r),
+            e1.ratio().to_string(),
+            e2.ratio()
+        ));
+    }
+
+    for p in after {
+        out.push_str(&format!("{:>5}  after the stop, not counted\n", p.seed));
+    }
+
+    if let Some(&(e1, e2)) = rule.evidence.last() {
+        let n = rule.counted();
+
+        out.push_str(&evidence_line("Primary (ticket 03): E1", e1, rule.primary, n));
+        out.push_str(&evidence_line("Secondary (selection): E2", e2, rule.secondary, n));
+    }
+
+    match rule.stop {
+        Some(stop) => out.push_str(&format!("The rule stops after pair {stop}.\n")),
+        None => out.push_str(&format!("The rule goes on after pair {}.\n", rule.counted())),
+    }
 }
 
 /// The whole analysis as text.
@@ -547,9 +821,14 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
         return Err(format!("more than {MAX_PAIRS} seed pairs"));
     }
 
-    let full = statistic(pairs, Rule::Full)?;
-    let t_only = statistic(pairs, Rule::TOnly)?;
-    let claim = claim_in(context, &full.rows);
+    // The rule reads every pair in seed order and counts those up to its stop; the pairs
+    // after the stop are only listed.
+    let rows = statistic(pairs, Rule::Full)?.rows;
+    let rule = sequential(&rows);
+    let claim = claim_in(context, &rows);
+    let (counted, after) = pairs.split_at(rule.counted());
+    let full = statistic(counted, Rule::Full)?;
+    let t_only = statistic(counted, Rule::TOnly)?;
     let mut out = String::new();
 
     out.push_str(
@@ -564,7 +843,7 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
 
     match &claim {
         Claim::Made => out.push_str(
-            "Void conditions checked here: every seed passes the calibration gate |R_seed| <= |L| / 3.\n",
+            "Void conditions checked here: every counted seed passes the calibration gate |R_seed| <= |L| / 3.\n",
         ),
         Claim::Void(seeds) => out.push_str(&format!(
             "VOID: the seed Cascades of seed(s) {seeds:?} solve more than |L| / 3 targets; recalibrate the control.\n"
@@ -579,12 +858,28 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
     out.push_str(
         "Pre-registered rule: a target counts when an exact answer reaches its T and CNOT reference.\n",
     );
-    render_rule(&mut out, &full, &claim, "Pre-registered rule");
+    render_table(&mut out, &full);
+
+    let median = full
+        .median
+        .map_or("undefined".to_string(), |m| m.to_string());
+
+    out.push_str(&format!(
+        "Median D_A over the {} counted pair(s), descriptive: {median}.\n",
+        counted.len()
+    ));
+    render_rule(&mut out, &full.rows, &rule, after);
+    out.push_str(&verdict(&claim, &rule));
     out.push_str(
-        "\nT-only variant: a target counts when an exact answer reaches its T reference, and its CNOT reference where that T count is 0.\n",
+        "\nT-only variant, descriptive with no verdict: a target counts when an exact answer reaches its T reference, and its CNOT reference where that T count is 0.\n",
     );
-    render_rule(&mut out, &t_only, &claim, "T-only variant");
-    out.push_str(&descriptive(context, pairs));
+    render_table(&mut out, &t_only);
+    out.push_str(&format!(
+        "T-only variant: D_A > 1/2 in {} of {} counted seed(s).\n",
+        t_only.above_half,
+        counted.len()
+    ));
+    out.push_str(&descriptive(context, counted));
 
     Ok(out)
 }
