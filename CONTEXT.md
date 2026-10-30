@@ -154,7 +154,7 @@ _Avoid_: deploy, release, merge (the human merges, not the Run)
 
 **Domain**:
 A kind of task Cascades are bred on, seen from the evaluator side: it makes the panels, renders and reads prompts, grades answers and says which of two answers is better. It never sees a Cascade. Grid puzzles and circuits are Domains; a Run names its Domain with `--domain`.
-_Avoid_: task family (that means Learner tasks), environment
+_Avoid_: task family (that means Learner tasks; doc comments in `src/cascade/` still use it loosely for a Domain), environment
 
 **Gene pool**:
 The breeder side of a Domain: the seed Cascades, the phrase pool of the section operators, the Mutator's brief and the admission rule every new Cascade must pass.

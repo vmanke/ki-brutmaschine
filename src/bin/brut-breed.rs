@@ -21,7 +21,7 @@
 //!   brut-breed --out <dir> --promote
 //!   brut-breed --out <dir> --verify
 //!
-//! --domain names the task family a run breeds on (step 1, ADR 0006): grid (the default) or
+//! --domain names the Domain a run breeds on (step 1, ADR 0006): grid (the default) or
 //! circuits. A circuit run takes its circuit settings (targets, dressing, gate cap) from
 //! --config; --domain circuits alone uses the defaults: every verified library target,
 //! dressed, with at most 64 gates per answer. --selection says how parents are drawn: dgm
@@ -127,9 +127,8 @@ struct Checkpoint<A = Grid> {
     log_head: String,
 }
 
-/// What a task family brings to the binary besides its domain: the gene pool its
-/// Cascades are made from, the models they call, and what it writes once a select phase
-/// is complete.
+/// What a Domain brings to the binary besides itself: the gene pool its Cascades are made
+/// from, the models they call, and what it writes once a select phase is complete.
 struct Family<D: Domain> {
     genes: GenePool,
     pool: ModelPool,
@@ -420,7 +419,7 @@ fn run() -> Result<i32> {
     // a writer writes) and works on a read-only run directory too.
     let _lock = lock_run(&out, !args.contains_key("verify"))?;
 
-    // The settings name the task family, so every mode reads them first: the recorded
+    // The settings name the Domain, so every mode reads them first: the recorded
     // ones (a resume may change two of them) or those of a fresh run.
     let cfg = if resume || read_only {
         let mut cfg: BreedConfig = read_json(&out.join(CONFIG))?;
@@ -454,7 +453,7 @@ fn run() -> Result<i32> {
 }
 
 /// Breed a run on the domain `D` until it is done, stopped, or waits for LLM answers: the
-/// run loop of Stage 2c for any task family. `cfg` holds a fresh run's settings, or the
+/// run loop of Stage 2c for any Domain. `cfg` holds a fresh run's settings, or the
 /// recorded ones with a resume's changes.
 fn drive<D: Domain>(
     cfg: BreedConfig,
