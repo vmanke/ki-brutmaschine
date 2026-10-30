@@ -531,9 +531,10 @@ Gebaut sind:
 Die Pilotläufe liegen in [docs/pilot-step1/](docs/pilot-step1/README.md): der erste Pilot
 auf den Seeds 101 und 102 und vier spätere Reihen. Pilotläufe zählen nie. Die
 Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestätigt. Noch am
-selben Tag verlangte sie bzw. er für Entscheidung 5 die wissenschaftlich tragende Fassung,
-deren Zahlen darauf eine Prüfung von 16 Entwürfen wählte; Entscheidung 5 steht hier in
-dieser Fassung:
+selben Tag verlangte sie bzw. er für Entscheidung 5 die wissenschaftlich tragende Fassung.
+Deren Zahlen wählte Claude, der KI-Assistent, nach einer Prüfung von 16 Entwürfen; die
+Eigentümerin bzw. der Eigentümer bestätigt sie mit dem Zusammenführen des Pull-Requests,
+das die Vorab-Registrierung einfriert. Entscheidung 5 steht hier in dieser Fassung:
 
 1. Exakte Gleichheit entscheidet über „richtig“.
 2. Bewertet wird erst nach T-Anzahl, dann nach CNOT-Anzahl.

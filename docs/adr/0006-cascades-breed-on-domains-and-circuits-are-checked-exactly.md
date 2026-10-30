@@ -242,7 +242,8 @@ promotion of circuit Cascades in step 1, the sequential rule across seeds, which
 the 9-of-10 rule as point 5
 (`.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`), and the panel
 sizes 33 and 22. Later that day the owner asked for the scientifically load-bearing
-version of point 5; a review of 16 designs then set the proof threshold 100, at most 120
-pairs and the counted seeds 1 to 100, then 111 to 130 (issue 09, Comments). The
-pre-registration implements these points. It is frozen at the one commit that the squash
-merge of its pull request creates on the main branch.
+version of point 5. After a review of 16 designs, Claude, the AI assistant, chose the
+proof threshold 100, at most 120 pairs and the counted seeds 1 to 100, then 111 to 130
+(issue 09, Comments). The pre-registration implements these points. It is frozen at the
+one commit that the squash merge of its pull request creates on the main branch; with
+that merge the owner confirms point 5 in this version.

@@ -440,9 +440,23 @@ nur, wenn die Liste der Seeds und ihre Reihenfolge fest sind, kein Seed der List
 ausgelassen oder ersetzt wird und sich nach Seed 1 nichts ändert.
 
 **Warum 100 und 120 Paare.** Am 2026-10-30 hat die Eigentümerin bzw. der Eigentümer zuerst
-die Schwelle 20 mit höchstens 60 Paaren freigegeben und noch am selben Tag die
-wissenschaftlich tragende Fassung verlangt. Eine Prüfung von 16 Entwürfen wählte darauf
-die Schwelle 100 und höchstens 120 Paare. Die Schranke von 1 % ist einseitig, wie die
+die Schwelle 20 mit höchstens 60 Paaren freigegeben. Noch am selben Tag verlangte sie bzw.
+er die wissenschaftlich tragende Fassung und nannte keine Zahlen. Claude, der
+KI-Assistent, der an diesem Repository arbeitet, prüfte darauf 16 Entwürfe: die Schwellen
+20, 40, 1024/11 und 100, jede mit höchstens 60, 80, 100 und 120 Paaren. Die Prüfung
+rechnete die Fehlerraten und Teststärken exakt aus, zählte sie unabhängig nach, testete
+sie mit einer Monte-Carlo-Simulation und prüfte die Quellen. Ihre drei unabhängigen
+Gutachter empfahlen je einen anderen Entwurf: 40 mit höchstens 100 Paaren, 1024/11 mit 120
+und 100 mit 120. Ein Gegenprüfer rechnete die Zahlen nach und hielt 1024/11 mit 120 Paaren
+(Schranke 11/1024 = 0.0107) für richtig, sofern die Liste der gezählten Seeds fest ist.
+Claude wählte die Schwelle 100 mit 120 Paaren und die Liste der Seeds oben. Die
+Eigentümerin bzw. der Eigentümer bestätigt diese Wahl mit dem Zusammenführen des
+Pull-Requests, das die Vorab-Registrierung einfriert; bis dahin ist nichts eingefroren,
+und kein gezählter Seed läuft. Statistisch sind dieser Entwurf und 1024/11 mit 120 Paaren
+fast gleich: Ein falscher Hauptnachweis hat höchstens die Wahrscheinlichkeit 0.0079
+gegenüber 0.0086, und bei der Kaplan-Meier-Quote gelingt der Hauptnachweis mit
+Wahrscheinlichkeit 0.8605 gegenüber 0.8620. Von beiden ist die Schwelle 100 etwas
+strenger, und nur ihre Schranke ist rund. Die Schranke von 1 % ist einseitig, wie die
 Nachweise. Für bestätigende Nachweise wie diese ist eine einseitige Grenze von 5 %
 großzügig: Nach der regulatorischen Leitlinie ICH E9 (1998, Abschnitt 5.5) ist es in
 regulatorischen Verfahren vorzuziehen, den Fehler erster Art eines einseitigen Tests auf
@@ -489,12 +503,13 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
   Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in Gitter-Läufen, keine
   Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 7
   anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Noch am selben Tag
-  verlangte sie bzw. er die wissenschaftlich tragende Fassung; die Nachweisschwelle 100,
-  höchstens 120 Paare und die Liste der Seeds aus Abschnitt 7 wählte darauf eine Prüfung
-  von 16 Entwürfen. Die Vorab-Registrierung setzt diese Punkte um. Sie friert bei dem
-  einen Commit ein, zu dem ihr Pull-Request beim Zusammenführen in den Hauptzweig
-  zusammengefasst wird. Gezählte Läufe gibt es noch keine; alle Zahlen dieses Berichts
-  stammen aus Pilotläufen.
+  verlangte sie bzw. er die wissenschaftlich tragende Fassung. Nach einer Prüfung von 16
+  Entwürfen wählte Claude, der KI-Assistent, die Nachweisschwelle 100, höchstens 120 Paare
+  und die Liste der Seeds aus Abschnitt 7. Die Vorab-Registrierung setzt diese Punkte um.
+  Sie friert bei dem einen Commit ein, zu dem ihr Pull-Request beim Zusammenführen in den
+  Hauptzweig zusammengefasst wird; mit diesem Zusammenführen bestätigt die Eigentümerin
+  bzw. der Eigentümer Claudes Wahl. Gezählte Läufe gibt es noch keine; alle Zahlen dieses
+  Berichts stammen aus Pilotläufen.
 - **Was der Pilot zeigt.** Die Kalibrierung hält in jedem fertigen Pilotlauf. Bis Generation
   1000 bestand Arm A in 9 von 11 Läufen, Arm R in 2 von 10, und in 8 der 10 Paare, deren
   Arme beide so weit liefen, bestand Arm A zuerst. Die neun Läufe des ersten Pilots bestehen

@@ -383,9 +383,22 @@ test cannot simply be checked again after every pair instead: an exact one-sided
 binomial test run after every pair succeeds falsely with probability 0.0987 by 20 pairs.
 
 **Why the threshold 100 and the cap of 120 pairs.** On 2026-10-30 the owner first approved
-the threshold 20 with at most 60 pairs, and later that day asked for the scientifically
-load-bearing version. A review then computed the exact operating characteristics of 16
-designs (issue 09, Comments). It chose this design for four reasons:
+the threshold 20 with at most 60 pairs. Later that day the owner asked for the
+scientifically load-bearing version and named no numbers. Claude, the AI assistant that
+works on this repository, then ran a review of 16 designs: the thresholds 20, 40, 1024/11
+and 100, each with a cap of 60, 80, 100 and 120 pairs (issue 09, Comments). The review
+computed their exact operating characteristics, recounted them independently, tested them
+by Monte Carlo simulation and checked the sources. The three independent judges of the
+review each favoured a different design: 40 with cap 100, 1024/11 with cap 120 and 100
+with cap 120. An adversarial critic recomputed the numbers and upheld 1024/11 with cap 120
+(bound 11/1024 = 0.0107), on the condition of a fixed list of counted seeds. Claude chose
+the threshold 100 with cap 120 and the seed list of section 2. The owner confirms this
+version of decision 5 with the squash merge that freezes this document (section 2); until
+that merge nothing is frozen and no counted seed runs. Statistically, this design and
+1024/11 with cap 120 are almost the same: a false proof of the primary claim has
+probability at most 0.0079 against 0.0086, and at the Kaplan-Meier rate the primary claim
+is proven with probability 0.8605 against 0.8620. Of the two, the threshold 100 is
+slightly stricter, and only its bound is round. Four further reasons support the choice:
 
 - **The level.** The bound of 1 % is one-sided, as the claims are. For confirmatory claims
   like these, a one-sided level of 5 % is lenient: the regulatory guideline ICH E9 (1998,

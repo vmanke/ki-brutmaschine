@@ -427,7 +427,7 @@ Statuses come from the v3 verifier unless marked otherwise. Corrections by v3 ar
 
 18. Project files (read in this session):
    - The 5 % house standard: PLAN_GENERALISIERUNG.md:192 'p < 0.05 (einseitig)', POSITIVKONTROLLE.md:29 and ARCHITEKTUR.md:653.
-   - The old size 11/1024: PREREG_STEP1_CIRCUITS.md:264-267.
+   - The old size 11/1024: PREREG_STEP1_CIRCUITS.md, section 8, paragraph "Error bounds".
 
 Added 2026-10-30 for the thresholds of the Comments; each was verified against its text in that review.
 
@@ -461,16 +461,24 @@ above. The strict variant of open point 2, with the threshold 1024/11, was not c
 Points 1-4 and 6 were approved the same day, so all six points of ADR 0006 now hold. The
 code changes after approval are agent work, so the status is now ready-for-agent.
 
-2026-10-30, thresholds. Later the same day the owner asked: "Na was denn jetzt,
-ordentliche Schwellen oder nicht? ... Wir nehmen die wissenschaftlich tragende Version". A
-review followed. It computed the exact operating characteristics of 16 designs: the proof
-thresholds 20, 40, 1024/11 and 100, each with a cap of 60, 80, 100 and 120 pairs. An
-independent recount and a Monte Carlo simulation checked those numbers. The sources were
-checked, and only those verified against their texts are cited, in the Sources section
-above (7, 18, 19, 20 and 21). Three independent judges voted for U = 40 with cap 100,
-U = 1024/11 with cap 120 and U = 100 with cap 120. An adversarial critic recomputed the
-numbers and upheld the 1 % bar with cap 120. The decision replaces U = 20 and the cap of
-60; everything else of the rule stays:
+2026-10-30, thresholds. Later the same day the owner wrote: "Na was denn jetzt,
+ordentliche Schwellen oder nicht? ... Wir nehmen die wissenschaftlich tragende Version".
+So the owner asked for the scientifically load-bearing version of point 5 and named no
+numbers. Claude, the AI assistant that works on this repository, then ran a review. It
+computed the exact operating characteristics of 16 designs: the proof thresholds 20, 40,
+1024/11 and 100, each with a cap of 60, 80, 100 and 120 pairs. An independent recount and
+a Monte Carlo simulation checked those numbers. The sources were checked, and only those
+verified against their texts are cited, in the Sources section above (7, 18, 19, 20 and
+21). The three independent judges of the review split: they voted for U = 40 with cap 100,
+U = 1024/11 with cap 120 and U = 100 with cap 120, one each. An adversarial critic
+recomputed the numbers and upheld U = 1024/11 with cap 120 (bound 11/1024 = 0.0107), on
+the condition of a fixed list of counted seeds. Claude chose U = 100 with cap 120 and the
+seed list below. This design is a statistical twin of U = 1024/11 with cap 120 (type I
+0.0079 against 0.0086, Kaplan-Meier power 0.8605 against 0.8620), and 100 is the round 1 %
+level; the other reasons are (a) to (d) below. The owner confirms point 5 in this version
+with the squash merge of the pull request, which freezes the pre-registration. Until that
+merge nothing is frozen and no counted seed runs. This version replaces U = 20 and the cap
+of 60; everything else of the rule stays:
 
 - Proof threshold U = 100 for both claims. A claim is proven at the first pair with
   E >= 100, in integers 3^w >= 100 · 2^n.

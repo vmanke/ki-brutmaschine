@@ -134,8 +134,9 @@ Built:
 The pilot Runs are in [docs/pilot-step1/](docs/pilot-step1/README.md): the first pilot on
 seeds 101 and 102 and four later batches. Pilot Runs never count. The owner confirmed six
 decisions on 2026-10-30. Later that day the owner asked for the scientifically
-load-bearing version of decision 5, and a review of 16 designs then chose its numbers;
-decision 5 is shown in that version:
+load-bearing version of decision 5. Claude, the AI assistant, chose its numbers after a
+review of 16 designs; the owner confirms them with the merge of the pull request, which
+freezes the pre-registration. Decision 5 is shown in that version:
 
 1. Exact equality decides what is correct.
 2. Scoring goes by T count first, then by CNOT count.

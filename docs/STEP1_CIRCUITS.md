@@ -421,8 +421,21 @@ if the seed list and its order are fixed, no seed of the list is skipped or repl
 nothing changes after seed 1.
 
 **Why 100 and 120 pairs.** On 2026-10-30 the owner first approved the threshold 20 with at
-most 60 pairs, and later that day asked for the scientifically load-bearing version. A
-review of 16 designs then chose the threshold 100 and the cap of 120 pairs. The bound of
+most 60 pairs. Later that day the owner asked for the scientifically load-bearing version
+and named no numbers. Claude, the AI assistant that works on this repository, then ran a
+review of 16 designs: the thresholds 20, 40, 1024/11 and 100, each with a cap of 60, 80,
+100 and 120 pairs. The review computed their exact error rates and power, recounted them
+independently, tested them by Monte Carlo simulation and checked the sources. The three
+independent judges of the review each favoured a different design: 40 with at most 100
+pairs, 1024/11 with 120 and 100 with 120. An adversarial critic recomputed the numbers and
+upheld 1024/11 with 120 pairs (bound 11/1024 = 0.0107), on the condition of a fixed list
+of counted seeds. Claude chose the threshold 100 with 120 pairs and the seed list above.
+The owner confirms this choice with the squash merge of the pull request, which freezes
+the pre-registration; until then nothing is frozen and no counted seed runs.
+Statistically, this design and 1024/11 with 120 pairs are almost the same: a false proof
+of the primary claim has probability at most 0.0079 against 0.0086, and at the
+Kaplan-Meier rate the primary claim is proven with probability 0.8605 against 0.8620. Of
+the two, the threshold 100 is slightly stricter, and only its bound is round. The bound of
 1 % is one-sided, as the claims are. For confirmatory claims like these, a one-sided bound
 of 5 % is lenient: the regulatory guideline ICH E9 (1998, section 5.5) holds it
 preferable, in regulatory settings, to set the type I error of a one-sided test at half
@@ -465,10 +478,11 @@ hours.
   equality as the criterion (it tightens Q38), scoring by T first and CNOT second, the
   `state` line in grid Runs too, no promotion of circuit Cascades in step 1, the rule
   across seeds of section 7 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
-  Later that day the owner asked for the scientifically load-bearing version; a review of
-  16 designs then chose the proof threshold 100, the cap of 120 pairs and the seed list of
-  section 7. The pre-registration implements these points. It is frozen at the one commit
-  that the squash merge of its pull request creates on the main branch. There are no
+  Later that day the owner asked for the scientifically load-bearing version. After a
+  review of 16 designs, Claude, the AI assistant, chose the proof threshold 100, the cap
+  of 120 pairs and the seed list of section 7. The pre-registration implements these
+  points. It is frozen at the one commit that the squash merge of its pull request creates
+  on the main branch; with that merge the owner confirms Claude's choice. There are no
   counted Runs yet; every number in this report comes from pilot Runs.
 - **What the pilot shows.** The calibration holds in every finished pilot Run. By
   generation 1000, arm A passed in 9 of 11 Runs and arm R in 2 of 10, and in 8 of the 10
