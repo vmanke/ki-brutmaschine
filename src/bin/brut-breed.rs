@@ -973,6 +973,8 @@ fn write_rediscovery(out: &Path, breeder: &Breeder<'_, CircuitDomain>) -> Result
     write_atomic(&path, serde_json::to_string_pretty(&found)?.as_bytes())?;
 
     let open = found.library.saturating_sub(found.reached_by_seeds);
+    // D > 1/2 in integers, whatever the gate says; `passes` needs both.
+    let above_half = 2 * found.reached_by_bred_only > open;
     let gate = if found.calibrated {
         "calibrated"
     } else {
@@ -985,7 +987,7 @@ fn write_rediscovery(out: &Path, breeder: &Breeder<'_, CircuitDomain>) -> Result
         found.reached_by_seeds,
         found.library,
         found.reached_by_bred_only,
-        if found.passes { "yes" } else { "no" }
+        if above_half { "yes" } else { "no" }
     );
 
     for t in &found.targets {

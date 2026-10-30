@@ -378,6 +378,54 @@ fn promotion_of_a_circuit_run_is_refused() {
     assert_eq!(record(), before);
 }
 
+#[test]
+fn the_headline_says_whether_d_is_above_half_whatever_the_gate_says() {
+    // A run on swap, cs and cz only: the seed Cascades solve two of the three targets, more
+    // than the gate allows, and bred Cascades solve the third.
+    let files = fresh("narrow");
+    let file = files.join("narrow.json");
+    let cfg = BreedConfig {
+        seed: 57,
+        generations: 5,
+        children_per_generation: 8,
+        search_puzzles: 9,
+        select_puzzles: 6,
+        max_calls: 400_000,
+        domain: DomainConfig::Circuits(CircuitConfig {
+            targets: ["swap", "cs", "cz"].map(String::from).to_vec(),
+            ..CircuitConfig::default()
+        }),
+        ..BreedConfig::default()
+    };
+    let dir = files.join("run");
+
+    std::fs::create_dir_all(&files).expect("mkdir");
+    std::fs::write(&file, serde_json::to_string_pretty(&cfg).expect("json")).expect("write");
+
+    let out = breed(&[
+        "--out",
+        dir.to_str().expect("path"),
+        "--config",
+        file.to_str().expect("path"),
+    ]);
+
+    ok(&out);
+
+    // D = 1 but the run fails the gate, so it does not pass; the headline says both.
+    let found = json(&dir, "rediscovery.json");
+
+    assert_eq!(found["share"], 1.0);
+    assert_eq!(found["calibrated"], false);
+    assert_eq!(found["passes"], false);
+    assert!(
+        stdout(&out).contains(
+            "the seeds solve 2 of 3 targets, bred Cascades 1 of the other 1; D > 1/2: yes; not calibrated"
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
 /// One archived Cascade as its Born event logs it.
 struct Logged {
     id: String,
