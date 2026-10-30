@@ -92,9 +92,11 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   (orientation); counting blobs (1 to 4); mirror symmetry; and for the 1-D families a
   motif anywhere in a sequence.
 - **Second, ARC grids:** grid-to-grid tasks, one colour class per cell, up to 30×30, for
-  U-Net and fully convolutional models. `src/arc_data.rs` already reads converted re-arc
-  files, but no re-arc data is in the repository and `tools/rearc_to_jsonl.py` is
-  missing. Ticket 06 settles the source, its licence and the download.
+  U-Net and fully convolutional models. The sources, commits and licences are pinned in
+  the project already (ARC-AGI-1 and ARC-AGI-2 under Apache-2.0, re-arc and ConceptARC
+  under MIT), and `src/arc_data.rs` loads them with a SHA-256 manifest. Training uses the
+  ARC-AGI-1 training tasks with their re-arc generations; both evaluation sets stay held
+  out. The converter `tools/rearc_to_jsonl.py` is missing and is rewritten in ticket 06.
 
 ## Tickets and pull requests
 
