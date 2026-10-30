@@ -7,8 +7,9 @@ This document fixes the step 1 experiment of plan (g) and
 any counted Run. Of this experiment, only the pilot seeds 101 and 102 have run
 ([docs/pilot-step1/](pilot-step1/README.md)); the counted seeds 1 to 10 have not run in
 either arm. The owner's sign-off covers this document together with the six open
-decisions of ADR 0006, and it names the hash of the commit that adds this file. From then
-on nothing below changes; every deviation is reported with the results, with its reason.
+decisions of ADR 0006, and it names the hash of the frozen commit: the commit that adds
+this file to the main branch, whose tree holds this file as signed off. From then on
+nothing below changes; every deviation is reported with the results, with its reason.
 The report on step 1 is [SCHRITT1_SCHALTUNGEN.md](SCHRITT1_SCHALTUNGEN.md) (English:
 [STEP1_CIRCUITS.md](STEP1_CIRCUITS.md)).
 
@@ -24,7 +25,7 @@ control of the breeder. It says nothing about real language models.
 
 | Item | Frozen as |
 |---|---|
-| Code | The whole tree of the commit that adds this file. The owner's sign-off names its hash. |
+| Code | The whole tree of the frozen commit, which the owner's sign-off names by its hash: the commit that adds this file to the main branch. Its tree holds this file as signed off; a later edit of this file or of the code is a deviation. |
 | Toolchain | rustc 1.97.0 on x86_64 Linux, as in the pilot (`docs/pilot-step1/pilot.json`). |
 | Program | `cargo build --release --bin brut-breed` at that commit. |
 | Analysis | `examples/circuit_positive_control.rs` at that commit. |
@@ -36,11 +37,18 @@ control of the breeder. It says nothing about real language models.
 | Seeds | 1 to 10, paired between the arms. The pilot seeds 101 and 102 are not counted (section 10). |
 | Definitions and rules | Sections 7 to 9. |
 
-The pilot ran commit d4a650e. Between that commit and the commit that adds this file only
-documents changed: `git diff d4a650e <frozen commit> -- src tests examples Cargo.toml
-Cargo.lock` is empty. On another toolchain or platform a floating-point function may round
-its last bit differently, and then the Runs may differ from Runs on the frozen toolchain;
-such Runs are a deviation.
+The pilot ran commit d4a650e. Since then the code has changed only where no Run's files
+depend on it: `--verify` also checks a finished circuit Run's archive against the logged
+`born` events and says why it skips `rediscovery.json`; one printed line about D follows
+D alone; the analysis makes a claim only for the generations and the cap of section 6;
+and there are new tests and comments. `git diff d4a650e f26ba91 -- Cargo.toml
+Cargo.lock` is empty, and in `src/cascade` that diff changes only comments. With the
+program of commit f26ba91 we ran the four 60-generation pilot Runs again: their
+`config.json`, `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are
+byte-equal to the pilot's, and all nine pilot Run directories pass its `--verify`. On
+another toolchain or platform a floating-point function may round its last bit
+differently, and then the Runs may differ from Runs on the frozen toolchain; such Runs are
+a deviation.
 
 ## 3. The target list L
 

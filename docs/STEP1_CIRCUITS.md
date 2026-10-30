@@ -336,7 +336,11 @@ stop check reads `--generations`.
   tasks, the best seed Cascade 2. In the other three Runs the best finalist solves 4
   (`report.json` of the pilot Runs).
 - **Reproducibility.** We ran arm A on seed 101 again; `events.jsonl` and
-  `rediscovery.json` are byte-equal to the pilot Run's.
+  `rediscovery.json` are byte-equal to the pilot Run's. After the review fixes, which
+  change only `--verify`, one printed line, the analysis and tests, we ran all four
+  60-generation Runs again with the program of commit f26ba91: `config.json`,
+  `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are byte-equal to
+  the pilot's, and all nine pilot Run directories pass its `--verify`.
 
 The settings of the counted Runs follow from the pilot: `--generations 200`, because every
 first solution came by generation 90 and a Run takes at most 26 s, and

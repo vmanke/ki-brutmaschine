@@ -350,7 +350,12 @@ die Stopp-Prüfung `--generations` liest.
   Auswahl-Aufgaben, das beste Startprogramm 2. In den drei anderen Läufen löst der beste
   Finalist 4 (`report.json` der Pilotläufe).
 - **Wiederholbarkeit.** Wir haben Arm A auf Seed 101 erneut laufen lassen; `events.jsonl` und
-  `rediscovery.json` sind byte-gleich mit dem Pilotlauf.
+  `rediscovery.json` sind byte-gleich mit dem Pilotlauf. Nach den Korrekturen aus der
+  Prüfung, die nur `--verify`, eine gedruckte Zeile, die Auswertung und Tests ändern, haben
+  wir alle vier Läufe mit 60 Generationen mit dem Programm von Commit f26ba91 wiederholt:
+  `config.json`, `events.jsonl`, `snapshot.json`, `report.json` und `rediscovery.json` sind
+  byte-gleich mit dem Pilot, und alle neun Lauf-Verzeichnisse des Pilots bestehen sein
+  `--verify`.
 
 Aus dem Pilot folgen die Einstellungen der gezählten Läufe: `--generations 200`, da alle
 ersten Lösungen bis Generation 90 kamen und ein Lauf höchstens 26 s dauert, und
