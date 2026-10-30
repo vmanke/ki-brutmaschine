@@ -87,8 +87,9 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
 - **Auswertung** (`examples/circuit_positive_control.rs`). Sie liest die fertigen Läufe
   beider Arme, paarweise nach Seed, bestimmt für jeden Lauf die Bestehenszeit und wendet
   die vorab festgelegte Regel über die Seeds an (Abschnitt 7). Nach jedem Paar nennt sie
-  den nächsten Seed oder das Urteil. Eine Aussage trifft sie nur für die Seeds 1, 2, 3, …
-  ohne Lücke, höchstens 60 Paare, mit 1000 Generationen und der Aufrufgrenze 13 000 000.
+  den nächsten Seed oder das Urteil. Eine Aussage trifft sie nur für die ersten Seeds der
+  festen Liste 1 bis 100, dann 111 bis 130, ohne Lücke, höchstens 120 Paare, mit 1000
+  Generationen und der Aufrufgrenze 13 000 000.
 - **Tests.** `tests/circuits.rs` hat 18 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
   und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
@@ -143,9 +144,9 @@ cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
 Arm A wählt die Eltern wie die Darwin-Gödel-Maschine (Zhang et al., ICLR 2026,
-Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die Seeds 1 bis 60 sind
-dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum den
-Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
+Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die Seeds 1 bis 100 und
+111 bis 130 sind dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum
+den Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
 Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu
 `rediscovery.json` und am Ende die besten Kaskaden und den Vergleich auf dem Auswahl-Panel.
 Für Arm A auf Seed 101 lautet die Zeile zu `rediscovery.json`:
@@ -417,25 +418,50 @@ Aufrufe.
 
 **Die Regel.** Das Experiment entscheidet selbst, wie viele Seeds es braucht. Die Regel,
 ihre Begründung und ihre Quellen stehen in der Vorab-Registrierung, Abschnitt 8. Die
-gezählten Seeds 1, 2, 3, … laufen in dieser Reihenfolge, je in beiden Armen und stets bis
-Generation 1000. Ein Lauf besteht, wenn seine Bestehenszeit T höchstens 1000 ist. Nach
-jedem Paar ändern sich zwei Belegwerte, die bei 1 beginnen:
+gezählten Seeds sind die feste Liste 1 bis 100, dann 111 bis 130; sie lässt die
+Pilot-Seeds 101 bis 110 aus. Sie laufen in dieser Reihenfolge, je in beiden Armen und
+stets bis Generation 1000. Ein Lauf besteht, wenn seine Bestehenszeit T höchstens 1000
+ist. Nach jedem Paar ändern sich zwei Belegwerte, die bei 1 beginnen:
 
 - **E1.** Es wächst um den Faktor 3/2, wenn Arm A besteht; sonst halbiert es sich.
 - **E2.** Es wächst um den Faktor 3/2, wenn Arm A zuerst besteht, und halbiert sich, wenn
   Arm R zuerst besteht; bei Gleichstand bleibt es gleich.
 
-Erreicht E1 den Wert 20, ist der Hauptnachweis erbracht: Mehr als die Hälfte aller Seeds
-besteht bis Generation 1000. Fällt E1 auf 1/20, ist er gescheitert. Für E2 gelten dieselben
-Schwellen. Den zweiten Nachweis, dass Arm A unter den Paaren ohne Gleichstand öfter zuerst
-besteht als Arm R, beanspruchen wir aber nur, wenn der Hauptnachweis erbracht ist. Das
-Experiment endet, sobald der Hauptnachweis scheitert, sobald er erbracht ist und E2 eine
-Schwelle erreicht hat, oder nach 60 Paaren. Gleich wann es endet, meldet es einen falschen
-Nachweis höchstens mit Wahrscheinlichkeit 1/20; für den Hauptnachweis sind es im
-ungünstigsten Fall rund 0.0385. Die alte Regel „9 von 10“ lag bei 11/1024 = 0.0107. Die
-neue Schranke ist also schwächer; sie entspricht der Schranke von 5 % der übrigen Tests im
-Projekt. Sie gilt nur, wenn die Reihenfolge der Seeds fest ist, kein Seed ausgelassen oder
-ersetzt wird und sich nach Seed 1 nichts ändert.
+Erreicht E1 den Wert 100, ist der Hauptnachweis erbracht: Mehr als die Hälfte aller Seeds
+besteht bis Generation 1000. Dafür braucht es mindestens 12 Paare. Fällt E1 auf 1/20, ist
+er gescheitert. Für E2 gelten dieselben Schwellen. Den zweiten Nachweis, dass Arm A unter
+den Paaren ohne Gleichstand öfter zuerst besteht als Arm R, beanspruchen wir aber nur,
+wenn der Hauptnachweis erbracht ist. Das Experiment endet, sobald der Hauptnachweis
+scheitert, sobald er erbracht ist und E2 eine Schwelle erreicht hat, oder nach 120 Paaren.
+Gleich wann es endet, meldet es einen falschen Nachweis höchstens mit Wahrscheinlichkeit
+1/100; für den Hauptnachweis sind es im ungünstigsten Fall rund 0.0079. Die alte Regel
+„9 von 10“ lag bei 11/1024 = 0.0107; die neue Schranke ist also etwas strenger. Sie gilt
+nur, wenn die Liste der Seeds und ihre Reihenfolge fest sind, kein Seed der Liste
+ausgelassen oder ersetzt wird und sich nach Seed 1 nichts ändert.
+
+**Warum 100 und 120 Paare.** Am 2026-10-30 hat die Eigentümerin bzw. der Eigentümer zuerst
+die Schwelle 20 mit höchstens 60 Paaren freigegeben und noch am selben Tag die
+wissenschaftlich tragende Fassung verlangt. Eine Prüfung von 16 Entwürfen wählte darauf
+die Schwelle 100 und höchstens 120 Paare. Die Schranke von 1 % ist einseitig, wie die
+Nachweise. Für bestätigende Nachweise wie diese ist eine einseitige Grenze von 5 %
+großzügig: Nach der regulatorischen Leitlinie ICH E9 (1998, Abschnitt 5.5) ist es in
+regulatorischen Verfahren vorzuziehen, den Fehler erster Art eines einseitigen Tests auf
+die Hälfte des üblichen zweiseitigen zu setzen, also auf 2.5 %. Die Schranke von 1 % ist
+um den Faktor 2.5 strenger; nach derselben Halbierung entspricht sie einem zweiseitigen
+Test zu 2 %. Die übrigen Tests des Projekts behalten ihre vorab festgelegte einseitige
+Grenze von 5 %. Auf Jeffreys' Skala in der Fassung von Kass und Raftery (1995) sowie Vovk
+und Wang (2021) gilt ein Belegwert über 100 als „entscheidend“ (decisive), einer von 20
+nur als „stark“ (strong). Bei der vorsichtigsten Schätzung aus dem Pilot, der
+Kaplan-Meier-Quote 0.710, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.86, über der
+üblichen Teststärke von 0.80 nach Cohen (1992). Bei der Kaplan-Meier-Quote wägt dieser
+Entwurf unter den 16 die beiden Fehler am besten ab, wenn ein falscher Erfolg um den
+Faktor 4 schwerer zählt als ein verpasster Nachweis; dieses Verhältnis von 4 zu 1 leitet
+Cohen (1992) aus seinen Konventionen ab. Der frühere Entwurf hätte den Hauptnachweis bei
+dieser Quote mit Wahrscheinlichkeit 0.82 erbracht. Der Gewinn hat eine Grenze: Häufiger
+als der frühere Entwurf gelingt der neue nur oberhalb einer Quote von etwa 0.67. Über die
+Unsicherheit der Pilotquote gemittelt ist die Chance auf einen wahren Nachweis etwa
+gleich. Was die Änderung bringt, ist ein um etwa den Faktor 5 seltenerer falscher Erfolg,
+um den Preis von mehr Rechenzeit.
 
 Nach jedem Paar rechnet die Auswertung und nennt den nächsten Seed oder das Urteil. Gleich
 nach Paar 1 lassen wir Seed 1 in beiden Armen noch einmal mit 1 und mit 4 Threads laufen;
@@ -443,11 +469,15 @@ alle Dateien außer `timings.jsonl` müssen byte-gleich sein. Vor dem Bericht z�
 `python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
 das Ergebnis unabhängig nach.
 
-Stimmen die Pilotquoten, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.82 bis 0.99.
-Wir rechnen dann im Mittel mit 17 bis 29 Seed-Paaren, also 3.6 bis 6.1 Stunden Rechenzeit
-bei 12.68 min je Paar. Im ungünstigsten Fall sind es 60 Paare: 14.3 Stunden beim Tempo des
-langsamsten Pilotpaars, 14.7 Stunden, wenn jedes Paar die langsamsten Läufe beider Arme
-hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
+Stimmen die Pilotquoten, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.86 bis 0.99.
+Wir rechnen dann im Mittel mit 26 bis 46 Seed-Paaren, also 5.8 bis 10.1 Stunden Rechenzeit
+bei 12.68 min je Paar, 0.42 Stunden für die Prüfung mit 1 und 4 Threads eingerechnet. Wir
+nehmen an, dass diese Prüfung so lange dauert wie zwei Paare bei 2 Threads; gemessen haben
+wir sie bei 1 und 4 Threads nicht. Im ungünstigsten Fall sind es 120 Paare: 28.6 Stunden
+beim Tempo des langsamsten Pilotpaars, 29.4 Stunden, wenn jedes Paar die langsamsten
+Läufe beider Arme hätte, also etwa 29 Stunden. Die Prüfung mit 1 und 4 Threads kommt
+hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mittel 4.0 bis
+6.6 Stunden gebraucht und höchstens etwa 15 Stunden.
 
 ## 8. Grenzen
 
@@ -458,10 +488,13 @@ hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
   sechs Punkte bestätigt: exakte Gleichheit als Kriterium (sie verschärft Q38), die
   Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in Gitter-Läufen, keine
   Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 7
-  anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Die Vorab-Registrierung
-  setzt diese Punkte um. Sie friert bei dem einen Commit ein, zu dem ihr Pull-Request beim
-  Zusammenführen in den Hauptzweig zusammengefasst wird. Gezählte Läufe gibt es noch keine;
-  alle Zahlen dieses Berichts stammen aus Pilotläufen.
+  anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Noch am selben Tag
+  verlangte sie bzw. er die wissenschaftlich tragende Fassung; die Nachweisschwelle 100,
+  höchstens 120 Paare und die Liste der Seeds aus Abschnitt 7 wählte darauf eine Prüfung
+  von 16 Entwürfen. Die Vorab-Registrierung setzt diese Punkte um. Sie friert bei dem
+  einen Commit ein, zu dem ihr Pull-Request beim Zusammenführen in den Hauptzweig
+  zusammengefasst wird. Gezählte Läufe gibt es noch keine; alle Zahlen dieses Berichts
+  stammen aus Pilotläufen.
 - **Was der Pilot zeigt.** Die Kalibrierung hält in jedem fertigen Pilotlauf. Bis Generation
   1000 bestand Arm A in 9 von 11 Läufen, Arm R in 2 von 10, und in 8 der 10 Paare, deren
   Arme beide so weit liefen, bestand Arm A zuerst. Die neun Läufe des ersten Pilots bestehen
@@ -473,10 +506,12 @@ hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
   späteren Reihen in 7 von 11 Läufen (Fisher-Test, p = 0.128). Ein Erfolg hängt an einem
   Ereignis, einem Worker, der Hadamard, Phase und Linear zugleich nennt. Darum streuen die
   Bestehenszeiten weit, und ein Erfolg nach Generation 1000 zählt als Misserfolg. Bei der
-  Quote 0.710 endet die Regel mit Wahrscheinlichkeit 0.099 als gescheitert und mit 0.080
-  ohne Urteil; ein gescheiterter Hauptnachweis beweist keine Quote von höchstens 1/2. Mit
-  den jetzigen Genen kann das gezählte Experiment also scheitern. Die Gene bleiben, wie sie
-  sind; jede Änderung verlangte neue Pilotläufe und eine neue Vorab-Registrierung.
+  Quote 0.710 endet die Regel mit Wahrscheinlichkeit 0.114 als gescheitert und mit 0.025
+  ohne Urteil; ein gescheiterter Hauptnachweis beweist keine Quote von höchstens 1/2.
+  Liegt die wahre Quote nur bei 0.6, gelingt der Hauptnachweis mit Wahrscheinlichkeit
+  0.18. Mit den jetzigen Genen kann das gezählte Experiment also scheitern. Die Gene
+  bleiben, wie sie sind; jede Änderung verlangte neue Pilotläufe und eine neue
+  Vorab-Registrierung.
 - **CH und Fredkin.** Kein Pilotlauf löste sie. Die Wege, welche die Tests zu ihnen
   festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf `sim:large`,
   Fredkin mit Compose außer Hadamard, Phase und Linear, und 7 CNOT erreicht es erst mit

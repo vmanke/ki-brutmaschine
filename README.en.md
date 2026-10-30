@@ -79,9 +79,10 @@ including its stop reason.
 
 ## Universes that invent (step 1)
 
-Status: built, with pilot Runs. The six decisions below were confirmed on 2026-10-30;
-counted Runs start once the pre-registration is frozen. Described in
-[docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
+Status: built, with pilot Runs. The six decisions below were confirmed on 2026-10-30. On
+the same day decision 5 got its scientifically load-bearing version: proof threshold 100,
+at most 120 seed pairs. Counted Runs start once the pre-registration is frozen.
+Described in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 the experiment is pre-registered in
 [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md). Specification:
@@ -132,7 +133,9 @@ Built:
 
 The pilot Runs are in [docs/pilot-step1/](docs/pilot-step1/README.md): the first pilot on
 seeds 101 and 102 and four later batches. Pilot Runs never count. The owner confirmed six
-decisions on 2026-10-30:
+decisions on 2026-10-30. Later that day the owner asked for the scientifically
+load-bearing version of decision 5, and a review of 16 designs then chose its numbers;
+decision 5 is shown in that version:
 
 1. Exact equality decides what is correct.
 2. Scoring goes by T count first, then by CNOT count.
@@ -140,11 +143,12 @@ decisions on 2026-10-30:
 4. Circuit Cascades are not promoted in step 1.
 5. The experiment decides by itself how many seeds it needs (sequential rule). A Run
    passes when breeding finds, by generation 1000, more than half of the targets that the
-   seed Cascades miss. Success means: more than half of all seeds pass. After each pair of
-   seeds the analysis checks whether the evidence suffices for a verdict; the experiment
-   ends after 60 pairs at the latest. However it ends, it reports a false success with
-   probability at most 1/20; the worst case is about 0.0385. This rule replaces the
-   rule "9 of 10", whose bound was 11/1024 = 0.0107.
+   seed Cascades miss. Success means: more than half of all seeds pass. The counted seeds
+   are 1 to 100, then 111 to 130, in this order. After each pair of seeds the analysis
+   checks whether the evidence suffices for a verdict; the experiment ends after 120 pairs
+   at the latest. However it ends, it reports a false success with probability at most
+   1/100; the worst case is about 0.0079. That is slightly stricter than the old rule
+   "9 of 10", whose bound was 11/1024 = 0.0107; this rule replaces it.
 6. The panels have 33 search and 22 select tasks.
 
 ## Building blocks

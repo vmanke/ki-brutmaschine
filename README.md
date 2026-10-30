@@ -470,7 +470,9 @@ aus dem Checkpoint nach, auch seinen Stoppgrund.
 ## Universen, die erfinden (Schritt 1)
 
 Stand: gebaut, mit Pilotläufen. Die sechs Entscheidungen unten sind am 2026-10-30
-freigegeben; gezählte Läufe beginnen, sobald die Vorab-Registrierung eingefroren ist.
+freigegeben. Am selben Tag bekam Entscheidung 5 ihre wissenschaftlich tragende Fassung:
+Nachweisschwelle 100, höchstens 120 Seed-Paare. Gezählte Läufe beginnen, sobald die
+Vorab-Registrierung eingefroren ist.
 Beschrieben in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md) und
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 das Experiment ist in [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md)
@@ -528,7 +530,10 @@ Gebaut sind:
 
 Die Pilotläufe liegen in [docs/pilot-step1/](docs/pilot-step1/README.md): der erste Pilot
 auf den Seeds 101 und 102 und vier spätere Reihen. Pilotläufe zählen nie. Die
-Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestätigt:
+Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestätigt. Noch am
+selben Tag verlangte sie bzw. er für Entscheidung 5 die wissenschaftlich tragende Fassung,
+deren Zahlen darauf eine Prüfung von 16 Entwürfen wählte; Entscheidung 5 steht hier in
+dieser Fassung:
 
 1. Exakte Gleichheit entscheidet über „richtig“.
 2. Bewertet wird erst nach T-Anzahl, dann nach CNOT-Anzahl.
@@ -537,11 +542,12 @@ Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestä
 5. Das Experiment entscheidet selbst, wie viele Seeds es braucht (sequenzielle Regel). Ein
    Lauf besteht, wenn die Zucht bis Generation 1000 mehr als die Hälfte der Ziele findet,
    welche die Startprogramme verfehlen. Erfolg heißt: Mehr als die Hälfte aller Seeds
-   besteht. Nach jedem Seed-Paar prüft die Auswertung, ob die Belege für ein Urteil
-   reichen; das Experiment endet spätestens nach 60 Paaren. Gleich wann es endet, meldet
-   es einen falschen Erfolg höchstens mit Wahrscheinlichkeit 1/20; der ungünstigste Fall
-   liegt bei rund 0.0385. Diese Regel ersetzt die Regel „9 von 10“, deren Schranke bei
-   11/1024 = 0.0107 lag.
+   besteht. Gezählt werden die Seeds 1 bis 100, dann 111 bis 130, in dieser Reihenfolge.
+   Nach jedem Seed-Paar prüft die Auswertung, ob die Belege für ein Urteil reichen; das
+   Experiment endet spätestens nach 120 Paaren. Gleich wann es endet, meldet es einen
+   falschen Erfolg höchstens mit Wahrscheinlichkeit 1/100; der ungünstigste Fall liegt bei
+   rund 0.0079. Das ist etwas strenger als die alte Regel „9 von 10“, deren Schranke bei
+   11/1024 = 0.0107 lag; diese Regel ersetzt sie.
 6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
 
 ## Die sechs Komponenten

@@ -3,6 +3,12 @@
 Status: ready-for-agent
 Type: task
 
+Note, 2026-10-30: after the approval, the owner asked for the scientifically load-bearing
+version, so U and the cap changed the same day. A claim is now proven at E >= 100 instead
+of 20, the cap is 120 pairs instead of 60, and the counted seeds are the fixed list 1 to
+100, then 111 to 130 (see Comments). The spec below is kept as first approved; the end of
+the Comments says how to read it.
+
 The owner rejected fixed counts and asked for a dynamic approach (2026-10-30): the
 experiment should decide by itself how many seeds it needs. A design workflow made three
 independent designs, checked each with an adversarial verifier and merged them into the
@@ -380,6 +386,7 @@ Statuses come from the v3 verifier unless marked otherwise. Corrections by v3 ar
 7. Vovk & Wang (2021). E-values: calibration, combination and applications. Ann. Statist. 49(3):1736-1754, doi:10.1214/20-AOS2020.
    - Supports: sequential e-values multiply into a test supermartingale (§4).
    - Supports: p = min(1, 1/E) is the only admissible calibrator (Prop. 2.2), so E >= 20 means p <= 0.05.
+   - Supports (added 2026-10-30): Jeffreys's rule of thumb for e-values (§7): e > 100 is 'decisive', e in (31.6, 100) 'very strong', e in (10, 31.6) 'strong'. Read in the arXiv version (arXiv:1912.06116v4).
 
 8. Ramdas, Grünwald, Vovk & Shafer (2023). Game-theoretic statistics and safe anytime-valid inference. Statistical Science 38(4):576-601, doi:10.1214/23-STS894.
    - Supports: valid at all stopping times, with 'optional stopping or continuation for any reason'.
@@ -422,6 +429,21 @@ Statuses come from the v3 verifier unless marked otherwise. Corrections by v3 ar
    - The 5 % house standard: PLAN_GENERALISIERUNG.md:192 'p < 0.05 (einseitig)', POSITIVKONTROLLE.md:29 and ARCHITEKTUR.md:653.
    - The old size 11/1024: PREREG_STEP1_CIRCUITS.md:264-267.
 
+Added 2026-10-30 for the thresholds of the Comments; each was verified against its text in that review.
+
+19. International Conference on Harmonisation (1998). ICH Harmonised Tripartite Guideline E9: Statistical Principles for Clinical Trials. Step 4 version, 5 February 1998. No DOI.
+   - A regulatory guideline, not a peer-reviewed paper.
+   - Supports reason (a), §5.5: "The approach of setting type I errors for one-sided tests at half the conventional type I error used in two-sided tests is preferable in regulatory settings." With the conventional 5 %, that is one-sided 2.5 %.
+
+20. Kass & Raftery (1995). Bayes factors. Journal of the American Statistical Association 90(430):773-795, doi:10.1080/01621459.1995.10476572.
+   - Supports reason (b), §3.2, p. 777: Jeffreys's categories call a Bayes factor from 10 to 100 'strong' and above 100 'decisive'.
+   - Caveat: Kass & Raftery's own, coarser scale calls 20 to 150 'strong' and above 150 'very strong'. They call the categories "a rough descriptive statement about standards of evidence", not a calibration.
+
+21. Cohen (1992). A power primer. Psychological Bulletin 112(1):155-159, doi:10.1037/0033-2909.112.1.155.
+   - Supports reason (c), p. 156: power .80 as "a convention proposed for general use".
+   - Supports reason (d), the weight 4 as the β:α ratio of 4:1, p. 156: "Taken with the conventional α = .05, power of .80 results in a β:α ratio of 4:1 (.20 to .05) of the two kinds of risks."
+   - Not cited: the reading that a type I error is four times as serious as a type II error. It is Cohen's (1988, p. 56), which the review saw only in secondary quotations.
+
 ## Provenance
 
 - Design workflow of 2026-10-30. d1: sequential test across seeds. d2: run length and wall
@@ -438,3 +460,98 @@ place of "9 of 10", with the evidence threshold 20 and the cap of 60 pairs as de
 above. The strict variant of open point 2, with the threshold 1024/11, was not chosen.
 Points 1-4 and 6 were approved the same day, so all six points of ADR 0006 now hold. The
 code changes after approval are agent work, so the status is now ready-for-agent.
+
+2026-10-30, thresholds. Later the same day the owner asked: "Na was denn jetzt,
+ordentliche Schwellen oder nicht? ... Wir nehmen die wissenschaftlich tragende Version". A
+review followed. It computed the exact operating characteristics of 16 designs: the proof
+thresholds 20, 40, 1024/11 and 100, each with a cap of 60, 80, 100 and 120 pairs. An
+independent recount and a Monte Carlo simulation checked those numbers. The sources were
+checked, and only those verified against their texts are cited, in the Sources section
+above (7, 18, 19, 20 and 21). Three independent judges voted for U = 40 with cap 100,
+U = 1024/11 with cap 120 and U = 100 with cap 120. An adversarial critic recomputed the
+numbers and upheld the 1 % bar with cap 120. The decision replaces U = 20 and the cap of
+60; everything else of the rule stays:
+
+- Proof threshold U = 100 for both claims. A claim is proven at the first pair with
+  E >= 100, in integers 3^w >= 100 · 2^n.
+- Lower threshold unchanged. A claim fails at the first pair with E <= 1/20, in integers
+  20 · 3^w <= 2^n.
+- Cap: at most 120 pairs.
+- Counted seeds: the fixed list 1, 2, ..., 100, then 111, 112, ..., 130, 120 seeds in all.
+  The pilot seeds 101 to 110 lie in that range and never count, so the list skips them.
+  The other pilot seeds (201-210, 301-310, 401, 402) lie outside it. The seeds run in this
+  order without gaps; pair i is the i-th seed of the list.
+- The seeds of the list are fresh. A scan of the 729 events.jsonl files on this machine
+  found no circuit Run with the counted settings on any seed of the list. The only circuit
+  Runs on seeds of the list are test Runs on 31, 33 and 57, with 9 or 11 search tasks.
+- Unchanged: 1000 generations, the call cap of 13 000 000, the three stop rules, the fixed
+  sequence (the secondary only after the primary is proven), the first crossing as final,
+  E2 unchanged on ties, the thread check after pair 1, the void rules and the T-only
+  variant.
+
+Reasons:
+
+- (a) The bound of 1 % is one-sided, as the claims are. For confirmatory claims like
+  these, a one-sided level of 5 % is lenient: the regulatory guideline ICH E9 (§5.5,
+  source 19) holds it preferable, in regulatory settings, to set the type I error of a
+  one-sided test at half the conventional two-sided one, that is at 2.5 %. The bound of
+  1 % is stricter than that by a factor of 2.5, and at least as strict as the bar of the
+  first version ("9 of 10", 11/1024 = 0.0107). By the same halving it matches a two-sided
+  test at 2 %. The other pass tests of the project keep their pre-registered one-sided
+  5 % (source 18).
+- (b) E >= 100 is 'decisive' evidence on Jeffreys's scale (Kass & Raftery 1995, source 20;
+  Vovk & Wang 2021, §7, source 7), whereas 20 is only 'strong'. E1 and E2 are powers of 3
+  over powers of 2 and never equal 100, so a proof means E above 100.
+- (c) The power is at least 0.80 at the most conservative pilot estimate, the
+  Kaplan-Meier rate 22/31: 0.8605 (Cohen 1992, source 21). P(undecided) is at most 5 %
+  there (0.0252), at p = 1/2 (0.0014) and at p = 3/4 (0.0031).
+- (d) Among the 16 designs it minimises 4 alpha + beta at the Kaplan-Meier rate (0.1710).
+  The weight 4 is the β:α ratio of 4:1 that Cohen (1992, source 21) derives from his
+  conventions.
+
+Caveat, stated honestly: the gain in power over U = 20 with cap 60 holds only above a pass
+rate of about 0.67 (0.666 by bisection with oc.py). Averaged over the uncertainty of the
+pilot rate, the chance of a true proof is about the same. What the change buys is a
+false-success probability about five times smaller, at more compute.
+
+Numbers. They come from the exact DP of oc.py and were checked twice. The evidence files
+are `.scratch/universum-erfinden/sequential-rule/designs.py` and `designs.txt`.
+
+- Count form, proven: 12, 14, 15, 17, 19, 20, 22 or 24 passes with 0 to 7 failures, so at
+  least 12 pairs to prove. Failed, unchanged: 5, 5, 6, 7, 7, 8, 8 or 9 failures with 0 to
+  7 passes, so at least 5 pairs to fail.
+- Worst-case type I error of the primary (p = 1/2, cap 120):
+  5230783465047250584069050481905459/2^119 = 0.007870 (bound 1/100). The largest
+  probability of any false claim over the joint null scenarios is 0.0079. Under both
+  nulls, claim 2 is made with probability 0.0010.
+- P(failed | p = 3/4) = 0.0367 (bound 1/20).
+- Primary power at cap 120: 0.1828 at p = 0.6; 0.8183 at 0.7; 0.8605 at 22/31 (failed
+  0.1144, undecided 0.0252); 0.9601 at 3/4; 0.9737 at 61/80; 0.9927 at 0.8; 0.9962 at
+  9/11.
+- Joint rule, Kaplan-Meier scenario: P(claim 1) 0.8605, P(both) 0.8574, E[N] 45.92 pairs,
+  N90 82, expected 10.12 h (E[N] × 12.68 min plus 0.42 h for the thread check). The
+  0.42 h assume that the four Runs of the thread check take as long as two pairs at 2
+  threads; they have not been timed at 1 or 4 threads.
+- Joint rule, the 10 long pilot pairs as observed: 0.9927 and 0.9927, E[N] 25.61, N90 42,
+  5.83 h.
+- Worst case, 120 pairs: 28.6 h at the slowest pilot pair (14.31 min), 29.4 h if every
+  pair had the slowest run of each arm (14.69 min), plus the thread check.
+- Comparison: U = 20 with cap 60 had type I 0.0385, Kaplan-Meier power 0.8211,
+  P(undecided) 0.0801 at the Kaplan-Meier rate, and 4.0 to 6.6 h expected with the thread
+  check. Its worst case is 14.3 h (14.7 h with the slowest run of each arm), plus the
+  thread check. U = 1024/11 with cap 120 is a statistical twin (type I 0.0086,
+  Kaplan-Meier power 0.8620); 100 is the round 1 % level and slightly stricter.
+- Pilot illustration on the pairs 301 to 309: the pass times are unchanged. After 9 pairs
+  E1 = 6561/512 = 12.81 and E2 = 6561/256 = 25.63, and both are open: neither reached 100
+  nor 1/20. Under U = 20, E2 had crossed 20 at the ninth pair.
+- Integers: 3^120 has 191 bits and does not fit u128, while 100 · 2^120 < 2^127 does.
+  Every decision must stay exact and in integers, with no new crate.
+
+How to read the sections above: the Summary, Design, Numbers, Risks, Open points and Code
+changes describe the design as first approved. That design has U = 20, a cap of 60 pairs,
+the seeds 1, 2, 3, ..., and one constant EVIDENCE = 20 for both tests in u128. Every
+number and risk in those sections belongs to that design. The current design, its numbers
+and its integer plan are those of this comment. The analysis compares 3^w with
+PROOF · 2^n (PROOF = 100) and FAILURE · 3^w with 2^n (FAILURE = 20) as exact natural
+numbers, since 3^120 needs 191 bits. The code changes are agent work, so the status stays
+ready-for-agent.

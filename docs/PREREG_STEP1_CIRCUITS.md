@@ -9,13 +9,16 @@ any counted Run. Of this experiment, only pilot seeds have run
 ([docs/pilot-step1/](pilot-step1/README.md)); no counted seed has run in either arm. The
 owner approved the six decisions of ADR 0006 and the changes of issue 09 on 2026-10-30;
 this version implements them. Decision 5 is the sequential rule of section 8, which
-replaced the fixed rule "9 of 10" on the same day. The frozen commit is the one commit
-that the pull request with this version creates on the main branch. The pull request is
-merged as one squashed commit, so none of the intermediate commits of its branch reaches
-the main branch. A commit cannot hold its own hash, so we record the hash with the
-results and in the pull request. From that commit on nothing below changes, and above
-all nothing changes after seed 1 has started: a change then makes a new experiment on
-seeds not used before. Every deviation is reported with the results, with its reason.
+replaced the fixed rule "9 of 10" on the same day. Later that day the owner asked for the
+scientifically load-bearing version of the rule, and this version implements that too:
+the proof threshold 100, at most 120 pairs and a fixed list of counted seeds (sections 2,
+6 and 8). The frozen commit is the one commit that the pull request with this version
+creates on the main branch. The pull request is merged as one squashed commit, so none of
+the intermediate commits of its branch reaches the main branch. A commit cannot hold its
+own hash, so we record the hash with the results and in the pull request. From that
+commit on nothing below changes, and above all nothing changes after seed 1 has started:
+a change then makes a new experiment on seeds not used before. Every deviation is
+reported with the results, with its reason.
 The report on step 1 is [SCHRITT1_SCHALTUNGEN.md](SCHRITT1_SCHALTUNGEN.md) (English:
 [STEP1_CIRCUITS.md](STEP1_CIRCUITS.md)).
 
@@ -42,7 +45,7 @@ models.
 | Genes | `src/cascade/circuit_genes.rs`: the 4 seed Cascades, the 50 phrases, the Mutator's brief and the admission rule `no_gate_lists`. |
 | Calibration | The results of section 5, pinned by tests. |
 | Arms | Section 6. |
-| Seeds | 1, 2, 3, ... in this order, at most 60, paired between the arms. The pilot seeds 101 to 110, 201 to 210, 301 to 310, 401 and 402 are not counted (section 10). |
+| Seeds | The fixed list 1, 2, ..., 100, then 111, 112, ..., 130: 120 seeds in this order, paired between the arms. Pair i is the i-th seed of the list. The pilot seeds 101 to 110 lie in the range of the list and are skipped; the pilot seeds 201 to 210, 301 to 310, 401 and 402 lie outside it. No pilot seed is counted (section 10). |
 | Definitions and rules | Sections 7 to 9. |
 
 The Runs of the first pilot (seeds 101 and 102, section 10) were first made with an
@@ -178,8 +181,8 @@ target plain and in three disguises.
 
 ## 6. The arms and the procedure
 
-**Arm A** (Darwin Gödel selection), for each counted seed S = 1, 2, 3, ... in this order,
-at most 60:
+**Arm A** (Darwin Gödel selection), for each counted seed S of the list 1 to 100, then
+111 to 130, in this order, at most 120:
 
 ```sh
 brut-breed --out runs/A-S --domain circuits --search 33 --select 22 --children 8 \
@@ -200,9 +203,9 @@ share their generations and their call cap. It also refuses a Run that bred more
 generations than its config plans (a resume may lower `--generations` below what a Run
 had bred) and a Run that stopped short of them for any reason but the call budget. It
 makes a claim only when these are the 1000 generations and the cap of 13 000 000 calls
-below, no Run ended at the cap, and the seeds are exactly 1 to n with n <= 60; otherwise
-it prints the numbers and says that it makes no claim. For more than 60 pairs it prints
-no numbers and stops with an error.
+below, no Run ended at the cap, and the seeds are exactly the first n seeds of the list
+with n <= 120; otherwise it prints the numbers and says that it makes no claim. For more
+than 120 pairs it prints no numbers and stops with an error.
 
 **Length and cap.** Every Run completes all 1000 generations; there is no early stop. The
 pilot batches set `--generations 1000` and `--max-calls 13000000` (section 10). By our
@@ -222,29 +225,31 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
 2. Acceptance check, before seed 1 and not counted: run the frozen analysis on the pilot
    pairs 301 to 309 of section 10. It must withhold the claim, give the pass times
    T_A = never, 7, 75, 97, 349, 143, 33, 180, 810 and T_R = never, 380, then never for
-   the rest, and end open with E1 = 6561/512 and E2 = 6561/256, which crossed 20 at the
-   ninth pair. `reference_rule.py --pilots` gives the same values.
-3. Run the counted pairs in seed order. For pair S, run arm A and arm R of seed S, one
-   process at a time, each into a fresh directory. A Run that is stopped, killed or
-   otherwise interrupted before it finishes is not resumed: we delete its directory and
-   run it again from scratch, on the same seed, into a fresh one. A resumed Run would
-   reach the same Cascades, judgments, `state` lines and `rediscovery.json`, but it counts
-   the reserved calls of the interrupted generation as spent, so `calls_used` in its
-   `events.jsonl`, `snapshot.json` and `report.json` would differ from a straight Run's.
-   Only uninterrupted Runs are counted, and the same holds for the Runs of step 5.
-   Finished pairs are kept.
+   the rest, and end open with E1 = 6561/512 and E2 = 6561/256: neither has reached 100
+   or fallen to 1/20. `reference_rule.py --pilots` gives the same values.
+3. Run the counted pairs in the order of the list. For the pair of seed S, run arm A and
+   arm R of seed S, one process at a time, each into a fresh directory. A Run that is
+   stopped, killed or otherwise interrupted before it finishes is not resumed: we delete
+   its directory and run it again from scratch, on the same seed, into a fresh one. A
+   resumed Run would reach the same Cascades, judgments, `state` lines and
+   `rediscovery.json`, but it counts the reserved calls of the interrupted generation as
+   spent, so `calls_used` in its `events.jsonl`, `snapshot.json` and `report.json` would
+   differ from a straight Run's. Only uninterrupted Runs are counted, and the same holds
+   for the Runs of step 5. Finished pairs are kept.
 4. After each pair, run `brut-breed --out <dir> --verify` on both of its Runs. Each must
    end with "report recomputed and equal; rediscovery recomputed and equal". Then run the
-   frozen analysis on all finished pairs, 1 to n:
+   frozen analysis on all finished pairs, the first n seeds of the list up to seed S:
 
    ```sh
    cargo run --example circuit_positive_control -- \
-     --a runs/A-1 runs/A-2 ... runs/A-n --r runs/R-1 runs/R-2 ... runs/R-n
+     --a runs/A-1 runs/A-2 ... runs/A-S --r runs/R-1 runs/R-2 ... runs/R-S
    ```
 
-   It updates the evidence values of section 8 in seed order and then either names the
-   next seed to run or gives the verdicts. As long as it names a seed, go on with step 3
-   for that seed. After pair 1, do step 5 before seed 2 starts.
+   The two lists hold the Runs of the seeds of the list up to S, in its order, so from
+   S = 111 on they skip runs/A-101 to runs/A-110 and runs/R-101 to runs/R-110. The
+   analysis updates the evidence values of section 8 in the order of the list and then
+   either names the next seed to run or gives the verdicts. As long as it names a seed, go
+   on with step 3 for that seed. After pair 1, do step 5 before seed 2 starts.
 5. Thread check, once, right after pair 1 and before pair 2, so that a void shows early:
    run seed 1 of each arm twice more, once with `RAYON_NUM_THREADS=1` and once with
    `RAYON_NUM_THREADS=4`, into fresh directories, one process at a time. In each arm,
@@ -259,14 +264,15 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
    python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs runs
    ```
 
-   This reads A-1, R-1, A-2, R-2, ... in seed order and counts a pair once both of its
-   Runs are finished. For every counted Run it checks that it is a circuit Run, and its
-   seed, arm, generations, call cap, children per generation, two panel sizes, stop
+   This reads A-1, R-1, A-2, R-2, ... in the order of the list and counts a pair once both
+   of its Runs are finished. For every counted Run it checks that it is a circuit Run, and
+   its seed, arm, generations, call cap, children per generation, two panel sizes, stop
    reason and calibration gate; the analysis checks every other setting of this section.
-   It refuses gaps in the seeds and more than 60 pairs, and it reports the experiment
-   void when a pair up to the stop fails the gate. Its pass times, evidence values, stop
-   pair and verdicts must equal those of the analysis; we report the recount with the
-   results, and any difference.
+   It refuses a seed that is not on the list 1 to 100, then 111 to 130, and a gap in the
+   order of the list, so also more than 120 pairs. It reports the experiment void when a
+   pair up to the stop fails the gate. Its pass times, evidence values, stop pair and
+   verdicts must equal those of the analysis; we report the recount with the results, and
+   any difference.
 
 ## 7. Definitions
 
@@ -310,20 +316,26 @@ Run's `rediscovery.json`; `--verify` checks the checkpoint's archive against the
 `born` events and recomputes the file from that archive, and the analysis recounts it from
 its own target list. Every decision is made in integers: D > 1/2 means
 2 · |R_bred \ R_seed| > |L \ R_seed|, pass times are compared as generations, and the
-evidence values of section 8 are compared as 3^k against 20 · 2^n.
+evidence values of section 8 are compared as 3^k against 100 · 2^n and as 20 · 3^k
+against 2^n.
 
 ## 8. Results
 
 The experiment decides by itself how many seeds it needs: a sequential rule across seeds.
 It replaces the fixed rule "9 of 10" of the first version of this document (ADR 0006,
-decision 5). Its design, its sources and its operating characteristics are in
+decision 5). Its design and its sources are in
 `.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`, with the scripts
-and their outputs in `.scratch/universum-erfinden/sequential-rule/`; `own_check.py` there
-recomputes the figures of the primary claim from the rule text alone.
+and their outputs in `.scratch/universum-erfinden/sequential-rule/`. The body of issue 09
+describes the design as first approved, with the threshold 20 and at most 60 pairs. The
+thresholds, the cap and the seed list of this version, and their operating
+characteristics, are in its Comments, entry "2026-10-30, thresholds", and in
+`designs.txt`. `own_check.py` recomputes the figures of the primary claim from the rule
+text alone, and `designs.py` compares the 16 designs from which the thresholds below were
+chosen.
 
 **Evidence values.** Two evidence values, E1 and E2, start at 1. They are updated strictly
-in seed order: pair s enters only after pairs 1 to s - 1, never in the order in which Runs
-finish.
+in the order of the seed list: pair i enters only after pairs 1 to i - 1, never in the
+order in which Runs finish.
 
 - E1 is multiplied by 3/2 when X(s) = 1 and by 1/2 when X(s) = 0. After n pairs with k
   passes, E1 = 3^k / 2^n.
@@ -333,13 +345,13 @@ finish.
   rate of 1/2.
 
 **Primary result (ticket 03).** The primary claim is proven at the first pair with
-E1 >= 20, that is 3^k >= 20 · 2^n. It fails at the first pair with E1 <= 1/20, that is
-20 · 3^k <= 2^n. In counts, it is proven at 8, 10, 11, 13, 15, 16, 18 or 20 passes with 0
-to 7 failures, and it fails at 5, 5, 6, 7, 7, 8, 8 or 9 failures with 0 to 7 passes. So
-it takes at least 8 pairs to prove and at least 5 to fail. Proven means that more than
+E1 >= 100, that is 3^k >= 100 · 2^n. It fails at the first pair with E1 <= 1/20, that is
+20 · 3^k <= 2^n. In counts, it is proven at 12, 14, 15, 17, 19, 20, 22 or 24 passes with
+0 to 7 failures, and it fails at 5, 5, 6, 7, 7, 8, 8 or 9 failures with 0 to 7 passes. So
+it takes at least 12 pairs to prove and at least 5 to fail. Proven means that more than
 half of all seeds pass within 1000 generations: it rejects the null hypothesis "pass rate
 <= 1/2". Failed means that the data speak against a pass rate of 3/4 or more: this verdict
-is wrong with probability at most 1/20 when the rate is 3/4 or more (0.0347 at exactly
+is wrong with probability at most 1/20 when the rate is 3/4 or more (0.0367 at exactly
 3/4). It does not prove a rate of 1/2 or less.
 
 **Secondary result: selection matters.** The same two thresholds apply to E2. Proven means
@@ -349,34 +361,68 @@ about selection. The two claims form a fixed sequence: the secondary is claimed 
 the primary is proven, whichever of the two crosses a threshold first. Every verdict is
 final at its first crossing.
 
-**Stop.** The ceiling is 1000 generations per Run and 60 pairs per experiment. After each
+**Stop.** The ceiling is 1000 generations per Run and 120 pairs per experiment. After each
 pair, the experiment stops at the first of:
 
 1. The primary has failed. The secondary is then "not tested", and E2 is reported.
 2. The primary is proven and E2 has crossed either threshold.
-3. 60 pairs are done. A claim still open is "undecided, no claim" and is reported with its
-   E value. Running more pairs later is a deviation and is reported as one.
+3. 120 pairs are done. A claim still open is "undecided, no claim" and is reported with
+   its E value. Running more pairs later is a deviation and is reported as one.
 
 **Error bounds.** However the experiment stops, each claim is made falsely with
-probability at most 1/20, and some claim is made falsely with probability at most 1/20.
+probability at most 1/100, and some claim is made falsely with probability at most 1/100.
 This follows from Ville's inequality for test supermartingales (Shafer, Shen, Vereshchagin
 and Vovk 2011; Waudby-Smith and Ramdas 2024) and from the fixed sequence of the two
 claims. The exact worst case for the primary claim, at a pass rate of 1/2 and the cap of
-60 pairs, is a false proof with probability 5555272097573807 / 2^57 = 0.0385; the largest
-probability of any false claim over the joint null scenarios of issue 09 is also 0.0385.
-The bar is weaker than that of the fixed rule "9 of 10", whose size was 11/1024 = 0.0107;
-it is the 5 % bar of the project's other pass tests. A fixed test cannot simply be checked
-again after every pair instead: an exact one-sided 5 % binomial test run after every pair
-succeeds falsely with probability 0.0987 by 20 pairs.
+120 pairs, is a false proof with probability
+5230783465047250584069050481905459 / 2^119 = 0.007870. The largest probability of any
+false claim over the joint null scenarios of issue 09 is 0.0079; when both null
+hypotheses hold, the secondary claim is made with probability 0.0010. The bar is slightly
+stricter than that of the fixed rule "9 of 10", whose size was 11/1024 = 0.0107. A fixed
+test cannot simply be checked again after every pair instead: an exact one-sided 5 %
+binomial test run after every pair succeeds falsely with probability 0.0987 by 20 pairs.
 
-**Conduct.** The error bounds require that the seed order is fixed, that no seed is skipped
-or replaced, that the updates go by seed and never by completion order, and that the
-settings, the ceiling, the definitions of T, X and Y and the thresholds do not change after
-seed 1. A breach voids the bounds. The bounds also rest on one assumption that cannot be
-checked: under the null hypothesis, each new seed passes with probability at most 1/2,
-given the earlier seeds. We assume this because the random streams of a Run are derived
-from a hash of its seed. In this container we run one process at a time; elsewhere Runs
-may run in parallel as long as the updates stay in seed order.
+**Why the threshold 100 and the cap of 120 pairs.** On 2026-10-30 the owner first approved
+the threshold 20 with at most 60 pairs, and later that day asked for the scientifically
+load-bearing version. A review then computed the exact operating characteristics of 16
+designs (issue 09, Comments). It chose this design for four reasons:
+
+- **The level.** The bound of 1 % is one-sided, as the claims are. For confirmatory claims
+  like these, a one-sided level of 5 % is lenient: the regulatory guideline ICH E9 (1998,
+  section 5.5) holds it preferable, in regulatory settings, to set the type I error of a
+  one-sided test at half the conventional two-sided one, that is at 2.5 %. The bound of
+  1 % is stricter than that by a factor of 2.5, and at least as strict as the bar of the
+  first version (11/1024 = 0.0107). By the same halving it matches a two-sided test at
+  2 %. The other pass tests of the project keep their pre-registered one-sided 5 %.
+- **The evidence.** On Jeffreys's scale, as Kass and Raftery (1995, section 3.2) and Vovk
+  and Wang (2021, section 7) give it, evidence above 100 is "decisive", whereas evidence
+  of 20 is only "strong". E1 and E2 are powers of 3 divided by powers of 2, so they never
+  equal 100, and a proof means evidence above 100. The former threshold 20 gave only
+  strong evidence.
+- **The power.** At the most conservative pilot estimate, the Kaplan-Meier rate 22/31,
+  the primary claim is proven with probability 0.8605, above the conventional power of
+  0.80 (Cohen 1992). The probability of ending undecided is at most 5 % there (0.0252),
+  at a pass rate of 1/2 (0.0014) and at 3/4 (0.0031).
+- **The balance of errors.** Among the 16 designs this one gives the smallest
+  4 · alpha + beta at the Kaplan-Meier rate, where alpha is the exact worst case of a
+  false proof and beta = 1 - power. The weight 4 is the ratio of 4 to 1 between the two
+  kinds of error that Cohen (1992) derives from his conventions.
+
+One caveat holds. The new design proves the primary claim more often than the former one
+only above a pass rate of about 0.67. Averaged over the uncertainty of the pilot rate, the
+chance of a true proof is about the same. What the change buys is a probability of a false
+success about five times smaller (0.0079 instead of 0.0385), at the price of more
+computing time (section 10).
+
+**Conduct.** The error bounds require that the seed list and its order are fixed, that no
+seed of the list is skipped or replaced, that the updates go by the order of the list and
+never by completion order, and that the settings, the ceiling, the definitions of T, X and
+Y and the thresholds do not change after seed 1. A breach voids the bounds. The bounds
+also rest on one assumption that cannot be checked: under the null hypothesis, each new
+seed passes with probability at most 1/2, given the earlier seeds. We assume this because
+the random streams of a Run are derived from a hash of its seed. In this container we run
+one process at a time; elsewhere Runs may run in parallel as long as the updates stay in
+the order of the list.
 
 **Reported per pair.** R_seed, D_A and D_R at generation 1000, T_A, T_R, X, Y, and E1 and E2
 after the pair. Then the stop pair and both verdicts, with E1 and E2 at the stop. We never
@@ -429,11 +475,12 @@ The experiment is void, and we make no claim, when any of these holds:
 ## 10. The pilot seeds
 
 Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402, which include
-the first pilot seeds 101 and 102. They never enter the analysis of the counted seeds,
-because they chose the design: the later batches set the ceiling of 1000 generations, the
-call cap and the planning figures below. The calibration test reads the search panel of
-seed 101 without a Run. The pass time of every pilot Run is in
-[docs/pilot-step1/](pilot-step1/README.md).
+the first pilot seeds 101 and 102. The seeds 101 to 110 lie in the range of the counted
+list, which skips them; the other pilot seeds lie outside it. Pilot seeds never enter the
+analysis of the counted seeds, because they chose the design: the later batches set the
+ceiling of 1000 generations, the call cap and the planning figures below. The calibration
+test reads the search panel of seed 101 without a Run. The pass time of every pilot Run
+is in [docs/pilot-step1/](pilot-step1/README.md).
 
 **First pilot, seeds 101 and 102.** `docs/pilot-step1/pilot.json` holds every number of
 this list; all its Runs pass `--verify`.
@@ -486,16 +533,22 @@ invention candidate or solved ch or fredkin.
   took 10.57 to 14.31 min (mean 12.68 min, 10 pairs).
 
 **Planning figures** (not part of the rule). At the pilot rates the primary claim is
-proven with probability 0.82 to 0.99, and both claims with 0.815 to 0.990: the low end
+proven with probability 0.86 to 0.99, and both claims with 0.857 to 0.993: the low end
 draws pairs from the Kaplan-Meier curves of both arms, the high end from the 10 long pilot
-pairs as observed. The experiment then needs 29.1 to 17.0 pairs on average, that is 6.1
-to 3.6 hours at 12.68 min per pair; 90 % of such experiments need at most 57 to 30 pairs.
-It needs at most 60 pairs: 14.3 hours at the slowest pilot pair, or 14.7 hours if every
-pair had the slowest Run of each arm. The thread check comes on top. These figures assume
-that the arms of a pair are independent, that the Kaplan-Meier curves stay flat after
-their last pilot pass, and that this container's timings carry over. The fixed rule
-"9 of 10" would have passed with probability 0.165 at the Kaplan-Meier rate and 0.433 at
-9/11.
+pairs as observed. The experiment then needs 45.9 to 25.6 pairs on average; 90 % of such
+experiments need at most 82 to 42 pairs. At 12.68 min per pair, that is 10.1 to 5.8 hours
+on average, including 0.42 hours for the thread check. We assume that its four Runs take
+as long as two pairs at 2 threads; they have not been timed at 1 or 4 threads. The
+experiment needs at most 120 pairs: 28.6 hours at the slowest pilot pair, or 29.4 hours
+if every pair had the slowest Run of each arm; the thread check comes on top. The primary
+claim alone is proven with probability 0.18 at a pass rate of 0.6, 0.82 at 0.7, 0.96 at
+3/4 and 0.996 at 9/11.
+These figures assume that the arms of a pair are independent, that the Kaplan-Meier
+curves stay flat after their last pilot pass, and that this container's timings carry
+over. The former design, threshold 20 with at most 60 pairs, would have taken 6.6 to 4.0
+hours on average on the same basis, and at most 60 pairs, 14.3 hours at the slowest pilot
+pair. The fixed rule "9 of 10" would have passed with probability 0.165 at the
+Kaplan-Meier rate and 0.433 at 9/11.
 
 ## 11. The claim
 
@@ -510,6 +563,6 @@ a human has checked the literature (Q38).
 
 If the primary claim fails, we report that it fails: the data then speak against a pass
 rate of 3/4 or more, which is no proof of a rate of 1/2 or less. A claim that is not
-decided by pair 60 is reported as undecided, with its E value. A later change of the
+decided by pair 120 is reported as undecided, with its E value. A later change of the
 genes, the designer, the settings or the analysis needs a new pre-registration and seeds
 not used before.

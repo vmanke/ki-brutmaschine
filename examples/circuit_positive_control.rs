@@ -21,13 +21,13 @@
 //! T passes first; equal T, also never in both arms, is a tie. Two evidence values start
 //! at 1. E1 is multiplied by 3/2 when X = 1 and by 1/2 when X = 0. E2 is multiplied by 3/2
 //! when arm A passes first and by 1/2 when arm R does; a tie leaves it unchanged. A claim
-//! is proven when its E first reaches 20 and fails when it first falls to 1/20, and this
+//! is proven when its E first reaches 100 and fails when it first falls to 1/20, and this
 //! first crossing is final. The primary claim (ticket 03: more than half of all seeds
 //! pass) rests on E1. The secondary claim (selection: among untied pairs, arm A passes
 //! first more often than arm R) rests on E2 and counts only when the primary is proven.
 //! The rule stops after the first pair at which the primary fails, or at which the primary
-//! is proven and E2 has crossed, and at the latest after 60 pairs. A claim still open then
-//! is undecided.
+//! is proven and E2 has crossed, and at the latest after 120 pairs. A claim still open
+//! then is undecided.
 //!
 //! It prints, per counted seed s, R_seed(s), D_A(s), D_R(s) and the calibration gate
 //! |R_seed(s)| <= |L| / 3, and then T_A, T_R, X, the first arm, E1 and E2. Pairs after the
@@ -42,13 +42,15 @@
 //! invention candidate per target and run. They also name the runs that ended at the call
 //! cap.
 //!
-//! It makes a claim only for the counted seeds 1, 2, 3, ... without gaps, at most 60, in
-//! both arms, run with the pre-registered `--generations 1000` and `--max-calls 13000000`,
-//! with no run ended at the call cap. For other seeds, such as the pilots, or for other
-//! generations or caps, it prints the numbers and says that it makes no claim. For more
-//! than 60 pairs it prints no numbers and stops with an error. Run
-//! `brut-breed --out <dir> --verify` on every directory first: this program checks each
-//! count against its own target list, not the hash chain.
+//! The counted seeds are a fixed list of 120 in this order: 1 to 100, then 111 to 130.
+//! Pair i runs the i-th seed of the list. The pilot seeds 101 to 110 lie in this range and
+//! never count, so the list skips them. It makes a claim only for the first seeds of the
+//! list, in order and without gaps, in both arms, run with the pre-registered
+//! `--generations 1000` and `--max-calls 13000000`, with no run ended at the call cap. For
+//! other seeds, such as the pilots, or for other generations or caps, it prints the numbers
+//! and says that it makes no claim. For more than 120 pairs it prints no numbers and stops
+//! with an error. Run `brut-breed --out <dir> --verify` on every directory first: this
+//! program checks each count against its own target list, not the hash chain.
 //!
 //! Usage:
 //!   cargo run --example circuit_positive_control -- --a <dir>... --r <dir>...
@@ -73,16 +75,25 @@ const GENERATIONS: usize = 1000;
 /// The call cap of every counted Run, which no counted Run can reach (section 6).
 const MAX_CALLS: u64 = 13_000_000;
 
-/// The most seed pairs the experiment counts, its pre-registered cap. Every evidence test
-/// fits a u128, since 20 * 3^60 < 2^128.
-const MAX_PAIRS: usize = 60;
+/// The most seed pairs the experiment counts, its pre-registered cap: one pair for each
+/// counted seed.
+const MAX_PAIRS: usize = 120;
 
-/// A claim is proven when its evidence reaches EVIDENCE, and it fails when its evidence
-/// falls to 1 / EVIDENCE.
-const EVIDENCE: u128 = 20;
+/// A claim is proven when its evidence first reaches PROOF.
+const PROOF: u32 = 100;
+
+/// A claim fails when its evidence first falls to 1 / FAILURE.
+const FAILURE: u32 = 20;
 
 /// How a run ends when it completes every generation.
 const ALL_GENERATIONS: &str = "all generations done";
+
+/// The counted seeds in their fixed order, MAX_PAIRS of them: 1 to 100, then 111 to 130.
+/// Pair i runs the i-th. The pilot seeds 101 to 110 lie in this range and never count, so
+/// the list skips them; the other pilot seeds lie beyond it.
+fn counted_seeds() -> impl Iterator<Item = u64> {
+    (1..=100).chain(111..=130)
+}
 
 fn main() {
     match run(std::env::args().skip(1).collect()) {
@@ -439,6 +450,72 @@ fn first(t_a: Option<usize>, t_r: Option<usize>) -> First {
     }
 }
 
+/// An exact natural number of any size, for the evidence values. 3^120 has 191 bits, more
+/// than a u128 holds. Its digits are in base 10^9, the lowest first, and the top digit is
+/// not 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Natural(Vec<u32>);
+
+/// The base of the digits of a Natural.
+const DIGIT_BASE: u64 = 1_000_000_000;
+
+impl Natural {
+    /// base^exp, for a base of at least 1.
+    fn power(base: u32, exp: u32) -> Natural {
+        (0..exp).fold(Natural(vec![1]), |product, _| product.times(base))
+    }
+
+    /// The product with a factor of at least 1, so that the top digit stays above 0.
+    fn times(self, factor: u32) -> Natural {
+        let mut digits = self.0;
+        let mut carry = 0;
+
+        for digit in &mut digits {
+            let x = u64::from(*digit) * u64::from(factor) + carry;
+
+            *digit = (x % DIGIT_BASE) as u32;
+            carry = x / DIGIT_BASE;
+        }
+
+        while carry > 0 {
+            digits.push((carry % DIGIT_BASE) as u32);
+            carry /= DIGIT_BASE;
+        }
+
+        Natural(digits)
+    }
+}
+
+impl Ord for Natural {
+    /// With no 0 on top, more digits make a larger number; equal lengths compare from the
+    /// top digit down.
+    fn cmp(&self, other: &Natural) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.iter().rev().cmp(other.0.iter().rev()))
+    }
+}
+
+impl PartialOrd for Natural {
+    fn partial_cmp(&self, other: &Natural) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for Natural {
+    /// In decimal: the top digit as it is, every lower one with all nine places.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut digits = self.0.iter().rev();
+
+        if let Some(top) = digits.next() {
+            write!(f, "{top}")?;
+        }
+
+        digits.try_for_each(|digit| write!(f, "{digit:09}"))
+    }
+}
+
 /// An evidence value E = 3^up / 2^n after n steps, `up` of them by 3/2 and the rest by
 /// 1/2: the likelihood ratio of a rate of 3/4 against 1/2. The default is the start, E = 1.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -456,28 +533,41 @@ impl Evidence {
         }
     }
 
-    /// E >= EVIDENCE, in integers: 3^up >= EVIDENCE * 2^n.
+    /// E >= PROOF, in integers: 3^up >= PROOF * 2^n.
     fn proven(self) -> bool {
-        3u128.pow(self.up) >= EVIDENCE * (1u128 << self.n)
+        Natural::power(3, self.up) >= Natural::power(2, self.n).times(PROOF)
     }
 
-    /// E <= 1 / EVIDENCE, in integers: EVIDENCE * 3^up <= 2^n.
+    /// E <= 1 / FAILURE, in integers: FAILURE * 3^up <= 2^n.
     fn failed(self) -> bool {
-        EVIDENCE * 3u128.pow(self.up) <= 1u128 << self.n
+        Natural::power(3, self.up).times(FAILURE) <= Natural::power(2, self.n)
     }
 
-    /// E as an exact fraction.
-    fn ratio(self) -> Ratio {
-        Ratio::new(3u128.pow(self.up), 1u128 << self.n)
+    /// E as a float, only to be read; no decision uses it.
+    fn value(self) -> f64 {
+        3f64.powi(self.up as i32) / 2f64.powi(self.n as i32)
+    }
+}
+
+impl fmt::Display for Evidence {
+    /// E as an exact fraction, 3^up / 2^n in lowest terms, and its value.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}/{} = {:.4}",
+            Natural::power(3, self.up),
+            Natural::power(2, self.n),
+            self.value()
+        )
     }
 }
 
 /// The verdict on one claim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verdict {
-    /// Its E reached EVIDENCE at this pair.
+    /// Its E reached PROOF at this pair.
     Proven(usize),
-    /// Its E fell to 1 / EVIDENCE at this pair.
+    /// Its E fell to 1 / FAILURE at this pair.
     Failed(usize),
     /// The rule stopped after MAX_PAIRS pairs before its E crossed: no claim.
     Undecided,
@@ -591,22 +681,26 @@ enum Claim {
     Withheld(String),
 }
 
-/// The claim the rows support. They must be the counted seeds 1, 2, 3, ... without gaps,
-/// at most MAX_PAIRS of them; a seed up to the stop that fails the calibration gate voids
-/// the experiment.
+/// The claim the rows support. Their seeds must be the first counted seeds in their fixed
+/// order, at most MAX_PAIRS of them; a seed up to the stop that fails the calibration gate
+/// voids the experiment.
 fn claim(rows: &[Row]) -> Claim {
-    let seeds: Vec<u64> = rows.iter().map(|r| r.seed).collect();
-
-    if seeds.len() > MAX_PAIRS {
+    if rows.len() > MAX_PAIRS {
         return Claim::Withheld(format!(
             "{} seed pairs, more than the {MAX_PAIRS} the pre-registration allows",
-            seeds.len()
+            rows.len()
         ));
     }
 
-    if !seeds.iter().copied().eq(1..=seeds.len() as u64) {
+    // Pair i must run the i-th counted seed; the list has a seed for each of these pairs.
+    let wrong = (1..)
+        .zip(rows.iter().zip(counted_seeds()))
+        .find(|(_, (row, seed))| row.seed != *seed);
+
+    if let Some((pair, (row, seed))) = wrong {
         return Claim::Withheld(format!(
-            "the seeds are {seeds:?}, not the counted seeds 1, 2, 3, ... without gaps"
+            "pair {pair} has seed {}, not {seed}; the counted seeds run 1 to 100 and then 111 to 130 in this order",
+            row.seed
         ));
     }
 
@@ -655,11 +749,14 @@ fn claim_in(context: &Context, rows: &[Row]) -> Claim {
 /// The verdicts on both claims at the stop, or the next seed while the rule goes on; only
 /// the reason when the runs support no claim.
 fn verdict(claim: &Claim, rule: &Sequential) -> String {
-    match (claim, rule.stop) {
-        (Claim::Void(_), _) => "No claim: the experiment is void.\n".to_string(),
-        (Claim::Withheld(why), _) => format!("No claim: {why}.\n"),
-        (Claim::Made, None) => format!("OPEN: run seed {} next.\n", rule.counted() + 1),
-        (Claim::Made, Some(_)) => {
+    // While the rule goes on, fewer than MAX_PAIRS pairs count, so the list has a next seed.
+    let next = counted_seeds().nth(rule.counted());
+
+    match (claim, rule.stop, next) {
+        (Claim::Void(_), _, _) => "No claim: the experiment is void.\n".to_string(),
+        (Claim::Withheld(why), _, _) => format!("No claim: {why}.\n"),
+        (Claim::Made, None, Some(seed)) => format!("OPEN: run seed {seed} next.\n"),
+        (Claim::Made, _, _) => {
             let primary = verdict_line(
                 "Primary (ticket 03)",
                 rule.primary,
@@ -756,14 +853,14 @@ fn render_table(out: &mut String, stat: &Statistic) {
 /// Where the E of one claim stands after `pairs` counted pairs, and where it first crossed.
 fn evidence_line(name: &str, e: Evidence, verdict: Verdict, pairs: usize) -> String {
     let crossed = match verdict {
-        Verdict::Proven(pair) => format!("; it reached {EVIDENCE} at pair {pair}"),
-        Verdict::Failed(pair) => format!("; it fell to 1/{EVIDENCE} at pair {pair}"),
-        Verdict::Open => format!("; open, it has reached neither {EVIDENCE} nor 1/{EVIDENCE}"),
-        Verdict::Undecided => format!("; it reached neither {EVIDENCE} nor 1/{EVIDENCE}"),
+        Verdict::Proven(pair) => format!("; it reached {PROOF} at pair {pair}"),
+        Verdict::Failed(pair) => format!("; it fell to 1/{FAILURE} at pair {pair}"),
+        Verdict::Open => format!("; open, it has reached neither {PROOF} nor 1/{FAILURE}"),
+        Verdict::Undecided => format!("; it reached neither {PROOF} nor 1/{FAILURE}"),
         Verdict::NotTested => String::new(),
     };
 
-    format!("{name} = {} after {pairs} pair(s){crossed}.\n", e.ratio())
+    format!("{name} = {e} after {pairs} pair(s){crossed}.\n")
 }
 
 /// The sequential rule pair by pair, the pairs after its stop, and where E1 and E2 stand.
@@ -774,8 +871,8 @@ fn render_rule(out: &mut String, rows: &[Row], rule: &Sequential, after: &[Pair]
          X = 1 when arm A passes; first is the arm with the smaller T.\n"
     ));
     out.push_str(&format!(
-        "E1 = 3^passes / 2^pairs and E2 = 3^(A first) / 2^(untied pairs). A claim is proven when its E first reaches {EVIDENCE} \
-         and fails when it first falls to 1/{EVIDENCE}; the secondary counts only if the primary is proven.\n"
+        "E1 = 3^passes / 2^pairs and E2 = 3^(A first) / 2^(untied pairs). A claim is proven when its E first reaches {PROOF} \
+         and fails when it first falls to 1/{FAILURE}; the secondary counts only if the primary is proven.\n"
     ));
     out.push_str(&format!(
         "{:>5}  {:>5}  {:>5}  {}  {:<5}  {:<22}  {}\n",
@@ -790,8 +887,8 @@ fn render_rule(out: &mut String, rows: &[Row], rule: &Sequential, after: &[Pair]
             show_time(row.t_r),
             u8::from(row.t_a.is_some()),
             first(row.t_a, row.t_r),
-            e1.ratio().to_string(),
-            e2.ratio()
+            e1.to_string(),
+            e2
         ));
     }
 
@@ -1272,9 +1369,9 @@ mod tests {
             .collect()
     }
 
-    /// The counted seeds 1 to n.
-    fn counted(n: u64) -> Vec<u64> {
-        (1..=n).collect()
+    /// The first n counted seeds.
+    fn counted(n: usize) -> Vec<u64> {
+        counted_seeds().take(n).collect()
     }
 
     /// A run in which the seed Cascades solve `seeds` and bred Cascades solve the first
@@ -1295,8 +1392,8 @@ mod tests {
         run
     }
 
-    /// Pairs for the seeds 1, 2, 3, ... with these pass times of arm A and arm R, None for
-    /// never. The seed Cascades solve swap and cs.
+    /// Pairs for the counted seeds in their order, with these pass times of arm A and arm R,
+    /// None for never. The seed Cascades solve swap and cs.
     fn timed_pairs(times: &[(Option<usize>, Option<usize>)]) -> Vec<Pair> {
         // A run passes when five of the nine open targets fall.
         let passing = |t: Option<usize>| match t {
@@ -1304,7 +1401,9 @@ mod tests {
             None => timed(&SEEDS_HIT, &[]),
         };
 
-        (1..)
+        assert!(times.len() <= MAX_PAIRS, "one counted seed per pair");
+
+        counted_seeds()
             .zip(times)
             .map(|(seed, &(a, r))| Pair {
                 seed,
@@ -1317,6 +1416,33 @@ mod tests {
     /// The rows of `pairs` under the pre-registered rule.
     fn rows(pairs: &[Pair]) -> Vec<Row> {
         statistic(pairs, Rule::Full).expect("pairs").rows
+    }
+
+    /// E < 1, in integers: 3^up < 2^n.
+    fn below_one(e: Evidence) -> bool {
+        Natural::power(3, e.up) < Natural::power(2, e.n)
+    }
+
+    /// Pass times for `n` pairs on which E1 never crosses: X = 1 exactly when E1 < 1 before
+    /// the pair, so E1 stays in [1/2, 3/2). Arm R passes first in an even pair with X = 1
+    /// and in an odd pair with X = 0, as on the synthetic path of reference_rule.py.
+    fn never_crossing(n: usize) -> Vec<(Option<usize>, Option<usize>)> {
+        let mut e1 = Evidence::default();
+        let mut times = Vec::new();
+
+        for pair in 1..=n {
+            let x = below_one(e1);
+            let t_r = match (x, pair % 2 == 0) {
+                (true, true) => Some(4),
+                (false, false) => Some(6),
+                _ => None,
+            };
+
+            times.push((x.then_some(5), t_r));
+            e1 = e1.step(x);
+        }
+
+        times
     }
 
     #[test]
@@ -1355,6 +1481,46 @@ mod tests {
     }
 
     #[test]
+    fn exact_naturals() {
+        assert_eq!(Natural::power(7, 0).to_string(), "1");
+        assert_eq!(Natural::power(3, 20).to_string(), "3486784401");
+        // A lower digit keeps its leading zeros: 2^30 = 1 073741824.
+        assert_eq!(Natural::power(2, 30).to_string(), "1073741824");
+        assert_eq!(
+            Natural::power(10, 18).to_string(),
+            format!("1{}", "0".repeat(18))
+        );
+        assert_eq!(
+            Natural::power(3, 120).to_string(),
+            "1797010299914431210413179829509605039731475627537851106401"
+        );
+        assert_eq!(
+            Natural::power(2, 120).to_string(),
+            "1329227995784915872903807060280344576"
+        );
+        assert_eq!(
+            Natural::power(2, 30).times(100),
+            Natural::power(10, 2).times(1 << 30)
+        );
+        // A carry of more than one digit.
+        assert_eq!(
+            Natural(vec![999_999_999]).times(u32::MAX).to_string(),
+            "4294967290705032705"
+        );
+
+        // Order: more digits are larger, equal counts compare from the top digit down.
+        assert_eq!(
+            Natural::power(10, 9).cmp(&Natural(vec![0, 1])),
+            Ordering::Equal
+        );
+        assert!(Natural::power(10, 9) > Natural(vec![999_999_999]));
+        assert!(Natural(vec![5, 2]) > Natural(vec![999_999_999, 1]));
+        assert!(Natural(vec![4, 2]) < Natural(vec![5, 2]));
+        assert!(Natural::power(3, 80) > Natural::power(2, 120).times(100));
+        assert!(Natural::power(3, 79) < Natural::power(2, 120).times(100));
+    }
+
+    #[test]
     fn evidence_boundaries_in_count_form() {
         let e = |passes: u32, failures: u32| Evidence {
             up: passes,
@@ -1362,7 +1528,7 @@ mod tests {
         };
         // With 0 to 7 failures, the passes that prove a claim; with 0 to 7 passes, the
         // failures that fail it.
-        let prove = [8, 10, 11, 13, 15, 16, 18, 20];
+        let prove = [12, 14, 15, 17, 19, 20, 22, 24];
         let fail = [5, 5, 6, 7, 7, 8, 8, 9];
 
         for (other, (&passes, &failures)) in (0..).zip(prove.iter().zip(&fail)) {
@@ -1385,13 +1551,56 @@ mod tests {
         }
 
         // E = 3^passes / 2^pairs as an exact fraction, starting at 1.
-        assert_eq!(Evidence::default().ratio(), Ratio::new(1, 1));
-        assert_eq!(e(8, 1).ratio().to_string(), "6561/512 = 12.8145");
-        assert_eq!(e(1, 5).ratio(), Ratio::new(3, 64));
+        assert_eq!(Evidence::default().to_string(), "1/1 = 1.0000");
+        assert_eq!(e(8, 1).to_string(), "6561/512 = 12.8145");
+        assert_eq!(e(1, 5).to_string(), "3/64 = 0.0469");
+    }
 
-        // At the cap of 60 pairs both tests still fit a u128.
-        assert!(e(60, 0).proven() && !e(60, 0).failed());
-        assert!(e(0, 60).failed() && !e(0, 60).proven());
+    #[test]
+    fn evidence_is_exact_up_to_the_cap() {
+        // An independent check in u128 for every 0 <= up <= n <= 120: 100 * 2^n < 2^127
+        // fits, and a 3^up or 20 * 3^up that does not fit exceeds both 100 * 2^n and 2^n.
+        for n in 0..=MAX_PAIRS as u32 {
+            for up in 0..=n {
+                let e = Evidence { up, n };
+                let three = 3u128.checked_pow(up);
+                let proven = three.is_none_or(|p| p >= 100 * (1u128 << n));
+                let failed = three
+                    .and_then(|p| p.checked_mul(20))
+                    .is_some_and(|f| f <= 1u128 << n);
+
+                assert_eq!(e.proven(), proven, "{up} passes in {n} pairs");
+                assert_eq!(e.failed(), failed, "{up} passes in {n} pairs");
+            }
+        }
+
+        // After 120 pairs, 80 passes prove a claim and at most 72 fail it.
+        let at_cap = |up: u32| Evidence { up, n: 120 };
+
+        assert!(at_cap(80).proven() && !at_cap(79).proven());
+        assert!(at_cap(72).failed() && !at_cap(73).failed());
+
+        // E prints exactly at the cap, where 3^120 has 191 bits.
+        assert_eq!(
+            at_cap(0).to_string(),
+            "1/1329227995784915872903807060280344576 = 0.0000"
+        );
+
+        let text = at_cap(120).to_string();
+        let (fraction, value) = text.split_once(" = ").expect("num/den = value");
+
+        assert_eq!(
+            fraction,
+            "1797010299914431210413179829509605039731475627537851106401/1329227995784915872903807060280344576"
+        );
+
+        // The value, 1.5^120 = 1.3519...e21, comes from f64 and is only read.
+        let value: f64 = value.parse().expect("a number");
+
+        assert!(
+            (value / 1.351920291788082e21 - 1.0).abs() < 1e-12,
+            "{value}"
+        );
     }
 
     #[test]
@@ -1456,15 +1665,15 @@ mod tests {
     }
 
     #[test]
-    fn eight_pairs_that_arm_a_passes_first_prove_both_claims() {
+    fn twelve_pairs_that_arm_a_passes_first_prove_both_claims() {
         // Arm A solves seven of the nine open targets, all first in generation 4: T_A = 4
         // and D_A = 7/9. Arm R solves four, which is not more than half: T_R is never.
-        let all = pairs(&counted(8), &[7; 8], &[4; 8]);
+        let all = pairs(&counted(12), &[7; 12], &[4; 12]);
         let rule = sequential(&rows(&all));
 
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (Some(8), Verdict::Proven(8), Verdict::Proven(8))
+            (Some(12), Verdict::Proven(12), Verdict::Proven(12))
         );
         assert_eq!(claim(&rows(&all)), Claim::Made);
 
@@ -1472,24 +1681,31 @@ mod tests {
 
         assert!(text.contains("    1   11  2: cs, swap"), "{text}");
         assert!(
-            text.contains("Median D_A over the 8 counted pair(s), descriptive: 7/9 = 0.7778."),
+            text.contains("Median D_A over the 12 counted pair(s), descriptive: 7/9 = 0.7778."),
             "{text}"
         );
+        // E = 3^11 / 2^11 is still below 100 after eleven pairs, and 3^12 / 2^12 is not.
         assert!(
             text.contains(
-                "    8      4  never  1  A      6561/256 = 25.6289      6561/256 = 25.6289\n"
+                "   11      4  never  1  A      177147/2048 = 86.4976   177147/2048 = 86.4976\n"
             ),
             "{text}"
         );
         assert!(
             text.contains(
-                "Primary (ticket 03): PROVEN at pair 8. More than half of all seeds pass within 1000 generations."
+                "   12      4  never  1  A      531441/4096 = 129.7463  531441/4096 = 129.7463\n"
             ),
             "{text}"
         );
         assert!(
             text.contains(
-                "Secondary (selection): PROVEN at pair 8. Among untied pairs, arm A passes first more often than arm R."
+                "Primary (ticket 03): PROVEN at pair 12. More than half of all seeds pass within 1000 generations."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Secondary (selection): PROVEN at pair 12. Among untied pairs, arm A passes first more often than arm R."
             ),
             "{text}"
         );
@@ -1497,6 +1713,19 @@ mod tests {
             !text.contains("No claim") && !text.contains("not counted"),
             "{text}"
         );
+
+        // Eleven such pairs leave both claims open.
+        let eleven = &all[..11];
+        let rule = sequential(&rows(eleven));
+
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (None, Verdict::Open, Verdict::Open)
+        );
+
+        let text = render(&Context::default(), eleven).expect("render");
+
+        assert!(text.contains("OPEN: run seed 12 next.\n"), "{text}");
     }
 
     #[test]
@@ -1514,9 +1743,10 @@ mod tests {
             (rule.stop, rule.primary, rule.secondary),
             (Some(6), Verdict::Failed(6), Verdict::NotTested)
         );
-        assert_eq!(rule.evidence[4].0.ratio(), Ratio::new(3, 32));
-        assert_eq!(rule.evidence[5].0.ratio(), Ratio::new(3, 64));
-        assert_eq!(rule.evidence[5].1.ratio(), Ratio::new(3, 2));
+        // E1 = 3/32 after five pairs and 3/64 after six; E2 = 3/2.
+        assert_eq!(rule.evidence[4].0, Evidence { up: 1, n: 5 });
+        assert_eq!(rule.evidence[5].0, Evidence { up: 1, n: 6 });
+        assert_eq!(rule.evidence[5].1, Evidence { up: 1, n: 1 });
 
         let text = render(&Context::default(), &all).expect("render");
 
@@ -1547,12 +1777,19 @@ mod tests {
         // Arm A first, then a tie in the same generation, then a tie where neither passes.
         let all = timed_pairs(&[(Some(7), Some(380)), (Some(50), Some(50)), (None, None)]);
         let rule = sequential(&rows(&all));
-        let e1: Vec<Ratio> = rule.evidence.iter().map(|(e1, _)| e1.ratio()).collect();
+        let e1: Vec<Evidence> = rule.evidence.iter().map(|&(e1, _)| e1).collect();
         let e2: Vec<Evidence> = rule.evidence.iter().map(|&(_, e2)| e2).collect();
 
         assert_eq!(e2, [Evidence { up: 1, n: 1 }; 3]);
-        // E1 follows X in every pair: X = 1, 1, 0.
-        assert_eq!(e1, [Ratio::new(3, 2), Ratio::new(9, 4), Ratio::new(9, 8)]);
+        // E1 follows X in every pair: X = 1, 1, 0, so E1 = 3/2, 9/4, 9/8.
+        assert_eq!(
+            e1,
+            [
+                Evidence { up: 1, n: 1 },
+                Evidence { up: 2, n: 2 },
+                Evidence { up: 2, n: 3 }
+            ]
+        );
     }
 
     #[test]
@@ -1561,16 +1798,16 @@ mod tests {
         let a_first = (Some(100), None);
 
         // As in the 1000-generation pilot: a tie, then pairs that arm A passes first. E2
-        // reaches 20 at pair 9, E1 only at pair 11, and then both claims hold.
+        // reaches 100 at pair 13, E1 only at pair 15, and then both claims hold.
         let mut times = vec![tie];
 
-        times.extend([a_first; 8]);
+        times.extend([a_first; 12]);
 
         let early = sequential(&rows(&timed_pairs(&times)));
 
         assert_eq!(
             (early.stop, early.primary, early.secondary),
-            (None, Verdict::Open, Verdict::Proven(9))
+            (None, Verdict::Open, Verdict::Proven(13))
         );
 
         times.extend([a_first; 2]);
@@ -1578,37 +1815,44 @@ mod tests {
         let all = timed_pairs(&times);
         let rule = sequential(&rows(&all));
 
-        assert_eq!(rule.evidence[9].0.ratio(), Ratio::new(19683, 1024));
+        // E1 = 3^13 / 2^14 = 97.31 after pair 14 is still open.
+        assert_eq!(rule.evidence[13].0, Evidence { up: 13, n: 14 });
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (Some(11), Verdict::Proven(11), Verdict::Proven(9))
+            (Some(15), Verdict::Proven(15), Verdict::Proven(13))
         );
 
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(
-            text.contains("Primary (ticket 03): PROVEN at pair 11."),
+            text.contains("Primary (ticket 03): PROVEN at pair 15."),
             "{text}"
         );
         assert!(
-            text.contains("Secondary (selection): PROVEN at pair 9."),
+            text.contains("Secondary (selection): PROVEN at pair 13."),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "E2 = 4782969/16384 = 291.9293 after 15 pair(s); it reached 100 at pair 13.\n"
+            ),
             "{text}"
         );
 
-        // Four ties, eight pairs that arm A passes first and six ties: E2 reaches 20 at
-        // pair 12, but E1 falls to 1/20 at pair 18, so there is no claim on selection.
+        // Four ties, twelve pairs that arm A passes first and eight ties: E2 reaches 100 at
+        // pair 16, but E1 falls to 1/20 at pair 24, so there is no claim on selection.
         let mut times = vec![tie; 4];
 
-        times.extend([a_first; 8]);
-        times.extend([tie; 6]);
+        times.extend([a_first; 12]);
+        times.extend([tie; 8]);
 
         let all = timed_pairs(&times);
         let rule = sequential(&rows(&all));
 
-        assert_eq!(rule.evidence[11].1.ratio(), Ratio::new(6561, 256));
+        assert_eq!(rule.evidence[15].1, Evidence { up: 12, n: 12 });
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (Some(18), Verdict::Failed(18), Verdict::NotTested)
+            (Some(24), Verdict::Failed(24), Verdict::NotTested)
         );
 
         let text = render(&Context::default(), &all).expect("render");
@@ -1618,31 +1862,33 @@ mod tests {
 
     #[test]
     fn a_proven_primary_waits_for_e2() {
-        // Both arms pass in the same generation: E1 reaches 20 at pair 8, E2 stays at 1,
+        // Both arms pass in the same generation: E1 reaches 100 at pair 12, E2 stays at 1,
         // and the rule goes on.
-        let mut times = vec![(Some(5), Some(5)); 8];
+        let mut times = vec![(Some(5), Some(5)); 12];
         let all = timed_pairs(&times);
         let rule = sequential(&rows(&all));
 
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (None, Verdict::Proven(8), Verdict::Open)
+            (None, Verdict::Proven(12), Verdict::Open)
         );
 
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(
-            text.contains("E1 = 6561/256 = 25.6289 after 8 pair(s); it reached 20 at pair 8."),
+            text.contains(
+                "E1 = 531441/4096 = 129.7463 after 12 pair(s); it reached 100 at pair 12."
+            ),
             "{text}"
         );
-        assert!(text.contains("OPEN: run seed 9 next."), "{text}");
+        assert!(text.contains("OPEN: run seed 13 next."), "{text}");
 
         // Then arm A passes first exactly when E2 < 1, and arm R first otherwise, so E2
-        // never crosses: the secondary is undecided after 60 pairs.
+        // never crosses: the secondary is undecided after 120 pairs.
         let mut e2 = Evidence::default();
 
-        for _ in 9..=60 {
-            let a_first = e2.ratio().compare(Ratio::new(1, 1)) == Ordering::Less;
+        for _ in 13..=120 {
+            let a_first = below_one(e2);
 
             times.push((Some(5), if a_first { None } else { Some(4) }));
             e2 = e2.step(a_first);
@@ -1653,17 +1899,28 @@ mod tests {
 
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (Some(60), Verdict::Proven(8), Verdict::Undecided)
+            (Some(120), Verdict::Proven(12), Verdict::Undecided)
         );
 
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(
-            text.contains("Primary (ticket 03): PROVEN at pair 8."),
+            text.contains("Primary (ticket 03): PROVEN at pair 12."),
             "{text}"
         );
         assert!(
-            text.contains("Secondary (selection): UNDECIDED after 60 pairs, no claim."),
+            text.contains("Secondary (selection): UNDECIDED after 120 pairs, no claim."),
+            "{text}"
+        );
+        // Arm A passes in all 120 pairs: E1 = 3^120 / 2^120, printed exactly.
+        assert!(
+            text.contains(
+                "Primary (ticket 03): E1 = 1797010299914431210413179829509605039731475627537851106401/1329227995784915872903807060280344576 = "
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(" after 120 pair(s); it reached 100 at pair 12.\n"),
             "{text}"
         );
     }
@@ -1671,30 +1928,30 @@ mod tests {
     #[test]
     fn a_failed_secondary_stops_the_rule() {
         // Both arms pass, arm R first, in five pairs: E2 = 1/32 fails at pair 5, while E1 is
-        // still open. Then both arms pass in the same generation, and E1 reaches 20 at pair
-        // 8. The primary is proven and E2 has crossed, so the rule stops there.
+        // still open. Then both arms pass in the same generation, and E1 reaches 100 at pair
+        // 12. The primary is proven and E2 has crossed, so the rule stops there.
         let mut times = vec![(Some(9), Some(3)); 5];
 
-        times.extend([(Some(5), Some(5)); 3]);
+        times.extend([(Some(5), Some(5)); 7]);
 
         let all = timed_pairs(&times);
         let rule = sequential(&rows(&all));
 
-        assert_eq!(rule.evidence[4].1.ratio(), Ratio::new(1, 32));
+        assert_eq!(rule.evidence[4].1, Evidence { up: 0, n: 5 });
         assert_eq!(
             (rule.stop, rule.primary, rule.secondary),
-            (Some(8), Verdict::Proven(8), Verdict::Failed(5))
+            (Some(12), Verdict::Proven(12), Verdict::Failed(5))
         );
 
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(
-            text.contains("E2 = 1/32 = 0.0312 after 8 pair(s); it fell to 1/20 at pair 5.\n"),
+            text.contains("E2 = 1/32 = 0.0312 after 12 pair(s); it fell to 1/20 at pair 5.\n"),
             "{text}"
         );
         assert!(
             text.contains(
-                "Primary (ticket 03): PROVEN at pair 8. More than half of all seeds pass within 1000 generations.\n"
+                "Primary (ticket 03): PROVEN at pair 12. More than half of all seeds pass within 1000 generations.\n"
             ),
             "{text}"
         );
@@ -1710,6 +1967,71 @@ mod tests {
     }
 
     #[test]
+    fn the_first_crossing_is_final() {
+        // Both arms pass in the same generation in twelve pairs, so E1 reaches 100 at pair
+        // 12 and E2 stays at 1. Then neither arm passes in twelve pairs, and E1 falls to
+        // 3^12 / 2^24, below 1/20, at pair 24. The primary stays proven at pair 12.
+        let mut times = vec![(Some(5), Some(5)); 12];
+
+        times.extend([(None, None); 12]);
+
+        let all = timed_pairs(&times);
+        let rule = sequential(&rows(&all));
+
+        assert!(rule.evidence[23].0.failed());
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (None, Verdict::Proven(12), Verdict::Open)
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains(
+                "E1 = 531441/16777216 = 0.0317 after 24 pair(s); it reached 100 at pair 12.\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("OPEN: run seed 25 next.\n"), "{text}");
+
+        // Arm R passes first in five pairs, so E2 = 1/32 fails at pair 5. Then come ten
+        // rounds of two pairs that arm A passes first and one in which neither passes:
+        // E2 = 3^20 / 2^25 is above 100 at pair 34. Arm A passes alone from pair 36 on, and
+        // E1 reaches 100 at pair 39. The secondary stays failed at pair 5.
+        let mut times = vec![(Some(9), Some(3)); 5];
+
+        for _ in 0..10 {
+            times.extend([(Some(3), None), (Some(3), None), (None, None)]);
+        }
+
+        times.extend([(Some(3), None); 10]);
+
+        let all = timed_pairs(&times);
+        let rule = sequential(&rows(&all));
+
+        assert_eq!(rule.evidence[33].1, Evidence { up: 20, n: 25 });
+        assert!(rule.evidence[33].1.proven());
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (Some(39), Verdict::Proven(39), Verdict::Failed(5))
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains(
+                "E2 = 282429536481/536870912 = 526.0660 after 39 pair(s); it fell to 1/20 at pair 5.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("Secondary (selection): FAILED at pair 5."),
+            "{text}"
+        );
+        assert!(!text.contains("PROVEN at pair 34"), "{text}");
+    }
+
+    #[test]
     fn an_open_run_names_the_next_seed() {
         let all = timed_pairs(&[(Some(7), Some(380)), (None, None), (Some(75), None)]);
         let rule = sequential(&rows(&all));
@@ -1721,6 +2043,18 @@ mod tests {
 
         let text = render(&Context::default(), &all).expect("render");
 
+        assert!(
+            text.contains(
+                "E1 = 9/8 = 1.1250 after 3 pair(s); open, it has reached neither 100 nor 1/20.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "E2 = 9/4 = 2.2500 after 3 pair(s); open, it has reached neither 100 nor 1/20.\n"
+            ),
+            "{text}"
+        );
         assert!(
             text.contains("The rule goes on after pair 3.\nOPEN: run seed 4 next.\n"),
             "{text}"
@@ -1781,49 +2115,71 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("VOID") && !text.contains("  NO\n"), "{text}");
-    }
 
-    #[test]
-    fn sixty_pairs_that_never_cross_are_undecided() {
-        // X = 1 exactly when E1 < 1 before the pair, so E1 stays in [1/2, 3/2). Arm R
-        // passes first in every second pair, as in reference_rule.py.
-        let mut e1 = Evidence::default();
-        let mut times = Vec::new();
-
-        for pair in 1..=60 {
-            let x = e1.ratio().compare(Ratio::new(1, 1)) == Ordering::Less;
-            let t_r = match (x, pair % 2 == 0) {
-                (true, true) => Some(4),
-                (false, false) => Some(6),
-                _ => None,
-            };
-
-            times.push((x.then_some(5), t_r));
-            e1 = e1.step(x);
-        }
-
-        let all = timed_pairs(&times);
-        let rule = sequential(&rows(&all));
-
-        for (e1, _) in &rule.evidence {
-            assert_ne!(e1.ratio().compare(Ratio::new(1, 2)), Ordering::Less);
-            assert_eq!(e1.ratio().compare(Ratio::new(3, 2)), Ordering::Less);
-        }
+        // A seed off the list withholds the claim even after the stop, as the pilot seed 101
+        // in pair 7 does: every pair must run the seed of the list.
+        all[6].seed = 101;
 
         assert_eq!(
-            (rule.stop, rule.primary, rule.secondary),
-            (Some(60), Verdict::Undecided, Verdict::NotTested)
-        );
-        // The end of reference_rule.py: 38 passes in 60 pairs, 20 of 48 untied pairs to A.
-        assert_eq!(
-            rule.evidence[59],
-            (Evidence { up: 38, n: 60 }, Evidence { up: 20, n: 48 })
+            claim(&rows(&all)),
+            Claim::Withheld(
+                "pair 7 has seed 101, not 7; the counted seeds run 1 to 100 and then 111 to 130 in this order"
+                    .to_string()
+            )
         );
 
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(
-            text.contains("Primary (ticket 03): UNDECIDED after 60 pairs, no claim."),
+            text.contains("  101  after the stop, not counted\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "No claim: pair 7 has seed 101, not 7; the counted seeds run 1 to 100 and then 111 to 130 in this order.\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("FAILED at pair 6"), "{text}");
+    }
+
+    #[test]
+    fn pairs_that_never_cross_are_undecided_at_the_cap() {
+        let all = timed_pairs(&never_crossing(120));
+        let rule = sequential(&rows(&all));
+
+        // E1 stays in [1/2, 3/2): 2 * 3^up >= 2^n and 2 * 3^up < 3 * 2^n.
+        for (e1, _) in &rule.evidence {
+            let twice = Natural::power(3, e1.up).times(2);
+
+            assert!(twice >= Natural::power(2, e1.n), "{e1}");
+            assert!(twice < Natural::power(2, e1.n).times(3), "{e1}");
+        }
+
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (Some(120), Verdict::Undecided, Verdict::NotTested)
+        );
+        // The end of reference_rule.py: 76 passes in 120 pairs, 38 of 98 untied pairs to A.
+        assert_eq!(
+            rule.evidence[119],
+            (Evidence { up: 76, n: 120 }, Evidence { up: 38, n: 98 })
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains(
+                "Primary (ticket 03): E1 = 1824800363140073127359051977856583921/1329227995784915872903807060280344576 = 1.3728 after 120 pair(s); it reached neither 100 nor 1/20.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("Primary (ticket 03): UNDECIDED after 120 pairs, no claim."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Secondary (selection): NOT TESTED, since the primary is not proven."),
             "{text}"
         );
     }
@@ -1859,14 +2215,20 @@ mod tests {
     #[test]
     fn seeds_must_start_at_one_without_gaps() {
         // Also the pilots are not counted, whatever they show.
-        for seeds in [&[1, 2, 4][..], &[2, 3], &[101, 102]] {
+        for (seeds, wrong) in [
+            (&[1, 2, 4][..], "pair 3 has seed 4, not 3"),
+            (&[2, 3], "pair 1 has seed 2, not 1"),
+            (&[101, 102], "pair 1 has seed 101, not 1"),
+        ] {
             let all = pairs(seeds, &[7; 3], &[0; 3]);
             let made = claim(&rows(&all));
             let text = render(&Context::default(), &all).expect("render");
 
             assert!(matches!(made, Claim::Withheld(_)), "{seeds:?}: {made:?}");
             assert!(
-                text.contains(&format!("No claim: the seeds are {seeds:?}")),
+                text.contains(&format!(
+                    "No claim: {wrong}; the counted seeds run 1 to 100 and then 111 to 130 in this order.\n"
+                )),
                 "{text}"
             );
             assert!(!text.contains("OPEN"), "{text}");
@@ -1879,16 +2241,83 @@ mod tests {
     }
 
     #[test]
-    fn more_than_sixty_pairs_are_refused() {
-        let sixty = pairs(&counted(60), &[7; 60], &[0; 60]);
+    fn the_counted_seeds_skip_the_pilot_seeds() {
+        let list: Vec<u64> = counted_seeds().collect();
 
-        assert!(render(&Context::default(), &sixty).is_ok());
+        assert_eq!(list.len(), MAX_PAIRS);
+        assert_eq!(list[..100], (1..=100).collect::<Vec<u64>>());
+        assert_eq!(list[100..], (111..=130).collect::<Vec<u64>>());
 
-        let sixty_one = pairs(&counted(61), &[7; 61], &[0; 61]);
-        let refused = render(&Context::default(), &sixty_one).expect_err("61 pairs");
+        for pilot in (101..=110)
+            .chain(201..=210)
+            .chain(301..=310)
+            .chain([401, 402])
+        {
+            assert!(!list.contains(&pilot), "pilot seed {pilot}");
+        }
 
-        assert!(refused.contains("more than 60 seed pairs"), "{refused}");
-        assert!(matches!(claim(&rows(&sixty_one)), Claim::Withheld(_)));
+        // After pair 100 the rule asks for seed 111, and seed 111 counts as pair 101.
+        let times = never_crossing(101);
+        let hundred = timed_pairs(&times[..100]);
+        let text = render(&Context::default(), &hundred).expect("render");
+
+        assert!(
+            text.contains("The rule goes on after pair 100.\nOPEN: run seed 111 next.\n"),
+            "{text}"
+        );
+
+        let mut all = timed_pairs(&times);
+
+        assert_eq!(all[100].seed, 111);
+        assert_eq!(claim(&rows(&all)), Claim::Made);
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains("The rule goes on after pair 101.\nOPEN: run seed 112 next.\n"),
+            "{text}"
+        );
+
+        // The pilot seed 101 in its place is refused, and so is a gap.
+        for (seed, wrong) in [
+            (101, "pair 101 has seed 101, not 111"),
+            (112, "pair 101 has seed 112, not 111"),
+        ] {
+            all[100].seed = seed;
+
+            let made = claim(&rows(&all));
+            let text = render(&Context::default(), &all).expect("render");
+
+            assert!(matches!(made, Claim::Withheld(_)), "{seed}: {made:?}");
+            assert!(
+                text.contains(&format!(
+                    "No claim: {wrong}; the counted seeds run 1 to 100 and then 111 to 130 in this order.\n"
+                )),
+                "{text}"
+            );
+            assert!(!text.contains("OPEN"), "{text}");
+        }
+    }
+
+    #[test]
+    fn more_pairs_than_the_cap_are_refused() {
+        let full = pairs(&counted(120), &[7; 120], &[0; 120]);
+
+        assert_eq!(full.last().map(|p| p.seed), Some(130));
+        assert!(render(&Context::default(), &full).is_ok());
+
+        // One pair more, on the seed after the list.
+        let seeds: Vec<u64> = counted_seeds().chain([131]).collect();
+        let more = pairs(&seeds, &[7; 121], &[0; 121]);
+        let refused = render(&Context::default(), &more).expect_err("121 pairs");
+
+        assert!(refused.contains("more than 120 seed pairs"), "{refused}");
+        assert_eq!(
+            claim(&rows(&more)),
+            Claim::Withheld(
+                "121 seed pairs, more than the 120 the pre-registration allows".to_string()
+            )
+        );
     }
 
     #[test]
@@ -1907,7 +2336,7 @@ mod tests {
 
     #[test]
     fn only_the_pre_registered_length_and_cap_make_a_claim() {
-        let all = pairs(&counted(10), &[7; 10], &[4; 10]);
+        let all = pairs(&counted(12), &[7; 12], &[4; 12]);
         let frozen = Context::default();
 
         assert_eq!((frozen.generations, frozen.max_calls), (1000, 13_000_000));
@@ -1952,7 +2381,7 @@ mod tests {
                 assert!(matches!(made, Claim::Withheld(_)), "{made:?}");
                 assert!(text.contains("No claim"), "{text}");
                 assert!(
-                    text.contains("E1 = 6561/256 = 25.6289 after 8 pair(s)"),
+                    text.contains("E1 = 531441/4096 = 129.7463 after 12 pair(s)"),
                     "{text}"
                 );
                 assert!(

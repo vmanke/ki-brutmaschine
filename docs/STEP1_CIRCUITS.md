@@ -83,8 +83,9 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
   both arms, paired by seed, finds the pass time of every Run and applies the
   pre-registered rule across seeds (section 7). After each pair it names the next seed or
-  gives the verdict. It makes a claim only for the seeds 1, 2, 3, ... without a gap, at
-  most 60 pairs, with 1000 generations and the call cap of 13 000 000.
+  gives the verdict. It makes a claim only for the first seeds of the fixed list 1 to 100,
+  then 111 to 130, without a gap, at most 120 pairs, with 1000 generations and the call
+  cap of 13 000 000.
 - **Tests.** `tests/circuits.rs` has 18 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; `rediscovery.json` appears only once a select phase is
@@ -138,9 +139,9 @@ cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
 Arm A chooses parents as the Darwin Gödel Machine does (Zhang et al., ICLR 2026,
-appendix C.2), arm R uniformly; otherwise both arms are the same. The seeds 1 to 60 are
-reserved for the pre-registered experiment, so the examples use the pilot seed
-101. A Run prints one line per generation (best Cascade, fitness,
+appendix C.2), arm R uniformly; otherwise both arms are the same. The seeds 1 to 100 and
+111 to 130 are reserved for the pre-registered experiment, so the examples use the pilot
+seed 101. A Run prints one line per generation (best Cascade, fitness,
 solved search tasks, archive size, calls), then one line about `rediscovery.json`, and at
 the end the best Cascades and the comparison on the select panel. For arm A on seed 101
 the line about `rediscovery.json` reads:
@@ -399,25 +400,46 @@ so the cap ends no counted Run early; the pilot Runs used at most 1 161 738 call
 generation 1000.
 
 **The rule.** The experiment decides by itself how many seeds it needs. The rule, its
-reasons and its sources are in the pre-registration, section 8. The counted seeds 1, 2,
-3, ... run in this order, each in both arms and always to generation 1000. A Run passes
-when its pass time T is at most 1000. After each pair two evidence values change, both
-starting at 1:
+reasons and its sources are in the pre-registration, section 8. The counted seeds are the
+fixed list 1 to 100, then 111 to 130; it skips the pilot seeds 101 to 110. They run in
+this order, each in both arms and always to generation 1000. A Run passes when its pass
+time T is at most 1000. After each pair two evidence values change, both starting at 1:
 
 - **E1.** It grows by the factor 3/2 when arm A passes; otherwise it is halved.
 - **E2.** It grows by the factor 3/2 when arm A passes first, and is halved when arm R
   passes first; on a tie it stays the same.
 
-When E1 reaches 20, the primary claim is proven: more than half of all seeds pass by
-generation 1000. When E1 falls to 1/20, it has failed. The same thresholds hold for E2.
-But we claim the second result, that among pairs without a tie arm A passes first more
-often than arm R, only if the primary claim is proven. The experiment ends as soon as the
-primary claim fails, as soon as it is proven and E2 has reached a threshold, or after 60
-pairs. However it ends, it reports a false claim with probability at most 1/20; for the
-primary claim the worst case is about 0.0385. The old rule "9 of 10" had
-11/1024 = 0.0107. So the new bound is weaker; it matches the 5 % bound of the project's
-other tests. It holds only if the seed order is fixed, no seed is skipped or replaced,
-and nothing changes after seed 1.
+When E1 reaches 100, the primary claim is proven: more than half of all seeds pass by
+generation 1000. That takes at least 12 pairs. When E1 falls to 1/20, it has failed. The
+same thresholds hold for E2. But we claim the second result, that among pairs without a
+tie arm A passes first more often than arm R, only if the primary claim is proven. The
+experiment ends as soon as the primary claim fails, as soon as it is proven and E2 has
+reached a threshold, or after 120 pairs. However it ends, it reports a false claim with
+probability at most 1/100; for the primary claim the worst case is about 0.0079. The old
+rule "9 of 10" had 11/1024 = 0.0107, so the new bound is slightly stricter. It holds only
+if the seed list and its order are fixed, no seed of the list is skipped or replaced, and
+nothing changes after seed 1.
+
+**Why 100 and 120 pairs.** On 2026-10-30 the owner first approved the threshold 20 with at
+most 60 pairs, and later that day asked for the scientifically load-bearing version. A
+review of 16 designs then chose the threshold 100 and the cap of 120 pairs. The bound of
+1 % is one-sided, as the claims are. For confirmatory claims like these, a one-sided bound
+of 5 % is lenient: the regulatory guideline ICH E9 (1998, section 5.5) holds it
+preferable, in regulatory settings, to set the type I error of a one-sided test at half
+the conventional two-sided one, that is at 2.5 %. The bound of 1 % is stricter than that
+by a factor of 2.5; by the same halving it matches a two-sided test at 2 %. The other pass
+tests of the project keep their pre-registered one-sided 5 %. On Jeffreys's scale, as Kass
+and Raftery (1995) and Vovk and Wang (2021) give it, an evidence value above 100 counts as
+"decisive", one of 20 only as "strong". At the most conservative pilot estimate, the
+Kaplan-Meier rate 0.710, the primary claim is proven with probability 0.86, above the
+conventional power of 0.80 (Cohen 1992). At the Kaplan-Meier rate, this design weighs the
+two errors best among the 16 when a false success counts four times as much as a missed
+proof; Cohen (1992) derives this ratio of 4 to 1 from his conventions. At that rate the
+former design would prove the primary claim with probability 0.82. The gain has a limit:
+the new design proves more often than the former one only above a pass rate of about 0.67.
+Averaged over the uncertainty of the pilot rate, the chance of a true proof is about the
+same. What the change buys is a false success about five times less likely, at more
+computing time.
 
 After each pair the analysis runs and names the next seed or gives the verdict. Right after
 pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
@@ -425,11 +447,15 @@ pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
 `python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
 recounts the result independently.
 
-If the pilot rates hold, the primary claim is proven with probability 0.82 to 0.99. We
-then expect 17 to 29 seed pairs on average, that is 3.6 to 6.1 hours of computing at
-12.68 min per pair. In the worst case it takes 60 pairs: 14.3 hours at the pace of the
-slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, so about
-15 hours. The check with 1 and 4 threads comes on top.
+If the pilot rates hold, the primary claim is proven with probability 0.86 to 0.99. We
+then expect 26 to 46 seed pairs on average, that is 5.8 to 10.1 hours of computing at
+12.68 min per pair, including 0.42 hours for the check with 1 and 4 threads. We assume
+that this check takes as long as two pairs at 2 threads; we have not timed it at 1 or 4
+threads. In the worst case the experiment takes 120 pairs: 28.6 hours at the pace of the
+slowest pilot pair, 29.4 hours if every pair had the slowest Runs of both arms, so about
+29 hours. The check with 1 and 4 threads comes on top. The former design, threshold 20
+with at most 60 pairs, would have taken 4.0 to 6.6 hours on average and at most about 15
+hours.
 
 ## 8. Limits
 
@@ -439,9 +465,11 @@ slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, 
   equality as the criterion (it tightens Q38), scoring by T first and CNOT second, the
   `state` line in grid Runs too, no promotion of circuit Cascades in step 1, the rule
   across seeds of section 7 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
-  The pre-registration implements these points. It is frozen at the one commit that the
-  squash merge of its pull request creates on the main branch. There are no counted Runs
-  yet; every number in this report comes from pilot Runs.
+  Later that day the owner asked for the scientifically load-bearing version; a review of
+  16 designs then chose the proof threshold 100, the cap of 120 pairs and the seed list of
+  section 7. The pre-registration implements these points. It is frozen at the one commit
+  that the squash merge of its pull request creates on the main branch. There are no
+  counted Runs yet; every number in this report comes from pilot Runs.
 - **What the pilot shows.** The calibration holds in every finished pilot Run. By
   generation 1000, arm A passed in 9 of 11 Runs and arm R in 2 of 10, and in 8 of the 10
   pairs whose arms both went that far, arm A passed first. The nine Runs of the first
@@ -453,9 +481,10 @@ slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, 
   of 11 Runs (Fisher's test, p = 0.128). A pass hinges on one event, a Worker that names
   Hadamard, Phase and Linear together. So the pass times are widely spread, and a pass
   after generation 1000 counts as a failure. At the rate 0.710 the rule ends as failed with
-  probability 0.099 and without a verdict with 0.080; a failed primary claim proves no
-  rate of 1/2 or less. So with the current genes the counted experiment may well fail.
-  The genes stay as they are; any change would need new pilot Runs and a new
+  probability 0.114 and without a verdict with 0.025; a failed primary claim proves no
+  rate of 1/2 or less. If the true rate is only 0.6, the primary claim is proven with
+  probability 0.18. So with the current genes the counted experiment may well fail. The
+  genes stay as they are; any change would need new pilot Runs and a new
   pre-registration.
 - **CH and Fredkin.** No pilot Run solved them. The routes the tests pin to them are long:
   CH falls to Search and Meet from 3 124 thinking tokens on `sim:large`; Fredkin to

@@ -1,6 +1,6 @@
 # Step 1 pilot runs
 
-These are pilot runs of the step 1 circuit experiment, not counted runs. Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402 (docs/PREREG_STEP1_CIRCUITS.md, section 10). The counted runs use the seeds 1, 2, 3, ... in this order and have not been run. This folder holds the first pilot, on seeds 101 and 102, with its data in `pilot.json`. The later batches, which chose the design of the counted experiment, are described below with the pass time of every run.
+These are pilot runs of the step 1 circuit experiment, not counted runs. Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402 (docs/PREREG_STEP1_CIRCUITS.md, section 10). The counted runs use the seeds 1 to 100, then 111 to 130, in this order, and have not been run; the list skips the pilot seeds 101 to 110. This folder holds the first pilot, on seeds 101 and 102, with its data in `pilot.json`. The later batches, which chose the design of the counted experiment, are described below with the pass time of every run.
 
 ## First pilot: seeds 101 and 102
 
@@ -80,4 +80,4 @@ What the batches set:
 |---|---|---|---|---|---|---|---|---|---|---|
 | Minutes to generation 1000, A + R | 12.08 | 14.28 | 12.80 | 12.57 | 12.46 | 13.67 | 13.46 | 10.57 | 10.64 | 14.31 |
 
-`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --pilots <dir>`, with `<dir>` holding `pilot-1000` and `pilot10`, applies the sequential rule to these pilot pairs as an illustration; its output is `reference_rule.txt` beside it. On the pairs 301 to 309 the experiment would still be open after the ninth pair, with E1 = 6561/512 and E2 = 6561/256. On the pairs 101 to 110, where a pass after generation 200 is unknown, the primary claim would fail at the sixth pair. Neither is a result: pilot seeds never count.
+`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --pilots <dir>`, with `<dir>` holding `pilot-1000` and `pilot10`, applies the sequential rule to these pilot pairs as an illustration; its output is `reference_rule.txt` beside it. On the pairs 301 to 309 the experiment would still be open after the ninth pair: E1 = 6561/512 and E2 = 6561/256 are both open, since neither has reached 100 or fallen to 1/20. On the pairs 101 to 110, where a pass after generation 200 is unknown, the primary claim would fail at the sixth pair. Neither is a result: pilot seeds never count.

@@ -3,15 +3,19 @@
 
 It reads only config.json, report.json and rediscovery.json of each run. In seed order it
 computes the pass time T of each run, the pair outcome, the evidence values E1 and E2, the
-stop pair and the two verdicts.
+stop pair and the two verdicts. A claim is proven at the first pair with E >= 100 and fails
+at the first pair with E <= 1/20. Both tests are exact integer comparisons.
 
 Two modes:
 
   python3 -I reference_rule.py --runs <dir>
-      The counted experiment. <dir> holds A-1, R-1, A-2, R-2, ... The seeds must run 1, 2,
-      3, ... one pair at a time. A pair counts once both of its runs are finished. Every
-      counted run must have the pre-registered settings and pass the calibration gate.
-      Recount the counted result with this mode before it is reported.
+      The counted experiment. <dir> holds A-1, R-1, A-2, R-2, ... The counted seeds are a
+      fixed list of 120: 1 to 100, then 111 to 130. The list skips the pilot seeds 101 to
+      110. Pair i is the i-th seed of the list. The seeds must run in this order, one pair
+      at a time. A run directory on any other seed is an error. A pair counts once both of
+      its runs are finished. Every counted run must have the pre-registered settings and
+      pass the calibration gate. Recount the counted result with this mode before it is
+      reported.
 
   python3 -I reference_rule.py --pilots <scratchpad>
       An illustration on uncounted pilot batches. Pilot seeds never count.
@@ -23,9 +27,20 @@ import re
 import sys
 from fractions import Fraction as F
 
-CAP = 60
+# A claim is proven at the first pair with E >= PROOF. It fails at the first pair with
+# E <= 1 / LOWER.
+PROOF = 100
+LOWER = 20
+CAP = 120
 CEIL = 1000
 ALL_GENERATIONS = "all generations done"
+
+# The counted seeds in their fixed order. Pair i is the i-th seed of the list. The list
+# skips the pilot seeds 101 to 110. The other pilot seeds (201-210, 301-310, 401 and 402)
+# lie outside it.
+SEEDS = list(range(1, 101)) + list(range(111, 131))
+
+assert len(SEEDS) == CAP
 
 # The pre-registered settings every counted run must have.
 PLANNED = {
@@ -70,11 +85,13 @@ def pass_time(red, label):
 
 
 def proven(w, n):
-    return 3 ** w >= 20 * 2 ** n
+    # E = 3^w / 2^n >= PROOF, in integers.
+    return 3 ** w >= PROOF * 2 ** n
 
 
 def failed(w, n):
-    return 20 * 3 ** w <= 2 ** n
+    # E = 3^w / 2^n <= 1 / LOWER, in integers.
+    return LOWER * 3 ** w <= 2 ** n
 
 
 def state(w, n):
@@ -196,7 +213,8 @@ def finished(runs_dir, arm, seed):
 
 
 def counted_pairs(runs_dir):
-    """The number of complete pairs 1..n, and the seed of a pair still running, if any."""
+    """The number n of complete pairs, which hold the first n seeds of SEEDS, and the seed
+    of a pair still running, if any."""
     seeds = set()
 
     for name in os.listdir(runs_dir):
@@ -208,23 +226,25 @@ def counted_pairs(runs_dir):
     if not seeds:
         fail(f"{runs_dir}: no run directories A-<seed> or R-<seed>")
 
-    if min(seeds) < 1:
-        fail(f"{runs_dir}: seeds start at 1, found seed {min(seeds)}")
+    # This also refuses more than CAP pairs, since the next pair would need a seed off the
+    # list.
+    off = sorted(seeds - set(SEEDS))
+
+    if off:
+        fail(f"{runs_dir}: seeds {off} are not on the list of the {CAP} counted seeds, "
+             f"1 to 100, then 111 to 130")
 
     n = 0
 
-    while finished(runs_dir, "A", n + 1) and finished(runs_dir, "R", n + 1):
+    while n < CAP and finished(runs_dir, "A", SEEDS[n]) and finished(runs_dir, "R", SEEDS[n]):
         n += 1
 
-    # After the complete pairs there may only be the one pair still running.
-    rest = sorted(s for s in seeds if s > n)
+    # After the complete pairs there may only be the next pair of the list, still running.
+    rest = sorted(seeds - set(SEEDS[:n]))
 
-    if rest and rest != [n + 1]:
-        fail(f"seeds must run 1, 2, 3, ... one pair at a time; after {n} complete pairs "
-             f"found seeds {rest}")
-
-    if n > CAP:
-        fail(f"{n} complete pairs, but the rule allows at most {CAP}")
+    if rest and rest != [SEEDS[n]]:
+        fail(f"seeds must run in the order of the list, one pair at a time; after {n} "
+             f"complete pairs found seeds {rest}, but only seed {SEEDS[n]} may be running")
 
     return n, (rest[0] if rest else None)
 
@@ -234,7 +254,7 @@ def recount(runs_dir):
     pairs = []
     calibrated = []
 
-    for s in range(1, n + 1):
+    for s in SEEDS[:n]:
         reds = []
 
         for arm in ("A", "R"):
@@ -252,15 +272,16 @@ def recount(runs_dir):
     # A counted pair up to the stop that fails the calibration gate makes the experiment void.
     counted = stop if stop is not None else n
 
-    for s in range(1, counted + 1):
-        if not calibrated[s - 1]:
-            print(f"VOID: seed {s} fails the calibration gate |R_seed| <= |L| / 3")
+    for i in range(counted):
+        if not calibrated[i]:
+            print(f"VOID: seed {SEEDS[i]} fails the calibration gate |R_seed| <= |L| / 3")
             sys.exit(1)
 
     print(verdict)
 
+    # Without a stop, fewer than CAP pairs are done, so the list has a next seed.
     if stop is None:
-        print(f"next: run seed {n + 1}")
+        print(f"next: run seed {SEEDS[n]}")
 
     if running is not None:
         print(f"seed {running}: not finished, not counted yet")
@@ -285,11 +306,13 @@ def pilots(sp):
     pilot_batch(sp, "pilot10", range(101, 111), "200 generations, so T > 200 is unknown")
 
     # Synthetic: X = 1 exactly when E1 < 1, so E1 stays in [1/2, 3/2) and never crosses.
+    # It runs CAP pairs, and pair i carries the i-th seed of the list, as in a counted run.
+    # Its pass times are synthetic.
     k = 0
     n = 0
     pairs = []
 
-    for i in range(1, 61):
+    for i in range(1, CAP + 1):
         x = F(3 ** k, 2 ** n) < 1
         k += x
         n += 1
@@ -299,7 +322,7 @@ def pilots(sp):
         else:
             tr = 6 if i % 2 == 1 else None
 
-        pairs.append((i, 5 if x else None, tr))
+        pairs.append((SEEDS[i - 1], 5 if x else None, tr))
 
     lines, verdict, _ = run_rule(pairs)
     print("== synthetic path that keeps E1 between 1/2 and 3/2:", verdict)
