@@ -17,7 +17,8 @@
 //!   most the reference's T count, and also at most its CNOT count for a Clifford target
 //!   whose reference has no T;
 //! - descriptive lines: the first generation in which a bred Cascade solved each target,
-//!   runs that ended at the call cap, and invention candidates.
+//!   runs that ended at the call cap, and the cheapest invention candidate per target and
+//!   run.
 //!
 //! D(s) = |R_bred(s) \ R_seed(s)| / |L \ R_seed(s)|: the share of the targets the seed
 //! Cascades miss that a bred Cascade solves, exactly and at the reference cost, on at
@@ -588,7 +589,8 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
     Ok(out)
 }
 
-/// The descriptive lines: first generations, call-cap stops and invention candidates.
+/// The descriptive lines: first generations, call-cap stops and the cheapest invention
+/// candidate per target and run.
 fn descriptive(context: &Context, pairs: &[Pair]) -> String {
     let mut out = String::from(
         "\nDescriptive: the first generation in which a bred Cascade solved each target, arm A|arm R (- never; * a target the seed Cascades solve).\n",

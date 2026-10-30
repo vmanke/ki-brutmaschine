@@ -185,7 +185,7 @@ The stop raised when an exact answer goes below a Proven or Derived Reference: t
 _Avoid_: discovery
 
 **Invention candidate**:
-An exact answer below a BestKnown Reference, recorded in `rediscovery.json` with `literature_checked = false`. It is called new only after a human has checked the literature (Q38).
+An exact answer below a BestKnown Reference. `rediscovery.json` records the cheapest one per Target, with `literature_checked = false`; any others are in the logged answers. It is called new only after a human has checked the literature (Q38).
 _Avoid_: invention, discovery, record
 
 **Designer**:

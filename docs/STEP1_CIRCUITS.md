@@ -63,9 +63,10 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
 - **Integrity alarm and invention candidate.** An exact answer below a proven or derived
   bound (Proven, Derived) stops the Run with an integrity error, because then the checker
   or the reference is wrong; the generation is not committed. An exact answer below a best
-  known count (BestKnown: 7 CNOT for Fredkin, 4 CNOT for CCiX) is recorded as an invention
-  candidate, with `literature_checked = false`. We call it new only after a human has
-  checked the literature (Q38).
+  known count (BestKnown: 7 CNOT for Fredkin, 4 CNOT for CCiX) is an invention candidate;
+  `rediscovery.json` records the cheapest one per target, with
+  `literature_checked = false`. We call it new only after a human has checked the
+  literature (Q38).
 - **Positive control** (`src/cascade/designer.rs`, `src/cascade/circuit_genes.rs`). No
   language model writes circuits in the container. A simulated designer under the model
   tags `sim:small` and `sim:large` answers the circuit prompts (section 5). The genes of
@@ -205,8 +206,8 @@ answer of the seed Cascades and of the bred ones (`best_seed`, `best_bred`: T, C
 gates, depth, T-depth), whether each reached the reference (`reached_by_seed`,
 `reached_by_bred`), the earliest generation of a bred Cascade that solved the target
 (`first_generation`), the text of the cheapest exact bred answer (`circuit`; it implements
-the disguised task, not the target in its plain form), and an invention candidate if
-there is one (`below_best_known`, `candidate`). Below follow |L| (`library`), |R_seed|
+the disguised task, not the target in its plain form), and the cheapest invention
+candidate if there is one (`below_best_known`, `candidate`). Below follow |L| (`library`), |R_seed|
 (`reached_by_seeds`), |R_bred \ R_seed| (`reached_by_bred_only`), the share D (`share`), the
 gate 3 · |R_seed| ≤ |L| (`calibrated`) and `passes` (calibrated and D > 1/2). The
 pre-registration defines these terms in section 7.

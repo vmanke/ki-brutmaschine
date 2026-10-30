@@ -71,9 +71,10 @@ Four further targets (W gate, sqrt(SWAP), quantum OR, 1-bit adder) have no verif
 reference; they never enter a panel and serve only as checker test vectors. An exact answer
 below a Proven or Derived number stops the Run with an integrity error, because then the
 checker or the reference is wrong; nothing of that generation is committed. An exact
-answer below a BestKnown number (Fredkin's 7 CNOTs, CCiX's 4 CNOTs) is recorded as an
-invention candidate with `literature_checked = false`; it is called new only after a human
-has checked the literature (Q38).
+answer below a BestKnown number (Fredkin's 7 CNOTs, CCiX's 4 CNOTs) is an invention
+candidate; `rediscovery.json` records the cheapest one per target, with
+`literature_checked = false`. A candidate is called new only after a human has checked
+the literature (Q38).
 
 **Tasks hide what they are.** A task is a library target in a disguise drawn per task:
 a relabelling of the qubits and X gates on inputs and outputs. The disguise keeps the

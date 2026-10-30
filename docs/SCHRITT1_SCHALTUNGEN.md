@@ -64,12 +64,12 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   Wert statt der Lösungsquote, also 0.8 · mittlerer Wert + 0.2 · Urteilskraft − Kosten. Ein
   Richter wird gewertet, wenn die Aufgabenart eine der beiden Antworten streng vorzieht.
 - **Integritätsalarm und Erfindungskandidat.** Eine exakte Antwort unter einer bewiesenen
-  oder abgeleiteten Schranke (Proven, Derived) hält den Lauf mit einem Integritätsfehler an,
-  denn dann irrt der Prüfer oder die Referenz; die Generation wird nicht festgeschrieben.
-  Eine exakte Antwort unter einem besten bekannten Wert (BestKnown: 7 CNOT für Fredkin,
-  4 CNOT für CCiX) wird als Erfindungskandidat festgehalten, mit
-  `literature_checked = false`. Neu nennen wir sie erst, wenn ein Mensch die Literatur
-  geprüft hat (Q38).
+  oder abgeleiteten Schranke (Proven, Derived) hält den Lauf mit einem Integritätsfehler
+  an, denn dann irrt der Prüfer oder die Referenz; die Generation wird nicht
+  festgeschrieben. Eine exakte Antwort unter einem besten bekannten Wert (BestKnown: 7 CNOT
+  für Fredkin, 4 CNOT für CCiX) ist ein Erfindungskandidat; `rediscovery.json` hält den
+  billigsten je Ziel fest, mit `literature_checked = false`. Neu nennen wir sie erst, wenn
+  ein Mensch die Literatur geprüft hat (Q38).
 - **Positivkontrolle** (`src/cascade/designer.rs`, `src/cascade/circuit_genes.rs`). Im
   Container schreibt kein Sprachmodell Schaltungen. Ein simulierter Entwerfer unter den
   Modellnamen `sim:small` und `sim:large` beantwortet die Schaltungs-Prompts (Abschnitt 5).
@@ -209,17 +209,18 @@ steigt von 4 auf 30. `parent_entropy_bits` steigt dort von 1.66 auf 8.43 Bit. In
 dieser Wert stets der Zweierlogarithmus der Archivgröße, von 2 Bit bei 4 Startprogrammen bis
 8.92 Bit bei 484 Kaskaden, wie es die gleichverteilte Elternwahl ergibt.
 
-**`rediscovery.json`.** Für jedes Ziel (`targets`) stehen dort die Referenz mit ihrem Status,
-die Zahl der Such-Aufgaben des Ziels (`tasks`), die Kosten der billigsten exakten Antwort
-der Startprogramme und der gezüchteten Kaskaden (`best_seed`, `best_bred`: T, CNOT, H,
-Gatter, Tiefe, T-Tiefe), ob Startprogramme und gezüchtete Kaskaden die Referenz erreicht
-haben (`reached_by_seed`, `reached_by_bred`), die früheste Generation einer gezüchteten Kaskade, die das Ziel löste
-(`first_generation`), der Text der billigsten exakten gezüchteten Antwort (`circuit`; er
-setzt die verkleidete Aufgabe um, nicht das Ziel in seiner Grundform) und ein etwaiger
-Erfindungskandidat (`below_best_known`, `candidate`). Darunter stehen |L| (`library`),
-|R_seed| (`reached_by_seeds`), |R_bred \ R_seed| (`reached_by_bred_only`), der Anteil D
-(`share`), die Schranke 3 · |R_seed| ≤ |L| (`calibrated`) und `passes` (kalibriert und
-D > 1/2). Die Begriffe definiert die Vorab-Registrierung, Abschnitt 7.
+**`rediscovery.json`.** Für jedes Ziel (`targets`) stehen dort die Referenz mit ihrem
+Status, die Zahl der Such-Aufgaben des Ziels (`tasks`), die Kosten der billigsten exakten
+Antwort der Startprogramme und der gezüchteten Kaskaden (`best_seed`, `best_bred`: T, CNOT,
+H, Gatter, Tiefe, T-Tiefe), ob Startprogramme und gezüchtete Kaskaden die Referenz erreicht
+haben (`reached_by_seed`, `reached_by_bred`), die früheste Generation einer gezüchteten
+Kaskade, die das Ziel löste (`first_generation`), der Text der billigsten exakten
+gezüchteten Antwort (`circuit`; er setzt die verkleidete Aufgabe um, nicht das Ziel in
+seiner Grundform) und der billigste Erfindungskandidat, falls es einen gibt
+(`below_best_known`, `candidate`). Darunter stehen |L| (`library`), |R_seed|
+(`reached_by_seeds`), |R_bred \ R_seed| (`reached_by_bred_only`), der Anteil D (`share`),
+die Schranke 3 · |R_seed| ≤ |L| (`calibrated`) und `passes` (kalibriert und D > 1/2). Die
+Begriffe definiert die Vorab-Registrierung, Abschnitt 7.
 
 **`report.json`.** Wie in Stufe 2c: die besten Kaskaden mit ihren gelösten Such-Aufgaben,
 die Finalisten mit ihren gelösten Auswahl-Aufgaben (bei Schaltungen dazu `select_quality`,

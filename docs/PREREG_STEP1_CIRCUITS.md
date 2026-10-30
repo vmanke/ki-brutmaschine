@@ -258,7 +258,8 @@ the primary result.
 
 **Descriptive results** (no decision attached). The analysis prints, per target and
 seed, the first generation in which a bred member of each arm solved the target; the
-Runs that ended at the call cap; and every invention candidate. From each Run's files we
+Runs that ended at the call cap; and the cheapest invention candidate per target and Run
+(any others are in the answers of the `born` events). From each Run's files we
 also report: the `state` lines of every tenth generation (as in `pilot.json`), the calls
 used and the wall time, the best member's solved tasks on the search panel (`report.json`,
 `top`), and how many of the 22 select tasks the finalists and the seed Cascades solve

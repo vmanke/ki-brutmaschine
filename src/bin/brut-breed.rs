@@ -31,11 +31,12 @@
 //! A finished circuit run also writes `<dir>/rediscovery.json`, the pre-registered count
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
-//! calibration gate, and any invention candidate (plan (g)). It is written before the
-//! report, so a run with a report has it too. Whenever --verify recomputes the report, it
-//! also checks that the checkpoint's archive holds the Cascades and answers the Born
-//! events of the log record, and recomputes the count from that archive. --promote
-//! refuses circuit runs: promotion of circuit Cascades is not part of step 1.
+//! calibration gate, and the cheapest invention candidate per target (plan (g)). It is
+//! written before the report, so a run with a report has it too. Whenever --verify
+//! recomputes the report, it also checks that the checkpoint's archive holds the Cascades
+//! and answers the Born events of the log record, and recomputes the count from that
+//! archive. --promote refuses circuit runs: promotion of circuit Cascades is not part of
+//! step 1.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
