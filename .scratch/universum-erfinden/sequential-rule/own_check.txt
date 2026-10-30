@@ -1,0 +1,26 @@
+== recommended: upper 20, lower 1/20, cap 60
+count form (passes to prove, failures to fail): ([8, 10, 11, 13, 15, 16, 18, 20], [5, 5, 6, 7, 7, 8, 8, 9])
+  p = 1/2                          proven 0.0385  failed 0.9366  undecided 0.0248  E[pairs] 20.9
+  p = 0.6                          proven 0.2728  failed 0.5777  undecided 0.1495  E[pairs] 31.1
+  p = 0.7                          proven 0.7810  failed 0.1231  undecided 0.0959  E[pairs] 28.3
+  Kaplan-Meier 22/31               proven 0.8211  failed 0.0988  undecided 0.0801  E[pairs] 27.2
+  p = 3/4                          proven 0.9379  failed 0.0347  undecided 0.0275  E[pairs] 22.3
+  Kaplan-Meier with A-310, 61/80   proven 0.9584  failed 0.0241  undecided 0.0175  E[pairs] 20.8
+  p = 0.8                          proven 0.9898  failed 0.0072  undecided 0.0030  E[pairs] 17.0
+  exact pilot count 9/11           proven 0.9952  failed 0.0038  undecided 0.0010  E[pairs] 15.5
+  exact P(proven | p = 1/2) = 5555272097573807/2^57
+== strict variant: upper 1024/11, lower 1/20, cap 60
+count form (passes to prove, failures to fail): ([12, 13, 15, 17, 19, 20, 22, 24], [5, 5, 6, 7, 7, 8, 8, 9])
+  p = 1/2                          proven 0.0079  failed 0.9544  undecided 0.0378  E[pairs] 21.9
+  p = 0.6                          proven 0.1312  failed 0.6017  undecided 0.2670  E[pairs] 36.7
+  p = 0.7                          proven 0.6404  failed 0.1273  undecided 0.2324  E[pairs] 38.9
+  Kaplan-Meier 22/31               proven 0.6962  failed 0.1019  undecided 0.2019  E[pairs] 37.9
+  p = 3/4                          proven 0.8811  failed 0.0353  undecided 0.0835  E[pairs] 32.2
+  Kaplan-Meier with A-310, 61/80   proven 0.9186  failed 0.0244  undecided 0.0570  E[pairs] 30.3
+  p = 0.8                          proven 0.9804  failed 0.0073  undecided 0.0123  E[pairs] 25.0
+  exact pilot count 9/11           proven 0.9916  failed 0.0038  undecided 0.0046  E[pairs] 22.8
+  exact P(proven | p = 1/2) = 4528381728901175/2^59
+== old rule, at least 9 of 10
+  p = 1/2                          P(pass) = 0.0107
+  Kaplan-Meier 22/31               P(pass) = 0.1650
+  exact pilot count 9/11           P(pass) = 0.4332

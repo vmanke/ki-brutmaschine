@@ -1,0 +1,299 @@
+{
+  "targets": [
+    {
+      "target": "cz",
+      "reference": {
+        "t": 0,
+        "cnot": 1,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": {
+        "t": 0,
+        "cnot": 2,
+        "h": 0,
+        "gates": 5,
+        "depth": 4,
+        "t_depth": 0
+      },
+      "best_bred": {
+        "t": 0,
+        "cnot": 1,
+        "h": 2,
+        "gates": 4,
+        "depth": 3,
+        "t_depth": 0
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 24,
+      "circuit": "H 0; Z 1; CNOT 1 0; H 0",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "swap",
+      "reference": {
+        "t": 0,
+        "cnot": 3,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": {
+        "t": 0,
+        "cnot": 3,
+        "h": 0,
+        "gates": 4,
+        "depth": 4,
+        "t_depth": 0
+      },
+      "best_bred": {
+        "t": 0,
+        "cnot": 3,
+        "h": 0,
+        "gates": 4,
+        "depth": 4,
+        "t_depth": 0
+      },
+      "reached_by_seed": true,
+      "reached_by_bred": true,
+      "first_generation": 1,
+      "circuit": "CNOT 0 1; CNOT 1 0; CNOT 0 1; X 1",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "cs",
+      "reference": {
+        "t": 3,
+        "cnot": 2,
+        "t_bound": "proven",
+        "cnot_bound": "derived"
+      },
+      "tasks": 3,
+      "best_seed": {
+        "t": 3,
+        "cnot": 2,
+        "h": 0,
+        "gates": 6,
+        "depth": 5,
+        "t_depth": 2
+      },
+      "best_bred": {
+        "t": 3,
+        "cnot": 2,
+        "h": 0,
+        "gates": 6,
+        "depth": 5,
+        "t_depth": 2
+      },
+      "reached_by_seed": true,
+      "reached_by_bred": true,
+      "first_generation": 1,
+      "circuit": "TDG 1; TDG 0; CNOT 0 1; TDG 1; CNOT 0 1; X 0",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "ch",
+      "reference": {
+        "t": 2,
+        "cnot": 1,
+        "t_bound": "derived",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": null,
+      "reached_by_seed": false,
+      "reached_by_bred": false,
+      "first_generation": null,
+      "circuit": null,
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "qft2",
+      "reference": {
+        "t": 3,
+        "cnot": 3,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": {
+        "t": 3,
+        "cnot": 3,
+        "h": 2,
+        "gates": 9,
+        "depth": 8,
+        "t_depth": 2
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 336,
+      "circuit": "H 1; T 0; Z 1; T 1; CNOT 0 1; TDG 1; CNOT 1 0; CNOT 0 1; H 1",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "ccz",
+      "reference": {
+        "t": 7,
+        "cnot": 6,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": {
+        "t": 7,
+        "cnot": 10,
+        "h": 0,
+        "gates": 17,
+        "depth": 15,
+        "t_depth": 5
+      },
+      "best_bred": {
+        "t": 7,
+        "cnot": 6,
+        "h": 0,
+        "gates": 13,
+        "depth": 10,
+        "t_depth": 4
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 37,
+      "circuit": "CNOT 0 1; CNOT 1 2; T 2; CNOT 0 2; T 2; CNOT 1 2; T 2; CNOT 0 2; T 1; CNOT 0 1; T 0; T 1; T 2",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "toffoli",
+      "reference": {
+        "t": 7,
+        "cnot": 6,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": {
+        "t": 7,
+        "cnot": 6,
+        "h": 2,
+        "gates": 15,
+        "depth": 12,
+        "t_depth": 5
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 336,
+      "circuit": "H 0; T 0; T 1; T 2; CNOT 0 1; TDG 1; CNOT 0 1; CNOT 0 2; TDG 2; CNOT 1 2; T 2; CNOT 0 2; TDG 2; CNOT 1 2; H 0",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "peres",
+      "reference": {
+        "t": 7,
+        "cnot": 5,
+        "t_bound": "proven",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": {
+        "t": 7,
+        "cnot": 5,
+        "h": 2,
+        "gates": 14,
+        "depth": 10,
+        "t_depth": 4
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 336,
+      "circuit": "H 2; T 0; TDG 1; T 2; CNOT 0 2; TDG 2; CNOT 1 2; TDG 2; CNOT 0 2; T 2; CNOT 1 0; T 0; CNOT 1 2; H 2",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "fredkin",
+      "reference": {
+        "t": 7,
+        "cnot": 7,
+        "t_bound": "proven",
+        "cnot_bound": "best_known"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": null,
+      "reached_by_seed": false,
+      "reached_by_bred": false,
+      "first_generation": null,
+      "circuit": null,
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "rtof",
+      "reference": {
+        "t": 4,
+        "cnot": 3,
+        "t_bound": "derived",
+        "cnot_bound": "proven"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": {
+        "t": 4,
+        "cnot": 3,
+        "h": 2,
+        "gates": 11,
+        "depth": 10,
+        "t_depth": 4
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 336,
+      "circuit": "H 2; T 2; CNOT 1 2; T 2; CNOT 0 2; T 2; CNOT 1 2; T 2; X 1; X 2; H 2",
+      "below_best_known": false,
+      "candidate": null
+    },
+    {
+      "target": "ccix",
+      "reference": {
+        "t": 4,
+        "cnot": 4,
+        "t_bound": "derived",
+        "cnot_bound": "best_known"
+      },
+      "tasks": 3,
+      "best_seed": null,
+      "best_bred": {
+        "t": 4,
+        "cnot": 4,
+        "h": 2,
+        "gates": 11,
+        "depth": 10,
+        "t_depth": 4
+      },
+      "reached_by_seed": false,
+      "reached_by_bred": true,
+      "first_generation": 89,
+      "circuit": "H 1; TDG 1; CNOT 0 1; TDG 1; CNOT 2 1; T 1; CNOT 0 1; T 1; CNOT 2 1; X 2; H 1",
+      "below_best_known": false,
+      "candidate": null
+    }
+  ],
+  "library": 11,
+  "reached_by_seeds": 2,
+  "reached_by_bred_only": 7,
+  "share": 0.7777777777777778,
+  "calibrated": true,
+  "passes": true
+}

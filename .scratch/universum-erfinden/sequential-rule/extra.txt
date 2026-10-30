@@ -1,0 +1,50 @@
+pair minutes with both arms to 1000: mean 12.68, max 14.31
+
+JOINT U=20 cap 50: scenario | pA | P(claim1) P(claim2) | E[N] N90 | E[hours] = E[N]*mean/60 | worst hours = cap*max/60
+  KM                       pA=0.7097 | 0.769 0.758 |  27.9 50 |  5.9 h | 11.9 h
+  KM+A310                  pA=0.7625 | 0.935 0.929 |  22.6 40 |  4.8 h | 11.9 h
+  empirical 10 long pairs  pA=0.8000 | 0.982 0.982 |  16.9 30 |  3.6 h | 11.9 h
+
+JOINT U=20 cap 60: scenario | pA | P(claim1) P(claim2) | E[N] N90 | E[hours] = E[N]*mean/60 | worst hours = cap*max/60
+  KM                       pA=0.7097 | 0.821 0.815 |  29.1 57 |  6.1 h | 14.3 h
+  KM+A310                  pA=0.7625 | 0.958 0.955 |  23.0 40 |  4.9 h | 14.3 h
+  empirical 10 long pairs  pA=0.8000 | 0.990 0.990 |  17.0 30 |  3.6 h | 14.3 h
+
+JOINT U=20 cap 80: scenario | pA | P(claim1) P(claim2) | E[N] N90 | E[hours] = E[N]*mean/60 | worst hours = cap*max/60
+  KM                       pA=0.7097 | 0.864 0.861 |  30.2 57 |  6.4 h | 19.1 h
+  KM+A310                  pA=0.7625 | 0.972 0.970 |  23.2 40 |  4.9 h | 19.1 h
+  empirical 10 long pairs  pA=0.8000 | 0.992 0.992 |  17.0 30 |  3.6 h | 19.1 h
+
+PRIMARY U=20 cap 50: p | P(proven) P(failed) P(undecided) E[N] N90
+  p=0.5000: 0.037 0.910 0.053  20.5 41
+  p=0.6000: 0.247 0.530 0.223  29.3 50
+  p=0.7000: 0.726 0.115 0.159  27.0 50
+  p=0.7097: 0.769 0.093 0.138  26.1 50
+  p=0.7500: 0.907 0.034 0.060  21.8 41
+  p=0.8000: 0.982 0.007 0.010  16.9 30
+
+PRIMARY U=20 cap 60: p | P(proven) P(failed) P(undecided) E[N] N90
+  p=0.5000: 0.039 0.937 0.025  20.9 41
+  p=0.6000: 0.273 0.578 0.150  31.1 60
+  p=0.7000: 0.781 0.123 0.096  28.3 59
+  p=0.7097: 0.821 0.099 0.080  27.2 57
+  p=0.7500: 0.938 0.035 0.027  22.3 41
+  p=0.8000: 0.990 0.007 0.003  17.0 30
+
+PRIMARY U=20 cap 80: p | P(proven) P(failed) P(undecided) E[N] N90
+  p=0.5000: 0.039 0.954 0.007  21.2 41
+  p=0.6000: 0.298 0.627 0.075  33.3 71
+  p=0.7000: 0.829 0.130 0.041  29.6 59
+  p=0.7097: 0.864 0.104 0.032  28.2 57
+  p=0.7500: 0.957 0.035 0.007  22.6 41
+  p=0.8000: 0.992 0.007 0.000  17.0 30
+assurance cap 50, Beta(10,3): 9/11 with a uniform prior: 0.8100
+assurance cap 50, Beta(9,2): 8/9 with a uniform prior: 0.8856
+assurance cap 60, Beta(10,3): 9/11 with a uniform prior: 0.8287
+assurance cap 60, Beta(9,2): 8/9 with a uniform prior: 0.8980
+old rule P(>= 9 of 10) at p = KM 22/31 = 0.165
+old rule P(>= 9 of 10) at p = 9/11 = 0.433
+old rule P(>= 9 of 10) at p = 6/20 at 200 gens = 0.000
+U=20: proven needs >= 8 passes with 0 failures: True False
+U=20: failed after 5 straight failures: True False
+pilot 101.. sequence (X = 1,0,0,0,0,0): failed at 6: True not before: False
