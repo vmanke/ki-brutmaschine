@@ -196,6 +196,10 @@ _Avoid_: oracle, solver
 A bred Cascade solving a Target that the seed Cascades miss, exactly and at Reference cost. The share D of such Targets, counted in `rediscovery.json`, is the pre-registered result of step 1.
 _Avoid_: invention, success rate
 
+**Pass time**:
+The first generation in which a Run's bred Cascades have solved more than half of the Targets its seed Cascades miss, or never. It is read from the first generations in `rediscovery.json`; a counted Run passes when its pass time is at most 1000, and the sequential rule of step 1 compares the pass times of both Arms of a seed.
+_Avoid_: T alone (T also counts T gates), success generation, hitting time
+
 **Arm**:
 One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice.
 _Avoid_: condition, group
