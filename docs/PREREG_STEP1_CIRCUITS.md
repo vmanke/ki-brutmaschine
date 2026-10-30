@@ -421,10 +421,15 @@ The experiment is void, and we make no claim, when any of these holds:
 
 ## 10. The pilot seeds
 
-Seeds 101 and 102 are pilots. We do not count them, and they never enter the analysis of
-the counted seeds. They may set only `--generations` and `--max-calls`. The calibration
-test reads the search panel of seed 101 without a Run. `docs/pilot-step1/pilot.json`
-holds every number below; all its Runs pass `--verify`.
+Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402, which include
+the first pilot seeds 101 and 102. They never enter the analysis of the counted seeds.
+They chose the design: the later batches set the ceiling of 1000 generations, the call cap
+and the planning figures below. Because they chose the design, counting them would bias
+the result. The calibration test reads the search panel of seed 101 without a Run. The
+pass time of every pilot Run is in [docs/pilot-step1/](pilot-step1/README.md).
+
+**First pilot, seeds 101 and 102.** `docs/pilot-step1/pilot.json` holds every number of
+this list; all its Runs pass `--verify`.
 
 - **60 generations, `--max-calls 200000`.** R_seed = {swap, cs} in all four Runs. Arm A:
   D = 7/9 on seed 101 and 2/9 on seed 102. Arm R: 1/9 and 2/9. No integrity alarm, no
@@ -433,25 +438,71 @@ holds every number below; all its Runs pass `--verify`.
 - **200 generations, `--max-calls 1000000`.** Each Run repeats its 60-generation Run
   exactly through generation 60, since only the stop check reads `--generations`. D
   stays 7/9 and 2/9 in arm A; in arm R it is 2/9 on both seeds (ccz at generation 90 on
-  seed 101). Every first hit came by generation 90, none in generations 91 to 200. At 60
-  generations the last first hit of arm A on seed 101 came at generation 55.
+  seed 101). In these four Runs every first hit came by generation 90, none in
+  generations 91 to 200. At 60 generations the last first hit of arm A on seed 101 came
+  at generation 55.
 - **Cost.** A 60-generation Run took 2.3 to 5.8 s and a 200-generation Run 12.6 to
   25.9 s, wall time at 2 threads.
 
-So the counted Runs use 200 generations, which lie past every first hit of the pilot at
-moderate cost, and a cap that cannot bind. Two pilot seeds cannot estimate the pass
-rate: by our calculation, exactly one pass in two seeds has probability 0.5 at a pass
-rate of 0.5 per seed and 0.18 at 0.9, while the primary rule then holds with probability
-0.0107 and 0.736.
+**Later batches.** Both arms ran with the settings of section 6 except the seed, the
+generations and the call cap. The Runs are not in the repository;
+`.scratch/universum-erfinden/sequential-rule/pilot.json` holds the values read from them,
+and `pilot.txt` beside it summarises them.
+
+| Seeds | Generations | `--max-calls` | Arm A passes | Arm R passes |
+|---|---|---|---|---|
+| 101 to 110 | 200 | 2 600 000 | 1 of 10 | 1 of 10 |
+| 201 to 210 | 200 | 2 600 000 | 5 of 10 | 2 of 10 |
+| 301 to 309 | 1000 | 13 000 000 | 8 of 9 | 1 of 9 |
+| 401 and 402 | 2000 | 26 000 000 | 1 of 2 | 1 of 1 |
+
+The Run A-310 was interrupted after generation 922; it is incomplete and left out of every
+figure. R-310 and R-402 were not run. In all 61 complete Runs, R_seed = {swap, cs}, the gate
+holds and the Run ended with all generations done. None raised an integrity alarm, found an
+invention candidate or solved ch or fredkin.
+
+- **The ceiling.** By generation 200, arm A passed on 6 of the 20 seeds 101 to 110 and 201
+  to 210: a rate of 0.30, with a 95 % confidence interval of 0.119 to 0.543. At that rate
+  the rule of section 8 fails with probability 1.000, after 9.1 pairs on average, so the
+  ceiling cannot stay at 200. Passes came as late as generation 810 in arm A (seed 309)
+  and 720 in arm R (seed 401). 1000 is the longest horizon with pilot data in both arms:
+  11 Runs of arm A and 10 of arm R reached it.
+- **The call cap.** 13 000 000 lies above the bound of 12 723 412 calls of section 6. The
+  pilot Runs used at most 1 161 738 calls by generation 1000.
+- **Pass rates at 1000 generations.** Arm A passed in 9 of the 11 Runs that reached
+  generation 1000 (0.818; 95 % confidence interval 0.482 to 0.977). A Kaplan-Meier
+  estimate over all 31 complete Runs of arm A gives 22/31 = 0.710. Arm R passed in 2 of
+  10 (Kaplan-Meier: 0.280). In the 10 pairs with both arms run to generation 1000, arm A
+  passed first 8 times, arm R once (seed 401), and once neither passed (seed 301).
+- **Wall time at 2 threads.** A Run to generation 1000 took 6.01 to 8.57 min in arm A
+  (mean 7.38 min, 11 Runs) and 4.54 to 6.12 min in arm R (mean 5.38 min, 10 Runs). A pair
+  took 10.57 to 14.31 min (mean 12.68 min, 10 pairs).
+
+**Planning figures** (not part of the rule). At the pilot rates the primary claim is
+proven with probability 0.82 to 0.99, and both claims with 0.815 to 0.990: the low end
+draws pairs from the Kaplan-Meier curves of both arms, the high end from the 10 long pilot
+pairs as observed. The experiment then needs 29.1 to 17.0 pairs on average, that is 6.1
+to 3.6 hours at 12.68 min per pair; 90 % of such experiments need at most 57 to 30 pairs.
+It needs at most 60 pairs: 14.3 hours at the slowest pilot pair, or 14.7 hours if every
+pair had the slowest Run of each arm. The thread check comes on top. These figures assume
+that the arms of a pair are independent, that the Kaplan-Meier curves stay flat after
+their last pilot pass, and that this container's timings carry over. The fixed rule
+"9 of 10" would have passed with probability 0.165 at the Kaplan-Meier rate and 0.433 at
+9/11.
 
 ## 11. The claim
 
-If the primary rule passes, we claim: breeding assembles prompts and Traits that unlock
-exact, reference-cost syntheses for most library targets the seed Cascades miss. If the
-secondary rule passes too: Darwin Gödel selection beats a uniform choice of parents with
-the same number of children. Both are claims about the breeder as a positive control,
-not about real models, and not about inventions: an answer below a BestKnown count is
-only an invention candidate until a human has checked the literature (Q38).
+If the primary claim is proven, we claim: breeding assembles prompts and Traits that
+unlock exact, reference-cost syntheses for most library targets the seed Cascades miss, in
+more than half of all seeds within 1000 generations. If the secondary claim is proven
+too: Darwin Gödel selection gets there sooner than a uniform choice of parents with the
+same number of children, in that among untied pairs arm A passes first more often than
+arm R. Both are claims about the breeder as a positive control, not about real models,
+and not about inventions: an answer below a BestKnown count is only an invention
+candidate until a human has checked the literature (Q38).
 
-If a rule fails, we report that it fails. A later change of the genes, the designer, the
-settings or the analysis needs a new pre-registration and seeds not used before.
+If the primary claim fails, we report that it fails: the data then speak against a pass
+rate of 3/4 or more, which is no proof of a rate of 1/2 or less. A claim that is not
+decided by pair 60 is reported as undecided, with its E value. A later change of the
+genes, the designer, the settings or the analysis needs a new pre-registration and seeds
+not used before.
