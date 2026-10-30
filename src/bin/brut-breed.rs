@@ -33,10 +33,11 @@
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
 //! calibration gate, and the cheapest invention candidate per target (plan (g)). It is
 //! written before the report, so a run with a report has it too. Whenever --verify
-//! recomputes the report, it also checks that the checkpoint's archive holds the Cascades
-//! and answers the Born events of the log record, and recomputes the count from that
-//! archive. --promote refuses circuit runs: promotion of circuit Cascades is not part of
-//! step 1.
+//! recomputes the report, it also checks that the checkpoint's archive holds one member
+//! per Born event of the log, in its order, and that each member, written as a Born event,
+//! is the logged one (the same id, Cascade, parents, generation, operator, solved count,
+//! graded value, usage and answers). Then it recomputes the count from that archive.
+//! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -1031,26 +1032,20 @@ fn check_rediscovery(
     Ok("; rediscovery recomputed and equal".to_string())
 }
 
-/// Error unless the archive of `breeder`, rebuilt from the checkpoint, holds the Cascades
-/// that the Born events among `events` record, in their order, each with the same id,
-/// generation, operator and answers. These are what `rediscovery` counts. No hash covers
-/// the checkpoint, so only this ties the count to the hash-chained log: an answer edited
-/// in the checkpoint would otherwise enter the count with the next resume. A Born event
-/// without answers logged no answer text.
+/// Error unless the archive of `breeder`, rebuilt from the checkpoint, holds one member per
+/// Born event among `events`, in their order, and each member, written as a Born event,
+/// is the logged one: the same id, Cascade, parents, generation, operator, solved count,
+/// graded value, usage and answers. `rediscovery` counts by the id, generation, operator
+/// and answers; the rest shapes what a resume to more generations breeds. No hash covers
+/// the checkpoint, so only this ties the archive to the hash-chained log: an answer edited
+/// in the checkpoint would otherwise enter the count with the next resume. What a member
+/// gains later (children, judgments, fitness, rating) is not in its Born event, and this
+/// does not check it.
 fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Event]) -> Result<()> {
     let tasks = breeder.search_panel().len();
-    let born: Vec<_> = events
+    let born: Vec<&Event> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Born {
-                generation,
-                id,
-                op,
-                answers,
-                ..
-            } => Some((*generation, id, *op, answers)),
-            _ => None,
-        })
+        .filter(|e| matches!(e, Event::Born { .. }))
         .collect();
     let archive = breeder.archive();
     let differs = |what: String| {
@@ -1069,15 +1064,28 @@ fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Eve
         )));
     }
 
-    for (m, (generation, id, op, answers)) in archive.iter().zip(born) {
-        let logged = answers.clone().unwrap_or_else(|| vec![None; tasks]);
-        let kept: Vec<Option<String>> = m
+    for (m, logged) in archive.iter().zip(born) {
+        // The member as the breeder logs it at its birth: the answers as text, left out
+        // when no answer has one.
+        let answers: Vec<Option<String>> = m
             .answers
             .iter()
             .map(|a| a.as_ref().and_then(|c| breeder.domain().artefact(c)))
             .collect();
+        let written = Event::Born {
+            generation: m.generation,
+            id: m.id.clone(),
+            parents: m.parents.clone(),
+            op: m.op,
+            cascade: m.cascade.clone(),
+            solved: m.solved,
+            puzzles: tasks,
+            usage: m.usage,
+            quality: m.quality,
+            answers: answers.iter().any(Option::is_some).then_some(answers),
+        };
 
-        if m.id != *id || m.generation != generation || m.op != op || kept != logged {
+        if written != *logged {
             return Err(differs(format!("archive member {}", m.id)));
         }
     }

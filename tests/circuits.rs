@@ -928,6 +928,58 @@ fn verify_ties_the_archive_size_ids_generations_and_operators_to_the_log() {
 }
 
 #[test]
+fn verify_ties_the_cascades_parents_scores_and_usage_to_the_log() {
+    // A bred member whose Cascade holds a text that its Born event does not, and one with
+    // a parent that its Born event does not name. Neither edit changes the count, but a
+    // resume to more generations would breed from the edited archive.
+    let (_, refused) = resumed_after_forging("forged-cascade", |archive, finalists| {
+        let m = unscored(archive, finalists);
+        let text = &mut m["cascade"]["stages"][0]["workers"][0]["sections"][0]["text"];
+        let edited = format!("EDITED: {}", text.as_str().expect("a section text"));
+
+        *text = serde_json::json!(edited);
+    });
+
+    refused_as_unlogged(&refused, "Cascade");
+
+    let (_, refused) = resumed_after_forging("forged-parents", |archive, finalists| {
+        unscored(archive, finalists)["parents"]
+            .as_array_mut()
+            .expect("parents")
+            .push(serde_json::json!("0000000000000000"));
+    });
+
+    refused_as_unlogged(&refused, "parents");
+
+    // A bred member with one more solved task, a higher graded value, or more completion
+    // tokens than its Born event logs. The graded value and the usage enter its fitness,
+    // so a resume to more generations would choose parents by them.
+    let (_, refused) = resumed_after_forging("forged-solved", |archive, finalists| {
+        let solved = &mut unscored(archive, finalists)["solved"];
+
+        *solved = serde_json::json!(solved.as_u64().expect("solved") + 1);
+    });
+
+    refused_as_unlogged(&refused, "solved count");
+
+    let (_, refused) = resumed_after_forging("forged-quality", |archive, finalists| {
+        let quality = &mut unscored(archive, finalists)["quality"];
+
+        *quality = serde_json::json!(quality.as_f64().expect("graded value") + 1.0);
+    });
+
+    refused_as_unlogged(&refused, "graded value");
+
+    let (_, refused) = resumed_after_forging("forged-usage", |archive, finalists| {
+        let tokens = &mut unscored(archive, finalists)["usage"]["completion_tokens"];
+
+        *tokens = serde_json::json!(tokens.as_u64().expect("tokens") + 1000);
+    });
+
+    refused_as_unlogged(&refused, "usage");
+}
+
+#[test]
 fn verify_says_why_it_skips_the_count_of_a_finished_run() {
     let dir = fresh("no-report");
     let path = dir.to_str().expect("path");
