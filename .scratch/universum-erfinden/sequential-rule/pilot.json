@@ -1,0 +1,2069 @@
+{
+ "runs": [
+  {
+   "batch": "pilot10",
+   "run": "A-101",
+   "arm": "A",
+   "seed": 101,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.3356005632,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 214049,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 32,
+   "firsts": [
+    1,
+    32,
+    32,
+    32,
+    32,
+    32,
+    55
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-102",
+   "arm": "A",
+   "seed": 102,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2473902781,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 193928,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    6,
+    29
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-103",
+   "arm": "A",
+   "seed": 103,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.35570692335,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 192473,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    5,
+    43,
+    156
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-104",
+   "arm": "A",
+   "seed": 104,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2455036486,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 182106,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    43,
+    52
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-105",
+   "arm": "A",
+   "seed": 105,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.24542216238333334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 189792,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    4,
+    88
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-106",
+   "arm": "A",
+   "seed": 106,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.36374471031666666,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 211822,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    21,
+    118
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-107",
+   "arm": "A",
+   "seed": 107,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2526729359,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 186598,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    27,
+    87
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-108",
+   "arm": "A",
+   "seed": 108,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.25601853916666667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 190233,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    23,
+    119,
+    157
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-109",
+   "arm": "A",
+   "seed": 109,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.4331776405666667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 190103,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    20,
+    54,
+    77
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "A-110",
+   "arm": "A",
+   "seed": 110,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.6216379083166667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 188278,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    5
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-101",
+   "arm": "R",
+   "seed": 101,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.42871169931666664,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 178684,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    35,
+    90
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-102",
+   "arm": "R",
+   "seed": 102,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2118645521666667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 153624,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    26,
+    40
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-103",
+   "arm": "R",
+   "seed": 103,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.44590401808333335,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 147893,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    73
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-104",
+   "arm": "R",
+   "seed": 104,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.4394673206166667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 151569,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    2,
+    26
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-105",
+   "arm": "R",
+   "seed": 105,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.3705313273333333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 160315,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    13
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-106",
+   "arm": "R",
+   "seed": 106,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.41494825715,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 139582,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    16,
+    27
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-107",
+   "arm": "R",
+   "seed": 107,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.41280966178333334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 140963,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    32
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-108",
+   "arm": "R",
+   "seed": 108,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.34871420905,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 155580,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    12,
+    27
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-109",
+   "arm": "R",
+   "seed": 109,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.3908756033,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 152495,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    5,
+    12
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot10",
+   "run": "R-110",
+   "arm": "R",
+   "seed": 110,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.36717371935000004,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 162201,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 6,
+   "final_D": "6/9",
+   "T": 48,
+   "firsts": [
+    9,
+    16,
+    48,
+    48,
+    48,
+    48
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-201",
+   "arm": "A",
+   "seed": 201,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.42262456163333334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 193330,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 172,
+   "firsts": [
+    17,
+    45,
+    172,
+    172,
+    172,
+    172,
+    172
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-202",
+   "arm": "A",
+   "seed": 202,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.30602686901666665,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 187345,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    10,
+    48,
+    167
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-203",
+   "arm": "A",
+   "seed": 203,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.44770184728333334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 198637,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 78,
+   "firsts": [
+    4,
+    78,
+    78,
+    78,
+    78,
+    78,
+    78
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-204",
+   "arm": "A",
+   "seed": 204,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.28050142178333337,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 206620,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    32
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-205",
+   "arm": "A",
+   "seed": 205,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.26463250546666667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 183937,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    37,
+    144
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-206",
+   "arm": "A",
+   "seed": 206,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.4929555597166667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 186731,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 97,
+   "firsts": [
+    3,
+    70,
+    97,
+    97,
+    97,
+    97,
+    97
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-207",
+   "arm": "A",
+   "seed": 207,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2552073197333333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 199219,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    26,
+    55
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-208",
+   "arm": "A",
+   "seed": 208,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.28278628355,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 184090,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 177,
+   "firsts": [
+    10,
+    10,
+    177,
+    177,
+    177,
+    177,
+    177
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-209",
+   "arm": "A",
+   "seed": 209,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.21723582798333335,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 179165,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    39,
+    127
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "A-210",
+   "arm": "A",
+   "seed": 210,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.24452237136666666,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 190393,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 105,
+   "firsts": [
+    28,
+    36,
+    105,
+    105,
+    105,
+    105,
+    105
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-201",
+   "arm": "R",
+   "seed": 201,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.24526011108333332,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 127698,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    7,
+    23
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-202",
+   "arm": "R",
+   "seed": 202,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.5033478149333334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 158162,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    5,
+    53
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-203",
+   "arm": "R",
+   "seed": 203,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.42881903986666664,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 140857,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    2,
+    103
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-204",
+   "arm": "R",
+   "seed": 204,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.4528469809166667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 179915,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    4,
+    14
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-205",
+   "arm": "R",
+   "seed": 205,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.37976089766666665,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 164315,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    21,
+    88
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-206",
+   "arm": "R",
+   "seed": 206,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.51085833625,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 180560,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    6,
+    17,
+    127
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-207",
+   "arm": "R",
+   "seed": 207,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.25933011443333337,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 142333,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    6,
+    20
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-208",
+   "arm": "R",
+   "seed": 208,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.3596412815166667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 145152,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    2,
+    22
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-209",
+   "arm": "R",
+   "seed": 209,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.35669568825000003,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 160792,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 149,
+   "firsts": [
+    6,
+    76,
+    149,
+    149,
+    149,
+    149,
+    149
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-base-201",
+   "run": "R-210",
+   "arm": "R",
+   "seed": 210,
+   "planned": 200,
+   "max_calls": 2600000,
+   "last_timed_generation": 200,
+   "minutes_to_1000": null,
+   "minutes_total": 0.2699863687833333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 201,
+   "calls_used": 141127,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 118,
+   "firsts": [
+    3,
+    33,
+    63,
+    118,
+    118,
+    118,
+    118
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-301",
+   "arm": "A",
+   "seed": 301,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 6.5480326910499995,
+   "minutes_total": 6.5480326910499995,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 974868,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    14,
+    18,
+    236
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-302",
+   "arm": "A",
+   "seed": 302,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 8.5699858262,
+   "minutes_total": 8.5699858262,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1073897,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 7,
+   "firsts": [
+    4,
+    7,
+    7,
+    7,
+    7,
+    7,
+    11
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-303",
+   "arm": "A",
+   "seed": 303,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 7.3223284705500005,
+   "minutes_total": 7.3223284705500005,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1132074,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 75,
+   "firsts": [
+    23,
+    52,
+    75,
+    75,
+    75,
+    75,
+    75
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-304",
+   "arm": "A",
+   "seed": 304,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 7.144084719433334,
+   "minutes_total": 7.144084719433334,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1084973,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 97,
+   "firsts": [
+    14,
+    27,
+    59,
+    97,
+    97,
+    127,
+    127
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-305",
+   "arm": "A",
+   "seed": 305,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 7.51381052125,
+   "minutes_total": 7.51381052125,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1049810,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 349,
+   "firsts": [
+    7,
+    15,
+    146,
+    349,
+    349,
+    349,
+    349
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-306",
+   "arm": "A",
+   "seed": 306,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 7.704779894466666,
+   "minutes_total": 7.704779894466666,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1154740,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 143,
+   "firsts": [
+    24,
+    66,
+    124,
+    143,
+    143,
+    143,
+    143
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-307",
+   "arm": "A",
+   "seed": 307,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 7.986380091883333,
+   "minutes_total": 7.986380091883333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1005012,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 33,
+   "firsts": [
+    3,
+    12,
+    12,
+    12,
+    33,
+    46,
+    46
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-308",
+   "arm": "A",
+   "seed": 308,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 6.030407386549999,
+   "minutes_total": 6.030407386549999,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1140219,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 180,
+   "firsts": [
+    31,
+    127,
+    180,
+    180,
+    180,
+    190,
+    315
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-309",
+   "arm": "A",
+   "seed": 309,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 6.0074187338,
+   "minutes_total": 6.0074187338,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1048161,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 810,
+   "firsts": [
+    8,
+    25,
+    810,
+    810,
+    810,
+    810,
+    810
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "A-310",
+   "arm": "A",
+   "seed": 310,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 922,
+   "minutes_to_1000": null,
+   "minutes_total": 6.764315781266666,
+   "complete": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-301",
+   "arm": "R",
+   "seed": 301,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.527078442133333,
+   "minutes_total": 5.527078442133333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 867195,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    7,
+    52,
+    133
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-302",
+   "arm": "R",
+   "seed": 302,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.708821665366667,
+   "minutes_total": 5.708821665366667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 830968,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 6,
+   "final_D": "6/9",
+   "T": 380,
+   "firsts": [
+    1,
+    67,
+    164,
+    380,
+    380,
+    380
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-303",
+   "arm": "R",
+   "seed": 303,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.4768970864,
+   "minutes_total": 5.4768970864,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 1002760,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    27,
+    37
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-304",
+   "arm": "R",
+   "seed": 304,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.424876361566667,
+   "minutes_total": 5.424876361566667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 783767,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    5,
+    54
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-305",
+   "arm": "R",
+   "seed": 305,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 4.943044126516667,
+   "minutes_total": 4.943044126516667,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 898957,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    2,
+    88,
+    879
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-306",
+   "arm": "R",
+   "seed": 306,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.968217713233333,
+   "minutes_total": 5.968217713233333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 853652,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    2,
+    50
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-307",
+   "arm": "R",
+   "seed": 307,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 5.46961751475,
+   "minutes_total": 5.46961751475,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 895392,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    1,
+    46
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-308",
+   "arm": "R",
+   "seed": 308,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 4.537691115666666,
+   "minutes_total": 4.537691115666666,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 852771,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    7,
+    173
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-1000",
+   "run": "R-309",
+   "arm": "R",
+   "seed": 309,
+   "planned": 1000,
+   "max_calls": 13000000,
+   "last_timed_generation": 1000,
+   "minutes_to_1000": 4.63362024105,
+   "minutes_total": 4.63362024105,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 1001,
+   "calls_used": 857341,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 2,
+   "final_D": "2/9",
+   "T": null,
+   "firsts": [
+    6,
+    55
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-2000",
+   "run": "A-401",
+   "arm": "A",
+   "seed": 401,
+   "planned": 2000,
+   "max_calls": 26000000,
+   "last_timed_generation": 2000,
+   "minutes_to_1000": 8.191596693033334,
+   "minutes_total": 29.978078970216664,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 2001,
+   "calls_used": 2365484,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 3,
+   "final_D": "3/9",
+   "T": null,
+   "firsts": [
+    21,
+    78,
+    173
+   ],
+   "file_passes": false
+  },
+  {
+   "batch": "pilot-2000",
+   "run": "A-402",
+   "arm": "A",
+   "seed": 402,
+   "planned": 2000,
+   "max_calls": 26000000,
+   "last_timed_generation": 2000,
+   "minutes_to_1000": 8.207475814633334,
+   "minutes_total": 33.94051307268333,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 2001,
+   "calls_used": 2323426,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 10,
+   "firsts": [
+    1,
+    8,
+    10,
+    10,
+    10,
+    10,
+    10
+   ],
+   "file_passes": true
+  },
+  {
+   "batch": "pilot-2000",
+   "run": "R-401",
+   "arm": "R",
+   "seed": 401,
+   "planned": 2000,
+   "max_calls": 26000000,
+   "last_timed_generation": 2000,
+   "minutes_to_1000": 6.1152952234999995,
+   "minutes_total": 23.07624008945,
+   "complete": true,
+   "stop_reason": "all generations done",
+   "generations_completed": 2001,
+   "calls_used": 1848468,
+   "R_seed": [
+    "cs",
+    "swap"
+   ],
+   "open": 9,
+   "final_hits": 7,
+   "final_D": "7/9",
+   "T": 720,
+   "firsts": [
+    1,
+    44,
+    720,
+    720,
+    720,
+    720,
+    720
+   ],
+   "file_passes": true
+  }
+ ],
+ "km_A": [
+  [
+   7,
+   31,
+   1,
+   0.967741935483871
+  ],
+  [
+   10,
+   30,
+   1,
+   0.9354838709677419
+  ],
+  [
+   32,
+   29,
+   1,
+   0.9032258064516129
+  ],
+  [
+   33,
+   28,
+   1,
+   0.8709677419354839
+  ],
+  [
+   75,
+   27,
+   1,
+   0.8387096774193549
+  ],
+  [
+   78,
+   26,
+   1,
+   0.8064516129032258
+  ],
+  [
+   97,
+   25,
+   2,
+   0.7419354838709677
+  ],
+  [
+   105,
+   23,
+   1,
+   0.7096774193548387
+  ],
+  [
+   143,
+   22,
+   1,
+   0.6774193548387096
+  ],
+  [
+   172,
+   21,
+   1,
+   0.6451612903225806
+  ],
+  [
+   177,
+   20,
+   1,
+   0.6129032258064516
+  ],
+  [
+   180,
+   19,
+   1,
+   0.5806451612903226
+  ],
+  [
+   349,
+   4,
+   1,
+   0.43548387096774194
+  ],
+  [
+   810,
+   3,
+   1,
+   0.2903225806451613
+  ]
+ ],
+ "p_A_km_1000": 0.7096774193548387,
+ "km_R": [
+  [
+   48,
+   30,
+   1,
+   0.9666666666666667
+  ],
+  [
+   118,
+   29,
+   1,
+   0.9333333333333333
+  ],
+  [
+   149,
+   28,
+   1,
+   0.9
+  ],
+  [
+   380,
+   10,
+   1,
+   0.81
+  ],
+  [
+   720,
+   9,
+   1,
+   0.72
+  ]
+ ],
+ "p_R_km_1000": 0.28,
+ "exact_A_1000": [
+  9,
+  11
+ ],
+ "exact_R_1000": [
+  2,
+  10
+ ],
+ "km_categories_1000": {
+  "X1W": 0.6373118279569893,
+  "X1L": 0.07236559139784947,
+  "X0L": 0.08129032258064516,
+  "X0T": 0.20903225806451614
+ },
+ "empirical_pairs_1000": [
+  [
+   301,
+   null,
+   null,
+   "X0T"
+  ],
+  [
+   302,
+   7,
+   380,
+   "X1W"
+  ],
+  [
+   303,
+   75,
+   null,
+   "X1W"
+  ],
+  [
+   304,
+   97,
+   null,
+   "X1W"
+  ],
+  [
+   305,
+   349,
+   null,
+   "X1W"
+  ],
+  [
+   306,
+   143,
+   null,
+   "X1W"
+  ],
+  [
+   307,
+   33,
+   null,
+   "X1W"
+  ],
+  [
+   308,
+   180,
+   null,
+   "X1W"
+  ],
+  [
+   309,
+   810,
+   null,
+   "X1W"
+  ],
+  [
+   401,
+   null,
+   720,
+   "X0L"
+  ]
+ ],
+ "pair_minutes_1000": [
+  [
+   301,
+   12.075111133183333
+  ],
+  [
+   302,
+   14.278807491566667
+  ],
+  [
+   303,
+   12.79922555695
+  ],
+  [
+   304,
+   12.568961081000001
+  ],
+  [
+   305,
+   12.456854647766667
+  ],
+  [
+   306,
+   13.6729976077
+  ],
+  [
+   307,
+   13.455997606633334
+  ],
+  [
+   308,
+   10.568098502216666
+  ],
+  [
+   309,
+   10.64103897485
+  ],
+  [
+   401,
+   14.306891916533335
+  ]
+ ]
+}
