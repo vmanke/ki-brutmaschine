@@ -13,6 +13,7 @@
     "first_bred_generation is the earliest generation of a bred member that solved one of the target's dressed search tasks; null when none did.",
     "best_seed and best_bred are [T, CNOT] of the cheapest exact answer; reference is [T, CNOT] of the library reference.",
     "integrity_alarm false: every run exited 0 and passed --verify; a run with an alarm stops with exit 1 and has no rediscovery.json.",
+    "targets of the horizon_probe runs were added from each probe run's rediscovery.json in review round 1 of the integration, in the format of the 60-generation runs; the probes' event logs still end in the recorded heads.",
     "first_worker_naming (probe only) is derived outside the program: the first generation in which one Worker's section texts contain a FAMILY_STEMS stem of each named family (lower-cased substring match, as designer::knowledge does on the system prompt)."
   ],
   "arms": {
@@ -334,6 +335,19 @@
         "d_value": 0.7778,
         "calibrated": true,
         "d_above_half": true,
+        "targets": [
+          {"target": "cz", "reference": [0, 1], "best_seed": [0, 2], "best_bred": [0, 1], "seed_hit": false, "first_bred_generation": 1},
+          {"target": "swap", "reference": [0, 3], "best_seed": [0, 3], "best_bred": [0, 3], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "cs", "reference": [3, 2], "best_seed": [3, 2], "best_bred": [3, 2], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "ch", "reference": [2, 1], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "qft2", "reference": [3, 3], "best_seed": null, "best_bred": [3, 3], "seed_hit": false, "first_bred_generation": 32},
+          {"target": "ccz", "reference": [7, 6], "best_seed": [7, 10], "best_bred": [7, 6], "seed_hit": false, "first_bred_generation": 55},
+          {"target": "toffoli", "reference": [7, 6], "best_seed": null, "best_bred": [7, 6], "seed_hit": false, "first_bred_generation": 32},
+          {"target": "peres", "reference": [7, 5], "best_seed": null, "best_bred": [7, 5], "seed_hit": false, "first_bred_generation": 32},
+          {"target": "fredkin", "reference": [7, 7], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "rtof", "reference": [4, 3], "best_seed": null, "best_bred": [4, 3], "seed_hit": false, "first_bred_generation": 32},
+          {"target": "ccix", "reference": [4, 4], "best_seed": null, "best_bred": [4, 4], "seed_hit": false, "first_bred_generation": 32}
+        ],
         "invention_candidates": [],
         "integrity_alarm": false,
         "verify": {
@@ -364,6 +378,19 @@
         "d_value": 0.2222,
         "calibrated": true,
         "d_above_half": false,
+        "targets": [
+          {"target": "cz", "reference": [0, 1], "best_seed": [0, 2], "best_bred": [0, 1], "seed_hit": false, "first_bred_generation": 29},
+          {"target": "swap", "reference": [0, 3], "best_seed": [0, 3], "best_bred": [0, 3], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "cs", "reference": [3, 2], "best_seed": [3, 2], "best_bred": [3, 2], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "ch", "reference": [2, 1], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "qft2", "reference": [3, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccz", "reference": [7, 6], "best_seed": [7, 10], "best_bred": [7, 6], "seed_hit": false, "first_bred_generation": 6},
+          {"target": "toffoli", "reference": [7, 6], "best_seed": null, "best_bred": [7, 10], "seed_hit": false, "first_bred_generation": null},
+          {"target": "peres", "reference": [7, 5], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "fredkin", "reference": [7, 7], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "rtof", "reference": [4, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccix", "reference": [4, 4], "best_seed": null, "best_bred": [4, 8], "seed_hit": false, "first_bred_generation": null}
+        ],
         "invention_candidates": [],
         "integrity_alarm": false,
         "verify": {
@@ -394,6 +421,19 @@
         "d_value": 0.2222,
         "calibrated": true,
         "d_above_half": false,
+        "targets": [
+          {"target": "cz", "reference": [0, 1], "best_seed": [0, 2], "best_bred": [0, 1], "seed_hit": false, "first_bred_generation": 35},
+          {"target": "swap", "reference": [0, 3], "best_seed": [0, 3], "best_bred": [0, 3], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "cs", "reference": [3, 2], "best_seed": [3, 2], "best_bred": [3, 2], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "ch", "reference": [2, 1], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "qft2", "reference": [3, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccz", "reference": [7, 6], "best_seed": [7, 10], "best_bred": [7, 6], "seed_hit": false, "first_bred_generation": 90},
+          {"target": "toffoli", "reference": [7, 6], "best_seed": null, "best_bred": [7, 10], "seed_hit": false, "first_bred_generation": null},
+          {"target": "peres", "reference": [7, 5], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "fredkin", "reference": [7, 7], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "rtof", "reference": [4, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccix", "reference": [4, 4], "best_seed": null, "best_bred": [4, 8], "seed_hit": false, "first_bred_generation": null}
+        ],
         "invention_candidates": [],
         "integrity_alarm": false,
         "verify": {
@@ -424,6 +464,19 @@
         "d_value": 0.2222,
         "calibrated": true,
         "d_above_half": false,
+        "targets": [
+          {"target": "cz", "reference": [0, 1], "best_seed": [0, 2], "best_bred": [0, 1], "seed_hit": false, "first_bred_generation": 26},
+          {"target": "swap", "reference": [0, 3], "best_seed": [0, 3], "best_bred": [0, 3], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "cs", "reference": [3, 2], "best_seed": [3, 2], "best_bred": [3, 2], "seed_hit": true, "first_bred_generation": 1},
+          {"target": "ch", "reference": [2, 1], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "qft2", "reference": [3, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccz", "reference": [7, 6], "best_seed": [7, 10], "best_bred": [7, 6], "seed_hit": false, "first_bred_generation": 40},
+          {"target": "toffoli", "reference": [7, 6], "best_seed": null, "best_bred": [7, 10], "seed_hit": false, "first_bred_generation": null},
+          {"target": "peres", "reference": [7, 5], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "fredkin", "reference": [7, 7], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "rtof", "reference": [4, 3], "best_seed": null, "best_bred": null, "seed_hit": false, "first_bred_generation": null},
+          {"target": "ccix", "reference": [4, 4], "best_seed": null, "best_bred": [4, 8], "seed_hit": false, "first_bred_generation": null}
+        ],
         "invention_candidates": [],
         "integrity_alarm": false,
         "verify": {
