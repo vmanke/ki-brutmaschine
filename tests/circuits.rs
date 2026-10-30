@@ -1065,9 +1065,10 @@ fn designer_calibration_is_pinned() {
     // The calibration gate of the pre-registration: |R_seed| <= |L| / 3.
     assert!(3 * union.len() <= names.len());
 
-    // The strong prompt is a Cascade breeding could make: it passes the genome's rules and
-    // the admission rule. It names the families in its order and reaches the reference on
-    // every task.
+    // The strong prompt passes the genome's rules and the admission rule. Its one
+    // hand-written text is no pool phrase, so a run without LLM rounds cannot write it;
+    // circuit_genes.rs shows that pool phrases reach every target. It names the families
+    // in its order and reaches the reference on every task.
     let strong = strong_cascade();
     let w = &strong.stages[0].workers[0];
 

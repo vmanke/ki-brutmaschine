@@ -260,7 +260,10 @@ Verkleidungen je Ziel auf zwei Qubits und 384 auf drei (`circuit_genes.rs`).
 Selbstprüfung, dessen Strategie Hadamard, Phase, Linear, Compose, Simplify, Search und Meet
 in dieser Reihenfolge nennt, löst alle 33 Aufgaben zur Referenz. Kein Ziel ist also
 unerreichbar, und L umfasst alle 11 Ziele. Der Prompt besteht die Regeln des Genoms und die
-Aufnahmeregel; die Zucht könnte ihn also bauen.
+Aufnahmeregel. Er ist ein von Hand geschriebener Text, den ein Lauf ohne LLM-Runden nicht
+schreiben kann; Kaskaden aus Satzbausteinen erreichen aber jedes Ziel zur Referenz,
+unverkleidet und in einer Verkleidung
+(`pool_phrases_reach_every_target_at_its_best_known_cost` in `circuit_genes.rs`).
 
 **Wege zu den Zielen.** Die Tests in `designer.rs` legen für die genannten Familien fest,
 wie viele Denk-Tokens die Antwort mindestens braucht; ein Denk-Token weniger verfehlt sie.

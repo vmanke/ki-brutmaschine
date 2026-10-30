@@ -246,8 +246,10 @@ a three-qubit target (`circuit_genes.rs`).
 **Strong prompt.** One `sim:large` Worker with 4096 thinking tokens, temperature 0 and
 self-check, whose strategy names Hadamard, Phase, Linear, Compose, Simplify, Search and
 Meet in this order, solves all 33 tasks at the reference. So no target is out of reach,
-and L holds all 11 targets. The prompt passes the genome's rules and the admission rule,
-so breeding could build it.
+and L holds all 11 targets. The prompt passes the genome's rules and the admission rule.
+It is one hand-written text, which a Run without LLM rounds cannot write; Cascades of
+pool phrases reach every target at its reference, plain and in one disguise
+(`pool_phrases_reach_every_target_at_its_best_known_cost` in `circuit_genes.rs`).
 
 **Routes to the targets.** The tests in `designer.rs` fix, for the families listed, the
 fewest thinking tokens that give the answer; one thinking token less misses it.

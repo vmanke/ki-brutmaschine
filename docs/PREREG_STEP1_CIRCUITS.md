@@ -114,7 +114,10 @@ swap in all 32, the phase seed cs in all 32, and no seed solves anything else
 **Strong prompt.** One `sim:large` Worker with 4096 thinking tokens, temperature 0, 512
 answer tokens and self-check, whose strategy names Hadamard, Phase, Linear, Compose,
 Simplify, Search and Meet in this order, solves all 33 tasks at the reference. It passes
-the genome's rules and the admission rule, so breeding could make it.
+the genome's rules and the admission rule. It is one hand-written text, which a Run
+without LLM rounds cannot write; Cascades of pool phrases reach every target at its
+reference, plain and in one disguise
+(`pool_phrases_reach_every_target_at_its_best_known_cost` in `circuit_genes.rs`).
 
 **Routes.** `one_step_short_misses_and_enough_thinking_hits` in `designer.rs` pins, on
 each plain target, the fewest thinking tokens that give the answer below; one token less
