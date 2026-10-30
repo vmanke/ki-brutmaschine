@@ -81,8 +81,10 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
   a model call. `--promote` refuses circuit Runs with exit code 1, because promoting
   circuit Cascades is not part of step 1.
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
-  both arms, paired by seed, and applies the pre-registered rules (section 6). It makes a
-  claim only for the pre-registered seeds, generations and call cap.
+  both arms, paired by seed, finds the pass time of every Run and applies the
+  pre-registered rule across seeds (section 6). After each pair it names the next seed or
+  gives the verdict. It makes a claim only for the seeds 1, 2, 3, ... without a gap, at
+  most 60 pairs, with 1000 generations and the call cap of 13 000 000.
 - **Tests.** `tests/circuits.rs` has 17 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; `rediscovery.json` appears only once a select phase is
@@ -131,13 +133,13 @@ cargo build --release
 ./target/release/brut-breed --out runs/c101-A --verify
 ./target/release/brut-breed --out runs/c101-R --verify
 
-# The frozen analysis; it makes no claim for fewer than the 10 counted seeds
+# The frozen analysis; it makes no claim on pilot seeds
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
 Arm A chooses parents as the Darwin Gödel Machine does (Zhang et al., ICLR 2026,
-appendix C.2), arm R uniformly; otherwise both arms are the same. The counted seeds 1 to
-10 are reserved for the pre-registered experiment, so the examples use the pilot seed
+appendix C.2), arm R uniformly; otherwise both arms are the same. The seeds 1 to 60 are
+reserved for the pre-registered experiment, so the examples use the pilot seed
 101. A Run prints one line per generation (best Cascade, fitness,
 solved search tasks, archive size, calls), then one line about `rediscovery.json`, and at
 the end the best Cascades and the comparison on the select panel. For arm A on seed 101
@@ -297,12 +299,12 @@ too, lies several steps away.
 
 ## 6. Pilot Runs
 
-Seeds 101 and 102 are pilot seeds: we do not count them, and they set only
-`--generations` and `--max-calls` of the counted Runs. We ran both arms on both seeds for
-60 generations, with `--search 33 --select 22 --children 8`, a release build, rustc 1.97.0
-and 2 threads. The program of the commit that holds this report repeats every pilot Run
-byte for byte (see Reproducibility below). The default cap of 20 000 calls ended arm A on seed
-101 after generation 20 (18 451 calls), so all four Runs use `--max-calls 200000`. Then we
+Pilot seeds never count. The first were seeds 101 and 102; four later batches follow below
+(table 4). In the first pilot we ran both arms on both seeds for 60 generations, with
+`--search 33 --select 22 --children 8`, a release build, rustc 1.97.0 and 2 threads. The
+program of the commit that holds this report repeats each of these pilot Runs byte for
+byte (see Reproducibility below). The default cap of 20 000 calls ended arm A on seed 101
+after generation 20 (18 451 calls), so all four Runs use `--max-calls 200000`. Then we
 repeated each Run with 200 generations. All numbers come from
 [pilot.json](pilot-step1/pilot.json); we checked all nine run directories again with
 `--verify` and ran the analysis again.
@@ -330,17 +332,18 @@ stop check reads `--generations`.
 - **Calibration.** In every Run the seed Cascades solve exactly SWAP and CS; the gate
   holds. Every Run passes `--verify`; none reports an integrity alarm or an invention
   candidate.
-- **First solutions.** Every first solution came by generation 90, none in generations 91
-  to 200. No Run solved CH or Fredkin.
+- **First solutions.** In these Runs every first solution came by generation 90, none in
+  generations 91 to 200. No Run solved CH or Fredkin.
 - **Bottleneck.** In arm A on seed 101, five targets fell in generation 32, the first in
   which one Worker named Hadamard, Phase and Linear together. In the other three Runs no
   such Worker arose in 200 generations. We found these generations (`first_worker_naming`
   in `pilot.json`) outside the program, by a search for the word stems in the section
   texts.
-- **Analysis.** For the four Runs with 60 generations the frozen analysis says "No claim:
-  only 2 seed pair(s)". D_A > 1/2 holds on one of two seeds (median 1/2), D_A > D_R in one
-  of two pairs (p = 3/4). In the T-only variant the seed Cascades also solve CCZ (7 T,
-  10 CNOT); then D_A is 6/8 and 1/8, D_R 3/8 and 3/8.
+- **Analysis.** For the four Runs with 60 generations, the first version of the analysis,
+  with the rule "9 of 10", made no claim, since there were only two seed pairs. D_A > 1/2
+  holds on one of two seeds (median 1/2), D_A > D_R in one of two pairs. In the T-only
+  variant the seed Cascades also solve CCZ (7 T, 10 CNOT); then D_A is 6/8 and 1/8, D_R
+  3/8 and 3/8.
 - **Select panel.** In arm A on seed 101 the best finalist solves 16 of the 22 select
   tasks, the best seed Cascade 2. In the other three Runs the best finalist solves 4
   (`report.json` of the pilot Runs).
@@ -351,30 +354,107 @@ stop check reads `--generations`.
   `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are byte-equal to
   the pilot's, and all nine pass its `--verify`.
 
-The settings of the counted Runs follow from the pilot: `--generations 200`, because every
-first solution came by generation 90 and a Run takes at most 26 s, and
-`--max-calls 2600000`. By our count from the call bounds in `arena.rs`, a Run of 200
-generations needs at most 2 547 412 calls, so the cap ends no counted Run early.
+**Later pilot batches.** After the first pilot we ran four more batches, both arms with
+the settings of the counted Runs except the seed, the generations and the call cap
+(table 4). The rule of the counted experiment was made from their data, so their seeds
+never count. The Runs are not in the repository:
+`.scratch/universum-erfinden/sequential-rule/pilot.json` holds the values read from them,
+and [pilot-step1/](pilot-step1/README.md) gives the pass time of every Run. That is the
+first generation in which the bred Cascades solve more than half of the targets that the
+seed Cascades miss, here 5 of the 9.
+
+Table 4: later pilot batches. "Passes" means here: by the last generation of the Run; the
+pass times are in brackets.
+
+| Seeds | Generations | `--max-calls` | Arm A passes | Arm R passes |
+|---|---|---|---|---|
+| 101 to 110 | 200 | 2 600 000 | 1 of 10 (32) | 1 of 10 (48) |
+| 201 to 210 | 200 | 2 600 000 | 5 of 10 (78 to 177) | 2 of 10 (118, 149) |
+| 301 to 309 | 1000 | 13 000 000 | 8 of 9 (7 to 810) | 1 of 9 (380) |
+| 401, 402 | 2000 | 26 000 000 | 1 of 2 (10) | 1 of 1 (720) |
+
+- **Incomplete.** The Run A-310 was interrupted after generation 922; it is incomplete and
+  left out of every figure. R-310 and R-402 were not run.
+- **Calibration.** In all 61 complete Runs the seed Cascades solve exactly SWAP and CS, the
+  gate holds, and the Run ended with all generations done. None reported an integrity
+  alarm or an invention candidate, and none solved CH or Fredkin.
+- **Late passes.** By generation 200, arm A passed on 6 of the 20 seeds 101 to 110 and 201
+  to 210; by generation 1000, in 9 of the 11 Runs that went that far. Passes still came in
+  generation 810 in arm A (seed 309) and in generation 720 in arm R (seed 401). So the
+  first pilot's hint that no target is added after generation 90 does not hold.
+- **Selection.** In the 10 pairs whose arms both ran to generation 1000, arm A passed
+  first 8 times, arm R once (seed 401), and once neither passed (seed 301).
+- **Wall time.** At 2 threads, a Run to generation 1000 took 6.01 to 8.57 min in arm A
+  (mean 7.38 min, 11 Runs) and 4.54 to 6.12 min in arm R (mean 5.38 min, 10 Runs), a pair
+  10.57 to 14.31 min (mean 12.68 min, 10 pairs).
+
+The settings of the counted Runs follow from the pilot Runs: `--generations 1000` and
+`--max-calls 13000000`. At a pass rate of 0.30, as by generation 200, the rule below fails
+with probability 1.000, after 9.1 pairs on average; so the ceiling could not stay at 200
+generations. 1000 is the longest horizon with pilot data in both arms. By our count from
+the call bounds in `arena.rs`, a Run of 1000 generations needs at most 12 723 412 calls,
+so the cap ends no counted Run early; the pilot Runs used at most 1 161 738 calls by
+generation 1000.
+
+**The rule of the counted experiment.** The experiment decides by itself how many seeds
+it needs. The rule, its reasons and its sources are in the pre-registration, section 8.
+The counted seeds 1, 2, 3, ... run in this order, each in both arms and always to
+generation 1000. A Run passes when its pass time T is at most 1000. After each pair two
+evidence values change, both starting at 1:
+
+- E1 grows by the factor 3/2 when arm A passes; otherwise it is halved.
+- E2 grows by the factor 3/2 when arm A passes first, and is halved when arm R passes
+  first; on a tie it stays the same.
+
+When E1 reaches 20, the primary claim is proven: more than half of all seeds pass by
+generation 1000. When E1 falls to 1/20, it has failed. The same thresholds hold for E2.
+But we claim the second result, that among pairs without a tie arm A passes first more
+often than arm R, only if the primary claim is proven. The experiment ends as soon as the
+primary claim fails, as soon as it is proven and E2 has reached a threshold, or after 60
+pairs. However it ends, it reports a false claim with probability at most 1/20; for the
+primary claim the worst case is exactly 0.0385. The old rule "9 of 10" had 11/1024 =
+0.0107. So the new bound is weaker; it matches the 5 % bound of the project's other
+tests. It holds only if the seed order is fixed, no seed is skipped or replaced, and
+nothing changes after seed 1.
+
+After each pair the analysis computes and names the next seed or the verdict. Right after
+pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
+`timings.jsonl` must be byte-equal. Before the report,
+`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
+recounts the result independently.
+
+If the pilot rates hold, the primary claim is proven with probability 0.82 to 0.99. We
+then expect 17 to 29 seed pairs on average, that is 3.6 to 6.1 hours of computing at
+12.68 min per pair. In the worst case it takes 60 pairs: 14.3 hours at the pace of the
+slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, so about
+15 hours. The check with 1 and 4 threads comes on top.
 
 ## 7. Limits
 
 - **Positive control.** The designer is not a language model. Its numbers show whether
   breeding finds genes that we know exist; they say nothing about real models.
-- **Six open decisions.** Counted Runs start only after the owner has confirmed six
-  points: exact equality as the criterion (it tightens Q38), scoring by T first and CNOT
-  second, the `state` line in grid Runs too, no promotion of circuit Cascades in step 1,
-  the 9-of-10 rule, and the panel sizes 33 and 22. The pre-registration is frozen with the
-  same sign-off.
-- **What the pilot shows.** The calibration holds in every Run. Arm A can meet the primary
-  rule on a seed (seed 101: D = 7/9). Every Run passes `--verify`. No target was added after
-  generation 90, and a Run with 200 generations takes at most 26 s.
-- **What the pilot does not show.** Two seeds estimate no pass rate. Arm A meets the
-  primary rule on one of two seeds. By our calculation, the 9-of-10 rule holds with
-  probability 0.0107 at an independent pass rate of 0.5 per seed and 0.736 at 0.9; exactly
-  one pass in two seeds has probability 0.5 at 0.5 and still 0.18 at 0.9. Nor does the pilot show
-  that selection helps: D_A > D_R in one pair, a tie in the other. So with the current
-  genes the counted experiment may well fail. Whether the genes change before the freeze
-  is the owner's decision; any change needs new pilot Runs.
+- **Counted Runs are still to come.** The owner confirmed six points on 2026-10-30: exact
+  equality as the criterion (it tightens Q38), scoring by T first and CNOT second, the
+  `state` line in grid Runs too, no promotion of circuit Cascades in step 1, the rule
+  across seeds of section 6 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
+  The pre-registration is frozen with the same sign-off, at the commit that adds its
+  signed-off version to the main branch. There are no counted Runs yet; every number in
+  this report comes from pilot Runs.
+- **What the pilot shows.** The calibration holds in every finished pilot Run. By
+  generation 1000, arm A passed in 9 of 11 Runs and arm R in 2 of 10, and in 8 of the 10
+  pairs whose arms both went that far, arm A passed first. The nine Runs of the first
+  pilot pass `--verify`.
+- **What the pilot does not show.** The pilot Runs estimate the pass rate only roughly:
+  9 of 11 has a 95 % confidence interval of 0.48 to 0.98, and the Kaplan-Meier estimate
+  over all 31 complete Runs of arm A is 0.710. The early batches differ: by generation 200,
+  arm A passed on 6 of the 20 seeds 101 to 110 and 201 to 210, in the later batches in 7
+  of 11 Runs (Fisher's test, p = 0.128). A pass hinges on one event, a Worker that names
+  Hadamard, Phase and Linear together. So the pass times are widely spread, and a pass
+  after generation 1000 counts as a failure. At the rate 0.710 the rule ends as failed with
+  probability 0.099 and without a verdict with 0.080; a failed primary claim proves no
+  rate of 1/2 or less. So with the current genes the counted experiment may well fail.
+  The genes stay as they are; any change would need new pilot Runs and a new
+  pre-registration.
 - **CH and Fredkin.** No pilot Run solved them. The routes the tests pin to them are long:
   CH falls to Search and Meet from 3 124 thinking tokens on `sim:large`; Fredkin to
   Compose besides Hadamard, Phase and Linear, and to 7 CNOT only with Simplify.

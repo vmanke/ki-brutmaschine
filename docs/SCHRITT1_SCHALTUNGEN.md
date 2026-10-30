@@ -85,9 +85,10 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   Checkpoint nach. `--promote` lehnt Schaltungsläufe mit Exit-Code 1 ab, denn die Beförderung
   von Schaltungs-Kaskaden gehört nicht zu Schritt 1.
 - **Auswertung** (`examples/circuit_positive_control.rs`). Sie liest die fertigen Läufe
-  beider Arme, paarweise nach Seed, und wendet die vorab festgelegten Regeln an
-  (Abschnitt 6). Eine Aussage trifft sie nur für die vorab festgelegten Seeds, mit der
-  festgelegten Zahl der Generationen und der festgelegten Aufrufgrenze.
+  beider Arme, paarweise nach Seed, bestimmt für jeden Lauf die Bestehenszeit und wendet
+  die vorab festgelegte Regel über die Seeds an (Abschnitt 6). Nach jedem Paar nennt sie
+  den nächsten Seed oder das Urteil. Eine Aussage trifft sie nur für die Seeds 1, 2, 3, …
+  ohne Lücke, höchstens 60 Paare, mit 1000 Generationen und der Aufrufgrenze 13 000 000.
 - **Tests.** `tests/circuits.rs` hat 17 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
   und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
@@ -137,13 +138,13 @@ cargo build --release
 ./target/release/brut-breed --out runs/c101-A --verify
 ./target/release/brut-breed --out runs/c101-R --verify
 
-# Eingefrorene Auswertung; für weniger als die 10 gezählten Seeds ohne Aussage
+# Eingefrorene Auswertung; für Pilot-Seeds ohne Aussage
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
 Arm A wählt die Eltern wie die Darwin-Gödel-Maschine (Zhang et al., ICLR 2026,
-Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die gezählten Seeds 1
-bis 10 sind dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum den
+Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die Seeds 1 bis 60 sind
+dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum den
 Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
 Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu
 `rediscovery.json` und am Ende die besten Kaskaden und den Vergleich auf dem Auswahl-Panel.
@@ -312,15 +313,16 @@ Modell, Denkbudget und Selbstprüfung, liegt also ebenfalls mehrere Schritte ent
 
 ## 6. Pilotläufe
 
-Die Seeds 101 und 102 sind Pilot-Seeds: Wir zählen sie nicht, und sie legen nur
-`--generations` und `--max-calls` der gezählten Läufe fest. Wir haben beide Arme auf beiden
-Seeds 60 Generationen lang laufen lassen, mit `--search 33 --select 22 --children 8`,
-Release-Build, rustc 1.97.0, 2 Threads. Das Programm des Commits, der diesen Bericht
-enthält, wiederholt jeden Pilotlauf byte-gleich (siehe Wiederholbarkeit unten). Die voreingestellte Grenze von
-20 000 Aufrufen beendete Arm A auf Seed 101 nach Generation 20 (18 451 Aufrufe); darum nutzen
-alle vier Läufe `--max-calls 200000`. Danach haben wir jeden Lauf mit 200 Generationen
-wiederholt. Alle Zahlen stammen aus [pilot.json](pilot-step1/pilot.json); wir haben alle neun
-Lauf-Verzeichnisse erneut mit `--verify` geprüft und die Auswertung erneut ausgeführt.
+Pilot-Seeds zählen nie. Die ersten waren die Seeds 101 und 102; vier spätere Reihen folgen
+unten (Tabelle 4). Im ersten Pilot haben wir beide Arme auf beiden Seeds 60 Generationen
+lang laufen lassen, mit `--search 33 --select 22 --children 8`, Release-Build, rustc
+1.97.0, 2 Threads. Das Programm des Commits, der diesen Bericht enthält, wiederholt jeden
+dieser Pilotläufe byte-gleich (siehe Wiederholbarkeit unten). Die voreingestellte Grenze
+von 20 000 Aufrufen beendete Arm A auf Seed 101 nach Generation 20 (18 451 Aufrufe); darum
+nutzen alle vier Läufe `--max-calls 200000`. Danach haben wir jeden Lauf mit 200
+Generationen wiederholt. Alle Zahlen stammen aus [pilot.json](pilot-step1/pilot.json); wir
+haben alle neun Lauf-Verzeichnisse erneut mit `--verify` geprüft und die Auswertung erneut
+ausgeführt.
 
 Tabelle 2: Pilotläufe mit 60 Generationen.
 
@@ -345,17 +347,18 @@ die Stopp-Prüfung `--generations` liest.
 - **Kalibrierung.** In allen Läufen lösen die Startprogramme genau SWAP und CS; die Schranke
   hält. Alle Läufe bestehen `--verify`; keiner meldet einen Integritätsalarm oder einen
   Erfindungskandidaten.
-- **Erste Lösungen.** Jede erste Lösung kam bis Generation 90, keine in den Generationen 91
-  bis 200. CH und Fredkin löste kein Lauf.
+- **Erste Lösungen.** In diesen Läufen kam jede erste Lösung bis Generation 90, keine in den
+  Generationen 91 bis 200. CH und Fredkin löste kein Lauf.
 - **Engpass.** In Arm A auf Seed 101 fielen fünf Ziele in Generation 32, der ersten, in der
   ein Worker Hadamard, Phase und Linear zugleich nannte. In den drei anderen Läufen entstand
   in 200 Generationen kein solcher Worker. Diese Generationen (`first_worker_naming` in
   `pilot.json`) haben wir außerhalb des Programms ermittelt, durch eine Suche nach den
   Wortstämmen in den Abschnittstexten.
-- **Auswertung.** Für die vier Läufe mit 60 Generationen meldet die eingefrorene Auswertung
-  „No claim: only 2 seed pair(s)“. D_A > 1/2 gilt auf einem von zwei Seeds (Median 1/2),
-  D_A > D_R in einem von zwei Paaren (p = 3/4). In der Variante nur nach T lösen die
-  Startprogramme zusätzlich CCZ (7 T, 10 CNOT); dann ist D_A 6/8 und 1/8, D_R 3/8 und 3/8.
+- **Auswertung.** Für die vier Läufe mit 60 Generationen traf die Auswertung in ihrer ersten
+  Fassung, mit der Regel „9 von 10“, keine Aussage, da nur zwei Seed-Paare vorlagen.
+  D_A > 1/2 gilt auf einem von zwei Seeds (Median 1/2), D_A > D_R in einem von zwei Paaren.
+  In der Variante nur nach T lösen die Startprogramme zusätzlich CCZ (7 T, 10 CNOT); dann
+  ist D_A 6/8 und 1/8, D_R 3/8 und 3/8.
 - **Auswahl-Panel.** In Arm A auf Seed 101 löst der beste Finalist 16 der 22
   Auswahl-Aufgaben, das beste Startprogramm 2. In den drei anderen Läufen löst der beste
   Finalist 4 (`report.json` der Pilotläufe).
@@ -367,36 +370,111 @@ die Stopp-Prüfung `--generations` liest.
   `rediscovery.json` sind byte-gleich mit dem Pilot, und alle neun bestehen sein
   `--verify`.
 
-Aus dem Pilot folgen die Einstellungen der gezählten Läufe: `--generations 200`, da alle
-ersten Lösungen bis Generation 90 kamen und ein Lauf höchstens 26 s dauert, und
-`--max-calls 2600000`. Nach unserer Rechnung aus den Aufrufgrenzen in `arena.rs` braucht
-ein Lauf mit 200 Generationen höchstens 2 547 412 Aufrufe, sodass die Grenze keinen
-gezählten Lauf vorzeitig beendet.
+**Spätere Pilotreihen.** Nach dem ersten Pilot haben wir vier weitere Reihen laufen lassen,
+beide Arme mit den Einstellungen der gezählten Läufe außer Seed, Generationen und
+Aufrufgrenze (Tabelle 4). Aus ihren Daten entstand die Regel des gezählten Experiments;
+darum zählen ihre Seeds nie. Die Läufe liegen nicht im Repository:
+`.scratch/universum-erfinden/sequential-rule/pilot.json` hält die aus ihnen gelesenen
+Werte, und [pilot-step1/](pilot-step1/README.md) nennt die Bestehenszeit jedes Laufs. Das
+ist die erste Generation, in der die gezüchteten Kaskaden mehr als die Hälfte der Ziele
+lösen, welche die Startprogramme verfehlen, hier 5 der 9.
+
+Tabelle 4: spätere Pilotreihen. „Besteht“ heißt hier: bis zur letzten Generation des Laufs;
+in Klammern die Bestehenszeiten.
+
+| Seeds | Generationen | `--max-calls` | Arm A besteht | Arm R besteht |
+|---|---|---|---|---|
+| 101 bis 110 | 200 | 2 600 000 | 1 von 10 (32) | 1 von 10 (48) |
+| 201 bis 210 | 200 | 2 600 000 | 5 von 10 (78 bis 177) | 2 von 10 (118, 149) |
+| 301 bis 309 | 1000 | 13 000 000 | 8 von 9 (7 bis 810) | 1 von 9 (380) |
+| 401, 402 | 2000 | 26 000 000 | 1 von 2 (10) | 1 von 1 (720) |
+
+- **Unvollständig.** Der Lauf A-310 brach nach Generation 922 ab; er ist unvollständig und
+  fehlt in allen Zahlen. R-310 und R-402 liefen nicht.
+- **Kalibrierung.** In allen 61 vollständigen Läufen lösen die Startprogramme genau SWAP und
+  CS, die Schranke hält, und der Lauf endete mit allen Generationen. Keiner meldete einen
+  Integritätsalarm oder einen Erfindungskandidaten, und keiner löste CH oder Fredkin.
+- **Späte Erfolge.** Bis Generation 200 bestand Arm A auf 6 der 20 Seeds 101 bis 110 und
+  201 bis 210, bis Generation 1000 in 9 der 11 Läufe, die so weit liefen. Erfolge kamen in
+  Arm A noch in Generation 810 (Seed 309), in Arm R in Generation 720 (Seed 401). Dass nach
+  Generation 90 kein Ziel mehr hinzukommt, wie der erste Pilot nahelegte, gilt also nicht.
+- **Auswahl.** In den 10 Paaren, deren Arme beide bis Generation 1000 liefen, bestand Arm A
+  8-mal zuerst, Arm R einmal (Seed 401), und einmal bestand keiner (Seed 301).
+- **Laufzeit.** Ein Lauf bis Generation 1000 dauerte bei 2 Threads in Arm A 6.01 bis
+  8.57 min (Mittel 7.38 min, 11 Läufe) und in Arm R 4.54 bis 6.12 min (Mittel 5.38 min,
+  10 Läufe), ein Paar 10.57 bis 14.31 min (Mittel 12.68 min, 10 Paare).
+
+Aus den Pilotläufen folgen die Einstellungen der gezählten Läufe: `--generations 1000` und
+`--max-calls 13000000`. Bei einer Quote von 0.30, wie bis Generation 200, scheitert die
+Regel unten mit Wahrscheinlichkeit 1.000, nach 9.1 Paaren im Mittel; die Obergrenze konnte
+also nicht bei 200 Generationen bleiben. 1000 ist der längste Horizont mit Pilotdaten in beiden
+Armen. Nach unserer Rechnung aus den Aufrufgrenzen in `arena.rs` braucht ein Lauf mit 1000
+Generationen höchstens 12 723 412 Aufrufe, sodass die Grenze keinen gezählten Lauf
+vorzeitig beendet; die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738
+Aufrufe.
+
+**Die Regel des gezählten Experiments.** Das Experiment entscheidet selbst, wie viele Seeds
+es braucht. Die Regel, ihre Begründung und ihre Quellen stehen in der Vorab-Registrierung,
+Abschnitt 8. Die gezählten Seeds 1, 2, 3, … laufen in dieser Reihenfolge, je in beiden
+Armen und stets bis Generation 1000. Ein Lauf besteht, wenn seine Bestehenszeit T höchstens
+1000 ist. Nach jedem Paar ändern sich zwei Belegwerte, die bei 1 beginnen:
+
+- E1 wächst um den Faktor 3/2, wenn Arm A besteht; sonst halbiert es sich.
+- E2 wächst um den Faktor 3/2, wenn Arm A zuerst besteht, und halbiert sich, wenn Arm R
+  zuerst besteht; bei Gleichstand bleibt es gleich.
+
+Erreicht E1 den Wert 20, ist der Hauptnachweis erbracht: Mehr als die Hälfte aller Seeds
+besteht bis Generation 1000. Fällt E1 auf 1/20, ist er gescheitert. Für E2 gelten dieselben
+Schwellen. Den zweiten Nachweis, dass Arm A unter den Paaren ohne Gleichstand öfter zuerst
+besteht als Arm R, beanspruchen wir aber nur, wenn der Hauptnachweis erbracht ist. Das
+Experiment endet, sobald der Hauptnachweis scheitert, sobald er erbracht ist und E2 eine
+Schwelle erreicht hat, oder nach 60 Paaren. Gleich wann es endet, meldet es einen falschen
+Nachweis höchstens mit Wahrscheinlichkeit 1/20; für den Hauptnachweis sind es im
+ungünstigsten Fall exakt 0.0385. Die alte Regel „9 von 10“ lag bei 11/1024 = 0.0107. Die
+neue Schranke ist also schwächer; sie entspricht der Schranke von 5 % der übrigen Tests im
+Projekt. Sie gilt nur, wenn die Reihenfolge der Seeds fest ist, kein Seed ausgelassen oder
+ersetzt wird und sich nach Seed 1 nichts ändert.
+
+Nach jedem Paar rechnet die Auswertung und nennt den nächsten Seed oder das Urteil. Gleich
+nach Paar 1 lassen wir Seed 1 in beiden Armen noch einmal mit 1 und mit 4 Threads laufen;
+alle Dateien außer `timings.jsonl` müssen byte-gleich sein. Vor dem Bericht zählt
+`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
+das Ergebnis unabhängig nach.
+
+Stimmen die Pilotquoten, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.82 bis 0.99.
+Wir rechnen dann im Mittel mit 17 bis 29 Seed-Paaren, also 3.6 bis 6.1 Stunden Rechenzeit
+bei 12.68 min je Paar. Im ungünstigsten Fall sind es 60 Paare: 14.3 Stunden beim Tempo des
+langsamsten Pilotpaars, 14.7 Stunden, wenn jedes Paar die langsamsten Läufe beider Arme
+hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
 
 ## 7. Grenzen
 
 - **Positivkontrolle.** Der Entwerfer ist kein Sprachmodell. Seine Zahlen zeigen, ob die
   Zucht Gene findet, von denen wir wissen, dass es sie gibt; über echte Modelle sagen sie
   nichts.
-- **Sechs offene Entscheidungen.** Gezählte Läufe beginnen erst, wenn die Eigentümerin bzw.
-  der Eigentümer sechs Punkte bestätigt hat: exakte Gleichheit als Kriterium (sie verschärft
-  Q38), die Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in
-  Gitter-Läufen, keine Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel
-  „9 von 10“ und die Panelgrößen 33 und 22. Mit derselben Freigabe friert die
-  Vorab-Registrierung ein.
-- **Was der Pilot zeigt.** Die Kalibrierung hält in allen Läufen. Arm A kann die Hauptregel
-  auf einem Seed erfüllen (Seed 101: D = 7/9). Alle Läufe bestehen `--verify`. Nach
-  Generation 90 kam kein Ziel mehr hinzu, und ein Lauf mit 200 Generationen dauert höchstens
-  26 s.
-- **Was der Pilot nicht zeigt.** Zwei Seeds schätzen keine Erfolgsquote. Arm A erfüllt die
-  Hauptregel auf einem von zwei Seeds. Nach unserer Rechnung hält die Regel „9 von 10“ bei
-  einer unabhängigen Quote von 0.5 je Seed nur mit Wahrscheinlichkeit 0.0107, bei 0.9 mit
-  0.736; genau ein Erfolg in zwei Seeds hat bei 0.5 die Wahrscheinlichkeit 0.5, bei 0.9
-  noch 0.18.
-  Ob die Auswahl hilft, zeigt der Pilot ebenfalls nicht: D_A > D_R in einem Paar,
-  Gleichstand im anderen. Mit den jetzigen Genen kann das gezählte Experiment also
-  scheitern. Ob die Gene vor dem Einfrieren geändert werden, entscheidet die Eigentümerin
-  bzw. der Eigentümer; jede Änderung verlangt neue Pilotläufe.
+- **Gezählte Läufe stehen aus.** Die Eigentümerin bzw. der Eigentümer hat am 2026-10-30
+  sechs Punkte bestätigt: exakte Gleichheit als Kriterium (sie verschärft Q38), die
+  Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in Gitter-Läufen, keine
+  Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 6
+  anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Mit derselben Freigabe friert
+  die Vorab-Registrierung ein, beim Commit, der ihre freigegebene Fassung in den Hauptzweig
+  bringt. Gezählte Läufe gibt es noch keine; alle Zahlen dieses Berichts stammen aus
+  Pilotläufen.
+- **Was der Pilot zeigt.** Die Kalibrierung hält in jedem fertigen Pilotlauf. Bis Generation
+  1000 bestand Arm A in 9 von 11 Läufen, Arm R in 2 von 10, und in 8 der 10 Paare, deren
+  Arme beide so weit liefen, bestand Arm A zuerst. Die neun Läufe des ersten Pilots bestehen
+  `--verify`.
+- **Was der Pilot nicht zeigt.** Die Pilotläufe schätzen die Erfolgsquote nur grob: 9 von 11
+  hat ein Konfidenzintervall zu 95 % von 0.48 bis 0.98, und die Kaplan-Meier-Schätzung über
+  alle 31 vollständigen Läufe von Arm A ergibt 0.710. Die frühen Reihen weichen ab: Bis
+  Generation 200 bestand Arm A auf 6 der 20 Seeds 101 bis 110 und 201 bis 210, in den
+  späteren Reihen in 7 von 11 Läufen (Fisher-Test, p = 0.128). Ein Erfolg hängt an einem
+  Ereignis, einem Worker, der Hadamard, Phase und Linear zugleich nennt. Darum streuen die
+  Bestehenszeiten weit, und ein Erfolg nach Generation 1000 zählt als Misserfolg. Bei der
+  Quote 0.710 endet die Regel mit Wahrscheinlichkeit 0.099 als gescheitert und mit 0.080
+  ohne Urteil; ein gescheiterter Hauptnachweis beweist keine Quote von höchstens 1/2. Mit
+  den jetzigen Genen kann das gezählte Experiment also scheitern. Die Gene bleiben, wie sie
+  sind; jede Änderung verlangte neue Pilotläufe und eine neue Vorab-Registrierung.
 - **CH und Fredkin.** Kein Pilotlauf löste sie. Die Wege, welche die Tests zu ihnen
   festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf `sim:large`,
   Fredkin mit Compose außer Hadamard, Phase und Linear, und 7 CNOT erreicht es erst mit
@@ -409,7 +487,7 @@ gezählten Lauf vorzeitig beendet.
   könnte beide gleich täuschen. Dagegen stehen die Gegenprobe mit `quantum.rs`, die aus ihren
   Definitionen gebauten Ziele und die Beleg-Schaltungen, die meisten aus der Literatur, die
   übrigen von der Recherche zu Schritt 1 gebaut und geprüft.
-- **Plattform.** Die Prüfsummen der Pilotläufe gelten für rustc 1.97.0 auf x86_64 Linux.
+- **Plattform.** Die Prüfsummen des ersten Pilots gelten für rustc 1.97.0 auf x86_64 Linux.
   Anderswo kann eine Gleitkomma-Funktion ihr letztes Bit anders runden; dann weichen die
   Läufe ab.
 - **Kein Mutator im Pilot.** Die Pilotläufe haben keine LLM-Runden (`llm_every` 0). Was
