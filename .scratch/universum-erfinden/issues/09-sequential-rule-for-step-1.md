@@ -313,7 +313,9 @@ This is the smallest set of changes. brut-breed needs no change: every run goes 
     - print T_A = never, 7, 75, 97, 349, 143, 33, 180, 810;
     - print T_R = never, 380, and never for the rest;
     - show E1 = 6561/512 (open) and E2 = 6561/256, which crossed 20 at pair 9.
-    The independent script reference_rule.py gives exactly this. Before the counted result is reported, recount it with the same script.
+    The independent script reference_rule.py gives exactly this (`--pilots <scratchpad>`). Before the counted result is reported, recount it with the same script:
+      python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs runs
+    That mode reads A-1, R-1, A-2, R-2, ... in seed order and counts a pair once both runs are finished. For every counted run it checks the seed, the arm, the pre-registered settings, the stop reason and the calibration gate. It refuses gaps in the seeds and more than 60 pairs. A failed gate up to the stop makes the experiment void.
 
 2. docs/PREREG_STEP1_CIRCUITS.md
    - Lines 7-9: no counted seed has run.

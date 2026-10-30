@@ -1,99 +1,319 @@
 #!/usr/bin/env python3
-"""s: a small reference implementation of the recommended rule, for cross-checks.
+"""Reference implementation of the sequential rule of issue 09, for cross-checks.
 
-Reads run directories (rediscovery.json only), computes T, X, Y, E1, E2 in seed order and
-the stop/verdicts. Used here on uncounted pilot batches as an illustration (never counted).
-Usage: python3 -I reference_rule.py <scratchpad>
+It reads only config.json, report.json and rediscovery.json of each run. In seed order it
+computes the pass time T of each run, the pair outcome, the evidence values E1 and E2, the
+stop pair and the two verdicts.
+
+Two modes:
+
+  python3 -I reference_rule.py --runs <dir>
+      The counted experiment. <dir> holds A-1, R-1, A-2, R-2, ... The seeds must run 1, 2,
+      3, ... one pair at a time. A pair counts once both of its runs are finished. Every
+      counted run must have the pre-registered settings and pass the calibration gate.
+      Recount the counted result with this mode before it is reported.
+
+  python3 -I reference_rule.py --pilots <scratchpad>
+      An illustration on uncounted pilot batches. Pilot seeds never count.
 """
+
 import json
 import os
+import re
 import sys
 from fractions import Fraction as F
 
-CAP, CEIL = 60, 1000
+CAP = 60
+CEIL = 1000
+ALL_GENERATIONS = "all generations done"
+
+# The pre-registered settings every counted run must have.
+PLANNED = {
+    "generations": CEIL,
+    "max_calls": 13_000_000,
+    "children_per_generation": 8,
+    "search_puzzles": 33,
+    "select_puzzles": 22,
+}
+
+RUN_DIR = re.compile(r"^([AR])-([0-9]+)$")
 
 
-def pass_time(red):
-    open_ = red["library"] - red["reached_by_seeds"]
-    firsts = sorted(t["first_generation"] for t in red["targets"]
-                    if t["reached_by_bred"] and not t["reached_by_seed"])
-    k = open_ // 2 + 1
-    T = firsts[k - 1] if open_ > 0 and len(firsts) >= k else None
-    assert red["passes"] == (T is not None)
-    return T
+def fail(message):
+    sys.exit(f"reference_rule: {message}")
+
+
+def load(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def pass_time(red, label):
+    # T: the k-th smallest first generation among the targets only bred members reach.
+    open_targets = red["library"] - red["reached_by_seeds"]
+    firsts = sorted(
+        t["first_generation"]
+        for t in red["targets"]
+        if t["reached_by_bred"] and not t["reached_by_seed"]
+    )
+    k = open_targets // 2 + 1
+
+    if open_targets > 0 and len(firsts) >= k:
+        t = firsts[k - 1]
+    else:
+        t = None
+
+    if red["passes"] != (red["calibrated"] and t is not None):
+        fail(f"{label}: rediscovery.json says passes = {red['passes']}, but T = {t}")
+
+    return t
 
 
 def proven(w, n):
-    return 3**w >= 20 * 2**n
+    return 3 ** w >= 20 * 2 ** n
 
 
 def failed(w, n):
-    return 20 * 3**w <= 2**n
+    return 20 * 3 ** w <= 2 ** n
+
+
+def state(w, n):
+    if proven(w, n):
+        return "proven"
+
+    if failed(w, n):
+        return "failed"
+
+    return "open"
+
+
+def within_ceiling(t):
+    if t is not None and t <= CEIL:
+        return t
+
+    return None
+
+
+def first_to_pass(ta, tr):
+    if ta is not None and (tr is None or ta < tr):
+        return "A"
+
+    if tr is not None and (ta is None or tr < ta):
+        return "R"
+
+    return "tie"
 
 
 def run_rule(pairs):
     """pairs: list of (seed, T_A, T_R) in seed order; T None = never (within CEIL)."""
-    k = n = w = l = 0
-    st1 = st2 = "open"
-    lines, stop = [], None
+    k = 0
+    n = 0
+    w = 0
+    l = 0
+    st1 = "open"
+    st2 = "open"
+    lines = []
+    stop = None
+
     for i, (seed, ta, tr) in enumerate(pairs, 1):
-        ta = ta if ta is not None and ta <= CEIL else None
-        tr = tr if tr is not None and tr <= CEIL else None
-        x = ta is not None
-        if ta is not None and (tr is None or ta < tr):
-            y = "A"
-        elif tr is not None and (ta is None or tr < ta):
-            y = "R"
-        else:
-            y = "tie"
-        if stop is None:
-            n += 1
-            k += x
-            if st1 == "open":
-                st1 = "proven" if proven(k, n) else ("failed" if failed(k, n) else "open")
-                st1_at = i
-            if y != "tie":
-                w, l = (w + 1, l) if y == "A" else (w, l + 1)
-                if st2 == "open":
-                    st2 = "proven" if proven(w, w + l) else ("failed" if failed(w, w + l) else "open")
-            E1, E2 = F(3**k, 2**n), F(3**w, 2**(w + l))
-            lines.append(f"pair {i} seed {seed}: T_A={ta} T_R={tr} X={int(x)} first={y} "
-                         f"E1={E1} ({float(E1):.3f}) E2={E2} ({float(E2):.3f}) [{st1}/{st2}]")
-            if st1 == "failed" or (st1 == "proven" and st2 != "open") or i == CAP:
-                stop = i
-        else:
+        if stop is not None:
             lines.append(f"pair {i} seed {seed}: after the stop, not counted")
-    p1 = "undecided" if (stop and st1 == "open") else st1
-    sec = (f"not claimed (primary not proven; E2 itself: {st2})" if st1 != "proven"
-           else ("undecided" if st2 == "open" else st2)) if stop else st2
-    verdict = (f"stop at pair {stop}: primary {p1}, secondary {sec}" if stop
-               else f"open after {len(pairs)} pairs: run the next seed")
-    return lines, verdict
+            continue
+
+        ta = within_ceiling(ta)
+        tr = within_ceiling(tr)
+        x = ta is not None
+        y = first_to_pass(ta, tr)
+
+        n += 1
+        k += x
+
+        if st1 == "open":
+            st1 = state(k, n)
+
+        if y != "tie":
+            if y == "A":
+                w += 1
+            else:
+                l += 1
+
+            if st2 == "open":
+                st2 = state(w, w + l)
+
+        E1 = F(3 ** k, 2 ** n)
+        E2 = F(3 ** w, 2 ** (w + l))
+        lines.append(f"pair {i} seed {seed}: T_A={ta} T_R={tr} X={int(x)} first={y} "
+                     f"E1={E1} ({float(E1):.3f}) E2={E2} ({float(E2):.3f}) [{st1}/{st2}]")
+
+        if st1 == "failed" or (st1 == "proven" and st2 != "open") or i == CAP:
+            stop = i
+
+    if stop is None:
+        verdict = f"open after {len(pairs)} pairs: run the next seed"
+    else:
+        primary = "undecided" if st1 == "open" else st1
+
+        if st1 != "proven":
+            secondary = f"not claimed (primary not proven; E2 itself: {st2})"
+        elif st2 == "open":
+            secondary = "undecided"
+        else:
+            secondary = st2
+
+        verdict = f"stop at pair {stop}: primary {primary}, secondary {secondary}"
+
+    return lines, verdict, stop
 
 
-def batch(sp, name, seeds, ceil_note):
+def check_run(path, arm, seed):
+    cfg = load(os.path.join(path, "config.json"))
+    report = load(os.path.join(path, "report.json"))
+
+    if cfg["seed"] != seed:
+        fail(f"{path}: config.json has seed {cfg['seed']}, expected {seed}")
+
+    for key, value in PLANNED.items():
+        if cfg.get(key) != value:
+            fail(f"{path}: {key} is {cfg.get(key)}, pre-registered {value}")
+
+    if "circuits" not in cfg.get("domain", {}):
+        fail(f"{path}: not a circuit run")
+
+    uniform = cfg.get("selection") == "uniform"
+
+    if uniform != (arm == "R"):
+        fail(f"{path}: arm {arm} runs with selection {cfg.get('selection', 'dgm (default)')}")
+
+    if report["stop_reason"] != ALL_GENERATIONS or report["generations_completed"] != CEIL + 1:
+        fail(f"{path}: stopped with {report['stop_reason']!r} after "
+             f"{report['generations_completed']} generations (generation 0 included)")
+
+
+def finished(runs_dir, arm, seed):
+    path = os.path.join(runs_dir, f"{arm}-{seed}")
+
+    return all(os.path.isfile(os.path.join(path, f)) for f in ("rediscovery.json", "report.json"))
+
+
+def counted_pairs(runs_dir):
+    """The number of complete pairs 1..n, and the seed of a pair still running, if any."""
+    seeds = set()
+
+    for name in os.listdir(runs_dir):
+        m = RUN_DIR.match(name)
+
+        if m:
+            seeds.add(int(m.group(2)))
+
+    if not seeds:
+        fail(f"{runs_dir}: no run directories A-<seed> or R-<seed>")
+
+    if min(seeds) < 1:
+        fail(f"{runs_dir}: seeds start at 1, found seed {min(seeds)}")
+
+    n = 0
+
+    while finished(runs_dir, "A", n + 1) and finished(runs_dir, "R", n + 1):
+        n += 1
+
+    # After the complete pairs there may only be the one pair still running.
+    rest = sorted(s for s in seeds if s > n)
+
+    if rest and rest != [n + 1]:
+        fail(f"seeds must run 1, 2, 3, ... one pair at a time; after {n} complete pairs "
+             f"found seeds {rest}")
+
+    if n > CAP:
+        fail(f"{n} complete pairs, but the rule allows at most {CAP}")
+
+    return n, (rest[0] if rest else None)
+
+
+def recount(runs_dir):
+    n, running = counted_pairs(runs_dir)
     pairs = []
+    calibrated = []
+
+    for s in range(1, n + 1):
+        reds = []
+
+        for arm in ("A", "R"):
+            path = os.path.join(runs_dir, f"{arm}-{s}")
+            check_run(path, arm, s)
+            reds.append(load(os.path.join(path, "rediscovery.json")))
+
+        calibrated.append(reds[0]["calibrated"] and reds[1]["calibrated"])
+        pairs.append((s, pass_time(reds[0], f"A-{s}"), pass_time(reds[1], f"R-{s}")))
+
+    lines, verdict, stop = run_rule(pairs)
+    print(f"== counted experiment in {runs_dir}: {n} complete pairs")
+    print("\n".join(lines))
+
+    # A counted pair up to the stop that fails the calibration gate makes the experiment void.
+    counted = stop if stop is not None else n
+
+    for s in range(1, counted + 1):
+        if not calibrated[s - 1]:
+            print(f"VOID: seed {s} fails the calibration gate |R_seed| <= |L| / 3")
+            sys.exit(1)
+
+    print(verdict)
+
+    if stop is None:
+        print(f"next: run seed {n + 1}")
+
+    if running is not None:
+        print(f"seed {running}: not finished, not counted yet")
+
+
+def pilot_batch(sp, name, seeds, ceil_note):
+    pairs = []
+
     for s in seeds:
-        ra = json.load(open(os.path.join(sp, name, f"A-{s}", "rediscovery.json")))
-        rr = json.load(open(os.path.join(sp, name, f"R-{s}", "rediscovery.json")))
-        pairs.append((s, pass_time(ra), pass_time(rr)))
-    lines, verdict = run_rule(pairs)
+        red_a = load(os.path.join(sp, name, f"A-{s}", "rediscovery.json"))
+        red_r = load(os.path.join(sp, name, f"R-{s}", "rediscovery.json"))
+        pairs.append((s, pass_time(red_a, f"{name}/A-{s}"), pass_time(red_r, f"{name}/R-{s}")))
+
+    lines, verdict, _ = run_rule(pairs)
     print(f"== {name} ({ceil_note}); illustration only, pilot seeds never count")
     print("\n".join(lines))
     print(verdict)
 
 
-sp = sys.argv[1]
-batch(sp, "pilot-1000", range(301, 310), "1000 generations")
-batch(sp, "pilot10", range(101, 111), "200 generations, so T > 200 is unknown")
+def pilots(sp):
+    pilot_batch(sp, "pilot-1000", range(301, 310), "1000 generations")
+    pilot_batch(sp, "pilot10", range(101, 111), "200 generations, so T > 200 is unknown")
 
-# synthetic: X = 1 exactly when E1 < 1, Y alternating, never crosses in 60 pairs
-k = n = 0
-pairs = []
-for i in range(1, 61):
-    x = F(3**k, 2**n) < 1
-    k, n = k + x, n + 1
-    pairs.append((i, 5 if x else None, 4 if (i % 2 == 0 and x) else (None if x else (6 if i % 2 else None))))
-lines, verdict = run_rule(pairs)
-print("== synthetic path that keeps E1 between 1/2 and 3/2:", verdict)
-print(lines[-1])
+    # Synthetic: X = 1 exactly when E1 < 1, so E1 stays in [1/2, 3/2) and never crosses.
+    k = 0
+    n = 0
+    pairs = []
+
+    for i in range(1, 61):
+        x = F(3 ** k, 2 ** n) < 1
+        k += x
+        n += 1
+
+        if x:
+            tr = 4 if i % 2 == 0 else None
+        else:
+            tr = 6 if i % 2 == 1 else None
+
+        pairs.append((i, 5 if x else None, tr))
+
+    lines, verdict, _ = run_rule(pairs)
+    print("== synthetic path that keeps E1 between 1/2 and 3/2:", verdict)
+    print(lines[-1])
+
+
+def main(argv):
+    if len(argv) == 3 and argv[1] == "--runs":
+        recount(argv[2])
+    elif len(argv) == 3 and argv[1] == "--pilots":
+        pilots(argv[2])
+    else:
+        fail("usage: reference_rule.py --runs <dir> | --pilots <scratchpad>")
+
+
+if __name__ == "__main__":
+    main(sys.argv)
