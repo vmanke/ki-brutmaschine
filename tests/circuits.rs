@@ -788,6 +788,145 @@ fn verify_ties_the_counted_archive_to_the_logged_answers() {
     );
 }
 
+/// The ids of the finalists that the last select phase in the log of `dir` scored.
+fn finalist_ids(dir: &Path) -> BTreeSet<String> {
+    let all = events(dir);
+    let last = all
+        .iter()
+        .rposition(|e| e["kind"] == "generation")
+        .map_or(0, |i| i + 1);
+
+    all[last..]
+        .iter()
+        .filter(|e| e["kind"] == "finalist")
+        .map(|e| e["id"].as_str().expect("id").to_string())
+        .collect()
+}
+
+/// The first bred member of `archive` that is not among `finalists`. The select phase did
+/// not score it, so an edit of it leaves the finalists of the report as they are.
+fn unscored<'a>(
+    archive: &'a mut [serde_json::Value],
+    finalists: &BTreeSet<String>,
+) -> &'a mut serde_json::Value {
+    archive
+        .iter_mut()
+        .find(|m| m["op"] != "seed" && !finalists.contains(m["id"].as_str().expect("id")))
+        .expect("a bred member that is no finalist")
+}
+
+/// A finished RICH run in the fresh directory `name`, whose checkpoint archive `forge`
+/// edits (it also gets the ids of the finalists), then resumed. The resume writes the
+/// report and the count anew from the edited archive and logs nothing, so only the check
+/// of the archive against the log stands between the edit and the count. Returns the
+/// output of the resume and of --verify after it.
+fn resumed_after_forging(
+    name: &str,
+    forge: impl FnOnce(&mut Vec<serde_json::Value>, &BTreeSet<String>),
+) -> (Output, Output) {
+    let dir = fresh(name);
+
+    ok(&run(&dir, &RICH));
+
+    let mut cp = json(&dir, "snapshot.json");
+    let before = cp.clone();
+
+    forge(
+        cp["snapshot"]["archive"].as_array_mut().expect("archive"),
+        &finalist_ids(&dir),
+    );
+    assert_ne!(cp, before, "{name}: the forgery changes the checkpoint");
+    std::fs::write(
+        dir.join("snapshot.json"),
+        serde_json::to_string(&cp).expect("json"),
+    )
+    .expect("forge");
+
+    let log = read(&dir, "events.jsonl");
+    let resumed = breed(&["--out", dir.to_str().expect("path"), "--resume"]);
+
+    ok(&resumed);
+    assert_eq!(
+        read(&dir, "events.jsonl"),
+        log,
+        "{name}: the resume logs nothing"
+    );
+
+    (resumed, verify(&dir))
+}
+
+/// Assert that --verify refused a run because its archive is not the one the log records.
+fn refused_as_unlogged(out: &Output, what: &str) {
+    assert_eq!(out.status.code(), Some(1), "{what}: {}", stdout(out));
+    assert!(
+        stderr(out).contains("integrity") && stderr(out).contains("Born events"),
+        "{what}: {}",
+        stderr(out)
+    );
+}
+
+#[test]
+fn verify_ties_the_archive_size_ids_generations_and_operators_to_the_log() {
+    // The seed Cascades moved to generation 1. The count no longer treats them as seeds,
+    // so it changes; their operator still says seed, so the select phase still scores
+    // them as seeds and the finalists stay as logged.
+    let (resumed, refused) = resumed_after_forging("forged-generation", |archive, _| {
+        for m in archive.iter_mut().filter(|m| m["op"] == "seed") {
+            m["generation"] = serde_json::json!(1);
+        }
+    });
+
+    assert!(
+        stdout(&resumed).contains("the seeds solve 0 of 11 targets"),
+        "{}",
+        stdout(&resumed)
+    );
+    refused_as_unlogged(&refused, "generation");
+
+    // A bred member that is no finalist with another operator, and one with another id.
+    let (_, refused) = resumed_after_forging("forged-operator", |archive, finalists| {
+        let m = unscored(archive, finalists);
+        let other = if m["op"] == "section_add" {
+            "section_drop"
+        } else {
+            "section_add"
+        };
+
+        m["op"] = serde_json::json!(other);
+    });
+
+    refused_as_unlogged(&refused, "operator");
+
+    let (_, refused) = resumed_after_forging("forged-id", |archive, finalists| {
+        unscored(archive, finalists)["id"] = serde_json::json!("ffffffffffffffff");
+    });
+
+    refused_as_unlogged(&refused, "id");
+
+    // A member that no Born event records, appended with the lowest fitness so that the
+    // select phase does not score it; and the last-born member removed.
+    let (_, refused) = resumed_after_forging("forged-extra", |archive, _| {
+        let mut extra = archive.last().expect("a member").clone();
+
+        extra["id"] = serde_json::json!("ffffffffffffffff");
+        extra["fitness"] = serde_json::json!(-1.0);
+        archive.push(extra);
+    });
+
+    refused_as_unlogged(&refused, "an extra member");
+
+    let (_, refused) = resumed_after_forging("forged-missing", |archive, finalists| {
+        let last = archive.pop().expect("a member");
+
+        assert!(
+            !finalists.contains(last["id"].as_str().expect("id")),
+            "the last-born member is no finalist"
+        );
+    });
+
+    refused_as_unlogged(&refused, "a missing member");
+}
+
 #[test]
 fn verify_says_why_it_skips_the_count_of_a_finished_run() {
     let dir = fresh("no-report");
