@@ -63,6 +63,11 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   matching resolutions. Every child passes the shape check, or it is redrawn.
 - **Base models.** One scaled-down seed per family, within the limits, enters the first
   generation next to random genomes.
+- **Promotion of winners.** Winners can be fed back upward (owner, 2026-10-30): the two
+  best models of a run by their hidden score, and only if they beat the run's best base
+  model, are promoted into `candidates/models/` through a draft pull request that a
+  human merges, as for Cascades (ADR 0004, ADR 0005). Later runs start with the merged
+  models next to the base models of the families, so the pool of base models grows.
 - **Library.** candle (`candle-core`, `candle-nn`, 0.11.0 on crates.io, Hugging Face).
   It runs on the CPU in Rust and has every operation the families need: 1-D and 2-D
   convolution with stride, dilation and groups, transposed convolution, max and average
@@ -103,14 +108,15 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
 5. `issues/05-mutations-and-integration.md`: mutation, crossover, base models in the
    population, CLI, README (German and English), ADR 0007, CONTEXT.md.
 6. `issues/06-arc-grids.md`: ARC grid tasks.
+7. `issues/07-promotion-of-winners.md`: winners become base models of later runs.
 
-Pull requests: tickets 01 and 02; then 03 to 05; then 06. Each is reviewed once by an
+Pull requests: tickets 01 and 02; then 03 to 05 and 07; then 06. Each is reviewed once by an
 independent reviewer; further rounds only on the owner's request.
 
 ## Cost estimate
 
-About 80 to 160 dollars of model usage in total: 01 about 8 to 15, 02 about 10 to 20, 03
-and 04 about 15 to 30 each, 05 about 10 to 20, 06 about 10 to 20, docs and one review per
+About 90 to 180 dollars of model usage in total: 01 about 8 to 15, 02 about 10 to 20, 03
+and 04 about 15 to 30 each, 05 about 10 to 20, 06 about 10 to 20, 07 about 10 to 20, docs and one review per
 pull request included. Every step that would exceed its range is announced first.
 
 ## Comments
