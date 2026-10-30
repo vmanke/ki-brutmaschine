@@ -129,8 +129,10 @@ lie further away: at the ceiling of the Traits (`sim:large`, 4096 thinking token
 self-check), Meet alone solves QFT2 in 4 of its 32 disguises, and Hadamard, Phase and
 Simplify solve CCiX in 128 of its 384 (`tests/circuits.rs`); such a Worker differs from
 every seed in model, thinking budget and self-check. A circuit Cascade is refused when
-any section holds three or more gate mentions such as "CNOT 0 1", so a Mutator cannot
-store answers in prompts.
+any one section holds three or more gate mentions such as "CNOT 0 1", so no section can
+spell out a circuit. Spread over several sections, two gates in each, a circuit still
+passes (`tests/circuits.rs`); against such a memorised circuit stands the disguise of
+every task.
 
 **A finished circuit Run is recounted.** Before its report, a finished circuit Run writes
 `rediscovery.json`: per target, the cheapest exact answer of the seed Cascades and of the

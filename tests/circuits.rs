@@ -1099,6 +1099,39 @@ fn designer_calibration_is_pinned() {
     }
 }
 
+#[test]
+fn the_admission_rule_counts_gate_mentions_per_section() {
+    // The eight gates of the QFT2 witness, two to a section: every section passes, so the
+    // Cascade does. Three of them in one section are refused. Against a memorised circuit
+    // spread like this stands the disguise of every task.
+    let (_, seed) = circuit_seed_cascades().swap_remove(0);
+    let with = |texts: &[&str]| {
+        let mut c = seed.clone();
+
+        for (name, text) in ["check", "style", "residual", "notes"].iter().zip(texts) {
+            c.stages[0].workers[0].sections.push(Section {
+                name: name.to_string(),
+                text: text.to_string(),
+            });
+        }
+
+        c
+    };
+    let spread = with(&[
+        "Start with H 0 and then CNOT 0 1.",
+        "Next comes CNOT 1 0, then TDG 1.",
+        "Then CNOT 0 1 and T 1.",
+        "End with T 0 and H 0.",
+    ]);
+    let listed = with(&["Start with H 0, then CNOT 0 1 and CNOT 1 0."]);
+
+    spread
+        .check(&CascadeLimits::default())
+        .expect("a valid Cascade");
+    assert_eq!(no_gate_lists(&spread), Ok(()));
+    assert!(no_gate_lists(&listed).is_err());
+}
+
 /// Every dressing of a target on `n` qubits: each relabelling of the qubits, with X on
 /// any set of inputs and on any set of outputs.
 fn every_dressing(n: usize) -> Vec<Dressing> {

@@ -71,7 +71,9 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
   tags `sim:small` and `sim:large` answers the circuit prompts (section 5). The genes of
   circuit breeding are four seed Cascades, 50 phrases, the Mutator's brief and the
   admission rule `no_gate_lists`: a section with three or more gate mentions such as
-  "CNOT 0 1" is refused, so no Mutator can store answers in prompts.
+  "CNOT 0 1" is refused, so no single section spells out a circuit. Spread over several
+  sections, two gates in each, a circuit still passes (`tests/circuits.rs`); against that
+  stands the disguise of each task.
 - **Program** (`src/bin/brut-breed.rs`). `--domain circuits` starts a circuit Run. A
   finished Run writes `rediscovery.json`, the pre-registered count, before its report
   (section 4). `--verify` recomputes the report and the count from the checkpoint, without
@@ -80,15 +82,16 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
   both arms, paired by seed, and applies the pre-registered rules (section 6). It makes a
   claim only for the pre-registered seeds, generations and call cap.
-- **Tests.** `tests/circuits.rs` has 14 tests: circuit Runs are reproducible across
+- **Tests.** `tests/circuits.rs` has 15 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; `rediscovery.json` appears only once a select phase is
   complete; 1 and 4 threads give byte-equal files; `--promote` is refused; the line about
   D holds for an uncalibrated Run too; `rediscovery.json` equals a recount from the logged
   answers, any change to the file or to the checkpoint's archive fails `--verify`, and
   `--verify` says why it skips the file; a source scan shows that `designer.rs` does not
-  know the library; the calibration is pinned, and so are two routes with fewer families
-  at the ceiling of the Traits; and the two cross-checks with `quantum.rs`.
+  know the library; the admission rule counts gate mentions per section; the calibration
+  is pinned, and so are two routes with fewer families at the ceiling of the Traits; and
+  the two cross-checks with `quantum.rs`.
 
 Table 1: the 11 targets with a verified reference. The full sources of each entry are in
 `LIBRARY` in `src/cascade/circuit.rs`. "Proven" and "derived" are lower bounds; a best

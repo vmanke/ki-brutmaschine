@@ -1,6 +1,6 @@
 //! The genes of circuit breeding (step 1, ticket 03): the seed Cascades, the phrase pool
 //! the section operators draw from, the Mutator's brief, and the admission rule that keeps
-//! written-out circuits out of genomes.
+//! a written-out circuit out of every single section.
 //!
 //! The genes speak to the simulated designer (`designer.rs`) only through words. A Worker
 //! knows a method family when its system prompt names one of the family's stems

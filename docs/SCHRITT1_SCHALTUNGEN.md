@@ -75,9 +75,11 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   Container schreibt kein Sprachmodell Schaltungen. Ein simulierter Entwerfer unter den
   Modellnamen `sim:small` und `sim:large` beantwortet die Schaltungs-Prompts (Abschnitt 5).
   Die Gene der Schaltungs-Zucht sind vier Startprogramme, 50 Satzbausteine, der Auftrag an
-  den Mutator und die Aufnahmeregel `no_gate_lists`: Ein Abschnitt mit drei oder mehr
-  Gatter-Nennungen wie „CNOT 0 1“ wird abgelehnt, damit kein Mutator Antworten in Prompts
-  ablegt.
+  den Mutator und die Aufnahmeregel `no_gate_lists`: Sie lehnt einen Abschnitt mit drei
+  oder mehr Gatter-Nennungen wie „CNOT 0 1“ ab, sodass kein einzelner Abschnitt eine
+  Schaltung ausschreibt. Über mehrere Abschnitte verteilt, je zwei Gatter, besteht eine
+  Schaltung die Regel noch (`tests/circuits.rs`); dagegen steht die Verkleidung jeder
+  Aufgabe.
 - **Programm** (`src/bin/brut-breed.rs`). `--domain circuits` startet einen Schaltungslauf.
   Ein fertiger Lauf schreibt vor seinem Bericht `rediscovery.json`, die vorab festgelegte
   Zählung (Abschnitt 4). `--verify` rechnet Bericht und Zählung ohne Modellaufruf aus dem
@@ -87,7 +89,7 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   beider Arme, paarweise nach Seed, und wendet die vorab festgelegten Regeln an
   (Abschnitt 6). Eine Aussage trifft sie nur für die vorab festgelegten Seeds, mit der
   festgelegten Zahl der Generationen und der festgelegten Aufrufgrenze.
-- **Tests.** `tests/circuits.rs` hat 14 Tests: Schaltungsläufe sind über Prozesse hinweg
+- **Tests.** `tests/circuits.rs` hat 15 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
   und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
   mit einer fertigen Auswahlphase; 1 und 4 Threads ergeben byte-gleiche Dateien;
@@ -95,9 +97,9 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   `rediscovery.json` gleicht einer Nachzählung aus den protokollierten Antworten, jede
   Änderung an der Datei oder am Archiv des Checkpoints lässt `--verify` scheitern, und
   `--verify` nennt, warum es die Datei auslässt; ein Quelltext-Scan zeigt, dass
-  `designer.rs` die Bibliothek nicht kennt; Tests legen die Kalibrierung fest und zwei Wege
-  mit weniger Familien an der Obergrenze der Traits; dazu kommen die beiden Gegenproben mit
-  `quantum.rs`.
+  `designer.rs` die Bibliothek nicht kennt; die Aufnahmeregel zählt Gatter-Nennungen je
+  Abschnitt; Tests legen die Kalibrierung fest und zwei Wege mit weniger Familien an der
+  Obergrenze der Traits; dazu kommen die beiden Gegenproben mit `quantum.rs`.
 
 Tabelle 1: die 11 Ziele mit geprüfter Referenz. Die vollständigen Quellen stehen je Eintrag
 in `LIBRARY` in `src/cascade/circuit.rs`. „Bewiesen“ und „abgeleitet“ sind untere Schranken;
