@@ -296,9 +296,9 @@ too, lies several steps away.
 
 Seeds 101 and 102 are pilot seeds: we do not count them, and they set only
 `--generations` and `--max-calls` of the counted Runs. We ran both arms on both seeds for
-60 generations, with `--search 33 --select 22 --children 8`, a release build at commit
-d4a650e (kept in the tag `pilot-step1`, since the main branch receives step 1 as new
-commits), rustc 1.97.0 and 2 threads. The default cap of 20 000 calls ended arm A on seed
+60 generations, with `--search 33 --select 22 --children 8`, a release build, rustc 1.97.0
+and 2 threads. The program of the commit that holds this report repeats every pilot Run
+byte for byte (see Reproducibility below). The default cap of 20 000 calls ended arm A on seed
 101 after generation 20 (18 451 calls), so all four Runs use `--max-calls 200000`. Then we
 repeated each Run with 200 generations. All numbers come from
 [pilot.json](pilot-step1/pilot.json); we checked all nine run directories again with
@@ -344,9 +344,9 @@ stop check reads `--generations`.
 - **Reproducibility.** We ran arm A on seed 101 again; `events.jsonl` and
   `rediscovery.json` are byte-equal to the pilot Run's. After the review fixes, which
   change only `--verify`, one printed line, the analysis and tests, we ran all nine pilot
-  Runs again with the program of commit b3a99e1, also kept in the tag `pilot-step1`:
-  `config.json`, `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are
-  byte-equal to the pilot's, and all nine pass its `--verify`.
+  Runs again with the program of the commit that holds this report: `config.json`,
+  `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are byte-equal to
+  the pilot's, and all nine pass its `--verify`.
 
 The settings of the counted Runs follow from the pilot: `--generations 200`, because every
 first solution came by generation 90 and a Run takes at most 26 s, and

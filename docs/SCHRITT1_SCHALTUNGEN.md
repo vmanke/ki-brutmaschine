@@ -312,8 +312,8 @@ Modell, Denkbudget und Selbstprüfung, liegt also ebenfalls mehrere Schritte ent
 Die Seeds 101 und 102 sind Pilot-Seeds: Wir zählen sie nicht, und sie legen nur
 `--generations` und `--max-calls` der gezählten Läufe fest. Wir haben beide Arme auf beiden
 Seeds 60 Generationen lang laufen lassen, mit `--search 33 --select 22 --children 8`,
-Release-Build auf Commit d4a650e (das Tag `pilot-step1` bewahrt ihn, da der Hauptzweig
-Schritt 1 als neue Commits erhält), rustc 1.97.0, 2 Threads. Die voreingestellte Grenze von
+Release-Build, rustc 1.97.0, 2 Threads. Das Programm des Commits, der diesen Bericht
+enthält, wiederholt jeden Pilotlauf byte-gleich (siehe Wiederholbarkeit unten). Die voreingestellte Grenze von
 20 000 Aufrufen beendete Arm A auf Seed 101 nach Generation 20 (18 451 Aufrufe); darum nutzen
 alle vier Läufe `--max-calls 200000`. Danach haben wir jeden Lauf mit 200 Generationen
 wiederholt. Alle Zahlen stammen aus [pilot.json](pilot-step1/pilot.json); wir haben alle neun
@@ -359,10 +359,10 @@ die Stopp-Prüfung `--generations` liest.
 - **Wiederholbarkeit.** Wir haben Arm A auf Seed 101 erneut laufen lassen; `events.jsonl` und
   `rediscovery.json` sind byte-gleich mit dem Pilotlauf. Nach den Korrekturen aus der
   Prüfung, die nur `--verify`, eine gedruckte Zeile, die Auswertung und Tests ändern, haben
-  wir alle neun Pilotläufe mit dem Programm von Commit b3a99e1 wiederholt, den ebenfalls
-  das Tag `pilot-step1` bewahrt: `config.json`, `events.jsonl`, `snapshot.json`,
-  `report.json` und `rediscovery.json` sind byte-gleich mit dem Pilot, und alle neun
-  bestehen sein `--verify`.
+  wir alle neun Pilotläufe mit dem Programm des Commits wiederholt, der diesen Bericht
+  enthält: `config.json`, `events.jsonl`, `snapshot.json`, `report.json` und
+  `rediscovery.json` sind byte-gleich mit dem Pilot, und alle neun bestehen sein
+  `--verify`.
 
 Aus dem Pilot folgen die Einstellungen der gezählten Läufe: `--generations 200`, da alle
 ersten Lösungen bis Generation 90 kamen und ein Lauf höchstens 26 s dauert, und
