@@ -203,7 +203,13 @@ needs at most 2 547 412 calls, so the cap cannot end a counted Run early. The
 1. Build the program at the frozen commit with the frozen toolchain. Run
    `cargo test --lib` and `cargo test --test circuits` there, which hold every test named
    in sections 3 and 5; all must pass.
-2. Run the 20 counted Runs, one at a time, each into a fresh directory.
+2. Run the 20 counted Runs, one at a time, each into a fresh directory. A Run that is
+   stopped, killed or otherwise interrupted before it finishes is not resumed: we delete
+   its directory and start it again from scratch into a fresh one. A resumed Run would
+   reach the same Cascades, judgments, `state` lines and `rediscovery.json`, but it counts
+   the reserved calls of the interrupted generation as spent, so `calls_used` in its
+   `events.jsonl`, `snapshot.json` and `report.json` would differ from a straight Run's.
+   Only uninterrupted Runs are counted, and the same holds for the Runs of step 3.
 3. Thread check: run seed 1 of each arm twice more, once with `RAYON_NUM_THREADS=1` and
    once with `RAYON_NUM_THREADS=4`, into fresh directories. In each arm, `config.json`,
    `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` must be
