@@ -43,12 +43,15 @@ depend on it: `--verify` also checks a finished circuit Run's archive against th
 alone; the analysis makes a claim only for the generations and the cap of section 6; and
 there are new tests and comments. `git diff d4a650e b3a99e1 -- Cargo.toml Cargo.lock` is
 empty, in `src/cascade` that diff changes only comments, and after b3a99e1 only documents
-changed. With the program of commit b3a99e1 we ran the four 60-generation pilot Runs
-again: their `config.json`, `events.jsonl`, `snapshot.json`, `report.json` and
-`rediscovery.json` are byte-equal to the pilot's, and all nine pilot Run directories pass
-its `--verify`. On another toolchain or platform a floating-point function may round its
-last bit differently, and then the Runs may differ from Runs on the frozen toolchain; such
-Runs are a deviation.
+changed. With the program of commit b3a99e1 we ran all nine pilot Runs again: their
+`config.json`, `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are
+byte-equal to the pilot's, and all nine pass its `--verify`. The main branch receives
+step 1 as new commits, so it need not hold d4a650e and b3a99e1; the tag `pilot-step1` of
+the repository keeps both and the history between them. The frozen commit can be checked
+without them: at that commit, the commands of `docs/pilot-step1/README.md` must give
+event logs that end in the head hashes that `pilot.json` records. On another toolchain or
+platform a floating-point function may round its last bit differently, and then the Runs
+may differ from Runs on the frozen toolchain; such Runs are a deviation.
 
 ## 3. The target list L
 

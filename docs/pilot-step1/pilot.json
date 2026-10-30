@@ -3,6 +3,8 @@
   "counted": false,
   "date": "2026-10-29",
   "code_commit": "d4a650ee4dc741975209ff6b4b71ad2c2d6b68d3",
+  "code_commit_kept_in": "the tag pilot-step1 of github.com/vmanke/ki-brutmaschine; the main branch receives step 1 as new commits and need not hold code_commit",
+  "rerun": "on 2026-10-30, with the release build of commit b3a99e13d37d375a64ddf2715547e6149948bf57 (same toolchain and threads), all nine runs gave byte-equal config.json, events.jsonl, snapshot.json, report.json and rediscovery.json, and all nine pass its --verify",
   "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07)",
   "binary": "cargo build --release --bin brut-breed",
   "threads": "RAYON_NUM_THREADS=2 (results do not depend on the thread count; wall time does)",
