@@ -39,16 +39,16 @@ control of the breeder. It says nothing about real language models.
 
 The pilot ran commit d4a650e. Since then the code has changed only where no Run's files
 depend on it: `--verify` also checks a finished circuit Run's archive against the logged
-`born` events and says why it skips `rediscovery.json`; one printed line about D follows
-D alone; the analysis makes a claim only for the generations and the cap of section 6;
-and there are new tests and comments. `git diff d4a650e f26ba91 -- Cargo.toml
-Cargo.lock` is empty, and in `src/cascade` that diff changes only comments. With the
-program of commit f26ba91 we ran the four 60-generation pilot Runs again: their
-`config.json`, `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are
-byte-equal to the pilot's, and all nine pilot Run directories pass its `--verify`. On
-another toolchain or platform a floating-point function may round its last bit
-differently, and then the Runs may differ from Runs on the frozen toolchain; such Runs are
-a deviation.
+`born` events and says why it skips `rediscovery.json`; one printed line about D follows D
+alone; the analysis makes a claim only for the generations and the cap of section 6; and
+there are new tests and comments. `git diff d4a650e f26ba91 -- Cargo.toml Cargo.lock` is
+empty, in `src/cascade` that diff changes only comments, and after f26ba91 only documents
+changed. With the program of commit f26ba91 we ran the four 60-generation pilot Runs
+again: their `config.json`, `events.jsonl`, `snapshot.json`, `report.json` and
+`rediscovery.json` are byte-equal to the pilot's, and all nine pilot Run directories pass
+its `--verify`. On another toolchain or platform a floating-point function may round its
+last bit differently, and then the Runs may differ from Runs on the frozen toolchain; such
+Runs are a deviation.
 
 ## 3. The target list L
 
@@ -248,9 +248,9 @@ generations.
 
 `rediscovery()` in `src/cascade/circuit.rs` computes these sets and writes them to each
 Run's `rediscovery.json`; `--verify` checks the checkpoint's archive against the logged
-`born` events and recomputes the file from that archive, and the analysis recounts it
-from its own target list. Every decision is made in integers: D > 1/2
-means 2 · |R_bred \ R_seed| > |L \ R_seed|, and D_A > D_R compares exact fractions.
+`born` events and recomputes the file from that archive, and the analysis recounts it from
+its own target list. Every decision is made in integers: D > 1/2 means
+2 · |R_bred \ R_seed| > |L \ R_seed|, and D_A > D_R compares exact fractions.
 
 ## 8. Results
 

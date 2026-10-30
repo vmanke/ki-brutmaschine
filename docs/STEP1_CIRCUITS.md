@@ -207,10 +207,10 @@ gates, depth, T-depth), whether each reached the reference (`reached_by_seed`,
 `reached_by_bred`), the earliest generation of a bred Cascade that solved the target
 (`first_generation`), the text of the cheapest exact bred answer (`circuit`; it implements
 the disguised task, not the target in its plain form), and the cheapest invention
-candidate if there is one (`below_best_known`, `candidate`). Below follow |L| (`library`), |R_seed|
-(`reached_by_seeds`), |R_bred \ R_seed| (`reached_by_bred_only`), the share D (`share`), the
-gate 3 · |R_seed| ≤ |L| (`calibrated`) and `passes` (calibrated and D > 1/2). The
-pre-registration defines these terms in section 7.
+candidate if there is one (`below_best_known`, `candidate`). Below follow |L| (`library`),
+|R_seed| (`reached_by_seeds`), |R_bred \ R_seed| (`reached_by_bred_only`), the share D
+(`share`), the gate 3 · |R_seed| ≤ |L| (`calibrated`) and `passes` (calibrated and
+D > 1/2). The pre-registration defines these terms in section 7.
 
 **`report.json`.** As in Stage 2c: the best Cascades with their solved search tasks, the
 finalists with their solved select tasks (for circuits also `select_quality`, the sum of
