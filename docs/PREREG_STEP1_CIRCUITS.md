@@ -295,9 +295,10 @@ generations.
   when fewer than k such targets exist.
 - **T_A(s) and T_R(s)** are T of the arm A and the arm R Run of seed s.
 - **X(s)** = 1 when the arm A Run of seed s passes, else 0.
-- **Pair outcome Y(s).** "A first" when T_A(s) < T_R(s), where T_R(s) may be never; "R
-  first" when T_R(s) < T_A(s); "tie" when T_A(s) = T_R(s), including the case where
-  neither Run passes.
+- **Pair outcome Y(s).** "A first" when T_A(s) < T_R(s); "R first" when
+  T_R(s) < T_A(s); "tie" when T_A(s) = T_R(s), including the case where neither Run
+  passes. Never counts as later than every generation, so "A first" includes a pass of arm
+  A when arm R never passes.
 
 `rediscovery()` in `src/cascade/circuit.rs` computes these sets and writes them to each
 Run's `rediscovery.json`; `--verify` checks the checkpoint's archive against the logged
@@ -355,12 +356,13 @@ pair, the experiment stops at the first of:
 probability at most 1/20, and some claim is made falsely with probability at most 1/20.
 This follows from Ville's inequality for test supermartingales (Shafer, Shen, Vereshchagin
 and Vovk 2011; Waudby-Smith and Ramdas 2024) and from the fixed sequence of the two
-claims. For the primary claim at a pass rate of 1/2 and the cap of 60 pairs, the exact
-probability is 5555272097573807 / 2^57 = 0.0385. The bar is weaker than that of the fixed
-rule "9 of 10", whose size was 11/1024 = 0.0107; it is the 5 % bar of the project's other
-pass tests. A fixed test cannot simply be checked again after every pair instead: an exact
-one-sided 5 % binomial test run after every pair succeeds falsely with probability 0.0987
-by 20 pairs.
+claims. The exact worst case for the primary claim, at a pass rate of 1/2 and the cap of
+60 pairs, is a false proof with probability 5555272097573807 / 2^57 = 0.0385; the largest
+probability of any false claim over the joint null scenarios of issue 09 is also 0.0385.
+The bar is weaker than that of the fixed rule "9 of 10", whose size was 11/1024 = 0.0107;
+it is the 5 % bar of the project's other pass tests. A fixed test cannot simply be checked
+again after every pair instead: an exact one-sided 5 % binomial test run after every pair
+succeeds falsely with probability 0.0987 by 20 pairs.
 
 **Conduct.** The error bounds require that the seed order is fixed, that no seed is skipped
 or replaced, that the updates go by seed and never by completion order, and that the
@@ -422,11 +424,11 @@ The experiment is void, and we make no claim, when any of these holds:
 ## 10. The pilot seeds
 
 Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402, which include
-the first pilot seeds 101 and 102. They never enter the analysis of the counted seeds.
-They chose the design: the later batches set the ceiling of 1000 generations, the call cap
-and the planning figures below. Because they chose the design, counting them would bias
-the result. The calibration test reads the search panel of seed 101 without a Run. The
-pass time of every pilot Run is in [docs/pilot-step1/](pilot-step1/README.md).
+the first pilot seeds 101 and 102. They never enter the analysis of the counted seeds,
+because they chose the design: the later batches set the ceiling of 1000 generations, the
+call cap and the planning figures below. The calibration test reads the search panel of
+seed 101 without a Run. The pass time of every pilot Run is in
+[docs/pilot-step1/](pilot-step1/README.md).
 
 **First pilot, seeds 101 and 102.** `docs/pilot-step1/pilot.json` holds every number of
 this list; all its Runs pass `--verify`.
@@ -496,8 +498,8 @@ If the primary claim is proven, we claim: breeding assembles prompts and Traits 
 unlock exact, reference-cost syntheses for most library targets the seed Cascades miss, in
 more than half of all seeds within 1000 generations. If the secondary claim is proven
 too: Darwin Gödel selection gets there sooner than a uniform choice of parents with the
-same number of children, in that among untied pairs arm A passes first more often than
-arm R. Both are claims about the breeder as a positive control, not about real models,
+same number of children; among untied pairs, arm A passes first more often than arm R.
+Both are claims about the breeder as a positive control, not about real models,
 and not about inventions: an answer below a BestKnown count is only an invention
 candidate until a human has checked the literature (Q38).
 
