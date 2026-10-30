@@ -141,7 +141,10 @@ disguises: CZ by Hadamard and Linear (0, 1); CZ by Phase alone (0, 2), exact but
 solved; QFT2 by Hadamard, Phase and Linear (3, 3); CH by Meet alone (2, 1). It also pins
 misses: Fredkin without Compose, Toffoli without Hadamard, SWAP by Phase, CZ by Hadamard
 alone, CH by Search alone, and CH by Hadamard, Phase, Linear, Compose, Previous and
-Simplify.
+Simplify. `fewer_families_reach_qft2_and_ccix_at_the_ceiling_of_the_traits` in
+`tests/circuits.rs` pins two routes of pool phrases with fewer families, at 4096 thinking
+tokens on `sim:large` with self-check: Meet alone solves QFT2 in 4 of its 32 disguises,
+and Hadamard, Phase and Simplify solve CCiX in 128 of its 384.
 
 **Phrase steps.** No phrase names two of Hadamard, Phase and Linear. Of the 704 children
 that one phrase step (SectionReplace, SectionAdd or StageAdd) makes of the seeds, 40

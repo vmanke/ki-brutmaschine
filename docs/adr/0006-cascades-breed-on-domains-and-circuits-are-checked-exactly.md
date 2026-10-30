@@ -117,15 +117,20 @@ reach-limited. Its numbers say nothing about real models.
 **The genes make the hard targets take steps.** The circuit gene pool
 (`src/cascade/circuit_genes.rs`) holds the four seeds, 50 phrases for the section
 operators and the Mutator's brief. No phrase names two of Hadamard, Phase and Linear. A
-seed knows one of the three, so one random phrase step teaches it at most one more: of
-the 704 one-step children of the seeds, 40 solve one target beyond SWAP and CS (CZ or
-CCZ) and none solves two, on every target plain and in three disguises. QFT2, Toffoli,
-Peres, RTOF, CCiX and Fredkin need all three (Fredkin also needs conjugation), so they
-take at least two steps; the tests pin 384 two-step children of 60 such stepping stones,
-each of which solves CZ, QFT2, Toffoli, Peres, RTOF and CCiX. These counts come from the
-unit tests of `circuit_genes.rs`. A circuit Cascade is refused when any section holds
-three or more gate mentions such as "CNOT 0 1", so a Mutator cannot store answers in
-prompts.
+seed knows at most one of the three, so one random phrase step teaches it at most one
+more: of the 704 one-step children of the seeds, 40 solve one target beyond SWAP and CS
+(CZ or CCZ) and none solves two, on every target plain and in three disguises. So QFT2,
+Toffoli, Peres, RTOF and CCiX take at least two steps: the tests pin 60 stepping stones
+whose last Worker knows two of the three and their 384 children that know all three,
+each of which solves CZ, QFT2, Toffoli, Peres, RTOF and CCiX at the seeds' Traits.
+These counts come from the unit tests of `circuit_genes.rs`. The three alone miss
+Fredkin, which takes conjugation besides (`designer.rs`). Routes with fewer families
+lie further away: at the ceiling of the Traits (`sim:large`, 4096 thinking tokens,
+self-check), Meet alone solves QFT2 in 4 of its 32 disguises, and Hadamard, Phase and
+Simplify solve CCiX in 128 of its 384 (`tests/circuits.rs`); such a Worker differs from
+every seed in model, thinking budget and self-check. A circuit Cascade is refused when
+any section holds three or more gate mentions such as "CNOT 0 1", so a Mutator cannot
+store answers in prompts.
 
 **A finished circuit Run is recounted.** Before its report, a finished circuit Run writes
 `rediscovery.json`: per target, the cheapest exact answer of the seed Cascades and of the

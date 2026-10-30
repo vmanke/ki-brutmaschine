@@ -80,12 +80,15 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
   both arms, paired by seed, and applies the pre-registered rules (section 6). It makes a
   claim only for the pre-registered seeds, generations and call cap.
-- **Tests.** `tests/circuits.rs` has 9 tests: circuit Runs are reproducible across
+- **Tests.** `tests/circuits.rs` has 14 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
-  lines as a straight Run; 1 and 4 threads give byte-equal files; `--promote` is refused;
-  `rediscovery.json` equals a recount from the logged answers, and any change to the file
-  fails `--verify`; a source scan shows that `designer.rs` does not know the library; the
-  calibration is pinned; and the two cross-checks with `quantum.rs`.
+  lines as a straight Run; `rediscovery.json` appears only once a select phase is
+  complete; 1 and 4 threads give byte-equal files; `--promote` is refused; the line about
+  D holds for an uncalibrated Run too; `rediscovery.json` equals a recount from the logged
+  answers, any change to the file or to the checkpoint's archive fails `--verify`, and
+  `--verify` says why it skips the file; a source scan shows that `designer.rs` does not
+  know the library; the calibration is pinned, and so are two routes with fewer families
+  at the ceiling of the Traits; and the two cross-checks with `quantum.rs`.
 
 Table 1: the 11 targets with a verified reference. The full sources of each entry are in
 `LIBRARY` in `src/cascade/circuit.rs`. "Proven" and "derived" are lower bounds; a best
@@ -243,8 +246,8 @@ Meet in this order, solves all 33 tasks at the reference. So no target is out of
 and L holds all 11 targets. The prompt passes the genome's rules and the admission rule,
 so breeding could build it.
 
-**Routes to the targets.** The tests in `designer.rs` fix which families and how many
-thinking tokens a target needs; one thinking token less misses it.
+**Routes to the targets.** The tests in `designer.rs` fix, for the families listed, the
+fewest thinking tokens that give the answer; one thinking token less misses it.
 
 | Target | Families named | Self-check | Model | Fewest thinking tokens | Exact answer (T, CNOT) |
 |---|---|---|---|---|---|
@@ -263,14 +266,20 @@ and Linear solve QFT2, and Meet alone solves CH; Phase alone gives only (0, 2) f
 
 **Phrases.** The 50 phrases fall on the sections `strategy` (25), `residual` (9), `style`
 (6), `check` (5), `role` (3) and `format` (2); we counted them in the source. No phrase
-names two of Hadamard, Phase and Linear. A seed Cascade knows one of these three families,
-and one random step with a phrase teaches it at most one more. Of the 704 children that
-such a step makes of the seed Cascades, 40 solve one target beyond SWAP and CS (20 CZ,
-20 CCZ) and none solves two. QFT2, Toffoli, Peres, RTOF, CCiX and Fredkin need all three
-families, so they take at least two steps: the 60 children whose last Worker knows two of
-the three have 384 children that know all three, and each of these solves CZ, QFT2,
-Toffoli, Peres, RTOF and CCiX. The tests in `circuit_genes.rs` fix these numbers, for each
-target plain and in three disguises.
+names two of Hadamard, Phase and Linear. A seed Cascade knows at most one of these three
+families (the search seed knows none), and one random step with a phrase teaches it at
+most one more. Of the 704 children that such a step makes of the seed Cascades, 40 solve
+one target beyond SWAP and CS (20 CZ, 20 CCZ) and none solves two. So QFT2, Toffoli,
+Peres, RTOF and CCiX take at least two steps: the 60 children whose last Worker knows two
+of the three have 384 children that know all three, and at the seeds' Traits each of these
+solves CZ, QFT2, Toffoli, Peres, RTOF and CCiX. The tests in `circuit_genes.rs` fix these
+numbers, for each target plain and in three disguises. The three alone miss Fredkin, which
+takes Compose besides (`designer.rs`). With the most thinking, the larger model and
+self-check, fewer families suffice for two of these targets: at 4096 thinking tokens on
+`sim:large` with self-check, Meet alone solves QFT2 in 4 of its 32 disguises, and
+Hadamard, Phase and Simplify solve CCiX in 128 of its 384 (`tests/circuits.rs`). Such a
+Worker differs from every seed Cascade in model, thinking budget and self-check, so it,
+too, lies several steps away.
 
 ## 6. Pilot Runs
 
@@ -347,9 +356,9 @@ generations needs at most 2 547 412 calls, so the cap ends no counted Run early.
   that selection helps: D_A > D_R in one pair, a tie in the other. So with the current
   genes the counted experiment may well fail. Whether the genes change before the freeze
   is the owner's decision; any change needs new pilot Runs.
-- **CH and Fredkin.** No pilot Run solved them. CH needs Search and Meet with at least
-  3 124 thinking tokens on `sim:large`; Fredkin needs Compose besides Hadamard, Phase and
-  Linear, and Simplify for 7 CNOT.
+- **CH and Fredkin.** No pilot Run solved them. The routes the tests pin to them are long:
+  CH falls to Search and Meet from 3 124 thinking tokens on `sim:large`; Fredkin to
+  Compose besides Hadamard, Phase and Linear, and to 7 CNOT only with Simplify.
 - **Derived bounds.** For four counts the bound is derived: CS with 2 CNOT, CH with 2 T,
   RTOF and CCiX with 4 T each. The count is in a source; that it cannot be beaten, the
   research derives from published results. If an exact answer goes below such a count,

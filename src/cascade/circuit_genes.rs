@@ -14,8 +14,8 @@
 //! SectionReplace may write any pool text into any section, and a Worker knows the
 //! families of every text it holds: a strategy text written over the role teaches its
 //! family, and a neutral text written over the strategy removes one. No phrase names two of
-//! Hadamard, Phase and Linear, so one phrase step never teaches a seed all three, which six
-//! of the eleven calibration targets need.
+//! Hadamard, Phase and Linear, so one phrase step never teaches a seed all three, and no
+//! one-step child of a seed reaches QFT2, Toffoli, Peres, RTOF, CCiX or Fredkin.
 //!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
@@ -66,8 +66,8 @@ const MAX_GATE_MENTIONS: usize = 2;
 /// No phrase names more than two families (Previous counts as one), and none names two of
 /// Hadamard, Phase and Linear. A seed knows at most one of these three, so one phrase step
 /// (SectionReplace, SectionAdd or StageAdd) teaches it at most one more: Hadamard and
-/// Linear reach CZ, Phase and Linear reach CCZ. The targets that need all three take a
-/// second step, from such a stepping stone or from Hadamard and Phase.
+/// Linear reach CZ, Phase and Linear reach CCZ. QFT2, Toffoli, Peres, RTOF and CCiX take a
+/// second step that teaches the third, from such a stepping stone or from Hadamard and Phase.
 ///
 /// A Worker knows the families of every section it holds, and SectionReplace may write any
 /// pool text into any section. Workers built that way name every route of the designer's

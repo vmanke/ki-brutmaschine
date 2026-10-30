@@ -87,13 +87,17 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   beider Arme, paarweise nach Seed, und wendet die vorab festgelegten Regeln an
   (Abschnitt 6). Eine Aussage trifft sie nur für die vorab festgelegten Seeds, mit der
   festgelegten Zahl der Generationen und der festgelegten Aufrufgrenze.
-- **Tests.** `tests/circuits.rs` hat 9 Tests: Schaltungsläufe sind über Prozesse hinweg
-  wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung und
-  dieselben `state`-Zeilen wie ein durchgehender Lauf; 1 und 4 Threads ergeben byte-gleiche
-  Dateien; `--promote` wird abgelehnt; `rediscovery.json` gleicht einer Nachzählung aus den
-  protokollierten Antworten, und jede Änderung an der Datei lässt `--verify` scheitern; ein
-  Quelltext-Scan zeigt, dass `designer.rs` die Bibliothek nicht kennt; ein Test legt die
-  Kalibrierung fest; dazu kommen die beiden Gegenproben mit `quantum.rs`.
+- **Tests.** `tests/circuits.rs` hat 14 Tests: Schaltungsläufe sind über Prozesse hinweg
+  wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
+  und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
+  mit einer fertigen Auswahlphase; 1 und 4 Threads ergeben byte-gleiche Dateien;
+  `--promote` wird abgelehnt; die Zeile zu D stimmt auch bei einem nicht kalibrierten Lauf;
+  `rediscovery.json` gleicht einer Nachzählung aus den protokollierten Antworten, jede
+  Änderung an der Datei oder am Archiv des Checkpoints lässt `--verify` scheitern, und
+  `--verify` nennt, warum es die Datei auslässt; ein Quelltext-Scan zeigt, dass
+  `designer.rs` die Bibliothek nicht kennt; Tests legen die Kalibrierung fest und zwei Wege
+  mit weniger Familien an der Obergrenze der Traits; dazu kommen die beiden Gegenproben mit
+  `quantum.rs`.
 
 Tabelle 1: die 11 Ziele mit geprüfter Referenz. Die vollständigen Quellen stehen je Eintrag
 in `LIBRARY` in `src/cascade/circuit.rs`. „Bewiesen“ und „abgeleitet“ sind untere Schranken;
@@ -256,8 +260,8 @@ in dieser Reihenfolge nennt, löst alle 33 Aufgaben zur Referenz. Kein Ziel ist 
 unerreichbar, und L umfasst alle 11 Ziele. Der Prompt besteht die Regeln des Genoms und die
 Aufnahmeregel; die Zucht könnte ihn also bauen.
 
-**Wege zu den Zielen.** Die Tests in `designer.rs` legen fest, welche Familien und wie viele
-Denk-Tokens ein Ziel braucht; ein Denk-Token weniger verfehlt es.
+**Wege zu den Zielen.** Die Tests in `designer.rs` legen für die genannten Familien fest,
+wie viele Denk-Tokens die Antwort mindestens braucht; ein Denk-Token weniger verfehlt sie.
 
 | Ziel | genannte Familien | Selbstprüfung | Modell | Denk-Tokens mindestens | exakte Antwort (T, CNOT) |
 |---|---|---|---|---|---|
@@ -275,16 +279,22 @@ Bei 4096 Denk-Tokens auf `sim:large` lösen außerdem Hadamard und Linear CZ, Ha
 und Linear QFT2 und Meet allein CH; Phase allein liefert für CZ nur (0, 2).
 
 **Satzbausteine.** Die 50 Bausteine verteilen sich auf die Abschnitte `strategy` (25),
-`residual` (9), `style` (6), `check` (5), `role` (3) und `format` (2); das haben wir aus dem
-Quelltext gezählt. Kein Baustein nennt zwei von Hadamard, Phase und Linear. Ein
-Startprogramm kennt eine dieser drei Familien, ein zufälliger Schritt mit einem Baustein
-lehrt es höchstens eine weitere. Von den 704 Kindern, welche ein solcher Schritt aus den
-Startprogrammen macht, lösen 40 ein Ziel über SWAP und CS hinaus (20 CZ, 20 CCZ) und keines
-zwei. QFT2, Toffoli, Peres, RTOF, CCiX und Fredkin brauchen alle drei Familien, also
-mindestens zwei Schritte: Die 60 Kinder, deren letzter Worker zwei der drei kennt, haben
-384 Kinder, die alle drei kennen, und jedes davon löst CZ, QFT2, Toffoli, Peres, RTOF und
-CCiX. Diese Zahlen legen die Tests in `circuit_genes.rs` fest, je Ziel unverkleidet und in
-drei Verkleidungen.
+`residual` (9), `style` (6), `check` (5), `role` (3) und `format` (2); das haben wir aus
+dem Quelltext gezählt. Kein Baustein nennt zwei von Hadamard, Phase und Linear. Ein
+Startprogramm kennt höchstens eine dieser drei Familien (das Such-Startprogramm keine), ein
+zufälliger Schritt mit einem Baustein lehrt es höchstens eine weitere. Von den 704 Kindern,
+welche ein solcher Schritt aus den Startprogrammen macht, lösen 40 ein Ziel über SWAP und
+CS hinaus (20 CZ, 20 CCZ) und keines zwei. QFT2, Toffoli, Peres, RTOF und CCiX brauchen
+darum mindestens zwei Schritte: Die 60 Kinder, deren letzter Worker zwei der drei kennt,
+haben 384 Kinder, die alle drei kennen, und jedes davon löst mit den Traits der
+Startprogramme CZ, QFT2, Toffoli, Peres, RTOF und CCiX. Diese Zahlen legen die Tests in
+`circuit_genes.rs` fest, je Ziel unverkleidet und in drei Verkleidungen. Fredkin verfehlen
+die drei allein; erst mit Compose fällt es (`designer.rs`). Mit den meisten Denk-Tokens,
+dem größeren Modell und Selbstprüfung genügen für zwei dieser Ziele weniger Familien: Bei
+4096 Denk-Tokens auf `sim:large` mit Selbstprüfung löst Meet allein QFT2 in 4 seiner 32
+Verkleidungen, und Hadamard, Phase und Simplify lösen CCiX in 128 seiner 384
+(`tests/circuits.rs`). Ein solcher Worker unterscheidet sich von jedem Startprogramm in
+Modell, Denkbudget und Selbstprüfung, liegt also ebenfalls mehrere Schritte entfernt.
 
 ## 6. Pilotläufe
 
@@ -367,9 +377,10 @@ gezählten Lauf vorzeitig beendet.
   Gleichstand im anderen. Mit den jetzigen Genen kann das gezählte Experiment also
   scheitern. Ob die Gene vor dem Einfrieren geändert werden, entscheidet die Eigentümerin
   bzw. der Eigentümer; jede Änderung verlangt neue Pilotläufe.
-- **CH und Fredkin.** Kein Pilotlauf löste sie. CH braucht Search und Meet mit mindestens
-  3 124 Denk-Tokens auf `sim:large`, Fredkin außer Hadamard, Phase und Linear auch Compose
-  und für 7 CNOT Simplify.
+- **CH und Fredkin.** Kein Pilotlauf löste sie. Die Wege, welche die Tests zu ihnen
+  festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf `sim:large`,
+  Fredkin mit Compose außer Hadamard, Phase und Linear, und 7 CNOT erreicht es erst mit
+  Simplify.
 - **Abgeleitete Schranken.** Bei vier Zahlen ist die Schranke abgeleitet: CS mit 2 CNOT, CH
   mit 2 T, RTOF und CCiX mit je 4 T. Die Zahl steht in einer Quelle; dass es nicht besser
   geht, folgert die Recherche aus veröffentlichten Ergebnissen. Unterbietet eine exakte

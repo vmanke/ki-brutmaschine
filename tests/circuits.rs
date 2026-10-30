@@ -1,8 +1,9 @@
 //! Step 1 integration tests (ADR 0006, plan (g) "Integration"): circuit runs of the
 //! `brut-breed` binary end to end, the rediscovery count against the logged answers, the
 //! source scan that keeps the simulated designer away from the target library, the pinned
-//! calibration of the positive control, and a cross-check of the exact checker against
-//! the floating-point simulator of `src/quantum.rs`, which shares no code with it.
+//! calibration of the positive control and two of its routes at the ceiling of the
+//! Traits, and a cross-check of the exact checker against the floating-point simulator of
+//! `src/quantum.rs`, which shares no code with it.
 //!
 //! No test here runs a counted seed of the experiment (1 to 10) or a pilot seed (101,
 //! 102). The calibration uses the search panel the pilot seed 101 would draw, without a
@@ -24,12 +25,16 @@ use brutmaschine::cascade::circuit::{
     Answered, CircuitDomain, CircuitTask, LIBRARY, Rediscovery, grade_circuit, library_target,
     rediscovery, verified,
 };
-use brutmaschine::cascade::circuit_genes::{circuit_seed_cascades, no_gate_lists};
-use brutmaschine::cascade::circuit_text::CIRCUIT_SELF_CHECK_TEXT;
+use brutmaschine::cascade::circuit_genes::{CIRCUIT_PHRASES, circuit_seed_cascades, no_gate_lists};
+use brutmaschine::cascade::circuit_text::{
+    CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_solve_prompt,
+};
 use brutmaschine::cascade::designer::{SimDesigner, knowledge};
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig};
-use brutmaschine::cascade::genome::{Cascade, CascadeLimits, Section, Stage, Traits, adapt_seeds};
-use brutmaschine::cascade::qubit::{self, Circuit, Gate};
+use brutmaschine::cascade::genome::{
+    Cascade, CascadeLimits, Section, Stage, Traits, Worker, adapt_seeds,
+};
+use brutmaschine::cascade::qubit::{self, Circuit, Dressing, Gate};
 use brutmaschine::quantum;
 use brutmaschine::util::derive_seed;
 
@@ -1092,6 +1097,162 @@ fn designer_calibration_is_pinned() {
             task.reference
         );
     }
+}
+
+/// Every dressing of a target on `n` qubits: each relabelling of the qubits, with X on
+/// any set of inputs and on any set of outputs.
+fn every_dressing(n: usize) -> Vec<Dressing> {
+    let span = u8::try_from(n).expect("few qubits");
+    let mut perms: Vec<Vec<u8>> = vec![Vec::new()];
+
+    for _ in 0..n {
+        let mut longer = Vec::new();
+
+        for head in &perms {
+            for q in (0..span).filter(|q| !head.contains(q)) {
+                let mut perm = head.clone();
+
+                perm.push(q);
+                longer.push(perm);
+            }
+        }
+
+        perms = longer;
+    }
+
+    let mut out = Vec::new();
+
+    for perm in perms {
+        for x_in in 0..1u32 << n {
+            for x_out in 0..1u32 << n {
+                out.push(Dressing {
+                    perm: perm.clone(),
+                    x_in,
+                    x_out,
+                });
+            }
+        }
+    }
+
+    out
+}
+
+/// The first pool phrase whose text names exactly the method families `families`.
+fn phrase_naming(families: &[&str]) -> &'static str {
+    let mut wanted = families.to_vec();
+
+    wanted.sort();
+    CIRCUIT_PHRASES
+        .iter()
+        .map(|(_, text)| *text)
+        .find(|text| {
+            let mut named = knowledge(text);
+
+            named.sort();
+            named == wanted
+        })
+        .expect("a pool phrase")
+}
+
+/// A Worker of the seeds' role and format around pool phrases in the sections `slots`,
+/// with its Traits at the ceiling: sim:large, 4096 thinking tokens, temperature 0 and
+/// self-check.
+fn ceiling_worker(slots: &[(&str, &str)]) -> Worker {
+    let (_, seed) = circuit_seed_cascades().swap_remove(0);
+    let base = &seed.stages[0].workers[0];
+    let section = |name: &str| {
+        base.sections
+            .iter()
+            .find(|s| s.name == name)
+            .expect("a seed section")
+            .clone()
+    };
+    let mut sections = vec![section("role")];
+
+    for (name, text) in slots {
+        sections.push(Section {
+            name: name.to_string(),
+            text: text.to_string(),
+        });
+    }
+
+    sections.push(section("format"));
+
+    Worker {
+        model: "sim:large".to_string(),
+        sections,
+        traits: Traits {
+            think_tokens: 4096,
+            temperature: 0.0,
+            answer_tokens: 512,
+            self_check: true,
+        },
+    }
+}
+
+/// On how many of the dressings of library target `name` the Worker `w` answers exactly
+/// at the reference, with requests built as a run builds them; and how many there are.
+fn solved_dressings(w: &Worker, name: &str) -> (usize, usize) {
+    let entry = library_target(name).expect("a library target");
+    let base = (entry.build)().expect("target");
+    let reference = entry.reference.expect("a verified reference");
+    let designer = SimDesigner::from_tag(&w.model).expect("a simulated designer");
+    let dressings = every_dressing(base.qubits());
+    let solved = (0u64..)
+        .zip(&dressings)
+        .filter(|(i, d)| {
+            let target = base.dress(d);
+            let prompt = render_circuit_solve_prompt(&target, 64, &[]);
+            let req = worker_request_with(w, prompt, *i, CIRCUIT_SELF_CHECK_TEXT);
+            let reply = designer.generate(&req).expect("generate");
+            let answer = (reply.stop_reason == StopReason::Stop)
+                .then(|| parse_circuit_answer(&reply.text, target.qubits(), 64))
+                .flatten();
+
+            answer.is_some_and(|c| {
+                let checked = qubit::check(&target, &c).expect("check");
+
+                checked.exact && reference.reached(&checked.cost)
+            })
+        })
+        .count();
+
+    (solved, dressings.len())
+}
+
+#[test]
+fn fewer_families_reach_qft2_and_ccix_at_the_ceiling_of_the_traits() {
+    // At the seeds' Traits, one phrase step from a seed reaches neither QFT2 nor CCiX, and
+    // two steps that teach a seed Hadamard, Phase and Linear reach both (circuit_genes.rs).
+    // At the ceiling of the Traits fewer families do, in some disguises: Meet alone reaches
+    // QFT2, and Hadamard, Phase and Simplify reach CCiX. Both Workers differ from every
+    // seed in model, thinking budget and self-check, and both are admitted.
+    let meet = ceiling_worker(&[("strategy", phrase_naming(&["Meet"]))]);
+    let hps = ceiling_worker(&[
+        ("strategy", phrase_naming(&["Hadamard"])),
+        ("check", phrase_naming(&["Phase"])),
+        ("style", phrase_naming(&["Simplify"])),
+    ]);
+    let routes = [
+        (&meet, vec!["Meet"]),
+        (&hps, vec!["Hadamard", "Phase", "Simplify"]),
+    ];
+
+    for (w, families) in routes {
+        let c = Cascade {
+            stages: vec![Stage {
+                workers: vec![w.clone()],
+            }],
+        };
+        let system = worker_request_with(w, String::new(), 0, CIRCUIT_SELF_CHECK_TEXT).system;
+
+        c.check(&CascadeLimits::default()).expect("a valid Cascade");
+        no_gate_lists(&c).expect("admitted");
+        assert_eq!(knowledge(&system), families);
+    }
+
+    assert_eq!(solved_dressings(&meet, "qft2"), (4, 32));
+    assert_eq!(solved_dressings(&hps, "ccix"), (128, 384));
 }
 
 /// The same gate list for `src/quantum.rs`, whose qubit 0 is the least significant bit:
