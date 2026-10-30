@@ -287,9 +287,9 @@ holds every number below; all its Runs pass `--verify`.
 
 So the counted Runs use 200 generations, which lie past every first hit of the pilot at
 moderate cost, and a cap that cannot bind. Two pilot seeds cannot estimate the pass
-rate: by our calculation, one pass in two seeds has probability 0.5 at a pass rate of
-0.5 per seed and 0.18 at 0.9, while the primary rule then holds with probability 0.0107
-and 0.736.
+rate: by our calculation, exactly one pass in two seeds has probability 0.5 at a pass
+rate of 0.5 per seed and 0.18 at 0.9, while the primary rule then holds with probability
+0.0107 and 0.736.
 
 ## 11. The claim
 

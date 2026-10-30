@@ -23,9 +23,10 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
   the answers, and says which of two answers is better. It never sees a Cascade, so no
   Cascade can change how it is judged. The breeder side (`GenePool`) supplies the seed
   Cascades, the phrases of the section operators, the Mutator's brief and an admission
-  rule. Grid puzzles and circuits share one loop. A golden test, recorded on the grid code
-  before the change, pins that grid Runs stay byte-identical except for the new `state`
-  line (`tests/universe.rs`).
+  rule. Grid puzzles and circuits share one loop. Golden tests, recorded on the grid code
+  before the change, pin a grid Run, a Run with LLM rounds, the Mutator's request keys and
+  the settings hashes; the only new line in a grid log is the `state` line
+  (`tests/universe.rs`).
 - **Universe observables** (ticket 01, `src/cascade/observe.rs`). After every committed
   generation, every Run writes one `state` line to its log (section 4).
 - **Exact simulator** (ticket 02, `src/cascade/qubit.rs`). It holds every amplitude as
@@ -124,8 +125,10 @@ cargo build --release
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
-The counted seeds 1 to 10 are reserved for the pre-registered experiment, so the examples
-use the pilot seed 101. A Run prints one line per generation (best Cascade, fitness,
+Arm A chooses parents as the Darwin Gödel Machine does (Zhang et al., ICLR 2026,
+appendix C.2), arm R uniformly; otherwise both arms are the same. The counted seeds 1 to
+10 are reserved for the pre-registered experiment, so the examples use the pilot seed
+101. A Run prints one line per generation (best Cascade, fitness,
 solved search tasks, archive size, calls), then one line about `rediscovery.json`, and at
 the end the best Cascades and the comparison on the select panel. For arm A on seed 101
 the line about `rediscovery.json` reads:
@@ -334,8 +337,8 @@ generations needs at most 2 547 412 calls, so the cap ends no counted Run early.
   generation 90, and a Run with 200 generations takes at most 26 s.
 - **What the pilot does not show.** Two seeds estimate no pass rate. Arm A meets the
   primary rule on one of two seeds. By our calculation, the 9-of-10 rule holds with
-  probability 0.0107 at an independent pass rate of 0.5 per seed and 0.736 at 0.9; one pass
-  in two seeds has probability 0.5 at 0.5 and still 0.18 at 0.9. Nor does the pilot show
+  probability 0.0107 at an independent pass rate of 0.5 per seed and 0.736 at 0.9; exactly
+  one pass in two seeds has probability 0.5 at 0.5 and still 0.18 at 0.9. Nor does the pilot show
   that selection helps: D_A > D_R in one pair, a tie in the other. So with the current
   genes the counted experiment may well fail. Whether the genes change before the freeze
   is the owner's decision; any change needs new pilot Runs.

@@ -56,9 +56,9 @@ bit, the checker's the most significant, so the tests map qubit q to n - 1 - q. 
 `tests/circuits.rs` both decide alike on 900 pairs of random circuits on one to four
 qubits: 300 pairs equal by construction (identity words, exact rewrites, swapped
 commuting neighbours), 300 unequal by construction and 300 drawn independently. For
-each of the 15 library witnesses both give the same matrix within
-1e-12, and `quantum.rs` confirms that the witness implements its target, which is built
-from its definition, not from a circuit.
+each of the 15 library witnesses both give the same matrix within 1e-12, and
+`quantum.rs` confirms that the witness implements its target, which is built from its
+definition, not from a circuit.
 
 **Only sourced references.** The library holds the 11 targets whose T and CNOT counts the
 research verified against the literature, each number with a status: Proven (a published

@@ -24,9 +24,10 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   Kaskade, sodass keine Kaskade ändern kann, wie sie bewertet wird. Die Züchterseite
   (`GenePool`) liefert die Startprogramme, die Satzbausteine der Abschnitts-Operatoren, den
   Auftrag an den Mutator und eine Aufnahmeregel. Gitter-Rätsel und Schaltungen teilen sich
-  dieselbe Schleife. Ein Golden-Test, aufgenommen auf dem Gitter-Code vor dem Umbau, hält
-  fest, dass Gitter-Läufe bis auf die neue `state`-Zeile byte-gleich bleiben
-  (`tests/universe.rs`).
+  dieselbe Schleife. Golden-Tests, aufgenommen auf dem Gitter-Code vor dem Umbau, halten
+  einen Gitter-Lauf, einen Lauf mit LLM-Runden, die Schlüssel der Mutator-Anfragen und die
+  Prüfsummen der Einstellungen fest; einzig neu im Protokoll eines Gitter-Laufs ist die
+  `state`-Zeile (`tests/universe.rs`).
 - **Universums-Kennzahlen** (Ticket 01, `src/cascade/observe.rs`). Nach jeder
   festgeschriebenen Generation schreibt jeder Lauf eine `state`-Zeile ins Protokoll
   (Abschnitt 4).
@@ -43,8 +44,9 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   teilt keinen Code mit `qubit.rs`. Sein Qubit 0 ist das niedrigste Bit, das von `qubit.rs`
   das höchste; die Tests bilden darum Qubit q auf n − 1 − q ab. In `tests/circuits.rs`
   entscheiden beide Simulatoren 900 Paare zufälliger Schaltungen auf 1 bis 4 Qubits gleich:
-  300 Paare sind nach Bauart gleich, 300 verschieden und 300 unabhängig gezogen. Für alle
-  15 Zeugen-Schaltungen der Bibliothek liefern beide dieselbe Matrix bis auf 1e-12.
+  300 Paare sind nach Bauart gleich, 300 verschieden und 300 unabhängig gezogen. Für die
+  15 Beleg-Schaltungen der Bibliothek, je eine Schaltung aus der Literatur zu jedem
+  Eintrag, liefern beide dieselbe Matrix bis auf 1e-12.
 - **Zielbibliothek und Aufgaben** (Ticket 03, `src/cascade/circuit.rs`). 11 Ziele tragen T-
   und CNOT-Zahlen, welche die Recherche in der Literatur nachgelesen hat (Tabelle 1). Vier
   weitere (W-Gatter, √SWAP, Quanten-OR, 1-Bit-Addierer) haben keine geprüfte Referenz; sie
@@ -89,8 +91,8 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   dieselben `state`-Zeilen wie ein durchgehender Lauf; 1 und 4 Threads ergeben byte-gleiche
   Dateien; `--promote` wird abgelehnt; `rediscovery.json` gleicht einer Nachzählung aus den
   protokollierten Antworten, und jede Änderung an der Datei lässt `--verify` scheitern; ein
-  Quelltext-Scan zeigt, dass `designer.rs` die Bibliothek nicht kennt; die Kalibrierung ist
-  festgenagelt; dazu kommen die beiden Gegenproben mit `quantum.rs`.
+  Quelltext-Scan zeigt, dass `designer.rs` die Bibliothek nicht kennt; ein Test legt die
+  Kalibrierung fest; dazu kommen die beiden Gegenproben mit `quantum.rs`.
 
 Tabelle 1: die 11 Ziele mit geprüfter Referenz. Die vollständigen Quellen stehen je Eintrag
 in `LIBRARY` in `src/cascade/circuit.rs`. „Bewiesen“ und „abgeleitet“ sind untere Schranken;
@@ -131,8 +133,10 @@ cargo build --release
 cargo run --example circuit_positive_control -- --a runs/c101-A --r runs/c101-R
 ```
 
-Die gezählten Seeds 1 bis 10 sind dem vorab festgelegten Experiment vorbehalten; die
-Beispiele nutzen darum den Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
+Arm A wählt die Eltern wie die Darwin-Gödel-Maschine (Zhang et al., ICLR 2026,
+Anhang C.2), Arm R gleichverteilt; sonst gleichen sich beide Arme. Die gezählten Seeds 1
+bis 10 sind dem vorab festgelegten Experiment vorbehalten; die Beispiele nutzen darum den
+Pilot-Seed 101. Ein Lauf druckt je Generation eine Zeile (beste
 Kaskade, Fitness, gelöste Such-Aufgaben, Archivgröße, Aufrufe), dann eine Zeile zu
 `rediscovery.json` und am Ende die besten Kaskaden und den Vergleich auf dem Auswahl-Panel.
 Für Arm A auf Seed 101 lautet die Zeile zu `rediscovery.json`:
@@ -189,8 +193,8 @@ Undefinierte Werte fehlen, statt NaN zu sein. Die Laufzeit je Generation steht i
 `timings.jsonl`, außerhalb der Hash-Kette.
 
 Ein Beispiel aus den Pilotläufen (`pilot.json`, jede zehnte Generation): In Arm A auf
-Seed 101 löst die beste Kaskade in Generation 0 3 der 33 Such-Aufgaben, in Generation 20
-9, in Generation 40 24 und in Generation 60 25; die Zahl der verschiedenen Antwortlisten
+Seed 101 löst die beste Kaskade 3 der 33 Such-Aufgaben in Generation 0, 9 in Generation 20,
+24 in Generation 40 und 25 in Generation 60; die Zahl der verschiedenen Antwortlisten
 steigt von 4 auf 30. `parent_entropy_bits` steigt dort von 1.66 auf 8.43 Bit. In Arm R ist
 dieser Wert stets der Zweierlogarithmus der Archivgröße, von 2 Bit bei 4 Startprogrammen bis
 8.92 Bit bei 484 Kaskaden, wie es die gleichverteilte Elternwahl ergibt.
@@ -198,8 +202,8 @@ dieser Wert stets der Zweierlogarithmus der Archivgröße, von 2 Bit bei 4 Start
 **`rediscovery.json`.** Für jedes Ziel (`targets`) stehen dort die Referenz mit ihrem Status,
 die Zahl der Such-Aufgaben des Ziels (`tasks`), die Kosten der billigsten exakten Antwort
 der Startprogramme und der gezüchteten Kaskaden (`best_seed`, `best_bred`: T, CNOT, H,
-Gatter, Tiefe, T-Tiefe), ob beide die Referenz erreicht haben (`reached_by_seed`,
-`reached_by_bred`), die früheste Generation einer gezüchteten Kaskade, die das Ziel löste
+Gatter, Tiefe, T-Tiefe), ob Startprogramme und gezüchtete Kaskaden die Referenz erreicht
+haben (`reached_by_seed`, `reached_by_bred`), die früheste Generation einer gezüchteten Kaskade, die das Ziel löste
 (`first_generation`), der Text der billigsten exakten gezüchteten Antwort (`circuit`; er
 setzt die verkleidete Aufgabe um, nicht das Ziel in seiner Grundform) und ein etwaiger
 Erfindungskandidat (`below_best_known`, `candidate`). Darunter stehen |L| (`library`),
@@ -223,12 +227,13 @@ Breite, Meet sucht von beiden Enden (Meet in the Middle nach Amy et al. 2013), S
 kürzt und fasst zusammen, Previous prüft und übernimmt die Antworten früherer Stufen. Er
 kennt keine Schaltung, keine Vorlage und keine Zielliste; ein Quelltext-Scan in
 `tests/circuits.rs` prüft, dass `designer.rs` die Bibliothek nicht nennt. Jede Arbeit kostet
-Schritte, bezahlt bevor sie geschieht: 16 freie Schritte je Aufruf und einen Schritt je
+Schritte, die er bezahlt, bevor er sie tut: 16 freie Schritte je Aufruf und einen Schritt je
 4 Denk-Tokens bei `sim:small`, je 2 bei `sim:large`, höchstens 2^13 = 8 192 Schritte je
 Aufruf. Bei 4096 Denk-Tokens, der Obergrenze der Traits, hat ein Aufruf höchstens
-2 064 Schritte; die Decke greift also nur bei direkten Anfragen. Mit Selbstprüfung prüft er
-einen Kandidaten auf allen Basiszuständen, ohne nur auf dem ersten und dem letzten, sodass
-ihn eine billige falsche Schaltung täuschen kann. Er antwortet mit dem billigsten geprüften
+2 064 Schritte; die Obergrenze von 8 192 Schritten greift also nur bei direkten Anfragen.
+Mit Selbstprüfung prüft er einen Kandidaten auf allen Basiszuständen, ohne Selbstprüfung
+nur auf dem ersten und dem letzten, sodass ihn eine billige falsche Schaltung täuschen
+kann. Er antwortet mit dem billigsten geprüften
 Kandidaten nach T, dann CNOT, dann Gatterzahl. Alle Konstanten stehen in der
 Vorab-Registrierung, Abschnitt 4.
 
@@ -351,7 +356,8 @@ gezählten Lauf vorzeitig beendet.
 - **Was der Pilot nicht zeigt.** Zwei Seeds schätzen keine Erfolgsquote. Arm A erfüllt die
   Hauptregel auf einem von zwei Seeds. Nach unserer Rechnung hält die Regel „9 von 10“ bei
   einer unabhängigen Quote von 0.5 je Seed nur mit Wahrscheinlichkeit 0.0107, bei 0.9 mit
-  0.736; ein Erfolg in zwei Seeds hat bei 0.5 die Wahrscheinlichkeit 0.5, bei 0.9 noch 0.18.
+  0.736; genau ein Erfolg in zwei Seeds hat bei 0.5 die Wahrscheinlichkeit 0.5, bei 0.9
+  noch 0.18.
   Ob die Auswahl hilft, zeigt der Pilot ebenfalls nicht: D_A > D_R in einem Paar,
   Gleichstand im anderen. Mit den jetzigen Genen kann das gezählte Experiment also
   scheitern. Ob die Gene vor dem Einfrieren geändert werden, entscheidet die Eigentümerin
@@ -365,7 +371,7 @@ gezählten Lauf vorzeitig beendet.
   Antwort eine solche Zahl, stoppt der Lauf mit einem Integritätsalarm.
 - **Gemeinsame Fehlerquelle.** Entwerfer und Prüfer nutzen beide `qubit.rs`; ein Fehler dort
   könnte beide gleich täuschen. Dagegen stehen die Gegenprobe mit `quantum.rs`, die aus ihren
-  Definitionen gebauten Ziele und die Zeugen-Schaltungen aus der Literatur.
+  Definitionen gebauten Ziele und die Beleg-Schaltungen aus der Literatur.
 - **Plattform.** Die Prüfsummen der Pilotläufe gelten für rustc 1.97.0 auf x86_64 Linux.
   Anderswo kann eine Gleitkomma-Funktion ihr letztes Bit anders runden; dann weichen die
   Läufe ab.
