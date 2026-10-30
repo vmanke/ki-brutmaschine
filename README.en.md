@@ -143,8 +143,8 @@ decisions on 2026-10-30:
    seed Cascades miss. Success means: more than half of all seeds pass. After each pair of
    seeds the analysis checks whether the evidence suffices for a verdict; the experiment
    ends after 60 pairs at the latest. However it ends, it reports a false success with
-   probability at most 1/20, exactly at most 0.0385. This rule replaces the rule
-   "9 of 10", whose bound was 11/1024 = 0.0107.
+   probability at most 1/20; the worst case is exactly 0.0385. This rule replaces the
+   rule "9 of 10", whose bound was 11/1024 = 0.0107.
 6. The panels have 33 search and 22 select tasks.
 
 ## Building blocks

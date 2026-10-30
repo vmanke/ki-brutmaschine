@@ -539,9 +539,9 @@ Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestä
    welche die Startprogramme verfehlen. Erfolg heißt: Mehr als die Hälfte aller Seeds
    besteht. Nach jedem Seed-Paar prüft die Auswertung, ob die Belege für ein Urteil
    reichen; das Experiment endet spätestens nach 60 Paaren. Gleich wann es endet, meldet
-   es einen falschen Erfolg höchstens mit Wahrscheinlichkeit 1/20, exakt höchstens
-   0.0385. Diese Regel ersetzt die Regel „9 von 10“, deren Schranke bei 11/1024 = 0.0107
-   lag.
+   es einen falschen Erfolg höchstens mit Wahrscheinlichkeit 1/20; der ungünstigste Fall
+   liegt genau bei 0.0385. Diese Regel ersetzt die Regel „9 von 10“, deren Schranke bei
+   11/1024 = 0.0107 lag.
 6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
 
 ## Die sechs Komponenten
