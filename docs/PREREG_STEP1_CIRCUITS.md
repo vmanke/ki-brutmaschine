@@ -1,20 +1,22 @@
 # Pre-registration of step 1: does breeding rediscover circuit references?
 
-Status: signed off by the owner on 2026-10-30; frozen at the commit that adds this
-version to the main branch.
+Status: implements the decisions the owner approved on 2026-10-30; frozen at the commit
+that the squash merge of its pull request creates on the main branch.
 
 This document fixes the step 1 experiment of plan (g) and
 [ADR 0006](adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md) before
 any counted Run. Of this experiment, only pilot seeds have run
 ([docs/pilot-step1/](pilot-step1/README.md)); no counted seed has run in either arm. The
-owner signed this document off on 2026-10-30, together with the six decisions of ADR
-0006. Decision 5 is the sequential rule of section 8, which replaced the fixed rule
-"9 of 10" on the same day. The frozen commit is the commit that adds this version of the
-file to the main branch. A commit cannot hold its own hash, so we record the hash with
-the results and in the pull request that adds this version. From that commit on nothing
-below changes; every deviation is reported with the results, with its reason. A change
-after seed 1 has started makes a new experiment on seeds not used before. The report on
-step 1 is [SCHRITT1_SCHALTUNGEN.md](SCHRITT1_SCHALTUNGEN.md) (English:
+owner approved the six decisions of ADR 0006 and the changes of issue 09 on 2026-10-30;
+this version implements them. Decision 5 is the sequential rule of section 8, which
+replaced the fixed rule "9 of 10" on the same day. The frozen commit is the one commit
+that the pull request with this version creates on the main branch. The pull request is
+merged as one squashed commit, so none of the intermediate commits of its branch reaches
+the main branch. A commit cannot hold its own hash, so we record the hash with the
+results and in the pull request. From that commit on nothing below changes, and above
+all nothing changes after seed 1 has started: a change then makes a new experiment on
+seeds not used before. Every deviation is reported with the results, with its reason.
+The report on step 1 is [SCHRITT1_SCHALTUNGEN.md](SCHRITT1_SCHALTUNGEN.md) (English:
 [STEP1_CIRCUITS.md](STEP1_CIRCUITS.md)).
 
 ## 1. Question
@@ -30,7 +32,7 @@ models.
 
 | Item | Frozen as |
 |---|---|
-| Code | The whole tree of the frozen commit: the commit that adds this version of the file to the main branch. Its hash is recorded with the results and in the pull request that adds this version. A later edit of this file or of the code is a deviation. |
+| Code | The whole tree of the frozen commit: the one commit that the squash merge of the pull request with this version creates on the main branch. Its hash is recorded with the results and in that pull request. A later edit of this file or of the code is a deviation. |
 | Toolchain | rustc 1.97.0 on x86_64 Linux, as in the pilot (`docs/pilot-step1/pilot.json`). |
 | Program | `cargo build --release --bin brut-breed` at that commit. |
 | Analysis | `examples/circuit_positive_control.rs` at that commit. |
@@ -53,10 +55,10 @@ was proposed, we built the program from the same tree and ran all nine Runs of t
 pilot again: their `config.json`, `events.jsonl`, `snapshot.json`, `report.json` and
 `rediscovery.json` are byte-equal to the pilot's, and all nine pass its `--verify`. So the
 first pilot's numbers are numbers of that program, and the frozen commit can be checked on
-its own: at that commit, the commands of `docs/pilot-step1/README.md` must give event logs
-that end in the head hashes that `pilot.json` records. On another toolchain or platform a
-floating-point function may round its last bit differently, and then the Runs may differ
-from Runs on the frozen toolchain; such Runs are a deviation.
+its own: at that commit, the first pilot's commands in `docs/pilot-step1/README.md` must
+give event logs that end in the head hashes that `pilot.json` records. On another
+toolchain or platform a floating-point function may round its last bit differently, and
+then the Runs may differ from Runs on the frozen toolchain; such Runs are a deviation.
 
 ## 3. The target list L
 
@@ -199,7 +201,8 @@ generations than its config plans (a resume may lower `--generations` below what
 had bred) and a Run that stopped short of them for any reason but the call budget. It
 makes a claim only when these are the 1000 generations and the cap of 13 000 000 calls
 below, no Run ended at the cap, and the seeds are exactly 1 to n with n <= 60; otherwise
-it prints the numbers and says that it makes no claim.
+it prints the numbers and says that it makes no claim. For more than 60 pairs it prints
+no numbers and stops with an error.
 
 **Length and cap.** Every Run completes all 1000 generations; there is no early stop. The
 pilot batches set `--generations 1000` and `--max-calls 13000000` (section 10). By our
@@ -241,7 +244,7 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
 
    It updates the evidence values of section 8 in seed order and then either names the
    next seed to run or gives the verdicts. As long as it names a seed, go on with step 3
-   for that seed.
+   for that seed. After pair 1, do step 5 before seed 2 starts.
 5. Thread check, once, right after pair 1 and before pair 2, so that a void shows early:
    run seed 1 of each arm twice more, once with `RAYON_NUM_THREADS=1` and once with
    `RAYON_NUM_THREADS=4`, into fresh directories, one process at a time. In each arm,
@@ -257,11 +260,13 @@ pilot pair of 1000 generations took 10.57 to 14.31 min, wall time at 2 threads.
    ```
 
    This reads A-1, R-1, A-2, R-2, ... in seed order and counts a pair once both of its
-   Runs are finished. For every counted Run it checks the seed, the arm, the settings of
-   this section, the stop reason and the calibration gate. It refuses gaps in the seeds
-   and more than 60 pairs, and it reports the experiment void when a pair up to the stop
-   fails the gate. Its pass times, evidence values, stop pair and verdicts must equal
-   those of the analysis; we report the recount with the results, and any difference.
+   Runs are finished. For every counted Run it checks that it is a circuit Run, and its
+   seed, arm, generations, call cap, children per generation, two panel sizes, stop
+   reason and calibration gate; the analysis checks every other setting of this section.
+   It refuses gaps in the seeds and more than 60 pairs, and it reports the experiment
+   void when a pair up to the stop fails the gate. Its pass times, evidence values, stop
+   pair and verdicts must equal those of the analysis; we report the recount with the
+   results, and any difference.
 
 ## 7. Definitions
 

@@ -143,7 +143,7 @@ decisions on 2026-10-30:
    seed Cascades miss. Success means: more than half of all seeds pass. After each pair of
    seeds the analysis checks whether the evidence suffices for a verdict; the experiment
    ends after 60 pairs at the latest. However it ends, it reports a false success with
-   probability at most 1/20; the worst case is exactly 0.0385. This rule replaces the
+   probability at most 1/20; the worst case is about 0.0385. This rule replaces the
    rule "9 of 10", whose bound was 11/1024 = 0.0107.
 6. The panels have 33 search and 22 select tasks.
 
@@ -189,4 +189,4 @@ access; `tests/cascade.rs` checks that.
 - Step 1: the pilot Runs estimate the pass rate only roughly. By generation 1000, arm A
   passed in 9 of 11 Runs, with a 95 % confidence interval of 0.48 to 0.98. What the pilot
   shows and what it does not is in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md),
-  section 7.
+  section 8.

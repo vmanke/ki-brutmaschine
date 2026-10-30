@@ -1,13 +1,14 @@
 # 09 Sequential rule for step 1
 
-Status: ready-for-human
+Status: ready-for-agent
 Type: task
 
 The owner rejected fixed counts and asked for a dynamic approach (2026-10-30): the
 experiment should decide by itself how many seeds it needs. A design workflow made three
 independent designs, checked each with an adversarial verifier and merged them into the
 rule below. Nothing here is in force until the owner approves it as point 5 of ADR 0006,
-in place of "9 of 10". The owner approved points 1-4 and 6 on 2026-10-30.
+in place of "9 of 10". The owner approved points 1-4 and 6 on 2026-10-30, and point 5 on
+the same day (see Comments).
 
 ## Summary for the owner (German)
 
@@ -431,3 +432,9 @@ Statuses come from the v3 verifier unless marked otherwise. Corrections by v3 ar
 - `own_check.py` is an independent check written from the rule text alone.
 
 ## Comments
+
+2026-10-30, approval. The owner approved the rule of this issue as point 5 of ADR 0006, in
+place of "9 of 10", with the evidence threshold 20 and the cap of 60 pairs as designed
+above. The strict variant of open point 2, with the threshold 1024/11, was not chosen.
+Points 1-4 and 6 were approved the same day, so all six points of ADR 0006 now hold. The
+code changes after approval are agent work, so the status is now ready-for-agent.

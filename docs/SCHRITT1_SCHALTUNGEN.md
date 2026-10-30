@@ -86,10 +86,10 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   von Schaltungs-Kaskaden gehört nicht zu Schritt 1.
 - **Auswertung** (`examples/circuit_positive_control.rs`). Sie liest die fertigen Läufe
   beider Arme, paarweise nach Seed, bestimmt für jeden Lauf die Bestehenszeit und wendet
-  die vorab festgelegte Regel über die Seeds an (Abschnitt 6). Nach jedem Paar nennt sie
+  die vorab festgelegte Regel über die Seeds an (Abschnitt 7). Nach jedem Paar nennt sie
   den nächsten Seed oder das Urteil. Eine Aussage trifft sie nur für die Seeds 1, 2, 3, …
   ohne Lücke, höchstens 60 Paare, mit 1000 Generationen und der Aufrufgrenze 13 000 000.
-- **Tests.** `tests/circuits.rs` hat 17 Tests: Schaltungsläufe sind über Prozesse hinweg
+- **Tests.** `tests/circuits.rs` hat 18 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
   und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
   mit einer fertigen Auswahlphase; 1 und 4 Threads ergeben byte-gleiche Dateien;
@@ -97,11 +97,11 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   `rediscovery.json` gleicht einer Nachzählung aus den protokollierten Antworten; eine
   Änderung an der Datei lässt `--verify` scheitern, ebenso ein Mitglied des Archivs im
   Checkpoint, das in einem Feld seines `born`-Ereignisses abweicht, und ein Mitglied zu
-  viel oder zu wenig; `--verify` nennt, warum es die Datei auslässt; ein Quelltext-Scan
-  zeigt, dass `designer.rs` die Bibliothek nicht kennt; die Aufnahmeregel zählt
-  Gatter-Nennungen je Abschnitt; Tests legen die Kalibrierung fest und zwei Wege mit
-  weniger Familien an der Obergrenze der Traits; dazu kommen die beiden Gegenproben mit
-  `quantum.rs`.
+  viel oder zu wenig; `--verify` nennt, warum es die Datei auslässt, und lehnt einen
+  Bericht ab, den sein Checkpoint nicht nachrechnen kann; ein Quelltext-Scan zeigt, dass
+  `designer.rs` die Bibliothek nicht kennt; die Aufnahmeregel zählt Gatter-Nennungen je
+  Abschnitt; Tests legen die Kalibrierung fest und zwei Wege mit weniger Familien an der
+  Obergrenze der Traits; dazu kommen die beiden Gegenproben mit `quantum.rs`.
 
 Tabelle 1: die 11 Ziele mit geprüfter Referenz. Die vollständigen Quellen stehen je Eintrag
 in `LIBRARY` in `src/cascade/circuit.rs`. „Bewiesen“ und „abgeleitet“ sind untere Schranken;
@@ -404,6 +404,8 @@ in Klammern die Bestehenszeiten.
   8.57 min (Mittel 7.38 min, 11 Läufe) und in Arm R 4.54 bis 6.12 min (Mittel 5.38 min,
   10 Läufe), ein Paar 10.57 bis 14.31 min (Mittel 12.68 min, 10 Paare).
 
+## 7. Das gezählte Experiment
+
 Aus den Pilotläufen folgen die Einstellungen der gezählten Läufe: `--generations 1000` und
 `--max-calls 13000000`. Bei einer Quote von 0.30, wie bis Generation 200, scheitert die
 Regel unten mit Wahrscheinlichkeit 1.000, nach 9.1 Paaren im Mittel; die Obergrenze konnte
@@ -413,15 +415,15 @@ mit 1000 Generationen höchstens 12 723 412 Aufrufe, sodass die Grenze keinen ge
 Lauf vorzeitig beendet; die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738
 Aufrufe.
 
-**Die Regel des gezählten Experiments.** Das Experiment entscheidet selbst, wie viele Seeds
-es braucht. Die Regel, ihre Begründung und ihre Quellen stehen in der Vorab-Registrierung,
-Abschnitt 8. Die gezählten Seeds 1, 2, 3, … laufen in dieser Reihenfolge, je in beiden
-Armen und stets bis Generation 1000. Ein Lauf besteht, wenn seine Bestehenszeit T höchstens
-1000 ist. Nach jedem Paar ändern sich zwei Belegwerte, die bei 1 beginnen:
+**Die Regel.** Das Experiment entscheidet selbst, wie viele Seeds es braucht. Die Regel,
+ihre Begründung und ihre Quellen stehen in der Vorab-Registrierung, Abschnitt 8. Die
+gezählten Seeds 1, 2, 3, … laufen in dieser Reihenfolge, je in beiden Armen und stets bis
+Generation 1000. Ein Lauf besteht, wenn seine Bestehenszeit T höchstens 1000 ist. Nach
+jedem Paar ändern sich zwei Belegwerte, die bei 1 beginnen:
 
-- E1 wächst um den Faktor 3/2, wenn Arm A besteht; sonst halbiert es sich.
-- E2 wächst um den Faktor 3/2, wenn Arm A zuerst besteht, und halbiert sich, wenn Arm R
-  zuerst besteht; bei Gleichstand bleibt es gleich.
+- **E1.** Es wächst um den Faktor 3/2, wenn Arm A besteht; sonst halbiert es sich.
+- **E2.** Es wächst um den Faktor 3/2, wenn Arm A zuerst besteht, und halbiert sich, wenn
+  Arm R zuerst besteht; bei Gleichstand bleibt es gleich.
 
 Erreicht E1 den Wert 20, ist der Hauptnachweis erbracht: Mehr als die Hälfte aller Seeds
 besteht bis Generation 1000. Fällt E1 auf 1/20, ist er gescheitert. Für E2 gelten dieselben
@@ -430,7 +432,7 @@ besteht als Arm R, beanspruchen wir aber nur, wenn der Hauptnachweis erbracht is
 Experiment endet, sobald der Hauptnachweis scheitert, sobald er erbracht ist und E2 eine
 Schwelle erreicht hat, oder nach 60 Paaren. Gleich wann es endet, meldet es einen falschen
 Nachweis höchstens mit Wahrscheinlichkeit 1/20; für den Hauptnachweis sind es im
-ungünstigsten Fall exakt 0.0385. Die alte Regel „9 von 10“ lag bei 11/1024 = 0.0107. Die
+ungünstigsten Fall rund 0.0385. Die alte Regel „9 von 10“ lag bei 11/1024 = 0.0107. Die
 neue Schranke ist also schwächer; sie entspricht der Schranke von 5 % der übrigen Tests im
 Projekt. Sie gilt nur, wenn die Reihenfolge der Seeds fest ist, kein Seed ausgelassen oder
 ersetzt wird und sich nach Seed 1 nichts ändert.
@@ -447,7 +449,7 @@ bei 12.68 min je Paar. Im ungünstigsten Fall sind es 60 Paare: 14.3 Stunden bei
 langsamsten Pilotpaars, 14.7 Stunden, wenn jedes Paar die langsamsten Läufe beider Arme
 hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
 
-## 7. Grenzen
+## 8. Grenzen
 
 - **Positivkontrolle.** Der Entwerfer ist kein Sprachmodell. Seine Zahlen zeigen, ob die
   Zucht Gene findet, von denen wir wissen, dass es sie gibt; über echte Modelle sagen sie
@@ -455,11 +457,11 @@ hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
 - **Gezählte Läufe stehen aus.** Die Eigentümerin bzw. der Eigentümer hat am 2026-10-30
   sechs Punkte bestätigt: exakte Gleichheit als Kriterium (sie verschärft Q38), die
   Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in Gitter-Läufen, keine
-  Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 6
-  anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Mit derselben Freigabe friert
-  die Vorab-Registrierung ein, beim Commit, der ihre freigegebene Fassung in den Hauptzweig
-  bringt. Gezählte Läufe gibt es noch keine; alle Zahlen dieses Berichts stammen aus
-  Pilotläufen.
+  Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 7
+  anstelle der Regel „9 von 10“ und die Panelgrößen 33 und 22. Die Vorab-Registrierung
+  setzt diese Punkte um. Sie friert bei dem einen Commit ein, zu dem ihr Pull-Request beim
+  Zusammenführen in den Hauptzweig zusammengefasst wird. Gezählte Läufe gibt es noch keine;
+  alle Zahlen dieses Berichts stammen aus Pilotläufen.
 - **Was der Pilot zeigt.** Die Kalibrierung hält in jedem fertigen Pilotlauf. Bis Generation
   1000 bestand Arm A in 9 von 11 Läufen, Arm R in 2 von 10, und in 8 der 10 Paare, deren
   Arme beide so weit liefen, bestand Arm A zuerst. Die neun Läufe des ersten Pilots bestehen
@@ -497,7 +499,7 @@ hätte, also etwa 15 Stunden. Die Prüfung mit 1 und 4 Threads kommt hinzu.
   `rediscovery.json` ablehnt, bleibt `literature_checked` im Lauf `false`; das Ergebnis einer
   solchen Prüfung gehört in einen Bericht.
 
-## 8. Quellen
+## 9. Quellen
 
 Die Quellen der Zielbibliothek und ihre Fundstellen hat die Recherche zu Schritt 1
 zusammengetragen; je Ziel stehen sie in `src/cascade/circuit.rs`.

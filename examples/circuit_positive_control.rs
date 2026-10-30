@@ -45,7 +45,8 @@
 //! It makes a claim only for the counted seeds 1, 2, 3, ... without gaps, at most 60, in
 //! both arms, run with the pre-registered `--generations 1000` and `--max-calls 13000000`,
 //! with no run ended at the call cap. For other seeds, such as the pilots, or for other
-//! generations or caps, it prints the numbers and says that it makes no claim. Run
+//! generations or caps, it prints the numbers and says that it makes no claim. For more
+//! than 60 pairs it prints no numbers and stops with an error. Run
 //! `brut-breed --out <dir> --verify` on every directory first: this program checks each
 //! count against its own target list, not the hash chain.
 //!
@@ -798,16 +799,20 @@ fn render_rule(out: &mut String, rows: &[Row], rule: &Sequential, after: &[Pair]
         out.push_str(&format!("{:>5}  after the stop, not counted\n", p.seed));
     }
 
-    if let Some(&(e1, e2)) = rule.evidence.last() {
-        let n = rule.counted();
+    let n = rule.counted();
 
-        out.push_str(&evidence_line("Primary (ticket 03): E1", e1, rule.primary, n));
-        out.push_str(&evidence_line("Secondary (selection): E2", e2, rule.secondary, n));
+    if let Some(&(e1, e2)) = rule.evidence.last() {
+        for (name, e, verdict) in [
+            ("Primary (ticket 03): E1", e1, rule.primary),
+            ("Secondary (selection): E2", e2, rule.secondary),
+        ] {
+            out.push_str(&evidence_line(name, e, verdict, n));
+        }
     }
 
     match rule.stop {
         Some(stop) => out.push_str(&format!("The rule stops after pair {stop}.\n")),
-        None => out.push_str(&format!("The rule goes on after pair {}.\n", rule.counted())),
+        None => out.push_str(&format!("The rule goes on after pair {n}.\n")),
     }
 }
 
@@ -1281,8 +1286,9 @@ mod tests {
             .filter(|n| !seeds.contains(n))
             .collect();
         let mut run = found(seeds, &open[..firsts.len()]);
+        let solved = run.targets.iter_mut().filter(|t| t.reached_by_bred);
 
-        for (t, &g) in run.targets.iter_mut().filter(|t| t.reached_by_bred).zip(firsts) {
+        for (t, &g) in solved.zip(firsts) {
             t.first_generation = Some(g);
         }
 
@@ -1360,12 +1366,18 @@ mod tests {
         let fail = [5, 5, 6, 7, 7, 8, 8, 9];
 
         for (other, (&passes, &failures)) in (0..).zip(prove.iter().zip(&fail)) {
-            assert!(e(passes, other).proven(), "{passes} passes, {other} failures");
+            assert!(
+                e(passes, other).proven(),
+                "{passes} passes, {other} failures"
+            );
             assert!(
                 !e(passes - 1, other).proven(),
                 "{passes} - 1 passes, {other} failures"
             );
-            assert!(e(other, failures).failed(), "{other} passes, {failures} failures");
+            assert!(
+                e(other, failures).failed(),
+                "{other} passes, {failures} failures"
+            );
             assert!(
                 !e(other, failures - 1).failed(),
                 "{other} passes, {failures} - 1 failures"
@@ -1464,7 +1476,9 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("    8      4  never  1  A      6561/256 = 25.6289      6561/256 = 25.6289\n"),
+            text.contains(
+                "    8      4  never  1  A      6561/256 = 25.6289      6561/256 = 25.6289\n"
+            ),
             "{text}"
         );
         assert!(
@@ -1510,8 +1524,18 @@ mod tests {
             text.contains("E1 = 3/64 = 0.0469 after 6 pair(s); it fell to 1/20 at pair 6."),
             "{text}"
         );
-        assert!(text.contains("E2 = 3/2 = 1.5000 after 6 pair(s).\n"), "{text}");
-        assert!(text.contains("Primary (ticket 03): FAILED at pair 6."), "{text}");
+        assert!(
+            text.contains("E2 = 3/2 = 1.5000 after 6 pair(s).\n"),
+            "{text}"
+        );
+        // A failed primary speaks against a rate of 3/4 or more; it proves no rate of 1/2 or
+        // less.
+        assert!(
+            text.contains(
+                "Primary (ticket 03): FAILED at pair 6. The data speak against a pass rate of 3/4 or more; they do not prove a rate of 1/2 or less.\n"
+            ),
+            "{text}"
+        );
         assert!(
             text.contains("Secondary (selection): NOT TESTED, since the primary is not proven."),
             "{text}"
@@ -1562,8 +1586,14 @@ mod tests {
 
         let text = render(&Context::default(), &all).expect("render");
 
-        assert!(text.contains("Primary (ticket 03): PROVEN at pair 11."), "{text}");
-        assert!(text.contains("Secondary (selection): PROVEN at pair 9."), "{text}");
+        assert!(
+            text.contains("Primary (ticket 03): PROVEN at pair 11."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Secondary (selection): PROVEN at pair 9."),
+            "{text}"
+        );
 
         // Four ties, eight pairs that arm A passes first and six ties: E2 reaches 20 at
         // pair 12, but E1 falls to 1/20 at pair 18, so there is no claim on selection.
@@ -1584,6 +1614,99 @@ mod tests {
         let text = render(&Context::default(), &all).expect("render");
 
         assert!(!text.contains("PROVEN"), "{text}");
+    }
+
+    #[test]
+    fn a_proven_primary_waits_for_e2() {
+        // Both arms pass in the same generation: E1 reaches 20 at pair 8, E2 stays at 1,
+        // and the rule goes on.
+        let mut times = vec![(Some(5), Some(5)); 8];
+        let all = timed_pairs(&times);
+        let rule = sequential(&rows(&all));
+
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (None, Verdict::Proven(8), Verdict::Open)
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains("E1 = 6561/256 = 25.6289 after 8 pair(s); it reached 20 at pair 8."),
+            "{text}"
+        );
+        assert!(text.contains("OPEN: run seed 9 next."), "{text}");
+
+        // Then arm A passes first exactly when E2 < 1, and arm R first otherwise, so E2
+        // never crosses: the secondary is undecided after 60 pairs.
+        let mut e2 = Evidence::default();
+
+        for _ in 9..=60 {
+            let a_first = e2.ratio().compare(Ratio::new(1, 1)) == Ordering::Less;
+
+            times.push((Some(5), if a_first { None } else { Some(4) }));
+            e2 = e2.step(a_first);
+        }
+
+        let all = timed_pairs(&times);
+        let rule = sequential(&rows(&all));
+
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (Some(60), Verdict::Proven(8), Verdict::Undecided)
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains("Primary (ticket 03): PROVEN at pair 8."),
+            "{text}"
+        );
+        assert!(
+            text.contains("Secondary (selection): UNDECIDED after 60 pairs, no claim."),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_failed_secondary_stops_the_rule() {
+        // Both arms pass, arm R first, in five pairs: E2 = 1/32 fails at pair 5, while E1 is
+        // still open. Then both arms pass in the same generation, and E1 reaches 20 at pair
+        // 8. The primary is proven and E2 has crossed, so the rule stops there.
+        let mut times = vec![(Some(9), Some(3)); 5];
+
+        times.extend([(Some(5), Some(5)); 3]);
+
+        let all = timed_pairs(&times);
+        let rule = sequential(&rows(&all));
+
+        assert_eq!(rule.evidence[4].1.ratio(), Ratio::new(1, 32));
+        assert_eq!(
+            (rule.stop, rule.primary, rule.secondary),
+            (Some(8), Verdict::Proven(8), Verdict::Failed(5))
+        );
+
+        let text = render(&Context::default(), &all).expect("render");
+
+        assert!(
+            text.contains("E2 = 1/32 = 0.0312 after 8 pair(s); it fell to 1/20 at pair 5.\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Primary (ticket 03): PROVEN at pair 8. More than half of all seeds pass within 1000 generations.\n"
+            ),
+            "{text}"
+        );
+        // A failed secondary speaks against arm A passing first in 3/4 or more of the
+        // untied pairs.
+        assert!(
+            text.contains(
+                "Secondary (selection): FAILED at pair 5. The data speak against arm A passing first in 3/4 or more of the untied pairs.\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("OPEN"), "{text}");
     }
 
     #[test]
@@ -1637,14 +1760,27 @@ mod tests {
             );
         }
 
+        // The descriptive lines cover the counted pairs only.
+        let header = text
+            .lines()
+            .find(|l| l.starts_with("target"))
+            .expect("the table of first generations");
+
+        assert!(header.ends_with("s6"), "{header}");
         assert!(text.contains("10 seed pair(s)"), "{text}");
-        assert!(text.contains("Median D_A over the 6 counted pair(s)"), "{text}");
-        assert!(text.contains("D_A > 1/2 in 1 of 6 counted seed(s)"), "{text}");
-        assert!(text.contains("Primary (ticket 03): FAILED at pair 6."), "{text}");
         assert!(
-            !text.contains("VOID") && !text.contains("  NO\n"),
+            text.contains("Median D_A over the 6 counted pair(s)"),
             "{text}"
         );
+        assert!(
+            text.contains("D_A > 1/2 in 1 of 6 counted seed(s)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Primary (ticket 03): FAILED at pair 6."),
+            "{text}"
+        );
+        assert!(!text.contains("VOID") && !text.contains("  NO\n"), "{text}");
     }
 
     #[test]

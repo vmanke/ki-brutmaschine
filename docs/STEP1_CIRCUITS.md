@@ -82,21 +82,21 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
   circuit Cascades is not part of step 1.
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
   both arms, paired by seed, finds the pass time of every Run and applies the
-  pre-registered rule across seeds (section 6). After each pair it names the next seed or
+  pre-registered rule across seeds (section 7). After each pair it names the next seed or
   gives the verdict. It makes a claim only for the seeds 1, 2, 3, ... without a gap, at
   most 60 pairs, with 1000 generations and the call cap of 13 000 000.
-- **Tests.** `tests/circuits.rs` has 17 tests: circuit Runs are reproducible across
+- **Tests.** `tests/circuits.rs` has 18 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; `rediscovery.json` appears only once a select phase is
   complete; 1 and 4 threads give byte-equal files; `--promote` is refused; the line about
   D holds for an uncalibrated Run too; `rediscovery.json` equals a recount from the logged
   answers; a change to the file fails `--verify`, and so does a member of the
   checkpoint's archive that differs from its `born` event in any field the event
-  records, or a member too many or too few; `--verify` says why it skips the file; a
-  source scan shows that `designer.rs` does not know the library; the admission rule
-  counts gate mentions per section; the calibration is pinned, and so are two routes with
-  fewer families at the ceiling of the Traits; and the two cross-checks with
-  `quantum.rs`.
+  records, or a member too many or too few; `--verify` says why it skips the file, and it
+  refuses a report that its checkpoint cannot recompute; a source scan shows that
+  `designer.rs` does not know the library; the admission rule counts gate mentions per
+  section; the calibration is pinned, and so are two routes with fewer families at the
+  ceiling of the Traits; and the two cross-checks with `quantum.rs`.
 
 Table 1: the 11 targets with a verified reference. The full sources of each entry are in
 `LIBRARY` in `src/cascade/circuit.rs`. "Proven" and "derived" are lower bounds; a best
@@ -388,6 +388,8 @@ pass times are in brackets.
   (mean 7.38 min, 11 Runs) and 4.54 to 6.12 min in arm R (mean 5.38 min, 10 Runs), a pair
   10.57 to 14.31 min (mean 12.68 min, 10 pairs).
 
+## 7. The counted experiment
+
 The settings of the counted Runs follow from the pilot Runs: `--generations 1000` and
 `--max-calls 13000000`. At a pass rate of 0.30, as by generation 200, the rule below fails
 with probability 1.000, after 9.1 pairs on average; so the ceiling could not stay at 200
@@ -396,15 +398,15 @@ the call bounds in `arena.rs`, a Run of 1000 generations needs at most 12 723 41
 so the cap ends no counted Run early; the pilot Runs used at most 1 161 738 calls by
 generation 1000.
 
-**The rule of the counted experiment.** The experiment decides by itself how many seeds
-it needs. The rule, its reasons and its sources are in the pre-registration, section 8.
-The counted seeds 1, 2, 3, ... run in this order, each in both arms and always to
-generation 1000. A Run passes when its pass time T is at most 1000. After each pair two
-evidence values change, both starting at 1:
+**The rule.** The experiment decides by itself how many seeds it needs. The rule, its
+reasons and its sources are in the pre-registration, section 8. The counted seeds 1, 2,
+3, ... run in this order, each in both arms and always to generation 1000. A Run passes
+when its pass time T is at most 1000. After each pair two evidence values change, both
+starting at 1:
 
-- E1 grows by the factor 3/2 when arm A passes; otherwise it is halved.
-- E2 grows by the factor 3/2 when arm A passes first, and is halved when arm R passes
-  first; on a tie it stays the same.
+- **E1.** It grows by the factor 3/2 when arm A passes; otherwise it is halved.
+- **E2.** It grows by the factor 3/2 when arm A passes first, and is halved when arm R
+  passes first; on a tie it stays the same.
 
 When E1 reaches 20, the primary claim is proven: more than half of all seeds pass by
 generation 1000. When E1 falls to 1/20, it has failed. The same thresholds hold for E2.
@@ -412,7 +414,7 @@ But we claim the second result, that among pairs without a tie arm A passes firs
 often than arm R, only if the primary claim is proven. The experiment ends as soon as the
 primary claim fails, as soon as it is proven and E2 has reached a threshold, or after 60
 pairs. However it ends, it reports a false claim with probability at most 1/20; for the
-primary claim the worst case is exactly 0.0385. The old rule "9 of 10" had
+primary claim the worst case is about 0.0385. The old rule "9 of 10" had
 11/1024 = 0.0107. So the new bound is weaker; it matches the 5 % bound of the project's
 other tests. It holds only if the seed order is fixed, no seed is skipped or replaced,
 and nothing changes after seed 1.
@@ -429,17 +431,17 @@ then expect 17 to 29 seed pairs on average, that is 3.6 to 6.1 hours of computin
 slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, so about
 15 hours. The check with 1 and 4 threads comes on top.
 
-## 7. Limits
+## 8. Limits
 
 - **Positive control.** The designer is not a language model. Its numbers show whether
   breeding finds genes that we know exist; they say nothing about real models.
 - **Counted Runs are still to come.** The owner confirmed six points on 2026-10-30: exact
   equality as the criterion (it tightens Q38), scoring by T first and CNOT second, the
   `state` line in grid Runs too, no promotion of circuit Cascades in step 1, the rule
-  across seeds of section 6 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
-  The pre-registration is frozen with the same sign-off, at the commit that adds its
-  signed-off version to the main branch. There are no counted Runs yet; every number in
-  this report comes from pilot Runs.
+  across seeds of section 7 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
+  The pre-registration implements these points. It is frozen at the one commit that the
+  squash merge of its pull request creates on the main branch. There are no counted Runs
+  yet; every number in this report comes from pilot Runs.
 - **What the pilot shows.** The calibration holds in every finished pilot Run. By
   generation 1000, arm A passed in 9 of 11 Runs and arm R in 2 of 10, and in 8 of the 10
   pairs whose arms both went that far, arm A passed first. The nine Runs of the first
@@ -476,7 +478,7 @@ slowest pilot pair, 14.7 hours if every pair had the slowest Runs of both arms, 
   `rediscovery.json`, `literature_checked` stays `false` in the Run; the result of such a
   check belongs in a report.
 
-## 8. Sources
+## 9. Sources
 
 The research for step 1 collected the sources of the target library and the places in
 them; `src/cascade/circuit.rs` lists them per target.

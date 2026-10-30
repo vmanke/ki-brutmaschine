@@ -193,7 +193,7 @@ The simulated model that writes circuits in circuit Runs, under the tags sim:sma
 _Avoid_: oracle, solver
 
 **Rediscovery**:
-A bred Cascade solving a Target that the seed Cascades miss, exactly and at Reference cost. The share D of such Targets, counted in `rediscovery.json`, is the pre-registered result of step 1.
+A bred Cascade solving a Target that the seed Cascades miss, exactly and at Reference cost. The share D of such Targets is counted in `rediscovery.json` and reported per Run at generation 1000; the pre-registered result of step 1 is the verdict of the sequential rule on the pass times.
 _Avoid_: invention, success rate
 
 **Pass time**:

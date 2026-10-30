@@ -194,10 +194,10 @@ as generation 810. At a pass rate of 0.30 the sequential rule fails with probabi
 1.000, so the counted Runs use `--generations 1000 --max-calls 13000000`: by our count from
 the call bounds, a Run of 1000 generations needs at most 12 723 412 calls, so the cap
 cannot end a Run early, and a pilot pair of 1000 generations took at most 14.31 min. At
-the pilot rates the primary claim is proven with probability 0.82 to 0.99, after 17 to
-29 pairs on average, while the fixed rule "9 of 10" would have passed with probability
-0.165 at the Kaplan-Meier rate of 0.710. The pass time of every pilot Run is in
-`docs/pilot-step1/README.md`.
+the pilot rates the primary claim is proven with probability 0.82 to 0.99, and the
+experiment needs 17 to 29 pairs on average. The fixed rule "9 of 10" would have passed
+with probability 0.165 at the Kaplan-Meier rate of 0.710. The pass time of every pilot
+Run is in `docs/pilot-step1/README.md`.
 
 **Promotion waits.** Circuit Cascades are not promoted in step 1; `--promote` refuses
 them. Promotion needs a reviewed candidate format for circuit Cascades, which step 1 does
@@ -223,5 +223,5 @@ criterion (it tightens Q38), the lexicographic score, the `state` line in grid l
 promotion of circuit Cascades in step 1, the sequential rule across seeds, which replaced
 the 9-of-10 rule as point 5
 (`.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`), and the panel
-sizes 33 and 22. The pre-registration is frozen with the same sign-off, at the commit that
-adds its signed-off version to the main branch.
+sizes 33 and 22. The pre-registration implements these points. It is frozen at the one
+commit that the squash merge of its pull request creates on the main branch.

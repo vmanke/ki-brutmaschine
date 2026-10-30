@@ -540,7 +540,7 @@ Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestä
    besteht. Nach jedem Seed-Paar prüft die Auswertung, ob die Belege für ein Urteil
    reichen; das Experiment endet spätestens nach 60 Paaren. Gleich wann es endet, meldet
    es einen falschen Erfolg höchstens mit Wahrscheinlichkeit 1/20; der ungünstigste Fall
-   liegt genau bei 0.0385. Diese Regel ersetzt die Regel „9 von 10“, deren Schranke bei
+   liegt bei rund 0.0385. Diese Regel ersetzt die Regel „9 von 10“, deren Schranke bei
    11/1024 = 0.0107 lag.
 6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
 
@@ -680,7 +680,7 @@ Mehr dazu, und welche Lücken es gibt, steht in
 - Schritt 1: Die Pilotläufe schätzen die Erfolgsquote nur grob. Bis Generation 1000
   bestand Arm A in 9 von 11 Läufen, mit einem Konfidenzintervall zu 95 % von 0.48 bis
   0.98. Was der Pilot zeigt und was nicht, steht in
-  [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 7.
+  [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 8.
 
 ## Aufbau eines Lauf-Verzeichnisses (MLP-Modus)
 
