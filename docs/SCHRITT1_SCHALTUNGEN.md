@@ -308,7 +308,7 @@ Die Seeds 101 und 102 sind Pilot-Seeds: Wir zählen sie nicht, und sie legen nur
 Seeds 60 Generationen lang laufen lassen, mit `--search 33 --select 22 --children 8`,
 Release-Build auf Commit d4a650e, rustc 1.97.0, 2 Threads. Die voreingestellte Grenze von
 20 000 Aufrufen beendete Arm A auf Seed 101 nach Generation 20 (18 451 Aufrufe); darum nutzen
-alle vier Läufe `--max-calls 200000`. Jeder Lauf wurde danach mit 200 Generationen
+alle vier Läufe `--max-calls 200000`. Danach haben wir jeden Lauf mit 200 Generationen
 wiederholt. Alle Zahlen stammen aus [pilot.json](pilot-step1/pilot.json); wir haben alle neun
 Lauf-Verzeichnisse erneut mit `--verify` geprüft und die Auswertung erneut ausgeführt.
 
@@ -340,8 +340,8 @@ die Stopp-Prüfung `--generations` liest.
 - **Engpass.** In Arm A auf Seed 101 fielen fünf Ziele in Generation 32, der ersten, in der
   ein Worker Hadamard, Phase und Linear zugleich nannte. In den drei anderen Läufen entstand
   in 200 Generationen kein solcher Worker. Diese Generationen (`first_worker_naming` in
-  `pilot.json`) sind außerhalb des Programms durch eine Suche nach den Wortstämmen in den
-  Abschnittstexten ermittelt.
+  `pilot.json`) haben wir außerhalb des Programms ermittelt, durch eine Suche nach den
+  Wortstämmen in den Abschnittstexten.
 - **Auswertung.** Für die vier Läufe mit 60 Generationen meldet die eingefrorene Auswertung
   „No claim: only 2 seed pair(s)“. D_A > 1/2 gilt auf einem von zwei Seeds (Median 1/2),
   D_A > D_R in einem von zwei Paaren (p = 3/4). In der Variante nur nach T lösen die

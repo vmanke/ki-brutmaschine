@@ -293,8 +293,8 @@ Seeds 101 and 102 are pilot seeds: we do not count them, and they set only
 `--generations` and `--max-calls` of the counted Runs. We ran both arms on both seeds for
 60 generations, with `--search 33 --select 22 --children 8`, a release build at commit
 d4a650e, rustc 1.97.0 and 2 threads. The default cap of 20 000 calls ended arm A on seed
-101 after generation 20 (18 451 calls), so all four Runs use `--max-calls 200000`. Each Run
-was then repeated with 200 generations. All numbers come from
+101 after generation 20 (18 451 calls), so all four Runs use `--max-calls 200000`. Then we
+repeated each Run with 200 generations. All numbers come from
 [pilot.json](pilot-step1/pilot.json); we checked all nine run directories again with
 `--verify` and ran the analysis again.
 
@@ -325,9 +325,9 @@ stop check reads `--generations`.
   to 200. No Run solved CH or Fredkin.
 - **Bottleneck.** In arm A on seed 101, five targets fell in generation 32, the first in
   which one Worker named Hadamard, Phase and Linear together. In the other three Runs no
-  such Worker arose in 200 generations. These generations (`first_worker_naming` in
-  `pilot.json`) were found outside the program, by a search for the word stems in the
-  section texts.
+  such Worker arose in 200 generations. We found these generations (`first_worker_naming`
+  in `pilot.json`) outside the program, by a search for the word stems in the section
+  texts.
 - **Analysis.** For the four Runs with 60 generations the frozen analysis says "No claim:
   only 2 seed pair(s)". D_A > 1/2 holds on one of two seeds (median 1/2), D_A > D_R in one
   of two pairs (p = 3/4). In the T-only variant the seed Cascades also solve CCZ (7 T,
