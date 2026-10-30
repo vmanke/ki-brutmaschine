@@ -171,7 +171,10 @@ Aufgaben, Summe der Aufgabenwerte, Verbrauch und Antworten), und dass `rediscove
 Byte für Byte der Neuberechnung aus diesem Archiv gleicht. Was ein Mitglied in späteren
 Generationen hinzugewinnt (Kinder, Urteile, Fitness, Peer-Wertung), steht nicht in seinem
 `born`-Ereignis und wird nicht geprüft. Weicht das Archiv oder die Datei ab oder fehlt die
-Datei, endet `--verify` mit Exit-Code 1 und einer Meldung „integrity: …“.
+Datei, endet `--verify` mit Exit-Code 1 und einer Meldung „integrity: …“. Ebenso endet
+es, wenn ein Schaltungslauf einen Bericht hat, den sein Checkpoint nicht nachrechnen kann,
+weil der Checkpoint unfertig ist oder Antworten des Auswahl-Panels fehlen: Ein
+Schaltungslauf behält alle, also wurde der Checkpoint gekürzt oder bearbeitet.
 Sonst nennt es, warum es die Datei nicht geprüft hat: „rediscovery.json not checked: the
 run is not finished“ oder, bei einem fertigen Lauf ohne seinen Bericht, „… there is no
 report.json; resume the run to write it“. `timings.jsonl` gehört nicht zum geprüften

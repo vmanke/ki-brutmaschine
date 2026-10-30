@@ -688,6 +688,27 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Ok when a run bred exactly the generations its config plans (generation 0 included),
+/// or fewer when the call budget ended it. A resume may lower --generations below what a
+/// run had already bred; such a run still verifies, but it is not a run of its config.
+fn bred_as_planned(stop_reason: &str, completed: usize, generations: usize) -> Result<(), String> {
+    let planned = generations + 1;
+    let fits = match stop_reason {
+        "all generations done" => completed == planned,
+        _ => completed < planned,
+    };
+
+    if fits {
+        Ok(())
+    } else {
+        Err(format!(
+            "it bred {completed} generations (generation 0 included) and stopped with \
+             {stop_reason:?}, but its config plans {planned}; a resume lowered --generations \
+             below what it had bred"
+        ))
+    }
+}
+
 /// The finished run in `dir`, which must have the settings of `arm`.
 fn load(dir: &Path, arm: Arm) -> Result<Loaded, String> {
     let bad = |m: String| format!("{}: {m}", dir.display());
@@ -711,6 +732,12 @@ fn load(dir: &Path, arm: Arm) -> Result<Loaded, String> {
     let report: Report = read_json(&dir.join("report.json"))?;
     let found: Rediscovery = read_json(&dir.join("rediscovery.json"))?;
 
+    bred_as_planned(
+        &report.stop_reason,
+        report.generations_completed,
+        cfg.generations,
+    )
+    .map_err(bad)?;
     check_counts(&found).map_err(|m| bad(format!("rediscovery.json: {m}")))?;
 
     Ok(Loaded {
@@ -1104,6 +1131,20 @@ mod tests {
         let full = statistic(&pairs(&eleven, &[9; 11], &[0; 11]), Rule::Full).expect("pairs");
 
         assert!(matches!(claim(&full.rows), Claim::Withheld(_)));
+    }
+
+    #[test]
+    fn a_run_that_bred_more_than_its_config_plans_is_refused() {
+        // 200 generations plus generation 0.
+        assert_eq!(bred_as_planned("all generations done", 201, 200), Ok(()));
+        assert_eq!(bred_as_planned("call budget reached", 150, 200), Ok(()));
+
+        // A run that bred 201 generations and was then resumed with --generations 200.
+        let longer = bred_as_planned("all generations done", 202, 200).expect_err("longer");
+
+        assert!(longer.contains("bred 202 generations"), "{longer}");
+        assert!(bred_as_planned("all generations done", 150, 200).is_err());
+        assert!(bred_as_planned("call budget reached", 201, 200).is_err());
     }
 
     #[test]

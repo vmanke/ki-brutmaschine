@@ -1019,6 +1019,49 @@ fn verify_says_why_it_skips_the_count_of_a_finished_run() {
     );
 }
 
+#[test]
+fn verify_refuses_a_circuit_report_its_checkpoint_cannot_recompute() {
+    let dir = fresh("cut-checkpoint");
+
+    ok(&run(&dir, &SMALL));
+
+    let snapshot = std::fs::read(dir.join("snapshot.json")).expect("snapshot");
+    let count = std::fs::read(dir.join("rediscovery.json")).expect("count");
+    let refused = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut cp: serde_json::Value = serde_json::from_slice(&snapshot).expect("json");
+
+        edit(&mut cp);
+        std::fs::write(
+            dir.join("snapshot.json"),
+            serde_json::to_vec_pretty(&cp).expect("json"),
+        )
+        .expect("write");
+
+        let out = verify(&dir);
+
+        assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+        assert!(
+            stderr(&out).contains("cannot be recomputed from the checkpoint"),
+            "{}",
+            stderr(&out)
+        );
+    };
+
+    // A finished checkpoint whose select-panel answers were cut: the report and the count
+    // cannot be recomputed, so --verify refuses instead of skipping them, also when the
+    // count was edited too.
+    refused(&|cp| cp["snapshot"]["select_answers"] = serde_json::json!({}));
+    std::fs::write(dir.join("rediscovery.json"), b"{}").expect("forge count");
+    refused(&|cp| cp["snapshot"]["select_answers"] = serde_json::json!({}));
+
+    // A report next to an unfinished checkpoint.
+    refused(&|cp| cp["snapshot"]["finished"] = serde_json::json!(false));
+
+    std::fs::write(dir.join("snapshot.json"), &snapshot).expect("restore snapshot");
+    std::fs::write(dir.join("rediscovery.json"), &count).expect("restore count");
+    ok(&verify(&dir));
+}
+
 /// Paths into the crate that `text` names: the module after `crate::`, or after
 /// `crate::cascade::` for the cascade modules, with grouped paths opened.
 fn crate_modules(text: &str) -> BTreeSet<String> {

@@ -186,7 +186,9 @@ most 4 Stages of at most 3 Workers, the models `sim:small` (0.0005 per call) and
 `sim:large` (0.002 per call), and the circuit settings: every verified target, dressed,
 at most 64 gates per answer. The analysis refuses a Run whose settings differ from these
 in anything but the seed, the generations and the call cap, and it requires all Runs to
-share their generations and their call cap. It makes a claim only when these are the
+share their generations and their call cap. It also refuses a Run that bred more
+generations than its config plans (a resume may lower `--generations` below what a Run
+had bred) and a Run that stopped short of them for any reason but the call budget. It makes a claim only when these are the
 200 generations and the cap of 2 600 000 calls below and no Run ended at the cap;
 otherwise it prints the numbers and says that it makes no claim.
 

@@ -856,6 +856,18 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
     } else {
         ("", false)
     };
+
+    // Every circuit run keeps all its select-panel answers, so a circuit report that the
+    // checkpoint cannot recompute means the checkpoint was cut or edited. Grid runs from
+    // before the select answers were kept fall back to the finalist check.
+    if has_report && !recomputed && !cfg.domain.is_grid() {
+        return Err(BrutError::Integrity(format!(
+            "{} cannot be recomputed from the checkpoint, which is unfinished or lacks \
+             select-panel answers; resume the run to finish it",
+            out.join(REPORT).display()
+        )));
+    }
+
     // The rest of what a finished run writes is checked exactly when its report is: the
     // report comes last, so a run with one has the rest too. The checkpoint alone does not
     // tell: a resume to more generations removes these files before its first commit,

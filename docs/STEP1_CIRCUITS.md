@@ -164,7 +164,10 @@ count, graded value, usage and answers), and `rediscovery.json` to equal the
 recomputation from that archive byte for byte. What a member gains in later generations
 (children, judgments, fitness, peer rating) is not in its `born` event and is not
 checked. If the archive or the file differs, or the file is missing, `--verify` ends with
-exit code 1 and a message "integrity: …". Otherwise it says why it did not check the file:
+exit code 1 and a message "integrity: …". It does the same when a circuit Run has a report
+that its checkpoint cannot recompute, because the checkpoint is unfinished or lacks
+select-panel answers: a circuit Run keeps all of them, so this means the checkpoint was
+cut or edited. Otherwise it says why it did not check the file:
 "rediscovery.json not checked: the run is not finished", or, for a finished Run whose
 report is missing, "… there is no report.json; resume the run to write it".
 `timings.jsonl` is not part of the verified record.
