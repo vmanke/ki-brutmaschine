@@ -1423,6 +1423,17 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_after_the_ceiling_is_never() {
+        // Runs longer than the ceiling: arm A passes in generation 1000, arm R in 1001.
+        let all = timed_pairs(&[(Some(1000), Some(1001))]);
+        let row = &rows(&all)[0];
+
+        assert_eq!(pass_time(&all[0].r), Some(1001));
+        assert_eq!((row.t_a, row.t_r), (Some(1000), None));
+        assert_eq!(first(row.t_a, row.t_r), First::A);
+    }
+
+    #[test]
     fn first_to_pass_decides_the_pair() {
         assert_eq!(first(Some(7), Some(380)), First::A);
         assert_eq!(first(Some(97), None), First::A);

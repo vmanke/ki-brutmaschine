@@ -407,10 +407,10 @@ in Klammern die Bestehenszeiten.
 Aus den Pilotläufen folgen die Einstellungen der gezählten Läufe: `--generations 1000` und
 `--max-calls 13000000`. Bei einer Quote von 0.30, wie bis Generation 200, scheitert die
 Regel unten mit Wahrscheinlichkeit 1.000, nach 9.1 Paaren im Mittel; die Obergrenze konnte
-also nicht bei 200 Generationen bleiben. 1000 ist der längste Horizont mit Pilotdaten in beiden
-Armen. Nach unserer Rechnung aus den Aufrufgrenzen in `arena.rs` braucht ein Lauf mit 1000
-Generationen höchstens 12 723 412 Aufrufe, sodass die Grenze keinen gezählten Lauf
-vorzeitig beendet; die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738
+also nicht bei 200 Generationen bleiben. 1000 ist der längste Horizont mit Pilotdaten in
+beiden Armen. Nach unserer Rechnung aus den Aufrufgrenzen in `arena.rs` braucht ein Lauf
+mit 1000 Generationen höchstens 12 723 412 Aufrufe, sodass die Grenze keinen gezählten
+Lauf vorzeitig beendet; die Pilotläufe brauchten bis Generation 1000 höchstens 1 161 738
 Aufrufe.
 
 **Die Regel des gezählten Experiments.** Das Experiment entscheidet selbst, wie viele Seeds

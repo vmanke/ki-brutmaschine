@@ -312,9 +312,9 @@ evidence values of section 8 are compared as 3^k against 20 · 2^n.
 The experiment decides by itself how many seeds it needs: a sequential rule across seeds.
 It replaces the fixed rule "9 of 10" of the first version of this document (ADR 0006,
 decision 5). Its design, its sources and its operating characteristics are in
-`.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`;
-`own_check.py` in `.scratch/universum-erfinden/sequential-rule/` recomputes them from the
-rule text alone.
+`.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1.md`, with the scripts
+and their outputs in `.scratch/universum-erfinden/sequential-rule/`; `own_check.py` there
+recomputes the figures of the primary claim from the rule text alone.
 
 **Evidence values.** Two evidence values, E1 and E2, start at 1. They are updated strictly
 in seed order: pair s enters only after pairs 1 to s - 1, never in the order in which Runs
