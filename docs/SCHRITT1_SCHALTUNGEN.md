@@ -88,17 +88,19 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   beider Arme, paarweise nach Seed, und wendet die vorab festgelegten Regeln an
   (Abschnitt 6). Eine Aussage trifft sie nur für die vorab festgelegten Seeds, mit der
   festgelegten Zahl der Generationen und der festgelegten Aufrufgrenze.
-- **Tests.** `tests/circuits.rs` hat 15 Tests: Schaltungsläufe sind über Prozesse hinweg
+- **Tests.** `tests/circuits.rs` hat 17 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung
   und dieselben `state`-Zeilen wie ein durchgehender Lauf; `rediscovery.json` entsteht erst
   mit einer fertigen Auswahlphase; 1 und 4 Threads ergeben byte-gleiche Dateien;
   `--promote` wird abgelehnt; die Zeile zu D stimmt auch bei einem nicht kalibrierten Lauf;
-  `rediscovery.json` gleicht einer Nachzählung aus den protokollierten Antworten, jede
-  Änderung an der Datei oder am Archiv des Checkpoints lässt `--verify` scheitern, und
-  `--verify` nennt, warum es die Datei auslässt; ein Quelltext-Scan zeigt, dass
-  `designer.rs` die Bibliothek nicht kennt; die Aufnahmeregel zählt Gatter-Nennungen je
-  Abschnitt; Tests legen die Kalibrierung fest und zwei Wege mit weniger Familien an der
-  Obergrenze der Traits; dazu kommen die beiden Gegenproben mit `quantum.rs`.
+  `rediscovery.json` gleicht einer Nachzählung aus den protokollierten Antworten; eine
+  Änderung an der Datei lässt `--verify` scheitern, ebenso ein Mitglied des Archivs im
+  Checkpoint, das in einem Feld seines `born`-Ereignisses abweicht, und ein Mitglied zu
+  viel oder zu wenig; `--verify` nennt, warum es die Datei auslässt; ein Quelltext-Scan
+  zeigt, dass `designer.rs` die Bibliothek nicht kennt; die Aufnahmeregel zählt
+  Gatter-Nennungen je Abschnitt; Tests legen die Kalibrierung fest und zwei Wege mit
+  weniger Familien an der Obergrenze der Traits; dazu kommen die beiden Gegenproben mit
+  `quantum.rs`.
 
 Tabelle 1: die 11 Ziele mit geprüfter Referenz. Die vollständigen Quellen stehen je Eintrag
 in `LIBRARY` in `src/cascade/circuit.rs`. „Bewiesen“ und „abgeleitet“ sind untere Schranken;
@@ -161,11 +163,15 @@ dauerte 3.2 s (Release-Build, 2 Threads).
 Checkpoints und die Einstellungen. Bei einem fertigen Lauf mit seiner `report.json` baut es
 den Lauf aus dem Checkpoint neu auf, rechnet den Bericht nach und leitet den Stoppgrund aus
 dem Checkpoint ab, statt ihn dem Bericht zu glauben („all generations done“ oder „call
-budget reached“). Bei einem solchen Schaltungslauf verlangt es zudem, dass das Archiv des
-Checkpoints genau die Kaskaden und Antworten enthält, welche die `born`-Ereignisse des
-Protokolls festhalten, da keine Prüfsumme den Checkpoint deckt, und dass `rediscovery.json`
-Byte für Byte der Neuberechnung aus diesem Archiv gleicht. Weicht das Archiv oder die Datei
-ab oder fehlt die Datei, endet `--verify` mit Exit-Code 1 und einer Meldung „integrity: …“.
+budget reached“). Keine Prüfsumme deckt den Checkpoint, daher verlangt es bei einem
+solchen Schaltungslauf zudem, dass das Archiv des Checkpoints je `born`-Ereignis des
+Protokolls ein Mitglied hält, in derselben Reihenfolge, jedes mit allen Feldern, die sein
+Ereignis festhält (Kennung, Kaskade, Eltern, Generation, Operator, Zahl der gelösten
+Aufgaben, Summe der Aufgabenwerte, Verbrauch und Antworten), und dass `rediscovery.json`
+Byte für Byte der Neuberechnung aus diesem Archiv gleicht. Was ein Mitglied in späteren
+Generationen hinzugewinnt (Kinder, Urteile, Fitness, Peer-Wertung), steht nicht in seinem
+`born`-Ereignis und wird nicht geprüft. Weicht das Archiv oder die Datei ab oder fehlt die
+Datei, endet `--verify` mit Exit-Code 1 und einer Meldung „integrity: …“.
 Sonst nennt es, warum es die Datei nicht geprüft hat: „rediscovery.json not checked: the
 run is not finished“ oder, bei einem fertigen Lauf ohne seinen Bericht, „… there is no
 report.json; resume the run to write it“. `timings.jsonl` gehört nicht zum geprüften
@@ -352,7 +358,7 @@ die Stopp-Prüfung `--generations` liest.
 - **Wiederholbarkeit.** Wir haben Arm A auf Seed 101 erneut laufen lassen; `events.jsonl` und
   `rediscovery.json` sind byte-gleich mit dem Pilotlauf. Nach den Korrekturen aus der
   Prüfung, die nur `--verify`, eine gedruckte Zeile, die Auswertung und Tests ändern, haben
-  wir alle vier Läufe mit 60 Generationen mit dem Programm von Commit f26ba91 wiederholt:
+  wir alle vier Läufe mit 60 Generationen mit dem Programm von Commit b3a99e1 wiederholt:
   `config.json`, `events.jsonl`, `snapshot.json`, `report.json` und `rediscovery.json` sind
   byte-gleich mit dem Pilot, und alle neun Lauf-Verzeichnisse des Pilots bestehen sein
   `--verify`.

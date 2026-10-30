@@ -83,16 +83,18 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
   both arms, paired by seed, and applies the pre-registered rules (section 6). It makes a
   claim only for the pre-registered seeds, generations and call cap.
-- **Tests.** `tests/circuits.rs` has 15 tests: circuit Runs are reproducible across
+- **Tests.** `tests/circuits.rs` has 17 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; `rediscovery.json` appears only once a select phase is
   complete; 1 and 4 threads give byte-equal files; `--promote` is refused; the line about
   D holds for an uncalibrated Run too; `rediscovery.json` equals a recount from the logged
-  answers, any change to the file or to the checkpoint's archive fails `--verify`, and
-  `--verify` says why it skips the file; a source scan shows that `designer.rs` does not
-  know the library; the admission rule counts gate mentions per section; the calibration
-  is pinned, and so are two routes with fewer families at the ceiling of the Traits; and
-  the two cross-checks with `quantum.rs`.
+  answers; a change to the file fails `--verify`, and so does a member of the
+  checkpoint's archive that differs from its `born` event in any field the event
+  records, or a member too many or too few; `--verify` says why it skips the file; a
+  source scan shows that `designer.rs` does not know the library; the admission rule
+  counts gate mentions per section; the calibration is pinned, and so are two routes with
+  fewer families at the ceiling of the Traits; and the two cross-checks with
+  `quantum.rs`.
 
 Table 1: the 11 targets with a verified reference. The full sources of each entry are in
 `LIBRARY` in `src/cascade/circuit.rs`. "Proven" and "derived" are lower bounds; a best
@@ -155,14 +157,17 @@ build, 2 threads).
 anchor and the settings. For a finished Run with its `report.json` it rebuilds the Run
 from the checkpoint, recomputes the report, and derives the stop reason from the
 checkpoint instead of trusting the report ("all generations done" or "call budget
-reached"). For such a circuit Run it also requires the checkpoint's archive to hold
-exactly the Cascades and answers that the `born` events of the log record, because no
-hash covers the checkpoint, and `rediscovery.json` to equal the recomputation from that
-archive byte for byte. If the archive or the file differs, or the file is missing,
-`--verify` ends with exit code 1 and a message "integrity: …". Otherwise it says why it
-did not check the file: "rediscovery.json not checked: the run is not finished", or, for
-a finished Run whose report is missing, "… there is no report.json; resume the run to
-write it". `timings.jsonl` is not part of the verified record.
+reached"). No hash covers the checkpoint, so for such a circuit Run it also requires the
+checkpoint's archive to hold one member per `born` event of the log, in their order, each
+with every field its event records (id, Cascade, parents, generation, operator, solved
+count, graded value, usage and answers), and `rediscovery.json` to equal the
+recomputation from that archive byte for byte. What a member gains in later generations
+(children, judgments, fitness, peer rating) is not in its `born` event and is not
+checked. If the archive or the file differs, or the file is missing, `--verify` ends with
+exit code 1 and a message "integrity: …". Otherwise it says why it did not check the file:
+"rediscovery.json not checked: the run is not finished", or, for a finished Run whose
+report is missing, "… there is no report.json; resume the run to write it".
+`timings.jsonl` is not part of the verified record.
 
 **Settings.** Without `--config`, `--domain circuits` takes all 11 targets, disguised,
 with at most 64 gates per answer. Other circuit settings come with `--config <file>`: a
@@ -338,7 +343,7 @@ stop check reads `--generations`.
 - **Reproducibility.** We ran arm A on seed 101 again; `events.jsonl` and
   `rediscovery.json` are byte-equal to the pilot Run's. After the review fixes, which
   change only `--verify`, one printed line, the analysis and tests, we ran all four
-  60-generation Runs again with the program of commit f26ba91: `config.json`,
+  60-generation Runs again with the program of commit b3a99e1: `config.json`,
   `events.jsonl`, `snapshot.json`, `report.json` and `rediscovery.json` are byte-equal to
   the pilot's, and all nine pilot Run directories pass its `--verify`.
 

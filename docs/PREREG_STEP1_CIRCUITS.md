@@ -41,9 +41,9 @@ The pilot ran commit d4a650e. Since then the code has changed only where no Run'
 depend on it: `--verify` also checks a finished circuit Run's archive against the logged
 `born` events and says why it skips `rediscovery.json`; one printed line about D follows D
 alone; the analysis makes a claim only for the generations and the cap of section 6; and
-there are new tests and comments. `git diff d4a650e f26ba91 -- Cargo.toml Cargo.lock` is
-empty, in `src/cascade` that diff changes only comments, and after f26ba91 only documents
-changed. With the program of commit f26ba91 we ran the four 60-generation pilot Runs
+there are new tests and comments. `git diff d4a650e b3a99e1 -- Cargo.toml Cargo.lock` is
+empty, in `src/cascade` that diff changes only comments, and after b3a99e1 only documents
+changed. With the program of commit b3a99e1 we ran the four 60-generation pilot Runs
 again: their `config.json`, `events.jsonl`, `snapshot.json`, `report.json` and
 `rediscovery.json` are byte-equal to the pilot's, and all nine pilot Run directories pass
 its `--verify`. On another toolchain or platform a floating-point function may round its

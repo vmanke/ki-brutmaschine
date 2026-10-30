@@ -141,16 +141,19 @@ bred ones, whether each reached the reference, the first generation of a bred hi
 cheapest invention candidate; then |L|, |R_seed|, |R_bred \ R_seed|, D and the
 calibration gate. For a finished Run with its `report.json`, `--verify` rebuilds the Run
 from its checkpoint without a model call and requires the recomputed report to be equal.
-No hash covers the checkpoint, so it also requires the checkpoint's archive to hold
-exactly the Cascades, generations, operators and answers that the hash-chained `born`
-events record, and `rediscovery.json` to match its recomputation from that archive byte
-for byte; an edited archive and a missing or edited file are integrity errors. It also
-derives a finished Run's stop reason from the checkpoint ("all generations done" or "call
-budget reached") instead of trusting the report. Without `report.json` it does not check
-`rediscovery.json` and says why: the Run is not finished, or its report is missing. A
-resume removes both files until the select phase is complete again. Since `--verify`
-refuses an edited file, `literature_checked` stays false in the Run, and a human's
-literature check is recorded outside it.
+No hash covers the checkpoint, so it also requires the checkpoint's archive to hold one
+member per hash-chained `born` event, in their order, each with every field its event
+records: id, Cascade, parents, generation, operator, solved count, graded value, usage and
+answers. It requires `rediscovery.json` to match its recomputation from that archive byte
+for byte. A member that differs from its `born` event, a member too many or too few, and a
+missing or edited file are integrity errors. What a member gains in later generations
+(children, judgments, fitness, peer rating) is not in its `born` event, and `--verify`
+does not check it. It also derives a finished Run's stop reason from the checkpoint ("all
+generations done" or "call budget reached") instead of trusting the report. Without
+`report.json` it does not check `rediscovery.json` and says why: the Run is not finished,
+or its report is missing. A resume removes both files until the select phase is complete
+again. Since `--verify` refuses an edited file, `literature_checked` stays false in the
+Run, and a human's literature check is recorded outside it.
 
 **The experiment is fixed before it runs.** `docs/PREREG_STEP1_CIRCUITS.md` freezes the
 commit, the target list, the designer's constants, the calibration, the configuration,
