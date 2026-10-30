@@ -171,7 +171,9 @@ most 4 Stages of at most 3 Workers, the models `sim:small` (0.0005 per call) and
 `sim:large` (0.002 per call), and the circuit settings: every verified target, dressed,
 at most 64 gates per answer. The analysis refuses a Run whose settings differ from these
 in anything but the seed, the generations and the call cap, and it requires all Runs to
-share their generations and their call cap.
+share their generations and their call cap. It makes a claim only when these are the
+200 generations and the cap of 2 600 000 calls below and no Run ended at the cap;
+otherwise it prints the numbers and says that it makes no claim.
 
 **Length and cap.** The pilot sets `--generations 200` and `--max-calls 2600000`
 (section 10). By our count from the call bounds in `src/cascade/arena.rs`, generation 0
@@ -267,6 +269,8 @@ The experiment is void, and we make no claim, when any of these holds:
 4. A seed fails the gate 3 · |R_seed(s)| <= |L|. Then the positive control is too easy
    and must be recalibrated before a new pre-registration.
 5. A counted Run fails `brut-breed --verify`.
+6. A counted Run has other generations or another call cap than section 6, or it ended at
+   the call cap. The analysis then makes no claim.
 
 ## 10. The pilot seeds
 

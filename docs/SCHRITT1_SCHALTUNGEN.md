@@ -85,7 +85,8 @@ Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEX
   von Schaltungs-Kaskaden gehört nicht zu Schritt 1.
 - **Auswertung** (`examples/circuit_positive_control.rs`). Sie liest die fertigen Läufe
   beider Arme, paarweise nach Seed, und wendet die vorab festgelegten Regeln an
-  (Abschnitt 6).
+  (Abschnitt 6). Eine Aussage trifft sie nur für die vorab festgelegten Seeds, mit der
+  festgelegten Zahl der Generationen und der festgelegten Aufrufgrenze.
 - **Tests.** `tests/circuits.rs` hat 9 Tests: Schaltungsläufe sind über Prozesse hinweg
   wiederholbar und bestehen `--verify`; Stopp und Fortsetzen ergeben dieselbe Abstammung und
   dieselben `state`-Zeilen wie ein durchgehender Lauf; 1 und 4 Threads ergeben byte-gleiche

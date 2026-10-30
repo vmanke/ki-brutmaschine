@@ -78,7 +78,8 @@ pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.m
   a model call. `--promote` refuses circuit Runs with exit code 1, because promoting
   circuit Cascades is not part of step 1.
 - **Analysis** (`examples/circuit_positive_control.rs`). It reads the finished Runs of
-  both arms, paired by seed, and applies the pre-registered rules (section 6).
+  both arms, paired by seed, and applies the pre-registered rules (section 6). It makes a
+  claim only for the pre-registered seeds, generations and call cap.
 - **Tests.** `tests/circuits.rs` has 9 tests: circuit Runs are reproducible across
   processes and pass `--verify`; a stop and a resume give the same lineage and `state`
   lines as a straight Run; 1 and 4 threads give byte-equal files; `--promote` is refused;

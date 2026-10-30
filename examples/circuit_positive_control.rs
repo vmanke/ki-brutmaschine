@@ -23,10 +23,12 @@
 //! Cascades miss that a bred Cascade solves, exactly and at the reference cost, on at
 //! least one of the target's dressed search tasks. Every decision is made in integers.
 //!
-//! It makes a claim only for the pre-registered seeds 1 to 10 in both arms. For other
-//! seeds, such as the pilots 101 and 102, or for fewer seeds, it prints the numbers and
-//! says that it makes no claim. Run `brut-breed --out <dir> --verify` on every directory
-//! first: this program checks each count against its own target list, not the hash chain.
+//! It makes a claim only for the pre-registered seeds 1 to 10 in both arms, run with the
+//! pre-registered `--generations 200` and `--max-calls 2600000`, with no run ended at the
+//! call cap. For other seeds, such as the pilots 101 and 102, for fewer seeds, or for
+//! other generations or caps, it prints the numbers and says that it makes no claim. Run
+//! `brut-breed --out <dir> --verify` on every directory first: this program checks each
+//! count against its own target list, not the hash chain.
 //!
 //! Usage:
 //!   cargo run --example circuit_positive_control -- --a <dir>... --r <dir>...
@@ -46,6 +48,12 @@ use brutmaschine::cascade::qubit::Cost;
 
 /// The seeds the pre-registration counts.
 const COUNTED: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+/// The generations of every counted Run (docs/PREREG_STEP1_CIRCUITS.md, section 6).
+const GENERATIONS: usize = 200;
+
+/// The call cap of every counted Run, which no counted Run can reach (section 6).
+const MAX_CALLS: u64 = 2_600_000;
 
 /// A rule holds when it holds in at least this many of the 10 pairs.
 const NEEDED: usize = 9;
@@ -412,6 +420,33 @@ fn claim(rows: &[Row]) -> Claim {
     }
 }
 
+/// The claim the runs support, given what they share: `claim` of their rows, withheld
+/// unless every run has the pre-registered generations and call cap and none ended at the
+/// cap. A rule decided on another length or cap is not the pre-registered experiment.
+fn claim_in(context: &Context, rows: &[Row]) -> Claim {
+    let made = claim(rows);
+
+    if matches!(made, Claim::Withheld(_)) {
+        return made;
+    }
+
+    if (context.generations, context.max_calls) != (GENERATIONS, MAX_CALLS) {
+        return Claim::Withheld(format!(
+            "the runs have --generations {} and --max-calls {}, not the pre-registered {GENERATIONS} and {MAX_CALLS}",
+            context.generations, context.max_calls
+        ));
+    }
+
+    if !context.capped.is_empty() {
+        return Claim::Withheld(format!(
+            "{} run(s) ended at the call cap, which the pre-registered cap rules out",
+            context.capped.len()
+        ));
+    }
+
+    made
+}
+
 /// The verdict of a rule that holds in `count` pairs.
 fn verdict(claim: &Claim, count: usize) -> String {
     match claim {
@@ -423,12 +458,24 @@ fn verdict(claim: &Claim, count: usize) -> String {
 }
 
 /// What the runs share besides their results.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Context {
     generations: usize,
     max_calls: u64,
     /// Runs that ended at the call cap: seed, arm and generations completed.
     capped: Vec<(u64, Arm, usize)>,
+}
+
+impl Default for Context {
+    /// The context of the pre-registered Runs: their generations and call cap, and no run
+    /// at the cap.
+    fn default() -> Self {
+        Context {
+            generations: GENERATIONS,
+            max_calls: MAX_CALLS,
+            capped: Vec::new(),
+        }
+    }
 }
 
 fn show(share: Share) -> String {
@@ -501,7 +548,7 @@ fn render(context: &Context, pairs: &[Pair]) -> Result<String, String> {
 
     let full = statistic(pairs, Rule::Full)?;
     let t_only = statistic(pairs, Rule::TOnly)?;
-    let claim = claim(&full.rows);
+    let claim = claim_in(context, &full.rows);
     let mut out = String::new();
 
     out.push_str(
@@ -1055,6 +1102,66 @@ mod tests {
         let full = statistic(&pairs(&eleven, &[9; 11], &[0; 11]), Rule::Full).expect("pairs");
 
         assert!(matches!(claim(&full.rows), Claim::Withheld(_)));
+    }
+
+    #[test]
+    fn only_the_pre_registered_length_and_cap_make_a_claim() {
+        let all = pairs(&COUNTED, &[7; 10], &[4; 10]);
+        let frozen = Context::default();
+
+        assert_eq!((frozen.generations, frozen.max_calls), (200, 2_600_000));
+        assert!(frozen.capped.is_empty());
+
+        let text = render(&frozen, &all).expect("render");
+
+        assert!(
+            text.contains("every run: --generations 200, --max-calls 2600000"),
+            "{text}"
+        );
+        assert!(text.contains("PASSES"), "{text}");
+
+        // A longer or shorter run, another cap, or a run at the cap: the same numbers, but
+        // no rule decides, also not when a seed would void the experiment.
+        let mut voided = all.clone();
+
+        voided[3].a = found(&["swap", "cs", "cz", "ch"], &bred(7));
+        voided[3].r = found(&["swap", "cs", "cz", "ch"], &[]);
+
+        let other = [
+            Context {
+                generations: 60,
+                ..Context::default()
+            },
+            Context {
+                max_calls: 200_000,
+                ..Context::default()
+            },
+            Context {
+                capped: vec![(1, Arm::R, 2)],
+                ..Context::default()
+            },
+        ];
+
+        for context in &other {
+            for runs in [&all, &voided] {
+                let made = claim_in(context, &statistic(runs, Rule::Full).expect("pairs").rows);
+                let text = render(context, runs).expect("render");
+
+                assert!(matches!(made, Claim::Withheld(_)), "{made:?}");
+                assert!(text.contains("No claim"), "{text}");
+                assert!(text.contains("D_A > 1/2 in 10 of 10 seeds"), "{text}");
+                assert!(
+                    !text.contains("PASSES") && !text.contains("FAILS") && !text.contains("VOID"),
+                    "{text}"
+                );
+            }
+        }
+
+        // Fewer seeds keep their own reason.
+        let nine = pairs(&COUNTED[..9], &[9; 9], &[0; 9]);
+        let rows = statistic(&nine, Rule::Full).expect("pairs").rows;
+
+        assert_eq!(claim_in(&other[0], &rows), claim(&rows));
     }
 
     #[test]
