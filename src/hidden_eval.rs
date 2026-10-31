@@ -73,10 +73,20 @@ pub const MAX_EVAL_PARAMS: usize = HARD_MAX_PARAMS;
 
 /// Most forward FLOPs the evaluator spends on one CNN: its forward FLOPs per sample
 /// (`cnn::shape`) times the hidden split. A CNN reuses each weight at every position, so
-/// its parameter count does not bound its cost. At the 1.6 GFLOP/s that ticket 01 measured
-/// for a small CNN this is about a minute, within `EVAL_TIMEOUT_SECONDS`. A CNN within the
-/// default limits needs less than 3 % of it.
+/// its parameter count does not bound its cost. A CNN within the default limits needs less
+/// than 3 % of it.
+///
+/// The count alone does not bound the time. A plan of grouped or narrow convolutions with
+/// norms and activations spends most of its time copying values and calling candle, not
+/// multiplying: a file of 9.2e10 FLOPs took 179 s at one thread (ticket 02). So
+/// `MAX_EVAL_SECONDS` caps the estimated time as well, and that cap binds for such plans.
 pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
+
+/// Most seconds that scoring one CNN may take by the time model of `cnn::shape`
+/// (`Plan::eval_nanos` for the hidden split, in the chunks of `score::evaluate`): half of
+/// `EVAL_TIMEOUT_SECONDS`. Every file of the measurements of ticket 02 scored in less than
+/// 0.94 of its estimate, at one thread.
+pub const MAX_EVAL_SECONDS: f64 = 60.0;
 
 /// How long the orchestrator waits for one `brut-eval` answer before it stops the process.
 pub const EVAL_TIMEOUT_SECONDS: f64 = 120.0;
@@ -389,9 +399,10 @@ impl HiddenEvaluator {
 /// block, and /dev/zero reports length 0). The read itself stops after `MAX_MODEL_BYTES`,
 /// so a file that grows after the size check cannot exhaust memory either.
 ///
-/// A CNN file (`"kind":"cnn"`) is parsed with unknown fields refused and at most
-/// `HARD_MAX_PARAMS` values (`cnn::model`). Its dense head gets the caps of an MLP here; its
-/// shapes are checked against the task by `check_cnn`.
+/// A CNN file (`"kind":"cnn"`) is parsed with unknown fields refused, at most
+/// `HARD_MAX_PARAMS` trained values and at most `MAX_RUNNING_VALUES` running statistics
+/// (`cnn::model`). Its dense head gets the caps of an MLP here; its shapes are checked
+/// against the task by `check_cnn`.
 fn load_model(path: &Path) -> Result<Model> {
     let not_regular = || {
         BrutError::Invalid(format!(
@@ -486,8 +497,9 @@ fn check_cnn_head(model: &CnnModel) -> Result<()> {
 }
 
 /// Check a CNN file against the task before it is scored: the shape check of its genome,
-/// the parameter cap and `MAX_EVAL_FLOPS` for its architecture, then every value against
-/// its tensor (`CnnModel::check_values`). This builds no tensor and touches no hidden data.
+/// the parameter cap, `MAX_EVAL_FLOPS` and `MAX_EVAL_SECONDS` for its architecture, then
+/// every value against its tensor (`CnnModel::check_values`). This builds no tensor and
+/// touches no hidden data.
 fn check_cnn(model: &CnnModel, spec: &TaskSpec) -> Result<()> {
     let plan = model.plan(spec)?;
 
@@ -502,6 +514,15 @@ fn check_cnn(model: &CnnModel, spec: &TaskSpec) -> Result<()> {
     if flops > MAX_EVAL_FLOPS {
         return Err(BrutError::Invalid(format!(
             "scoring the model would cost {flops} FLOPs, max {MAX_EVAL_FLOPS}"
+        )));
+    }
+
+    let seconds = plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9;
+
+    if seconds > MAX_EVAL_SECONDS {
+        return Err(BrutError::Invalid(format!(
+            "scoring the model would take about {seconds:.0} s by the time model, max \
+             {MAX_EVAL_SECONDS} s"
         )));
     }
 

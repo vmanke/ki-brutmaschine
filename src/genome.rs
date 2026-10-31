@@ -8,7 +8,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::cnn::genome::CnnGenome;
-use crate::cnn::shape::Plan;
+use crate::cnn::shape::{Plan, TIME_BUDGET_FLOPS_PER_SECOND};
 use crate::config::Limits;
 use crate::task::TaskSpec;
 use crate::util::{BrutError, Result, log_uniform_f32, sha256_hex};
@@ -224,7 +224,8 @@ impl Genome {
     ///
     /// The training genes and the hidden layers follow the same rules for both kinds. A
     /// CNN must also pass the shape check (`CnnGenome::plan`). `max_params` and
-    /// `max_train_flops` hold for both kinds.
+    /// `max_train_flops` hold for both kinds. A CNN's estimated training time must also
+    /// stay within `max_train_flops / TIME_BUDGET_FLOPS_PER_SECOND` seconds (`cnn::shape`).
     pub fn validate(&self, limits: &Limits, spec: &TaskSpec) -> Result<()> {
         let fail = |m: String| Err(BrutError::Invalid(format!("genome: {m}")));
 
@@ -280,14 +281,16 @@ impl Genome {
             ));
         }
 
-        let (params, flops) = match &self.arch {
-            Arch::Mlp => (self.param_count(spec), self.train_flops(spec)),
+        let samples = (spec.n_train as f64) * (self.epochs as f64);
+        let (params, flops, seconds) = match &self.arch {
+            Arch::Mlp => (self.param_count(spec), self.train_flops(spec), 0.0),
             Arch::Cnn(cnn) => match cnn.plan(&self.hidden, self.activation, spec) {
                 Ok(plan) => (
                     plan.params,
                     plan.train_flops_per_sample()
                         .saturating_mul(spec.n_train as u64)
                         .saturating_mul(self.epochs as u64),
+                    plan.train_nanos_per_sample() * samples / 1e9,
                 ),
                 Err(BrutError::Invalid(m)) => return fail(m),
                 Err(e) => return Err(e),
@@ -302,6 +305,17 @@ impl Genome {
             return fail(format!(
                 "{flops} train FLOPs > max {}",
                 limits.max_train_flops
+            ));
+        }
+
+        // A CNN must also fit the time that its FLOP budget buys, so that the FLOP limit
+        // ends its training, not the clock (`cnn::shape`, "Time").
+        let budget = limits.max_train_flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND;
+
+        if seconds > budget {
+            return fail(format!(
+                "estimated training time {seconds:.1} s > {budget:.1} s, the time \
+                 max_train_flops buys a CNN"
             ));
         }
 

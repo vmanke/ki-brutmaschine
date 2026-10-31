@@ -46,7 +46,8 @@ impl Model {
     /// Parse a model file. Without a `"kind"` key it is an MLP; with `"kind":"cnn"` a CNN.
     ///
     /// The errors are generic: a parser's message could quote strings from the file. A CNN
-    /// file holds at most `config::HARD_MAX_PARAMS` values (see `CnnModel`), so a hostile
+    /// file holds at most `config::HARD_MAX_PARAMS` trained values and at most
+    /// `cnn::model::MAX_RUNNING_VALUES` running statistics (see `CnnModel`), so a hostile
     /// file cannot make the parser allocate more for them. The values are not checked
     /// against a task here; `CnnModel::check` does that.
     pub fn from_json(bytes: &[u8]) -> Result<Model> {

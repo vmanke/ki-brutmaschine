@@ -29,6 +29,24 @@
 //! in the MLP rule. Training costs 3 times the forward pass, since the backward pass costs
 //! twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per parameter
 //! and sample.
+//!
+//! Time. A FLOP of a CNN takes longer than a FLOP of an MLP, and how much longer depends on
+//! the layout: candle copies the kernel cells of every output position before it
+//! multiplies, runs each norm and activation as passes over all values, computes a grouped
+//! convolution group by group, and its backward pass of a 2-D convolution loops over every
+//! kernel cell. A plan of narrow layers at full size runs at 0.15 GFLOP/s by the count
+//! above, one of wide layers at 6 GFLOP/s (one thread, ticket 02). So the count alone
+//! cannot keep the training of a CNN within `max_candidate_seconds`; when the clock stops
+//! it, its result depends on the load of the machine. The time model therefore prices what
+//! the time goes into, the `Counts` of the plan, with the `TRAIN_NANOS_*` and `EVAL_NANOS_*`
+//! constants. They come from timing 47 CNNs on the machine that wrote this check, at one
+//! thread and with the opt-level 2 of `cargo test`, and they hold a safety factor: every
+//! measured time stayed below 0.86 of the training estimate and 0.94 of the scoring
+//! estimate. More threads made most plans faster; grouped convolutions got up to 15 %
+//! slower at four threads. `Genome::validate` holds a CNN's estimated training time to
+//! `max_train_flops` divided by `TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the default limits,
+//! and `brut-eval` holds the estimated time of scoring to `MAX_EVAL_SECONDS`. Another or a
+//! busier machine can be slower than the model; then the clock can still stop a candidate.
 
 use crate::cnn::genome::{
     CnnActivation, CnnGenome, ConvGenes, Dims, Downsample, GROUP_NORM_GROUPS, Head, MAX_CHANNELS,
@@ -138,7 +156,165 @@ impl Plan {
     pub fn train_flops_per_sample(&self) -> u64 {
         self.forward_flops.saturating_mul(3)
     }
+
+    /// Values of one sample in the input (all channels) and after every layer. Saturates.
+    pub fn values_per_row(&self) -> usize {
+        let input = self.input.channels.saturating_mul(self.input.positions());
+
+        self.steps.iter().fold(input, |acc, step| {
+            acc.saturating_add(step.output.channels.saturating_mul(step.output.positions()))
+        })
+    }
+
+    /// The counts of the time model for one sample (see "Time" in the module doc).
+    pub fn counts(&self) -> Counts {
+        let mut counts = Counts::default();
+        let mut before = &self.input;
+
+        for step in &self.steps {
+            let out = step.output.positions() as u64;
+            let values = (step.output.channels as u64).saturating_mul(out);
+            let axes = before.size.len() as u32;
+
+            counts.values = counts.values.saturating_add(values);
+
+            match step.layer {
+                Layer::Conv {
+                    inputs,
+                    kernel,
+                    groups,
+                    ..
+                } => {
+                    let cells = (kernel as u64).saturating_pow(axes);
+                    let taps = cells.saturating_mul(inputs as u64).saturating_mul(out);
+                    let tiles = (groups as u64).saturating_mul(out.div_ceil(TILE_POSITIONS));
+
+                    counts.taps = counts.taps.saturating_add(taps);
+                    counts.tiles = counts.tiles.saturating_add(tiles);
+                    counts.calls = counts.calls.saturating_add(groups as u64);
+
+                    if groups > 1 {
+                        let inputs = (inputs as u64).saturating_mul(before.positions() as u64);
+
+                        counts.group_inputs = counts
+                            .group_inputs
+                            .saturating_add(inputs.saturating_mul(groups as u64));
+                    }
+                }
+                Layer::Pool { window, .. } => {
+                    let cells = (window as u64).saturating_pow(axes);
+
+                    counts.pool_taps = counts.pool_taps.saturating_add(cells.saturating_mul(values));
+                    counts.calls = counts.calls.saturating_add(1);
+                }
+                Layer::Norm { .. }
+                | Layer::Activation(_)
+                | Layer::GlobalAvgPool
+                | Layer::Flatten
+                | Layer::Dense { .. } => counts.calls = counts.calls.saturating_add(1),
+            }
+
+            before = &step.output;
+        }
+
+        counts
+    }
+
+    /// Estimated training time of one sample (forward pass, backward pass and update), in
+    /// nanoseconds at one thread on the reference machine, safety factor included.
+    pub fn train_nanos_per_sample(&self) -> f64 {
+        let c = self.counts();
+
+        TRAIN_NANOS_PER_FLOP * self.train_flops_per_sample() as f64
+            + TRAIN_NANOS_PER_TAP * c.taps as f64
+            + TRAIN_NANOS_PER_VALUE * c.values as f64
+            + TRAIN_NANOS_PER_POOL_TAP * c.pool_taps as f64
+            + TRAIN_NANOS_PER_GROUP_INPUT * c.group_inputs as f64
+            + TRAIN_NANOS_PER_TILE * c.tiles as f64
+    }
+
+    /// Estimated time to score `rows` samples in chunks of at most `rows_per_chunk` rows,
+    /// in nanoseconds at one thread on the reference machine, safety factor included.
+    pub fn eval_nanos(&self, rows: usize, rows_per_chunk: usize) -> f64 {
+        let c = self.counts();
+        let chunks = rows.div_ceil(rows_per_chunk.max(1)) as f64;
+        let per_row = EVAL_NANOS_PER_FLOP * self.forward_flops as f64
+            + EVAL_NANOS_PER_TAP * c.taps as f64
+            + EVAL_NANOS_PER_VALUE * c.values as f64
+            + EVAL_NANOS_PER_POOL_TAP * c.pool_taps as f64
+            + EVAL_NANOS_PER_TILE * c.tiles as f64;
+
+        rows as f64 * per_row + chunks * EVAL_NANOS_PER_CALL * c.calls as f64
+    }
 }
+
+/// The counts of a plan that the time model prices, for one sample. Each saturates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Kernel cells that each convolution reads: kernel cells times input channels times
+    /// output positions. candle copies them into a matrix before it multiplies (im2col).
+    pub taps: u64,
+    /// Values after each layer.
+    pub values: u64,
+    /// Window cells of each pooling layer: window cells times output values.
+    pub pool_taps: u64,
+    /// The input values of each grouped convolution times its groups. candle splits the
+    /// input into one part per group, and the backward pass of each part fills a tensor of
+    /// the whole input.
+    pub group_inputs: u64,
+    /// Matrix products per sample: for each convolution, its groups times its tiles of
+    /// `TILE_POSITIONS` output positions.
+    pub tiles: u64,
+    /// Calls into candle per chunk of rows: one per group of each convolution, one per
+    /// other layer.
+    pub calls: u64,
+}
+
+/// Output positions per matrix product of candle's convolution (its `TILE_SIZE`).
+const TILE_POSITIONS: u64 = 512;
+
+/// Training nanoseconds per training FLOP of the plan.
+pub const TRAIN_NANOS_PER_FLOP: f64 = 0.05;
+
+/// Training nanoseconds per kernel cell read (`Counts::taps`).
+pub const TRAIN_NANOS_PER_TAP: f64 = 80.0;
+
+/// Training nanoseconds per value after a layer (`Counts::values`).
+pub const TRAIN_NANOS_PER_VALUE: f64 = 72.0;
+
+/// Training nanoseconds per window cell of a pooling layer (`Counts::pool_taps`).
+pub const TRAIN_NANOS_PER_POOL_TAP: f64 = 30.0;
+
+/// Training nanoseconds per input value and group of a grouped convolution
+/// (`Counts::group_inputs`).
+pub const TRAIN_NANOS_PER_GROUP_INPUT: f64 = 1.8;
+
+/// Training nanoseconds per matrix product of a convolution (`Counts::tiles`).
+pub const TRAIN_NANOS_PER_TILE: f64 = 5000.0;
+
+/// Scoring nanoseconds per forward FLOP of the plan.
+pub const EVAL_NANOS_PER_FLOP: f64 = 0.035;
+
+/// Scoring nanoseconds per kernel cell read (`Counts::taps`).
+pub const EVAL_NANOS_PER_TAP: f64 = 5.0;
+
+/// Scoring nanoseconds per value after a layer (`Counts::values`).
+pub const EVAL_NANOS_PER_VALUE: f64 = 8.5;
+
+/// Scoring nanoseconds per window cell of a pooling layer (`Counts::pool_taps`).
+pub const EVAL_NANOS_PER_POOL_TAP: f64 = 8.0;
+
+/// Scoring nanoseconds per matrix product of a convolution (`Counts::tiles`).
+pub const EVAL_NANOS_PER_TILE: f64 = 5000.0;
+
+/// Scoring nanoseconds per call into candle and chunk of rows (`Counts::calls`).
+pub const EVAL_NANOS_PER_CALL: f64 = 7500.0;
+
+/// FLOPs per second at which `max_train_flops` becomes a time budget for a CNN: 1 GFLOP/s.
+///
+/// The estimated training time of a valid CNN stays within `max_train_flops` divided by
+/// this rate, 20 s at the default limits (`Genome::validate`).
+pub const TIME_BUDGET_FLOPS_PER_SECOND: f64 = 1e9;
 
 impl CnnGenome {
     /// Shape inference: the layers this genome describes on the task `spec`.

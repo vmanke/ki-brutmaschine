@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cnn::model::CnnModel;
+use crate::cnn::shape::Plan;
 use crate::config::ScoreWeights;
 use crate::model::Model;
 use crate::nn::{Mlp, Workspace};
@@ -51,11 +52,19 @@ fn chunk_rows(sizes: &[usize]) -> usize {
 /// summed in order. For a CNN it does. candle's matrix products (gemm) may sum in another
 /// order when the number of rows changes, so a row's outputs can differ in the last bits
 /// between chunk sizes; the dense layers of the head show this. The scores of a CNN are
-/// therefore reproducible for this rule only: `rows_per_chunk` of
-/// `Evaluator::values_per_row`, with `EVAL_CHUNK` and `EVAL_MAX_FLOATS`. A change of any of
-/// them changes the bits of CNN validation and hidden scores, not those of MLPs.
+/// therefore reproducible for this rule only: `cnn_chunk_rows`, with `EVAL_CHUNK` and
+/// `EVAL_MAX_FLOATS`. A change of any of them changes the bits of CNN validation and hidden
+/// scores, not those of MLPs.
 fn rows_per_chunk(per_row: usize) -> usize {
     (EVAL_MAX_FLOATS / per_row.max(1)).clamp(1, EVAL_CHUNK)
+}
+
+/// Rows per chunk for a CNN of this plan: `rows_per_chunk` of `Plan::values_per_row`.
+///
+/// `evaluate` scores a CNN in chunks of this size, and `brut-eval` estimates the time of
+/// scoring with it before it scores (`Plan::eval_nanos`).
+pub(crate) fn cnn_chunk_rows(plan: &Plan) -> usize {
+    rows_per_chunk(plan.values_per_row())
 }
 
 impl Metrics {
@@ -118,6 +127,7 @@ fn evaluate_cnn(model: &CnnModel, spec: &TaskSpec, data: &Dataset) -> Metrics {
         Ok(evaluator) if shapes_ok => evaluator,
         _ => return Metrics::failed(spec.objective),
     };
+    // The same rule as `cnn_chunk_rows`, from the plan of the checked model.
     let rows = rows_per_chunk(evaluator.values_per_row());
 
     metrics(spec, data, rows, |x, rows| evaluator.outputs(x, rows).ok())

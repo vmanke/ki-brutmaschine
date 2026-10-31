@@ -186,14 +186,10 @@ impl CnnModel {
             .collect();
         let values = Values::from_plan_order(&specs, &self.params, running);
         let net = Net::new(&plan, &specs, &values)?;
-        let input = plan.input.channels.saturating_mul(plan.input.positions());
-        let values_per_row = plan.steps.iter().fold(input, |acc, step| {
-            acc.saturating_add(step.output.channels.saturating_mul(step.output.positions()))
-        });
 
         Ok(Evaluator {
             net,
-            values_per_row,
+            values_per_row: plan.values_per_row(),
             outputs: spec.n_out,
         })
     }
@@ -232,7 +228,7 @@ pub(crate) struct Evaluator {
 
 impl Evaluator {
     /// Values of one sample in the input (all channels) and after every layer of the
-    /// network. `score::evaluate` sizes its chunks of rows by it.
+    /// network (`Plan::values_per_row`). `score::evaluate` sizes its chunks of rows by it.
     ///
     /// It is not the memory of a row: the evaluation records no graph (`Net::forward_eval`),
     /// so it holds only a few layer outputs at a time, besides the buffers candle needs
