@@ -14,7 +14,11 @@ also writes observables after each generation, so we can study it as a universe 
 Q33). The decisions are in
 [ADR 0006](adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md), the
 pre-registered experiment in [PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md), the
-pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.md`.
+pilot Runs in [pilot-step1/](pilot-step1/README.md), and the terms in `CONTEXT.md`. The
+counted experiment has run and proved both pre-registered claims, the primary claim at pair
+15 and the claim about selection at pair 27 (section 7). Both concern the breeder as a
+positive control with the simulated designer; they say nothing about real language models.
+The data of the experiment are in [step1-counted/](step1-counted/README.md).
 
 ## 2. What step 1 built
 
@@ -391,6 +395,14 @@ pass times are in brackets.
 
 ## 7. The counted experiment
 
+**Result.** The counted experiment ran from 2026-10-30 at 22:32 UTC to 2026-10-31 at
+12:44 UTC, by the frozen pre-registration. The rule stopped after 27 seed pairs. The primary
+claim (ticket 03) is proven at pair 15. It says that more than half of all seeds pass by
+generation 1000. The secondary claim is proven at pair 27. It says that, among pairs without
+a tie, arm A passes first more often than arm R. Both claims concern the breeder as a
+positive control with the simulated designer; they say nothing about real language models.
+The data and scripts are in [step1-counted/](step1-counted/README.md).
+
 The settings of the counted Runs follow from the pilot Runs: `--generations 1000` and
 `--max-calls 13000000`. At a pass rate of 0.30, as by generation 200, the rule below fails
 with probability 1.000, after 9.1 pairs on average; so the ceiling could not stay at 200
@@ -420,6 +432,200 @@ rule "9 of 10" had 11/1024 = 0.0107, so the new bound is slightly stricter. It h
 if the seed list and its order are fixed, no seed of the list is skipped or replaced, and
 nothing changes after seed 1.
 
+**Procedure.** We built the program at the frozen commit
+`15cb15100a39db9d815674b0778ab6be30932e56`, with rustc 1.97.0 (2d8144b78 2026-07-07) on
+x86_64 Linux (Ubuntu 24.04.5 LTS). This commit was created on 2026-10-30 at 21:50 UTC by
+the merge of pull request #19. There, `cargo test --lib` passed (610 tests; none of the 7
+ignored ones is a calibration test), and so did `cargo test --test circuits` (18) and
+`cargo test --example circuit_positive_control` (31). Before seed 1, the acceptance check
+on the pilot pairs 301 to 309 gave exactly the pass times and evidence values that the
+pre-registration names in section 6, step 2, in the analysis and in `reference_rule.py`;
+the analysis withheld the claim there, as required. Then a driver script
+([step1-driver.sh](step1-counted/step1-driver.sh)) ran the pairs in the order of the list,
+one process at a time. After each pair it checked both Runs with `--verify`, recorded the
+hashes of their five files and called the frozen analysis, which named the next seed. Right
+after pair 1, seed 1 ran again in both arms with 1 and with 4 threads. For the counted Runs
+the driver did not set `RAYON_NUM_THREADS`; rayon then takes one thread per CPU, and the
+container reported 4 CPUs after the experiment.
+
+**Verdicts.**
+
+- **Primary claim (ticket 03): proven at pair 15.** After 15 pairs with 14 passes of arm A,
+  E1 = 3^14/2^15 = 145.9646 reached 100 for the first time. At the stop after 27 pairs,
+  E1 = 3^24/2^27 = 2104.2640; arm A passed on 24 of the 27 seeds.
+- **Secondary claim (selection): proven at pair 27.** At the stop,
+  E2 = 3^20/2^25 = 103.9143. Among the 25 pairs without a tie, arm A passed first 20 times
+  and arm R 5 times (pairs 5, 9, 11, 20 and 25). In pairs 10 and 19 neither Run passed;
+  they count as ties. The secondary claim counts because the primary claim is proven, as
+  the fixed sequence of section 8 of the pre-registration requires.
+
+So we make the pre-registered claim (pre-registration, section 11): breeding assembles
+prompts and Traits that unlock exact, reference-cost syntheses for most library targets the
+seed Cascades miss, in more than half of all seeds within 1000 generations. Darwin Gödel
+selection gets there sooner than a uniform choice of parents with the same number of
+children: among untied pairs, arm A passes first more often than arm R. Both are claims
+about the breeder as a positive control, not about real models, and not about inventions.
+
+**Stop.** The rule stopped after pair 27, by the second of its three stop rules: the
+primary claim was proven, and E2 had crossed a threshold. After pair 26, E2 stood at
+69.2762. In pair 27 arm A passed in generation 126 and arm R never, so E2 rose by the
+factor 3/2 to 103.9143. No pair ran after the stop. We report both evidence values at the
+stop, not their largest values along the way.
+
+**Per pair.** Table 5 gives what section 8 of the pre-registration requires per pair. Pair
+i has seed i. D is the share of the 9 targets the seed Cascades miss that bred Cascades
+solve by generation 1000. "never" means no pass time by generation 1000. X is 1 when arm A
+passes, else 0. Y names the arm that passed first. E1 and E2 hold after the pair, rounded
+to four decimal places; their fractions are in [analysis.txt](step1-counted/analysis.txt).
+
+Table 5: the 27 counted pairs.
+
+| Pair | R_seed | D_A | D_R | T_A | T_R | X | Y | E1 | E2 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | SWAP, CS | 7/9 | 2/9 | 574 | never | 1 | A first | 1.5000 | 1.5000 |
+| 2 | SWAP, CS | 7/9 | 6/9 | 199 | 376 | 1 | A first | 2.2500 | 2.2500 |
+| 3 | SWAP, CS | 7/9 | 7/9 | 278 | 665 | 1 | A first | 3.3750 | 3.3750 |
+| 4 | SWAP, CS | 7/9 | 2/9 | 65 | never | 1 | A first | 5.0625 | 5.0625 |
+| 5 | SWAP, CS | 7/9 | 6/9 | 227 | 61 | 1 | R first | 7.5938 | 2.5312 |
+| 6 | SWAP, CS | 7/9 | 2/9 | 296 | never | 1 | A first | 11.3906 | 3.7969 |
+| 7 | SWAP, CS | 8/9 | 3/9 | 557 | never | 1 | A first | 17.0859 | 5.6953 |
+| 8 | SWAP, CS | 7/9 | 2/9 | 211 | never | 1 | A first | 25.6289 | 8.5430 |
+| 9 | SWAP, CS | 7/9 | 7/9 | 184 | 126 | 1 | R first | 38.4434 | 4.2715 |
+| 10 | SWAP, CS | 2/9 | 2/9 | never | never | 0 | tie | 19.2217 | 4.2715 |
+| 11 | SWAP, CS | 7/9 | 7/9 | 56 | 18 | 1 | R first | 28.8325 | 2.1357 |
+| 12 | SWAP, CS | 7/9 | 7/9 | 107 | 916 | 1 | A first | 43.2488 | 3.2036 |
+| 13 | SWAP, CS | 7/9 | 2/9 | 47 | never | 1 | A first | 64.8732 | 4.8054 |
+| 14 | SWAP, CS | 7/9 | 7/9 | 20 | 220 | 1 | A first | 97.3098 | 7.2081 |
+| 15 | SWAP, CS | 7/9 | 2/9 | 28 | never | 1 | A first | 145.9646 | 10.8122 |
+| 16 | SWAP, CS | 7/9 | 3/9 | 610 | never | 1 | A first | 218.9469 | 16.2183 |
+| 17 | SWAP, CS | 7/9 | 7/9 | 204 | 618 | 1 | A first | 328.4204 | 24.3274 |
+| 18 | SWAP, CS | 7/9 | 2/9 | 62 | never | 1 | A first | 492.6306 | 36.4912 |
+| 19 | SWAP, CS | 3/9 | 3/9 | never | never | 0 | tie | 246.3153 | 36.4912 |
+| 20 | SWAP, CS | 3/9 | 7/9 | never | 116 | 0 | R first | 123.1577 | 18.2456 |
+| 21 | SWAP, CS | 7/9 | 2/9 | 225 | never | 1 | A first | 184.7365 | 27.3684 |
+| 22 | SWAP, CS | 7/9 | 2/9 | 304 | never | 1 | A first | 277.1047 | 41.0526 |
+| 23 | SWAP, CS | 7/9 | 7/9 | 158 | 182 | 1 | A first | 415.6571 | 61.5788 |
+| 24 | SWAP, CS | 7/9 | 7/9 | 23 | 37 | 1 | A first | 623.4856 | 92.3682 |
+| 25 | SWAP, CS | 7/9 | 6/9 | 629 | 439 | 1 | R first | 935.2285 | 46.1841 |
+| 26 | SWAP, CS | 7/9 | 2/9 | 923 | never | 1 | A first | 1402.8427 | 69.2762 |
+| 27 | SWAP, CS | 7/9 | 2/9 | 126 | never | 1 | A first | 2104.2640 | 103.9143 |
+
+**Error bounds.** By section 8 of the pre-registration, however the experiment ends, each
+of the two claims is made falsely with probability at most 1/100, and some claim is made
+falsely with probability at most 1/100. This follows from Ville's inequality for test
+supermartingales and from the fixed sequence of the two claims; for the primary claim the
+worst case is 0.0079. The bounds require that the seed list and its order are fixed, that
+no seed of the list is skipped or replaced, that the evidence values follow the order of
+the list, and that nothing changes after seed 1. We met these conditions. The seeds 1 to 27
+ran in this order. All 54 `config.json` hold exactly the settings of section 6 of the
+pre-registration, with the seed of their pair and, in arm R, the uniform parent choice. The
+driver ran at the frozen commit at both of its starts. A-12 ran again from scratch on the
+same seed after an interruption (deviation 1, below). The assumption that the seeds act as
+independent draws cannot be checked. We assume it, because the random streams of a Run are
+derived from a hash of its seed.
+
+**Recount.** Before this report, `reference_rule.py`, an independent implementation of the
+rule, recounted the result from the run directories
+([recount.txt](step1-counted/recount.txt)). It gave the same 27 rows (T_A, T_R, X, Y, E1
+and E2), the same stop after pair 27 and the same verdicts as the frozen analysis; there is
+no difference. A third script, [make_counted.py](step1-counted/make_counted.py),
+recomputes these numbers from `rediscovery.json` once more, compares them with both outputs
+and with the recorded hashes, and writes [counted.json](step1-counted/counted.json). It
+stops at any difference; on the 54 Runs it ran through. All 270 hashes (27 pairs, 2 arms,
+5 files) match the files.
+
+**Void conditions.** None of the six conditions of section 9 of the pre-registration
+holds:
+
+1. No counted Run raised an integrity alarm. All 54 ended with exit code 0 and wrote
+   `rediscovery.json`.
+2. The thread check found no differing byte. `config.json`, `events.jsonl`,
+   `snapshot.json`, `report.json` and `rediscovery.json` of seed 1 are, in both arms, at 1
+   and at 4 threads equal to those of the counted Runs. We compared the 20 files again after
+   the experiment.
+3. Every calibration test of section 5 of the pre-registration passed at the frozen commit
+   (Procedure, above).
+4. Every pair meets the gate 3 · |R_seed| ≤ |L|: in all 54 Runs the seed Cascades solve
+   exactly SWAP and CS, and 3 · 2 = 6 ≤ 11.
+5. All 54 counted Runs passed `--verify`; the last line ended each time in "report
+   recomputed and equal; rediscovery recomputed and equal". The same holds for the four
+   Runs of the thread check.
+6. All 54 Runs have 1000 generations and the call cap 13 000 000, and all ended with "all
+   generations done"; none ended at the cap.
+
+**Descriptive results.** The numbers below carry no verdict (pre-registration, section 8).
+
+- **Median of D_A** (descriptive). Over the 27 pairs it is 7/9 = 0.778. D_A was 7/9 in 23
+  pairs, 8/9 once (seed 7), 3/9 twice (seeds 19 and 20) and 2/9 once (seed 10).
+- **T-only variant** (descriptive). The seed Cascades then also solve CCZ in every Run, with
+  7 T and 10 CNOT, so 8 targets are open. D_A is then 7/8 in 15 seeds, 6/8 in 9, 4/8 once
+  (seed 10) and 3/8 twice (seeds 19 and 20); D_R is 7/8 in 6 seeds, 6/8 in 5, 5/8 once
+  (seed 2), 4/8 once (seed 13) and 3/8 in 14. So D_A > 1/2 holds in 24 of the 27 seeds,
+  D_R > 1/2 in 12. The values per seed are in `analysis.txt` and `counted.json`.
+- **First solution per target** (descriptive). Table 6 counts on how many seeds a bred
+  member of each arm solved the target, and gives the median of the generation in which it
+  first fell; the values per seed are in `analysis.txt`. Only one Run solved CH, A-7 in
+  generation 594. No Run solved Fredkin at the reference; exact Fredkin circuits with 7 T
+  and 8 to 12 CNOT were found by 15 Runs of arm A and 7 of arm R.
+- **Calls to the first hit** (descriptive). We take `calls_used` of the generation in which
+  a target first fell. Table 6 gives the median, `counted.json` the value per Run and
+  target.
+- **Call cap and inventions** (descriptive). No Run ended at the call cap, and no Run found
+  an invention candidate.
+- **Best single-Cascade coverage** (descriptive). The member of the archive with the most
+  solved search tasks solves 12 to 27 of the 33 in arm A (median 27), 9 to 27 in arm R
+  (median 12). The best member by fitness solves 9 to 27 in arm A (median 27), 3 to 27 in
+  arm R (median 9); in 32 of the 54 Runs it solves as many.
+- **Select panel** (descriptive). The best finalist solves 6 to 18 of the 22 select tasks in
+  arm A (median 18), 4 to 18 in arm R (median 6). The best seed Cascade solves 2 in every
+  Run.
+- **Trajectories** (descriptive). The `state` lines of every tenth generation are in
+  `counted.json`, per Run.
+
+Table 6: the targets in the 27 seeds per arm (descriptive). The medians hold for the Runs
+that solved the target; the calls count to the end of the generation of the first solution.
+A star marks SWAP and CS, which the seed Cascades already solve; the columns count bred
+Cascades here.
+
+| Target | Seeds solved, A | Seeds solved, R | First generation, median A | First generation, median R | Calls by then, median A (thousands) | Calls by then, median R (thousands) |
+|---|---|---|---|---|---|---|
+| CZ | 27 | 27 | 12 | 5 | 6.8 | 2.9 |
+| SWAP* | 27 | 27 | 1 | 1 | 0.5 | 0.5 |
+| CS* | 27 | 27 | 1 | 1 | 0.5 | 0.5 |
+| CH | 1 | 0 | 594 | – | 814.7 | – |
+| QFT2 | 24 | 12 | 201.5 | 201 | 186.4 | 151.2 |
+| CCZ | 27 | 27 | 24 | 37 | 16.4 | 22.2 |
+| Toffoli | 24 | 10 | 207.5 | 298 | 195.5 | 241.0 |
+| Peres | 24 | 12 | 201.5 | 201 | 186.4 | 151.2 |
+| Fredkin | 0 | 0 | – | – | – | – |
+| RTOF | 24 | 11 | 201.5 | 182 | 186.4 | 131.3 |
+| CCiX | 26 | 15 | 107 | 220 | 102.4 | 171.2 |
+
+**Calls and wall time.** Both are in `counted.json` per Run; here is the summary. A Run of
+arm A used 963 146 to 1 409 998 calls (mean 1 080 499), one of arm R 780 867 to 958 373
+(mean 853 058). By generation 1000 it was at most 1 409 602 (A-18), far below the bound of
+12 723 412 of section 6 of the pre-registration. As wall time we measure the time between
+the "start" and the "done" line of a Run in the driver's log, to the second. A Run took
+4.87 to 11.18 min in arm A (mean 7.36 min) and 4.33 to 5.92 min in arm R (mean 5.01 min),
+a pair 10.30 to 15.95 min (mean 12.37 min). The 54 Runs took 5.57 hours together, the four
+Runs of the thread check 33.6 min: A-1 at 1 thread 14.42 min, at 4 threads 8.00 min, R-1
+6.23 and 4.95 min. Beforehand we had expected 26 to 46 pairs on average, that is 5.8 to
+10.1 hours including 0.42 hours for the thread check; for it we had assumed the duration of
+two pairs at 2 threads. We measured 5.57 hours for 27 pairs and 0.56 hours for the thread
+check, 6.13 hours together. The pilot Runs ran at 2 threads, the counted ones at the
+default, so their wall times are not directly comparable.
+
+**Deviation 1.** A container restart between 2026-10-31 at 01:18:49 UTC and about 09:11 UTC
+interrupted Run A-12. It had started at 01:18:49 UTC and had no `report.json` yet. Pairs 1
+to 11 were finished and verified, and their 110 hashes still matched after the restart. The
+driver started again at 09:20:01 UTC (`driver.log`); `deviations.txt` gives 09:20:04 UTC,
+the time of the second check of R-1 in `driver.log`. Following section 6, step 3 of the
+pre-registration, the driver deleted the unfinished directory at 09:20:09 UTC and ran A-12
+again from scratch on the same seed, until 09:27:40 UTC. No finished pair ran again or
+changed. At the restart the driver checked pair 1 again with `--verify` and wrote its ten
+hashes a second time into [hashes.txt](step1-counted/hashes.txt); both copies are equal
+([deviations.txt](step1-counted/deviations.txt), [driver.log](step1-counted/driver.log)).
+
 **Why 100 and 120 pairs.** On 2026-10-30 the owner first approved the threshold 20 with at
 most 60 pairs. Later that day the owner asked for the scientifically load-bearing version
 and named no numbers. Claude, the AI assistant that works on this repository, then ran a
@@ -430,8 +636,8 @@ independent judges of the review each favoured a different design: 40 with at mo
 pairs, 1024/11 with 120 and 100 with 120. An adversarial critic recomputed the numbers and
 upheld 1024/11 with 120 pairs (bound 11/1024 = 0.0107), on the condition of a fixed list
 of counted seeds. Claude chose the threshold 100 with 120 pairs and the seed list above.
-The owner confirms this choice with the squash merge of the pull request, which freezes
-the pre-registration; until then nothing is frozen and no counted seed runs.
+The owner confirmed this choice with the squash merge of pull request #19, which froze the
+pre-registration at commit 15cb151; only then did seed 1 start.
 
 Three of the 16 designs side by side, from
 `.scratch/universum-erfinden/sequential-rule/designs.txt`; the last three columns hold the
@@ -473,36 +679,33 @@ passes in 11 Runs with a uniform prior), the chance of a true proof is about the
 0.827 against 0.829. What the change buys is a false success about five times less likely,
 at more computing time.
 
-After each pair the analysis runs and names the next seed or gives the verdict. Right after
-pair 1 we run seed 1 in both arms again with 1 and with 4 threads; all files but
-`timings.jsonl` must be byte-equal. Before the report,
-`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
-recounts the result independently.
-
-If the pilot rates hold, the primary claim is proven with probability 0.86 to 0.99. We
-then expect 26 to 46 seed pairs on average, that is 5.8 to 10.1 hours of computing at
-12.68 min per pair, including 0.42 hours for the check with 1 and 4 threads. We assume
-that this check takes as long as two pairs at 2 threads; we have not timed it at 1 or 4
-threads. In the worst case the experiment takes 120 pairs: 28.6 hours at the pace of the
-slowest pilot pair, 29.4 hours if every pair had the slowest Runs of both arms, so about
-29 hours. The check with 1 and 4 threads comes on top. The former design, threshold 20
-with at most 60 pairs, would have taken 4.0 to 6.6 hours on average and at most about 15
-hours.
-
 ## 8. Limits
 
 - **Positive control.** The designer is not a language model. Its numbers show whether
-  breeding finds genes that we know exist; they say nothing about real models.
-- **Counted Runs are still to come.** The owner confirmed six points on 2026-10-30: exact
+  breeding finds genes that we know exist; they say nothing about real models. This holds
+  for the two claims of the counted experiment too.
+- **Approval and freeze.** The owner confirmed six points on 2026-10-30: exact
   equality as the criterion (it tightens Q38), scoring by T first and CNOT second, the
   `state` line in grid Runs too, no promotion of circuit Cascades in step 1, the rule
   across seeds of section 7 in place of the 9-of-10 rule, and the panel sizes 33 and 22.
   Later that day the owner asked for the scientifically load-bearing version. After a
   review of 16 designs, Claude, the AI assistant, chose the proof threshold 100, the cap
   of 120 pairs and the seed list of section 7. The pre-registration implements these
-  points. It is frozen at the one commit that the squash merge of its pull request creates
-  on the main branch; with that merge the owner confirms Claude's choice. There are no
-  counted Runs yet; every number in this report comes from pilot Runs.
+  points. It was frozen at commit 15cb151, which the squash merge of its pull request #19
+  created on the main branch. With that merge the owner confirmed Claude's choice. The
+  counted Runs ran only after that (section 7). Numbers from counted Runs appear only in
+  sections 1, 7 and 8; all other numbers from Runs come from pilot Runs.
+- **What the counted experiment shows.** The primary claim rejects the null hypothesis that
+  at most half of all seeds pass by generation 1000. The secondary claim rejects the null
+  hypothesis that, among pairs without a tie, arm A passes first at most as often as arm R.
+  The rule makes each of the two claims falsely with probability at most 1/100, under the
+  assumptions of section 8 of the pre-registration. These assumptions hold when the seeds
+  act as independent draws, which we assume.
+- **What it does not show.** The experiment does not estimate the pass rate. 24 passes in
+  27 seeds is a descriptive count. Since the stop depended on the data, a confidence
+  interval for a fixed number of seeds does not hold here, and we give none.
+  Nor does the secondary claim say by how many generations arm A passes sooner. E2 reached
+  the threshold 100 only at pair 27, where the rule stopped.
 - **What the pilot shows.** The calibration holds in every finished pilot Run. By
   generation 1000, arm A passed in 9 of 11 Runs and arm R in 2 of 10, and in 8 of the 10
   pairs whose arms both went that far, arm A passed first. The nine Runs of the first
@@ -516,12 +719,14 @@ hours.
   after generation 1000 counts as a failure. At the rate 0.710 the rule ends as failed with
   probability 0.114 and without a verdict with 0.025; a failed primary claim proves no
   rate of 1/2 or less. If the true rate is only 0.6, the primary claim is proven with
-  probability 0.18. So with the current genes the counted experiment may well fail. The
-  genes stay as they are; any change would need new pilot Runs and a new
-  pre-registration.
-- **CH and Fredkin.** No pilot Run solved them. The routes the tests pin to them are long:
-  CH falls to Search and Meet from 3 124 thinking tokens on `sim:large`; Fredkin to
-  Compose besides Hadamard, Phase and Linear, and to 7 CNOT only with Simplify.
+  probability 0.18. So with the current genes the counted experiment might well have
+  failed; it proved both claims (section 7). The genes stayed as they were; any change
+  would have needed new pilot Runs and a new pre-registration.
+- **CH and Fredkin.** No pilot Run solved them. Of the 54 counted Runs only A-7 solved CH,
+  in generation 594, and none solved Fredkin at the reference. The routes the tests pin to
+  them are long: CH falls to Search and Meet from 3 124 thinking tokens on `sim:large`;
+  Fredkin to Compose besides Hadamard, Phase and Linear, and to 7 CNOT only with
+  Simplify.
 - **Derived bounds.** For four counts the bound is derived: CS with 2 CNOT, CH with 2 T,
   RTOF and CCiX with 4 T each. The count is in a source; that it cannot be beaten, the
   research derives from published results. If an exact answer goes below such a count,
@@ -530,15 +735,16 @@ hours.
   could fool both alike. Against it stand the cross-check with `quantum.rs`, the targets
   built from their definitions, and the witness circuits, most of them from the
   literature, the others built and checked by the research for step 1.
-- **Platform.** The hashes of the first pilot hold for rustc 1.97.0 on x86_64 Linux.
+- **Platform.** The hashes of the first pilot and of the counted Runs
+  ([hashes.txt](step1-counted/hashes.txt)) hold for rustc 1.97.0 on x86_64 Linux.
   Elsewhere a floating-point function may round its last bit differently; then the Runs
   differ.
-- **No Mutator in the pilot.** The pilot Runs have no LLM rounds (`llm_every` 0). What
-  Claude changes as the Mutator on circuits we have not measured.
-- **Inventions.** No pilot Run found an invention candidate. A candidate is no invention
-  until a human has checked the literature. Since `--verify` refuses a changed
-  `rediscovery.json`, `literature_checked` stays `false` in the Run; the result of such a
-  check belongs in a report.
+- **No Mutator.** The pilot Runs and the counted Runs have no LLM rounds (`llm_every` 0).
+  What Claude changes as the Mutator on circuits we have not measured.
+- **Inventions.** No pilot Run and no counted Run found an invention candidate. A candidate
+  is no invention until a human has checked the literature. Since `--verify` refuses a
+  changed `rediscovery.json`, `literature_checked` stays `false` in the Run; the result of
+  such a check belongs in a report.
 
 ## 9. Sources
 

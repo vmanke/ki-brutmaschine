@@ -1,6 +1,6 @@
 # Spec: Universes that invent (overseers, soul, qubits)
 
-Status: ready-for-agent (step 1), needs-triage (later steps)
+Status: done (step 1), needs-triage (later steps)
 
 Builds on Stage 2c (docs/adr/0005-*.md, `.scratch/kaskaden-zucht/`). Decided in the
 grilling session of 2026-10-29, questions Q24 to Q47 (Q1 to Q23 are in the Stage 2c spec).

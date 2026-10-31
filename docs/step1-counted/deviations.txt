@@ -1,0 +1,6 @@
+Deviation 1 (container restart).
+- The container of the session was restarted between 2026-10-31T01:18:49Z and about 09:11Z.
+- The restart interrupted run runs/A-12, which had started at 01:18:49Z. It had no report.json.
+- Pairs 1 to 11 were finished and verified before the restart. All 110 recorded hash lines (11 pairs x 2 arms x 5 files) still matched after the restart.
+- The driver was restarted at 2026-10-31T09:20:04Z. Per PREREG section 6 step 3 it deleted the unfinished run A-12 and reran it from scratch.
+- No result of a finished pair was changed or rerun.

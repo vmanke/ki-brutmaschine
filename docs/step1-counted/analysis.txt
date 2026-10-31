@@ -1,0 +1,119 @@
+Step 1 circuit positive control: the frozen analysis of docs/PREREG_STEP1_CIRCUITS.md
+27 seed pair(s); every run: --generations 1000, --max-calls 13000000.
+
+Void conditions checked here: every counted seed passes the calibration gate |R_seed| <= |L| / 3.
+Checked elsewhere: integrity alarms (a run with one has no rediscovery.json and is refused here), brut-breed --verify on every run, equal logs at 1 and 4 threads (seed 1, both arms), and the calibration test at the frozen commit.
+
+Pre-registered rule: a target counts when an exact answer reaches its T and CNOT reference.
+ seed  |L|  R_seed                              D_A               D_R               calibrated
+    1   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+    2   11  2: cs, swap                         7/9 = 0.778       6/9 = 0.667       yes
+    3   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+    4   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+    5   11  2: cs, swap                         7/9 = 0.778       6/9 = 0.667       yes
+    6   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+    7   11  2: cs, swap                         8/9 = 0.889       3/9 = 0.333       yes
+    8   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+    9   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   10   11  2: cs, swap                         2/9 = 0.222       2/9 = 0.222       yes
+   11   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   12   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   13   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   14   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   15   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   16   11  2: cs, swap                         7/9 = 0.778       3/9 = 0.333       yes
+   17   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   18   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   19   11  2: cs, swap                         3/9 = 0.333       3/9 = 0.333       yes
+   20   11  2: cs, swap                         3/9 = 0.333       7/9 = 0.778       yes
+   21   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   22   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   23   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   24   11  2: cs, swap                         7/9 = 0.778       7/9 = 0.778       yes
+   25   11  2: cs, swap                         7/9 = 0.778       6/9 = 0.667       yes
+   26   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+   27   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+Median D_A over the 27 counted pair(s), descriptive: 7/9 = 0.7778.
+
+Sequential rule, in seed order: T is the first generation with D > 1/2, never when there is none by generation 1000; X = 1 when arm A passes; first is the arm with the smaller T.
+E1 = 3^passes / 2^pairs and E2 = 3^(A first) / 2^(untied pairs). A claim is proven when its E first reaches 100 and fails when it first falls to 1/20; the secondary counts only if the primary is proven.
+ seed    T_A    T_R  X  first  E1                      E2
+    1    574  never  1  A      3/2 = 1.5000            3/2 = 1.5000
+    2    199    376  1  A      9/4 = 2.2500            9/4 = 2.2500
+    3    278    665  1  A      27/8 = 3.3750           27/8 = 3.3750
+    4     65  never  1  A      81/16 = 5.0625          81/16 = 5.0625
+    5    227     61  1  R      243/32 = 7.5938         81/32 = 2.5312
+    6    296  never  1  A      729/64 = 11.3906        243/64 = 3.7969
+    7    557  never  1  A      2187/128 = 17.0859      729/128 = 5.6953
+    8    211  never  1  A      6561/256 = 25.6289      2187/256 = 8.5430
+    9    184    126  1  R      19683/512 = 38.4434     2187/512 = 4.2715
+   10  never  never  0  tie    19683/1024 = 19.2217    2187/512 = 4.2715
+   11     56     18  1  R      59049/2048 = 28.8325    2187/1024 = 2.1357
+   12    107    916  1  A      177147/4096 = 43.2488   6561/2048 = 3.2036
+   13     47  never  1  A      531441/8192 = 64.8732   19683/4096 = 4.8054
+   14     20    220  1  A      1594323/16384 = 97.3098  59049/8192 = 7.2081
+   15     28  never  1  A      4782969/32768 = 145.9646  177147/16384 = 10.8122
+   16    610  never  1  A      14348907/65536 = 218.9469  531441/32768 = 16.2183
+   17    204    618  1  A      43046721/131072 = 328.4204  1594323/65536 = 24.3274
+   18     62  never  1  A      129140163/262144 = 492.6306  4782969/131072 = 36.4912
+   19  never  never  0  tie    129140163/524288 = 246.3153  4782969/131072 = 36.4912
+   20  never    116  0  R      129140163/1048576 = 123.1577  4782969/262144 = 18.2456
+   21    225  never  1  A      387420489/2097152 = 184.7365  14348907/524288 = 27.3684
+   22    304  never  1  A      1162261467/4194304 = 277.1047  43046721/1048576 = 41.0526
+   23    158    182  1  A      3486784401/8388608 = 415.6571  129140163/2097152 = 61.5788
+   24     23     37  1  A      10460353203/16777216 = 623.4856  387420489/4194304 = 92.3682
+   25    629    439  1  R      31381059609/33554432 = 935.2285  387420489/8388608 = 46.1841
+   26    923  never  1  A      94143178827/67108864 = 1402.8427  1162261467/16777216 = 69.2762
+   27    126  never  1  A      282429536481/134217728 = 2104.2640  3486784401/33554432 = 103.9143
+Primary (ticket 03): E1 = 282429536481/134217728 = 2104.2640 after 27 pair(s); it reached 100 at pair 15.
+Secondary (selection): E2 = 3486784401/33554432 = 103.9143 after 27 pair(s); it reached 100 at pair 27.
+The rule stops after pair 27.
+Primary (ticket 03): PROVEN at pair 15. More than half of all seeds pass within 1000 generations.
+Secondary (selection): PROVEN at pair 27. Among untied pairs, arm A passes first more often than arm R.
+
+T-only variant, descriptive with no verdict: a target counts when an exact answer reaches its T reference, and its CNOT reference where that T count is 0.
+ seed  |L|  R_seed                              D_A               D_R               calibrated
+    1   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+    2   11  3: ccz, cs, swap                    7/8 = 0.875       5/8 = 0.625       yes
+    3   11  3: ccz, cs, swap                    7/8 = 0.875       7/8 = 0.875       yes
+    4   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+    5   11  3: ccz, cs, swap                    6/8 = 0.750       6/8 = 0.750       yes
+    6   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+    7   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+    8   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+    9   11  3: ccz, cs, swap                    6/8 = 0.750       6/8 = 0.750       yes
+   10   11  3: ccz, cs, swap                    4/8 = 0.500       3/8 = 0.375       yes
+   11   11  3: ccz, cs, swap                    6/8 = 0.750       6/8 = 0.750       yes
+   12   11  3: ccz, cs, swap                    7/8 = 0.875       7/8 = 0.875       yes
+   13   11  3: ccz, cs, swap                    7/8 = 0.875       4/8 = 0.500       yes
+   14   11  3: ccz, cs, swap                    7/8 = 0.875       7/8 = 0.875       yes
+   15   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+   16   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+   17   11  3: ccz, cs, swap                    7/8 = 0.875       7/8 = 0.875       yes
+   18   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+   19   11  3: ccz, cs, swap                    3/8 = 0.375       3/8 = 0.375       yes
+   20   11  3: ccz, cs, swap                    3/8 = 0.375       7/8 = 0.875       yes
+   21   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+   22   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+   23   11  3: ccz, cs, swap                    6/8 = 0.750       7/8 = 0.875       yes
+   24   11  3: ccz, cs, swap                    7/8 = 0.875       6/8 = 0.750       yes
+   25   11  3: ccz, cs, swap                    7/8 = 0.875       6/8 = 0.750       yes
+   26   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+   27   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+T-only variant: D_A > 1/2 in 24 of 27 counted seed(s).
+
+Descriptive: the first generation in which a bred Cascade solved each target, arm A|arm R (- never; * a target the seed Cascades solve).
+target            s1        s2        s3        s4        s5        s6        s7        s8        s9       s10       s11       s12       s13       s14       s15       s16       s17       s18       s19       s20       s21       s22       s23       s24       s25       s26       s27
+cz               2|8       7|8      37|7       5|1      55|2      36|5       6|9       4|7       9|4      32|7      1|14       5|1     11|12     22|12      25|2      31|3     14|46      20|2       1|2     38|12       4|1     12|27       2|2      23|1       1|3     55|11      20|1
+swap           1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     2*|1*     1*|1*     1*|1*     1*|2*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*
+cs             1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|5*     1*|1*     1*|1*     1*|1*     1*|1*     1*|3*     1*|1*     1*|1*     1*|1*     1*|1*     1*|2*     1*|1*     1*|2*     1*|1*     1*|1*     1*|1*     1*|1*     1*|2*     1*|1*     1*|1*
+ch               -|-       -|-       -|-       -|-       -|-       -|-     594|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-
+qft2           574|-   199|376   278|665      65|-    227|61     296|-     557|-     211|-    184|91       -|-     56|18   107|648      47|-    20|220      28|-     610|-   204|618      62|-       -|-     -|116     225|-     235|-   158|182     15|33   629|439     923|-     126|-
+ccz           110|55     14|60     24|85      65|3       1|1   129|162     44|93    12|120      2|16     93|32     32|55      17|9     15|96      29|3     28|82      3|44     43|48      3|25      69|4     22|87     22|32     13|37     27|32      5|14      7|12     34|23    33|126
+toffoli        574|-   199|376   286|665      65|-     227|-     296|-     557|-     211|-   184|126       -|-     56|18   107|916      47|-    20|220      38|-     610|-   204|618      62|-       -|-     -|116     225|-     304|-   745|747     23|37     629|-     923|-     126|-
+peres          574|-   199|376   278|665      65|-    227|61     296|-     557|-     211|-   184|126       -|-     56|18   107|916      47|-    20|220      34|-     610|-   204|618      68|-       -|-     -|116     225|-     304|-   158|182     15|37   629|439     923|-     126|-
+fredkin          -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-
+rtof           574|-     199|-   278|665      65|-    227|61     296|-     557|-     211|-   184|126       -|-     56|18   107|916      47|-    20|220      28|-     610|-   204|618      62|-       -|-     -|116     225|-     304|-   158|182     15|37   629|439     923|-     126|-
+ccix           517|-   199|376   278|665      65|-    210|61     296|-    48|841     211|-     51|80       -|-     56|18    58|916      47|-    20|220      28|-   610|369   117|586      62|-   702|185   296|116      92|-     304|-   158|182     23|37    97|439     447|-      20|-
+Runs that ended at the call cap: none.
+Invention candidates (below a BestKnown count): none.

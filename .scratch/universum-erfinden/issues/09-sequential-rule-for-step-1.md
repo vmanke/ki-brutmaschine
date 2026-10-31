@@ -1,6 +1,6 @@
 # 09 Sequential rule for step 1
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 Note, 2026-10-30: after the approval, the owner asked for the scientifically load-bearing
@@ -570,3 +570,17 @@ and its integer plan are those of this comment. The analysis compares 3^w with
 PROOF · 2^n (PROOF = 100) and FAILURE · 3^w with 2^n (FAILURE = 20) as exact natural
 numbers, since 3^120 needs 191 bits. The code changes are agent work, so the status stays
 ready-for-agent.
+
+2026-10-31, result. The code changes are in the frozen commit 15cb151, and the rule has
+decided the counted experiment. Before seed 1, the acceptance check on the pilot pairs 301
+to 309 gave the pass times and evidence values of the pre-registration. The rule then
+stopped after pair 27, by stop rule 2: the primary claim is proven at pair 15 (E1 =
+3^24/2^27 = 2104.2640 at the stop), and the secondary claim is proven at pair 27 (E2 =
+3^20/2^25 = 103.9143 at the stop; 20 pairs A first, 5 R first, ties at pairs 10 and 19).
+Both are results about the breeder as a positive control with the simulated designer, not
+about real models. `reference_rule.py --runs runs` gave the same 27 rows, the same stop
+pair and the same verdicts as the frozen analysis. One deviation is reported: a container
+restart interrupted Run A-12, which was deleted and run again from scratch on the same
+seed, as section 6 step 3 of the pre-registration requires. Report:
+`docs/STEP1_CIRCUITS.md`, section 7 (German: `docs/SCHRITT1_SCHALTUNGEN.md`, Abschnitt 7);
+data: `docs/step1-counted/`. The status is now done.

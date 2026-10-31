@@ -469,11 +469,16 @@ aus dem Checkpoint nach, auch seinen Stoppgrund.
 
 ## Universen, die erfinden (Schritt 1)
 
-Stand: gebaut, mit Pilotläufen. Die sechs Entscheidungen unten wurden am 2026-10-30
-freigegeben, Entscheidung 5 zuerst mit der Schwelle 20 und höchstens 60 Paaren. Ihre
-wissenschaftlich tragende Fassung (Nachweisschwelle 100, höchstens 120 Seed-Paare), deren
-Zahlen Claude wählte, wird mit dem Zusammenführen bestätigt, das die Vorab-Registrierung
-einfriert. Gezählte Läufe beginnen, sobald die Vorab-Registrierung eingefroren ist.
+Stand: gebaut; das gezählte Experiment ist gelaufen. Die sechs Entscheidungen unten wurden
+am 2026-10-30 freigegeben, Entscheidung 5 zuerst mit der Schwelle 20 und höchstens 60
+Paaren. Ihre wissenschaftlich tragende Fassung (Nachweisschwelle 100, höchstens 120
+Seed-Paare), deren Zahlen Claude wählte, wurde mit dem Zusammenführen von Pull-Request #19
+bestätigt, das die Vorab-Registrierung einfror. Danach lief das gezählte Experiment, und
+die Regel hielt nach 27 Seed-Paaren an. Der Hauptnachweis ist bei Paar 15 erbracht, der
+Nachweis zur Auswahl bei Paar 27
+([docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 7; Daten in
+[docs/step1-counted/](docs/step1-counted/README.md)). Das Experiment ist eine
+Positivkontrolle mit dem simulierten Entwerfer und sagt nichts über echte Sprachmodelle.
 Beschrieben in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md) und
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 das Experiment ist in [docs/PREREG_STEP1_CIRCUITS.md](docs/PREREG_STEP1_CIRCUITS.md)
@@ -530,12 +535,14 @@ Gebaut sind:
   `examples/circuit_positive_control.rs`.
 
 Die Pilotläufe liegen in [docs/pilot-step1/](docs/pilot-step1/README.md): der erste Pilot
-auf den Seeds 101 und 102 und vier spätere Reihen. Pilotläufe zählen nie. Die
+auf den Seeds 101 und 102 und vier spätere Reihen. Pilotläufe zählen nie; die Daten der
+gezählten Läufe liegen in [docs/step1-counted/](docs/step1-counted/README.md). Die
 Eigentümerin bzw. der Eigentümer hat am 2026-10-30 sechs Entscheidungen bestätigt. Noch am
 selben Tag verlangte sie bzw. er für Entscheidung 5 die wissenschaftlich tragende Fassung.
 Deren Zahlen wählte Claude, der KI-Assistent, nach einer Prüfung von 16 Entwürfen; die
-Eigentümerin bzw. der Eigentümer bestätigt sie mit dem Zusammenführen des Pull-Requests,
-das die Vorab-Registrierung einfriert. Entscheidung 5 steht hier in dieser Fassung:
+Eigentümerin bzw. der Eigentümer bestätigte sie mit dem Zusammenführen von
+Pull-Request #19, das die Vorab-Registrierung einfror. Entscheidung 5 steht hier in dieser
+Fassung:
 
 1. Exakte Gleichheit entscheidet über „richtig“.
 2. Bewertet wird erst nach T-Anzahl, dann nach CNOT-Anzahl.
@@ -685,10 +692,11 @@ Mehr dazu, und welche Lücken es gibt, steht in
 - Kaskaden-Zucht: Die simulierten Modelle (`sim:small`, `sim:large`) sind
   Positivkontrollen. Ihre Zahlen zeigen, dass die Zucht funktioniert, nicht, wie gut
   echte Modelle wären.
-- Schritt 1: Die Pilotläufe schätzen die Erfolgsquote nur grob. Bis Generation 1000
-  bestand Arm A in 9 von 11 Läufen, mit einem Konfidenzintervall zu 95 % von 0.48 bis
-  0.98. Was der Pilot zeigt und was nicht, steht in
-  [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 8.
+- Schritt 1: Das gezählte Experiment ist eine Positivkontrolle mit dem simulierten
+  Entwerfer. Sein Hauptnachweis besagt, dass mehr als die Hälfte aller Seeds bis
+  Generation 1000 besteht; wie hoch die Erfolgsquote ist, schätzt es nicht, und über echte
+  Sprachmodelle sagt es nichts. Was das Experiment und der Pilot zeigen und was nicht,
+  steht in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 8.
 
 ## Aufbau eines Lauf-Verzeichnisses (MLP-Modus)
 
