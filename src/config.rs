@@ -40,7 +40,8 @@ pub struct Limits {
     pub max_params: usize,
     /// Max training epochs for one candidate.
     pub max_epochs: usize,
-    /// Max estimated training FLOPs for one candidate.
+    /// Max estimated training FLOPs for one candidate. A CNN's estimated training time
+    /// must also stay within it at 1 GFLOP/s (`cnn::shape`, "Time").
     pub max_train_flops: u64,
     /// Max wall-clock seconds for training one candidate.
     pub max_candidate_seconds: f64,

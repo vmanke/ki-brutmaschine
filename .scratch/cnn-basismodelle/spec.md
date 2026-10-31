@@ -56,7 +56,9 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   (U-Net, for grid-to-grid tasks). Activations: the existing four plus SiLU and ReLU6.
 - **Shape check.** Every genome is checked before training: shapes fit, and the
   parameter count and the training FLOPs stay within `Limits` (`max_params`,
-  `max_train_flops`). MLPs and CNNs share these limits, so neither wins by size.
+  `max_train_flops`). MLPs and CNNs share these limits, so neither wins by size. A CNN's
+  estimated training time must also fit the time that `max_train_flops` buys at 1 GFLOP/s,
+  so that its training ends by the FLOP limit, not by the clock (see Reproducibility).
 - **Mutations.** Switch a stage's family where the shapes allow it; insert or remove a
   stage; change width, kernel, stride, dilation or groups; toggle SE, residual and
   normalization; change downsampling or activation. Crossover exchanges whole stages at
@@ -84,12 +86,18 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   three reasons alone: it was not built, so its gradients, determinism and speed were not
   checked. Ticket 01 settled this (Comments there).
 - **Reproducibility.** The project compares logs byte for byte. CNN training gives the
-  same bits at any thread count on one machine: ticket 01 checked 19 thread settings, and
-  the tests of ticket 02 compare every step's loss and the model file across runs and
-  rayon pools of 1 and 4 threads. So no fixed thread count is needed, and candidates train
-  in parallel as MLPs do. Other CPUs may give other bits, because gemm picks its kernel
-  (with or without fused multiply-add) and its cache blocking at run time (ADR 0007).
-  Tests therefore compare results within one machine only.
+  same bits at any thread count on one machine: ticket 01 checked 19 thread settings. The
+  tests of ticket 02 compare every step's loss and the model file across runs and rayon
+  pools of 1 and 4 threads, and across child processes with `RAYON_NUM_THREADS` at 1 and
+  3, the variable from which candle takes the threads of its matrix products. So no fixed
+  thread count is needed, and candidates train in parallel as MLPs do. The bits are equal
+  only while no candidate hits a wall-clock limit. So the shape check also estimates a
+  CNN's training time (`cnn::shape`, "Time") and holds it to `max_train_flops` at
+  1 GFLOP/s, 20 s at the default limits, below `max_candidate_seconds` (30 s); a busier or
+  slower machine can still reach the clock. Other CPUs may give other bits, because gemm
+  picks its kernel (with or without fused multiply-add) and its cache blocking at run time
+  (ADR 0007). Tests therefore compare results within one machine only. The scores of a CNN
+  also depend on the chunk sizes of `score::evaluate`, which are part of this contract.
 - **Security.** Before candle entered `Cargo.toml`, `cargo audit` (RustSec, cargo-audit
   0.22.2, advisory database of 2026-10-30) checked it and every new transitive dependency;
   a crate with an open advisory is not admitted. With the pinned commit the audit of the

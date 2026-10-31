@@ -78,8 +78,9 @@ pub const MAX_EVAL_PARAMS: usize = HARD_MAX_PARAMS;
 ///
 /// The count alone does not bound the time. A plan of grouped or narrow convolutions with
 /// norms and activations spends most of its time copying values and calling candle, not
-/// multiplying: a file of 9.2e10 FLOPs took 179 s at one thread (ticket 02). So
-/// `MAX_EVAL_SECONDS` caps the estimated time as well, and that cap binds for such plans.
+/// multiplying: 200 rows of a file of 9.2e10 FLOPs took 17.9 s at one thread, so all 2000
+/// would take about 179 s (ticket 02). So `MAX_EVAL_SECONDS` caps the estimated time as
+/// well, and that cap binds for such plans.
 pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
 
 /// Most seconds that scoring one CNN may take by the time model of `cnn::shape`

@@ -9,10 +9,12 @@
 //!
 //! Reproducibility. Training is deterministic: the same genome and data give the same bits
 //! at any thread count of the same machine, also inside rayon pools of other sizes
-//! (ticket 01 checked 19 thread settings). Another CPU can give other bits: gemm, the
-//! matrix library under candle, picks its kernel (with or without fused multiply-add) and
-//! its cache blocking at run time from the CPU. Tests therefore compare results within one
-//! machine only.
+//! (ticket 01 checked 19 thread settings). This holds while the clock does not stop the
+//! training; the time model of the shape check keeps a valid CNN within its FLOP budget's
+//! time (`cnn::shape`, "Time"). Another CPU can give other bits: gemm, the matrix library
+//! under candle, picks its kernel (with or without fused multiply-add) and its cache
+//! blocking at run time from the CPU. Tests therefore compare results within one machine
+//! only.
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -617,7 +619,10 @@ mod tests {
         // `ops` runs every operation in f64 with a bound of 1e-6.
         let step = 1e-2;
 
-        for (task, dims) in [(TaskKind::Shapes, Dims::TwoD), (TaskKind::Motif1d, Dims::OneD)] {
+        for (task, dims) in [
+            (TaskKind::Shapes, Dims::TwoD),
+            (TaskKind::Motif1d, Dims::OneD),
+        ] {
             let spec = task.spec();
             let data = head(&generate(&spec, Split::Train, 1), 16);
             let genome = smooth(dims);
@@ -698,6 +703,7 @@ mod tests {
     /// of one channel, and group norm with pooling. Each takes the most stages that are
     /// valid at 5 epochs, then the most epochs that are valid.
     fn slow_valid_cnns() -> Vec<(TaskKind, Genome)> {
+        let relu = CnnActivation::Relu;
         let unit = |width: usize, kernel: usize, norm: Norm, activation: CnnActivation| Stage {
             norm,
             ..genomes::plain(width, kernel, activation)
@@ -710,84 +716,79 @@ mod tests {
             norm: stage.norm,
             activation: stage.activation,
         };
-        let make = |dims: Dims, first: Stem, stage: Stage, n: usize, head: Head| Genome {
-            batch_size: 16,
-            epochs: 5,
-            ..genomes::genome(
-                CnnGenome {
-                    dims,
-                    stem: first,
-                    stages: vec![stage; n],
-                    head,
-                },
-                Vec::new(),
-                Activation::Relu,
-            )
+        let grouped = Stage {
+            groups: 32,
+            ..unit(32, 3, Norm::Batch, relu)
         };
-        let relu = CnnActivation::Relu;
-        let layouts: Vec<(TaskKind, Box<dyn Fn(usize) -> Genome>)> = vec![
-            (TaskKind::Shapes, {
-                let s = unit(1, 9, Norm::None, relu);
-                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Shapes, {
-                let s = unit(4, 3, Norm::Batch, relu);
-                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Shapes, {
-                let s = unit(8, 1, Norm::Layer, CnnActivation::Gelu);
-                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Shapes, {
-                let s = Stage {
-                    groups: 32,
-                    ..unit(32, 3, Norm::Batch, relu)
-                };
-                let first = Stem {
-                    width: 32,
-                    kernel: 3,
-                    stride: 2,
-                    down: Downsample::Conv,
-                    norm: Norm::Batch,
-                    activation: relu,
-                };
-                Box::new(move |n| make(Dims::TwoD, first.clone(), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Shapes, {
-                let s = unit(1, 1, Norm::None, relu);
-                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Motif1d, {
-                let s = Stage {
-                    dilation: 2,
-                    ..unit(1, 11, Norm::None, relu)
-                };
-                let first = Stem {
-                    width: 1,
-                    kernel: 11,
-                    stride: 1,
-                    down: Downsample::Conv,
-                    norm: Norm::None,
-                    activation: relu,
-                };
-                Box::new(move |n| make(Dims::OneD, first.clone(), s.clone(), n, Head::GlobalAvgPool))
-            }),
-            (TaskKind::Shapes, {
-                let s = unit(8, 3, Norm::Group, CnnActivation::Silu);
-                let first = Stem {
-                    stride: 2,
-                    down: Downsample::MaxPool,
-                    ..stem(&s, 1, Downsample::Conv)
-                };
-                Box::new(move |n| make(Dims::TwoD, first.clone(), s.clone(), n, Head::Flatten))
-            }),
+        let sequence = Stage {
+            dilation: 2,
+            ..unit(1, 11, Norm::None, relu)
+        };
+        let pooled = unit(8, 3, Norm::Group, CnnActivation::Silu);
+        let full = |stage: Stage| (stem(&stage, 1, Downsample::Conv), stage);
+
+        // The task, the stem and the stage that repeats, and the head of each layout.
+        let layouts = [
+            (
+                TaskKind::Shapes,
+                full(unit(1, 9, Norm::None, relu)),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Shapes,
+                full(unit(4, 3, Norm::Batch, relu)),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Shapes,
+                full(unit(8, 1, Norm::Layer, CnnActivation::Gelu)),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Shapes,
+                (stem(&grouped, 2, Downsample::Conv), grouped.clone()),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Shapes,
+                full(unit(1, 1, Norm::None, relu)),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Motif1d,
+                (stem(&sequence, 1, Downsample::Conv), sequence.clone()),
+                Head::GlobalAvgPool,
+            ),
+            (
+                TaskKind::Shapes,
+                (stem(&pooled, 2, Downsample::MaxPool), pooled.clone()),
+                Head::Flatten,
+            ),
         ];
         let limits = Limits::default();
 
         layouts
             .into_iter()
-            .filter_map(|(task, layout)| {
+            .filter_map(|(task, (first, stage), head)| {
                 let spec = task.spec();
+                let dims = match task {
+                    TaskKind::Motif1d => Dims::OneD,
+                    _ => Dims::TwoD,
+                };
+                let layout = |n: usize| Genome {
+                    batch_size: 16,
+                    epochs: 5,
+                    ..genomes::genome(
+                        CnnGenome {
+                            dims,
+                            stem: first.clone(),
+                            stages: vec![stage.clone(); n],
+                            head,
+                        },
+                        Vec::new(),
+                        Activation::Relu,
+                    )
+                };
                 let stages = (1..=crate::cnn::genome::MAX_STAGES)
                     .filter(|&n| layout(n).validate(&limits, &spec).is_ok())
                     .max()?;
@@ -815,7 +816,8 @@ mod tests {
     #[ignore]
     fn slow_valid_cnns_train_within_the_time_budget() {
         let limits = Limits::default();
-        let budget = limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
+        let budget =
+            limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
         let cnns = slow_valid_cnns();
 
         assert_eq!(cnns.len(), 7);

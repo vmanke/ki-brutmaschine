@@ -286,9 +286,10 @@ pub fn crossover(a: &Genome, b: &Genome, rng: &mut ChaCha8Rng) -> Genome {
 /// Order: first cut epochs (down to `MIN_EPOCHS`) to meet the FLOP limit,
 /// then halve the widest layer, then drop layers. Feasible limits always give a valid genome.
 ///
-/// A CNN keeps its architecture: only its training genes are clamped and its epochs cut.
-/// If the architecture itself breaks a shape rule or a limit, the result stays invalid,
-/// and `RandomMutator::propose` draws another child.
+/// A CNN keeps its architecture: only its training genes are clamped and its epochs cut,
+/// to fit `max_train_flops` and the time budget of `Genome::validate`. If the architecture
+/// itself breaks a shape rule or a limit, the result stays invalid, and
+/// `RandomMutator::propose` draws another child.
 pub fn repair(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
     let mut g = g;
 

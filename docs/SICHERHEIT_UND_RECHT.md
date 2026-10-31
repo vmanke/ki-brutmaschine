@@ -191,30 +191,31 @@ belegt sehr viel Speicher oder führt Code aus.
   (`MAX_EVAL_FLOPS`), da ein Faltungsnetz jedes Gewicht an jeder Bildstelle
   wiederverwendet und die Parameterzahl seine Kosten nicht begrenzt. Die FLOPs
   allein begrenzen die Zeit jedoch nicht: Eine Datei aus Faltungen je Kanal
-  mit Schichtnorm und GELU kostete 9.2e10 FLOPs und brauchte 179 Sekunden
-  (ein Thread), länger als die 120 Sekunden, nach denen der Orchestrator
-  `brut-eval` beendet. Deshalb schätzt `brut-eval` die Zeit der Bewertung mit
-  dem Zeitmodell aus `cnn::shape`, welches auch die kopierten Fensterwerte,
-  die Zwischenwerte und die Aufrufe je Gruppe zählt, und weist eine Datei ab,
-  deren Schätzung 60 Sekunden übersteigt (`MAX_EVAL_SECONDS`). In unseren
-  Messungen blieb jede Bewertung unter 0.91 ihrer Schätzung; zwei Dateien
-  knapp unter der Grenze brauchten 17 und 42 Sekunden. Nach unserer Rechnung
-  braucht ein Faltungsnetz innerhalb der voreingestellten Grenzen auf den
-  Bild- und Sequenzaufgaben weniger als 3 % der FLOP-Grenze. Danach prüft
-  `brut-eval` jede Werteliste gegen ihre Tensorform, auf endliche Werte und
-  auf laufende Varianzen nicht unter 0. Eine Fehlermeldung nennt nur Anzahlen,
-  nicht die Listen selbst, sodass sie kurz bleibt. Eine abgewiesene Datei
-  kostet keine Abfrage.
+  mit Schichtnorm und GELU kostete 9.2e10 FLOPs und hätte etwa 179 Sekunden
+  gebraucht (ein Thread; 200 der 2000 Zeilen brauchten 17.9 Sekunden), länger
+  als die 120 Sekunden, nach denen der Orchestrator `brut-eval` beendet.
+  Deshalb schätzt `brut-eval` die Zeit der Bewertung mit dem Zeitmodell aus
+  `cnn::shape`, welches auch die kopierten Fensterwerte, die Zwischenwerte und
+  die Aufrufe je Gruppe zählt, und weist eine Datei ab, deren Schätzung 60
+  Sekunden übersteigt (`MAX_EVAL_SECONDS`). In unseren Messungen blieb jede
+  Bewertung unter 0.91 ihrer Schätzung; zwei Dateien knapp unter der Grenze
+  brauchten 17 und 42 Sekunden. Nach unserer Rechnung braucht ein Faltungsnetz
+  innerhalb der voreingestellten Grenzen auf den Bild- und Sequenzaufgaben
+  weniger als 3 % der FLOP-Grenze. Danach prüft `brut-eval` jede Werteliste
+  gegen ihre Tensorform, auf endliche Werte und auf laufende Varianzen nicht
+  unter 0. Eine Fehlermeldung nennt nur Anzahlen, nicht die Listen selbst,
+  sodass sie kurz bleibt. Eine abgewiesene Datei kostet keine Abfrage.
 - Beim Bewerten rechnet `score::evaluate` in Blöcken, deren Größe von der
   Netzbreite abhängt. Bei einem MLP braucht ein Block höchstens etwa 8 MiB für
   Zwischenwerte; Puffer für die Rückwärtsrechnung legt die reine Bewertung
   nicht an. Bei einem Faltungsnetz legt candle beim Bewerten keinen
   Rechengraphen an (`Param::value`), sodass jede Zwischenschicht frei wird,
-  sobald die nächste sie gelesen hat. Hinzu kommen die Puffer, in welche candle die Fenster einer
-  Faltung kopiert: einer je Thread und je 512 Bildstellen. Die Zeitgrenze hält
-  einen solchen Puffer unter etwa 16 MB. Gemessen (opt-level 2): Eine Datei
-  knapp unter der Zeitgrenze belegte mit einem Thread höchstens 25 MiB, mit
-  vier Threads 111 MiB; ein kleines Faltungsnetz belegte 11 MiB.
+  sobald die nächste sie gelesen hat. Hinzu kommen die Puffer, in welche
+  candle die Fenster einer Faltung kopiert: einer je Thread und je 512
+  Bildstellen. Die Zeitgrenze hält einen solchen Puffer unter etwa 16 MB.
+  Gemessen (opt-level 2): Eine Datei knapp unter der Zeitgrenze belegte mit
+  einem Thread höchstens 25 MiB, mit vier Threads 111 MiB; ein kleines
+  Faltungsnetz belegte 11 MiB.
 - Der Orchestrator wartet höchstens 120 Sekunden auf eine Antwort von
   `brut-eval` (`hidden_eval::EVAL_TIMEOUT_SECONDS`). Danach beendet er den
   Prozess und vermerkt den Fehler im Archiv.

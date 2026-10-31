@@ -1,6 +1,6 @@
 # 02 Model genome, shape check and grid tasks
 
-Status: done
+Status: resolved
 Blocked by: 01
 Spec: `../spec.md`
 
@@ -71,12 +71,14 @@ of the MLP mode), B2 (input shapes and tasks), B3 (CNN genome and shape check) a
   W3 and W4) and `mse`. Each has gradient cases (worst error 2.3e-10 against the limit
   1e-6), and the 1-D pools match candle's 2-D pools on a height of 1 exactly.
 - **Hidden evaluation (B4).** `brut-eval` scores both kinds. A CNN file is read with
-  unknown fields refused and at most `HARD_MAX_PARAMS` (2 000 000) values in all. Before
-  any tensor is built, `check_cnn` runs the shape check against the task, the parameter
-  cap, a new cap of 1e11 forward FLOPs for scoring the hidden split
-  (`MAX_EVAL_FLOPS`; a CNN within the default limits needs less than 3 % of it by our
-  count), and then checks every value list against its tensor. A refused file costs no
-  query. Scoring runs in chunks sized by all layer outputs of a sample.
+  unknown fields refused, at most `HARD_MAX_PARAMS` (2 000 000) trained values and at most
+  `MAX_RUNNING_VALUES` (6656) running statistics. Before any tensor is built, `check_cnn`
+  runs the shape check against the task, the parameter cap, a new cap of 1e11 forward
+  FLOPs for scoring the hidden split (`MAX_EVAL_FLOPS`; a CNN within the default limits
+  needs less than 3 % of it by our count), a cap of 60 s on the time that the time model
+  estimates for scoring (`MAX_EVAL_SECONDS`, review fixes below), and then checks every
+  value list against its tensor. A refused file costs no query. Scoring runs in chunks
+  sized by all layer outputs of a sample, the input with all its channels.
 - **The run loop (B4).** No random genome is a CNN yet, so `Config::base_genomes` lets
   genomes join generation 0 before the random ones (generator `base`). Each must pass
   `Genome::validate`. The field is left out of the JSON when empty, and generation 0
@@ -87,9 +89,13 @@ of the MLP mode), B2 (input shapes and tasks), B3 (CNN genome and shape check) a
 - Learning, `src/cnn/train.rs`: `a_plain_cnn_learns_shapes`,
   `a_plain_cnn_learns_bars_and_stripes`, `a_plain_cnn_learns_blob_count`,
   `a_plain_cnn_learns_mirror_symmetry`, `a_plain_cnn_learns_the_motif` (see below).
-- Training rules: `training_is_byte_equal_twice_and_in_pools_of_1_and_4_threads` (the bits
-  of every step's loss and the model file, for a VGG-like 2-D CNN with batch norm and a
-  1-D CNN with all three norms and both pools), `every_optimizer_reduces_the_loss`,
+- Training rules: `training_is_byte_equal_twice_and_in_rayon_pools_of_1_and_4_threads` (the
+  bits of every step's loss and the model file, for a VGG-like 2-D CNN with batch norm and
+  a 1-D CNN with all three norms and both pools),
+  `training_is_byte_equal_at_1_and_3_matrix_threads` (the same fingerprints in child
+  processes with `RAYON_NUM_THREADS` at 1 and 3),
+  `every_tensor_gets_a_gradient_and_moves`, `loss_and_grad_matches_finite_differences`,
+  `every_optimizer_reduces_the_loss`,
   `flops_follow_the_plan_and_match_the_estimate`,
   `budgets_and_the_kill_switch_stop_cnn_training_cleanly`,
   `divergence_is_reported_with_finite_loss`,
@@ -114,16 +120,20 @@ of the MLP mode), B2 (input shapes and tasks), B3 (CNN genome and shape check) a
 - Runs, `tests/e2e.rs`: `a_cnn_base_genome_trains_is_saved_and_scored_in_a_run` (the CNN
   trains, its file gives back its archived validation metrics exactly, `brut-eval` scores
   it on the hidden split, and its children are CNNs with CNN files);
-  `a_cnn_run_does_not_depend_on_the_thread_count` (1 and 2 worker threads give the same
-  candidates and model files); `a_run_written_before_cnns_opens_scores_and_resumes` (a
-  run that `brut run --no-hidden` wrote at bec9aa1, in `tests/fixtures/pre_cnn_run`: the
-  archive verifies, its 10 model files give back their archived validation metrics, and
-  it resumes for one more generation); `tiny_runs_on_the_image_and_sequence_tasks` (B2).
+  `a_cnn_run_does_not_depend_on_the_worker_threads` (1 and 2 worker threads give the same
+  candidates and model files); `a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads`
+  (`brut run --no-hidden` in child processes with `RAYON_NUM_THREADS` at 1 and 3, with
+  two base CNNs that hold every norm and pool);
+  `a_run_written_before_cnns_opens_scores_and_resumes` (a run that `brut run --no-hidden`
+  wrote at bec9aa1, in `tests/fixtures/pre_cnn_run`: the archive verifies, its 10 model
+  files give back their archived validation metrics, and it resumes for one more
+  generation); `tiny_runs_on_the_image_and_sequence_tasks` (B2).
 - Config: `base_genomes_are_left_out_when_empty_and_checked_when_given`.
 - Shape check (B3): one test per rule in `src/cnn/shape.rs`, among them
   `rejects_too_many_parameters` and `rejects_too_many_flops`, plus hand counts and
   `no_genome_panics`; genome JSON and variation tests in `src/genome.rs` and
-  `src/variation.rs`. Tasks (B2): `src/task.rs` has 20 tests, 14 more than at bec9aa1.
+  `src/variation.rs`. Tasks (B2): `src/task.rs` has 21 tests, 15 more than at bec9aa1
+  (one from the review fixes).
 
 ### Measurements
 
@@ -143,7 +153,8 @@ the five tests at once.
 | motif-1d | 2 | 0.5 | 2242 | 0.803 | 0.65 | 3.0 s, 3.1 s |
 
 By our count the 2-D network spends 5.0e9 training FLOPs in 4.0 s, about 1.2 GFLOP/s,
-close to the 1.6 GFLOP/s of the spike (ticket 01). In the run of
+close to the 1.6 GFLOP/s of the spike (ticket 01). Other layouts run far slower or faster
+by this count, from 0.08 to 6 GFLOP/s at one thread (review fixes below). In the run of
 `a_cnn_base_genome_trains_is_saved_and_scored_in_a_run` (master seed 16) the base CNN of
 598 parameters reached 1.0 on the Valid and on the hidden split of bars and stripes, its
 two children 1.0 and 1.0 on Valid and 1.0 and 0.99 on the hidden split, and the random MLP
@@ -151,13 +162,22 @@ next to them 0.515 and 0.51.
 
 ### Reproducibility (D8)
 
-CNN training gives the same bits at any thread count on one machine: the test above
-compares the bits of every step's loss and of the model file across two runs in a row and
-rayon pools of 1 and 4 threads, and a whole run with 1 and 2 worker threads. Other CPUs
-may give other bits, because gemm picks its kernel (with or without fused multiply-add)
-and its cache blocking at run time (ADR 0007). The tests compare within one machine only;
-the bounds of the learning tests lie 0.10 to 0.23 below the accuracies reached here, as
-room for other bits.
+CNN training gives the same bits at any thread count on one machine. The tests above
+compare the bits of every step's loss and of the model file across two runs in a row and
+rayon pools of 1 and 4 threads, and in child processes with `RAYON_NUM_THREADS` at 1 and
+3; candle takes the threads of its matrix products from that variable, not from the pool
+around it. They compare a whole run with 1 and 2 worker threads, and `brut run
+--no-hidden` with `RAYON_NUM_THREADS` at 1 and 3. This holds while no candidate hits a
+wall-clock limit; the time model of the shape check keeps every valid CNN at the default
+limits below 20 s at one thread on this machine, against the 30 s of
+`max_candidate_seconds` (review fixes below). A busier or slower machine can still reach
+the clock; then `stopped_by_budget` marks the candidate and its bits can differ. Other
+CPUs may give other bits, because gemm picks its kernel (with or without fused
+multiply-add) and its cache blocking at run time (ADR 0007). The tests compare within one
+machine only; the bounds of the learning tests lie 0.10 to 0.23 below the accuracies
+reached here, as room for other bits. The scores of a CNN also depend on the chunk sizes
+of `score::evaluate` (`score::cnn_chunk_rows`): a row's outputs can differ in the last
+bits between chunk sizes, so that rule is part of the reproducibility of CNN scores.
 
 ### Known limits
 
@@ -173,13 +193,15 @@ room for other bits.
   samples, so the current tasks never get there.
 - Each optimizer step copies the values between candle and Rust (a few times the
   parameter count), small against the convolutions.
-- During scoring candle keeps every layer output of a chunk until its end, since the
-  weights are candle variables; the chunks are therefore sized by the sum of all layer
-  outputs per sample, not their maximum.
+- Scoring records no graph (`Param::value`), so candle frees each layer output once the
+  next layer has read it. The chunks are still sized by the sum of all layer outputs per
+  sample, since a change of the sizes would change the bits of CNN scores.
 - A JSON file of an MLP with an extra `"kind"` key is now read as a CNN file and refused.
   The crate never writes such a file.
-- `brut-eval` refuses a CNN whose scoring would cost more than 1e11 FLOPs, even when its
-  run allowed it with larger limits.
+- `brut-eval` refuses a CNN whose scoring would cost more than 1e11 FLOPs or take more than
+  60 s by the time model, even when its run allowed it with larger limits.
+- The time model is calibrated on one machine, at one thread and with opt-level 2. Another
+  machine may need other prices; tickets 03 and 04 must price their new layers.
 
 ### Done when
 
@@ -190,3 +212,64 @@ room for other bits.
   unchanged.
 - The shape check rejects every genome that breaks a shape or a limit, with a test per
   rule: yes, the `rejects_*` tests of `src/cnn/shape.rs` (B3).
+
+### Review fixes (2026-10-31)
+
+The independent review of pull request 1 reported 14 findings. Each was checked before it
+was fixed; the numbers below come from this machine, at nice 10.
+
+- **The clock could end a CNN before its FLOP limit (major).** Confirmed: by the count of
+  `cnn::shape`, CNNs ran at 0.08 to 6 GFLOP/s at one thread, so a valid CNN could take
+  more than the 30 s of `max_candidate_seconds`, and then its bits depend on the load. The
+  shape check now has a time model (`cnn::shape`, "Time"): it prices the kernel cells that
+  candle copies, the values after each layer, the window cells of pooling, the input of
+  each group of a grouped convolution and each matrix product, from timing 77 CNNs in 134
+  training runs. Every measured time stayed below 0.89 of the estimate. `Genome::validate`
+  holds the estimated training time to `max_train_flops` at 1 GFLOP/s, 20 s at the
+  defaults, and `variation::repair` cuts the epochs to fit. The two slow CNNs of the review
+  are refused now (`rejects_a_cnn_too_slow_for_its_flop_budget`). The slowest valid CNNs
+  of seven slow layouts trained in 7.2 to 13.3 s at one thread (the ignored test
+  `slow_valid_cnns_train_within_the_time_budget`). The rule costs room: the review's S3, two
+  3x3 layers of 16 channels with batch norm at 16x16, is invalid at 5 epochs now (estimate
+  25.5 s, measured 18.9 s), and the test VGG took 21.1 s, so its stem now pools.
+- **Thread tests (two findings).** Confirmed from candle's source: gemm takes its threads
+  from `RAYON_NUM_THREADS`, not from the rayon pool. New: the same fingerprints in child
+  processes at 1 and 3 threads (`training_is_byte_equal_at_1_and_3_matrix_threads`), and
+  `brut run --no-hidden` with two base CNNs in child processes at 1 and 3
+  (`a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads`). Both pass.
+- **Chunks change the bits of CNN scores.** Confirmed: all 4 outputs of a VGG row differ
+  in their bits alone and in a chunk of 512. The chunk rule is now part of the
+  reproducibility contract (`score::rows_per_chunk`, `score::cnn_chunk_rows`); the test
+  compares 512 rows with 1, up to rounding.
+- **`values_per_row` left out the input channels.** Confirmed and fixed
+  (`Plan::values_per_row`); for motif-1d the input counts 256 values, not 64.
+- **The learning tests did not show that the convolutions work.** New:
+  `every_tensor_gets_a_gradient_and_moves`, and `loss_and_grad_matches_finite_differences`
+  (2-D and 1-D, 39 values each, worst error 0.32 of the bound). On motif-1d an MLP with the
+  same head and genes reached 0.513, the CNN 0.803; the test asserts a gap above 0.15.
+- **Clean pictures repeat between the splits.** Confirmed for shapes (0.308 of the Hidden
+  samples show a clean picture of Train) and bars and stripes (0.009); blob count repeats
+  too (0.062, the single blobs), which the review expected not to. Mirror symmetry and
+  motif-1d repeat none. `clean_pictures_repeat_across_splits_only_in_the_small_tasks` holds
+  these shares, and the docs of `TaskKind` state them, so a hidden score of shapes reads as
+  partly a score on seen pictures.
+- **burn was not built.** Confirmed from the spike report; ticket 01, the spec and ADR 0007
+  say so now.
+- **`MAX_EVAL_FLOPS` did not bound the time of scoring (major).** Confirmed: 200 rows of
+  the review's file of 12 depthwise layers took 17.9 s at one thread, about 179 s for the
+  2000 hidden rows. `brut-eval` now also
+  refuses a file whose estimated scoring time exceeds 60 s (`MAX_EVAL_SECONDS`), before it
+  charges a query. Every measured scoring of 81 CNNs stayed below 0.91 of the estimate;
+  files just below the cap scored in 17.3 s and 41.7 s (the ignored test
+  `files_just_below_the_time_cap_score_within_the_timeout`).
+- **The value cap held per field.** Confirmed; the running statistics now have their own
+  cap of 6656 values (`MAX_RUNNING_VALUES`), the most a valid model has.
+- **Scoring kept the graph.** Confirmed: the evaluation read the parameters as candle
+  variables. It now reads them cut off from the graph (`Param::value`). `brut-eval` peaked
+  at 11.3 MiB for a small CNN and at 24.8 MiB (one thread) and 111.4 MiB (four threads) for
+  a file just below the time cap; candle's window buffers grow with the threads.
+- **A refusal could print megabytes.** Confirmed; the message now names counts only.
+- **The contracts still said "no new dependency".** Fixed with errata E15 and notes at I1,
+  T-SEC-3 and AC-1, and at I1 of the backend contract.
+- **Eight defects.** The 17 failing cases come from seven defects, D1 to D7; D8 is the
+  generator. Fixed in four places.

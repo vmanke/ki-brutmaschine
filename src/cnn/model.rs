@@ -399,9 +399,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::untrained;
     use super::*;
-    use crate::cnn::genome::{
-        CnnActivation, Dims, Downsample, Head, Norm, Stage, Stem, testing,
-    };
+    use crate::cnn::genome::{CnnActivation, Dims, Downsample, Head, Norm, Stage, Stem, testing};
     use crate::task::TaskKind;
 
     /// The VGG-like test genome on the shapes task: batch norm, max pooling, flatten.
@@ -584,13 +582,14 @@ mod tests {
         assert_eq!(running, MAX_RUNNING_VALUES);
 
         // The reader takes that many values, and stops at one more.
-        assert!(serde_json::from_str::<CnnModel>(&file_with_running_lists(MAX_RUNNING_VALUES)).is_ok());
+        assert!(
+            serde_json::from_str::<CnnModel>(&file_with_running_lists(MAX_RUNNING_VALUES)).is_ok()
+        );
 
-        let message = serde_json::from_str::<CnnModel>(&file_with_running_lists(
-            MAX_RUNNING_VALUES + 1,
-        ))
-        .expect_err("over the cap")
-        .to_string();
+        let message =
+            serde_json::from_str::<CnnModel>(&file_with_running_lists(MAX_RUNNING_VALUES + 1))
+                .expect_err("over the cap")
+                .to_string();
 
         assert!(
             message.contains(&format!("more than {MAX_RUNNING_VALUES} values")),
@@ -617,7 +616,10 @@ mod tests {
 
         let message = long.check(&spec).expect_err("a long list").to_string();
 
-        assert!(message.contains("list 3 of running statistics has 1000 values"), "{message}");
+        assert!(
+            message.contains("list 3 of running statistics has 1000 values"),
+            "{message}"
+        );
         assert!(message.len() < 120, "{message}");
     }
 
@@ -645,7 +647,19 @@ mod tests {
         // part, since a batch norm uses its running statistics here. But candle's matrix
         // products may sum in another order for another number of rows, so the last bits
         // may differ (`score::rows_per_chunk`).
-        for (alone, within) in outputs(&model, 1).iter().zip(&chunk) {
+        let alone = outputs(&model, 1);
+        let differ = alone
+            .iter()
+            .zip(&chunk)
+            .filter(|(a, b)| a.to_bits() != b.to_bits())
+            .count();
+
+        eprintln!(
+            "{differ} of {} outputs of row 1 differ in their bits alone and in a chunk of {rows}",
+            alone.len()
+        );
+
+        for (alone, within) in alone.iter().zip(&chunk) {
             assert!(
                 (alone - within).abs() <= 1e-4 * alone.abs().max(1.0),
                 "{alone} {within}"

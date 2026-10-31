@@ -204,7 +204,9 @@ impl Plan {
                 Layer::Pool { window, .. } => {
                     let cells = (window as u64).saturating_pow(axes);
 
-                    counts.pool_taps = counts.pool_taps.saturating_add(cells.saturating_mul(values));
+                    counts.pool_taps = counts
+                        .pool_taps
+                        .saturating_add(cells.saturating_mul(values));
                     counts.calls = counts.calls.saturating_add(1);
                 }
                 Layer::Norm { .. }
@@ -1032,6 +1034,10 @@ mod tests {
                 (8, vec![32]),
             ]
         );
+
+        // Values per row count the input with all 4 channels: 4 x 64, then the layers:
+        // 8 x 64 five times, 8 x 32, then 8, 2.
+        assert_eq!(plan.values_per_row(), 4 * 64 + 5 * 8 * 64 + 8 * 32 + 8 + 2);
     }
 
     #[test]
@@ -1392,7 +1398,10 @@ mod tests {
         let seconds = plan.train_seconds(5000.0);
 
         // The FLOP rule binds first for this genome: its time fits the FLOP budget.
-        assert!(seconds < flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND, "{seconds} s");
+        assert!(
+            seconds < flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND,
+            "{seconds} s"
+        );
 
         let limits = Limits {
             max_params: 100_000,
@@ -1492,8 +1501,8 @@ mod tests {
             };
             let mut g = testing::genome(cnn, Vec::new(), Activation::Relu);
             let spec = TaskKind::Shapes.spec();
-            let per_epoch = g.cnn_plan(&spec).expect("plan").train_flops_per_sample()
-                * spec.n_train as u64;
+            let per_epoch =
+                g.cnn_plan(&spec).expect("plan").train_flops_per_sample() * spec.n_train as u64;
 
             g.batch_size = 16;
             g.epochs = (Limits::default().max_train_flops / per_epoch) as usize;

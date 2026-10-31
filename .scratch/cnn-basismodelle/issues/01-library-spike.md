@@ -1,6 +1,6 @@
 # 01 Library spike: candle
 
-Status: done
+Status: resolved
 Start: after the counted Runs of step 1 have finished.
 Spec: `../spec.md`
 

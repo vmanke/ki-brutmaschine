@@ -112,9 +112,27 @@ of the numbers. Other CPUs may give other bits. gemm chooses its kernel at run t
 or scalar (gemm-common `gemm.rs:1018`). For products with more than 64 rows or columns it
 also sizes its blocks from the L1 cache it detects (gemm-common `cache.rs:514-570`; read,
 not tested). Tests therefore compare results within one machine only. The CNN training
-of the crate keeps this property: its tests compare the loss of every step and the model
-file of two runs in a row and in rayon pools of 1 and 4 threads, and the candidates and
-model files of a run with 1 and 2 worker threads (ticket 02).
+of the crate keeps this property. Its tests compare the loss of every step and the model
+file of two runs in a row and in rayon pools of 1 and 4 threads. They compare the same
+fingerprints in child processes with `RAYON_NUM_THREADS` at 1 and 3: candle reads that
+variable when a matrix product starts, not the rayon pool around it, so only a child
+process varies the threads of gemm. And they compare the candidates and model files of a
+run with 1 and 2 worker threads, and of `brut run --no-hidden` in child processes with
+`RAYON_NUM_THREADS` at 1 and 3 (ticket 02).
+
+The equal bits need one more condition: no candidate may hit a wall-clock limit. When
+`max_candidate_seconds` stops a training, the epochs done depend on the load of the
+machine. For an MLP the FLOP limit always comes first (13 GFLOP/s by the count). For a CNN
+it does not by itself: the time per counted FLOP varies about 70-fold between layouts
+(0.08 GFLOP/s for depthwise layers of 256 groups, 0.15 for narrow layers at full size, 6
+for wide ones, at one thread),
+since candle spends most of the time of narrow, grouped and normed layers on copies and
+calls, not on products. So the shape check also estimates a CNN's training time from its
+plan (`cnn::shape`, "Time") and holds it to `max_train_flops` at 1 GFLOP/s, 20 s at the
+default limits. The model comes from timing 77 CNNs on this machine; every measured time
+stayed below 0.89 of the estimate. The slowest valid CNNs of seven slow layouts took 7 to
+13 s at one thread. A busier or slower machine can still reach the 30 s, and then
+`stopped_by_budget` marks the candidate.
 
 **A training step is fast enough for the budget.** On this machine, with the experiment of
 step 1 running and at nice 10, one step of that CNN on a batch of 64 images of 16x16
@@ -122,7 +140,9 @@ step 1 running and at nice 10, one step of that CNN on a batch of 64 images of 1
 thread changed the time by a factor of 0.91 to 1.2. By our count a step costs about 77
 MFLOP, so the default `max_train_flops` of 2e10 allows about 260 steps, about 12 s, below
 the default `max_candidate_seconds` of 30 s. These times are from the release; the run at
-the pinned commit did not time steps.
+the pinned commit did not time steps. This holds for that CNN only. Ticket 02 measured
+CNNs at 0.08 to 6 GFLOP/s by the same count, so the time model above, not this estimate,
+keeps every valid CNN within the budget.
 
 Rejected: candle 0.11.0 from crates.io (zip 8.6.0 with three open advisories); the release
 with a local patch for zip 9 (6 lines, compiled but never run, and a fork to maintain);
