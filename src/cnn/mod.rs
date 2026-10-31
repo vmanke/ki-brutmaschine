@@ -6,6 +6,12 @@
 //! tensor in its own type and offers only operations whose gradients we
 //! checked against finite differences. No other file names candle; a test in
 //! `ops` scans the sources for it.
+//!
+//! A CNN genome (`genome`) is the `Arch::Cnn` of a `Genome`: a stem, stages and a head.
+//! `shape` infers the layers it describes, with their shapes, parameters and FLOPs; this
+//! is the shape check of `Genome::validate`.
 #![forbid(unsafe_code)]
 
+pub mod genome;
 pub mod ops;
+pub mod shape;

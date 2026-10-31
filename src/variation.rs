@@ -2,20 +2,31 @@
 //!
 //! The trait allows other generators later (for example an LLM-based one).
 //! Every generator must return a genome that passes `Genome::validate`.
+//!
+//! A CNN genome keeps its architecture for now: its stem, stages, head, and the dense
+//! layers and activation of its head. Mutation and crossover change only its training
+//! genes. Ticket 05 of the CNN spec adds the CNN mutations.
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::config::Limits;
 use crate::genome::{
-    ACTIVATIONS, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN, LR_MAX,
-    LR_MIN, MIN_EPOCHS, OPTIMIZERS,
+    ACTIVATIONS, Arch, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN,
+    LR_MAX, LR_MIN, MIN_EPOCHS, OPTIMIZERS,
 };
 use crate::task::TaskSpec;
 use crate::util::{log_uniform_f32, normal_f32};
 
 /// Number of mutable genes (the seed is always renewed and not counted).
 const GENE_COUNT: usize = 8;
+
+/// The first training gene. Genes 0 and 1 (hidden layers and activation) shape the
+/// network, so a CNN, which keeps its architecture, mutates only the genes from here on.
+const FIRST_TRAINING_GENE: usize = 2;
+
+/// Crossovers tried before a child of a CNN parent gives way to a random genome.
+const CNN_CROSSOVER_TRIES: usize = 4;
 
 pub trait VariantGenerator: Send + Sync {
     /// Short name for the audit log.
@@ -59,17 +70,50 @@ impl VariantGenerator for RandomMutator {
     ) -> Genome {
         match parents {
             [] => Genome::random(rng, limits, spec),
-            [one] => mutate(one, self.gene_rate, rng, limits, spec),
-            [a, b, ..] => {
-                let child = crossover(a, b, rng);
+            [one] => {
+                let child = mutate(one, self.gene_rate, rng, limits, spec);
 
-                repair(child, limits, spec)
+                if one.arch.is_mlp() {
+                    return child;
+                }
+
+                // A valid CNN parent always gives a valid child (`repair` cuts its epochs).
+                // A parent that breaks the limits cannot be mutated into shape, so a random
+                // genome takes the child's place.
+                if child.validate(limits, spec).is_ok() {
+                    child
+                } else {
+                    Genome::random(rng, limits, spec)
+                }
+            }
+            [a, b, ..] => {
+                if a.arch.is_mlp() && b.arch.is_mlp() {
+                    let child = crossover(a, b, rng);
+
+                    return repair(child, limits, spec);
+                }
+
+                // The child takes the architecture of one parent, which may break the
+                // limits if that parent does. Then it is drawn again, and after
+                // `CNN_CROSSOVER_TRIES` failures a random genome takes its place.
+                for _ in 0..CNN_CROSSOVER_TRIES {
+                    let child = repair(crossover(a, b, rng), limits, spec);
+
+                    if child.validate(limits, spec).is_ok() {
+                        return child;
+                    }
+                }
+
+                Genome::random(rng, limits, spec)
             }
         }
     }
 }
 
 /// Mutate one genome. Always gets a fresh training seed.
+///
+/// An MLP may change every gene. A CNN changes only its training genes (optimizer,
+/// learning rate, l2, batch size, epochs and init scale) and keeps its architecture.
 pub fn mutate(
     parent: &Genome,
     gene_rate: f64,
@@ -84,8 +128,13 @@ pub fn mutate(
     };
     let mut g = parent.clone();
     let mut changed = false;
+    let first = if g.arch.is_mlp() {
+        0
+    } else {
+        FIRST_TRAINING_GENE
+    };
 
-    for gene in 0..GENE_COUNT {
+    for gene in first..GENE_COUNT {
         if rng.random_bool(rate) {
             mutate_gene(&mut g, gene, rng, limits);
             changed = true;
@@ -94,7 +143,7 @@ pub fn mutate(
 
     // A child that only differs by its seed would waste a training run.
     if !changed {
-        let gene = rng.random_range(0..GENE_COUNT);
+        let gene = rng.random_range(first..GENE_COUNT);
 
         mutate_gene(&mut g, gene, rng, limits);
     }
@@ -183,15 +232,27 @@ fn mutate_layers(g: &mut Genome, rng: &mut ChaCha8Rng, limits: &Limits) {
 }
 
 /// Uniform crossover of two genomes. Hidden layers are taken whole from one parent.
+///
+/// Once a CNN takes part, the architecture comes whole from one parent: its `arch`, and
+/// its `hidden` and `activation`, which for a CNN form the head. The training genes are
+/// mixed as for two MLPs.
 pub fn crossover(a: &Genome, b: &Genome, rng: &mut ChaCha8Rng) -> Genome {
     let mut pick = || rng.random_bool(0.5);
 
-    let hidden = if pick() {
-        a.hidden.clone()
+    let (arch, hidden, activation) = if a.arch.is_mlp() && b.arch.is_mlp() {
+        let hidden = if pick() {
+            a.hidden.clone()
+        } else {
+            b.hidden.clone()
+        };
+        let activation = if pick() { a.activation } else { b.activation };
+
+        (Arch::Mlp, hidden, activation)
     } else {
-        b.hidden.clone()
+        let shape = if pick() { a } else { b };
+
+        (shape.arch.clone(), shape.hidden.clone(), shape.activation)
     };
-    let activation = if pick() { a.activation } else { b.activation };
     let optimizer = if pick() { a.optimizer } else { b.optimizer };
     let learning_rate = if pick() {
         a.learning_rate
@@ -205,6 +266,7 @@ pub fn crossover(a: &Genome, b: &Genome, rng: &mut ChaCha8Rng) -> Genome {
     let seed = rng.random();
 
     Genome {
+        arch,
         hidden,
         activation,
         optimizer,
@@ -222,6 +284,10 @@ pub fn crossover(a: &Genome, b: &Genome, rng: &mut ChaCha8Rng) -> Genome {
 ///
 /// Order: first cut epochs (down to `MIN_EPOCHS`) to meet the FLOP limit,
 /// then halve the widest layer, then drop layers. Feasible limits always give a valid genome.
+///
+/// A CNN keeps its architecture: only its training genes are clamped and its epochs cut.
+/// If the architecture itself breaks a shape rule or a limit, the result stays invalid,
+/// and `RandomMutator::propose` draws another child.
 pub fn repair(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
     let mut g = g;
 
@@ -233,6 +299,11 @@ pub fn repair(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
     let max_epochs = limits.max_epochs.max(MIN_EPOCHS);
 
     g.epochs = g.epochs.clamp(MIN_EPOCHS, max_epochs);
+
+    if !g.arch.is_mlp() {
+        return fit_cnn_epochs(g, limits, spec);
+    }
+
     g.hidden.truncate(limits.max_hidden_layers);
 
     if limits.max_width == 0 {
@@ -269,6 +340,36 @@ pub fn repair(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
             return g;
         }
     }
+}
+
+/// Cut the epochs of a CNN genome to meet `max_train_flops`, down to `MIN_EPOCHS`.
+///
+/// Leaves the genome as it is when its shapes do not fit, when it has too many
+/// parameters, or when even `MIN_EPOCHS` epochs cost too much.
+fn fit_cnn_epochs(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
+    let mut g = g;
+
+    let Ok(plan) = g.cnn_plan(spec) else {
+        return g;
+    };
+
+    if plan.params > limits.max_params {
+        return g;
+    }
+
+    let per_epoch = plan
+        .train_flops_per_sample()
+        .saturating_mul(spec.n_train as u64);
+    let affordable = limits
+        .max_train_flops
+        .checked_div(per_epoch)
+        .unwrap_or(u64::MAX);
+
+    if affordable >= MIN_EPOCHS as u64 {
+        g.epochs = g.epochs.min(affordable.min(usize::MAX as u64) as usize);
+    }
+
+    g
 }
 
 /// Halve the widest layer, or drop the last layer when all widths are 1.
@@ -324,6 +425,7 @@ mod tests {
 
     fn sample() -> Genome {
         Genome {
+            arch: Arch::Mlp,
             hidden: vec![16, 8],
             activation: Activation::Relu,
             optimizer: Optimizer::Momentum,
@@ -397,6 +499,7 @@ mod tests {
         let spec = TaskKind::TwoSpirals.spec();
         let limits = Limits::default();
         let g = Genome {
+            arch: Arch::Mlp,
             hidden: vec![0, 10_000, 3, 7, 9, 11],
             activation: Activation::Gelu,
             optimizer: Optimizer::Adam,
