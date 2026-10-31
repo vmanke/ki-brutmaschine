@@ -1,0 +1,216 @@
+2026-10-30T22:32:35Z driver started at commit 15cb15100a39db9d815674b0778ab6be30932e56
+2026-10-30T22:32:35Z start runs/A-1
+2026-10-30T22:40:34Z done runs/A-1
+2026-10-30T22:40:34Z start runs/R-1
+2026-10-30T22:45:15Z done runs/R-1
+2026-10-30T22:45:16Z verify ok runs/A-1
+2026-10-30T22:45:17Z verify ok runs/R-1
+2026-10-30T22:45:17Z start runs-threads/A-1-t1 with RAYON_NUM_THREADS=1
+2026-10-30T22:59:42Z done runs-threads/A-1-t1
+2026-10-30T22:59:43Z verify ok runs-threads/A-1-t1
+2026-10-30T22:59:43Z start runs-threads/A-1-t4 with RAYON_NUM_THREADS=4
+2026-10-30T23:07:43Z done runs-threads/A-1-t4
+2026-10-30T23:07:44Z verify ok runs-threads/A-1-t4
+2026-10-30T23:07:44Z start runs-threads/R-1-t1 with RAYON_NUM_THREADS=1
+2026-10-30T23:13:58Z done runs-threads/R-1-t1
+2026-10-30T23:13:59Z verify ok runs-threads/R-1-t1
+2026-10-30T23:13:59Z start runs-threads/R-1-t4 with RAYON_NUM_THREADS=4
+2026-10-30T23:18:56Z done runs-threads/R-1-t4
+2026-10-30T23:18:57Z verify ok runs-threads/R-1-t4
+2026-10-30T23:18:57Z thread check ok: five files byte-equal at the default, 1 and 4 threads, both arms
+2026-10-30T23:18:57Z pair done; the analysis names seed 2 next
+2026-10-30T23:18:57Z start runs/A-2
+2026-10-30T23:25:40Z done runs/A-2
+2026-10-30T23:25:40Z start runs/R-2
+2026-10-30T23:30:57Z done runs/R-2
+2026-10-30T23:30:58Z verify ok runs/A-2
+2026-10-30T23:30:59Z verify ok runs/R-2
+2026-10-30T23:31:00Z pair done; the analysis names seed 3 next
+2026-10-30T23:31:00Z start runs/A-3
+2026-10-30T23:36:51Z done runs/A-3
+2026-10-30T23:36:51Z start runs/R-3
+2026-10-30T23:42:37Z done runs/R-3
+2026-10-30T23:42:38Z verify ok runs/A-3
+2026-10-30T23:42:38Z verify ok runs/R-3
+2026-10-30T23:42:40Z pair done; the analysis names seed 4 next
+2026-10-30T23:42:40Z start runs/A-4
+2026-10-30T23:50:39Z done runs/A-4
+2026-10-30T23:50:39Z start runs/R-4
+2026-10-30T23:56:10Z done runs/R-4
+2026-10-30T23:56:11Z verify ok runs/A-4
+2026-10-30T23:56:11Z verify ok runs/R-4
+2026-10-30T23:56:13Z pair done; the analysis names seed 5 next
+2026-10-30T23:56:13Z start runs/A-5
+2026-10-31T00:01:49Z done runs/A-5
+2026-10-31T00:01:49Z start runs/R-5
+2026-10-31T00:06:44Z done runs/R-5
+2026-10-31T00:06:45Z verify ok runs/A-5
+2026-10-31T00:06:46Z verify ok runs/R-5
+2026-10-31T00:06:48Z pair done; the analysis names seed 6 next
+2026-10-31T00:06:48Z start runs/A-6
+2026-10-31T00:12:50Z done runs/A-6
+2026-10-31T00:12:50Z start runs/R-6
+2026-10-31T00:17:50Z done runs/R-6
+2026-10-31T00:17:50Z verify ok runs/A-6
+2026-10-31T00:17:51Z verify ok runs/R-6
+2026-10-31T00:17:54Z pair done; the analysis names seed 7 next
+2026-10-31T00:17:54Z start runs/A-7
+2026-10-31T00:29:05Z done runs/A-7
+2026-10-31T00:29:05Z start runs/R-7
+2026-10-31T00:33:51Z done runs/R-7
+2026-10-31T00:33:52Z verify ok runs/A-7
+2026-10-31T00:33:52Z verify ok runs/R-7
+2026-10-31T00:33:55Z pair done; the analysis names seed 8 next
+2026-10-31T00:33:55Z start runs/A-8
+2026-10-31T00:39:51Z done runs/A-8
+2026-10-31T00:39:51Z start runs/R-8
+2026-10-31T00:44:59Z done runs/R-8
+2026-10-31T00:45:00Z verify ok runs/A-8
+2026-10-31T00:45:01Z verify ok runs/R-8
+2026-10-31T00:45:04Z pair done; the analysis names seed 9 next
+2026-10-31T00:45:04Z start runs/A-9
+2026-10-31T00:51:46Z done runs/A-9
+2026-10-31T00:51:46Z start runs/R-9
+2026-10-31T00:56:20Z done runs/R-9
+2026-10-31T00:56:20Z verify ok runs/A-9
+2026-10-31T00:56:21Z verify ok runs/R-9
+2026-10-31T00:56:24Z pair done; the analysis names seed 10 next
+2026-10-31T00:56:24Z start runs/A-10
+2026-10-31T01:01:16Z done runs/A-10
+2026-10-31T01:01:16Z start runs/R-10
+2026-10-31T01:06:42Z done runs/R-10
+2026-10-31T01:06:42Z verify ok runs/A-10
+2026-10-31T01:06:43Z verify ok runs/R-10
+2026-10-31T01:06:47Z pair done; the analysis names seed 11 next
+2026-10-31T01:06:47Z start runs/A-11
+2026-10-31T01:14:23Z done runs/A-11
+2026-10-31T01:14:23Z start runs/R-11
+2026-10-31T01:18:43Z done runs/R-11
+2026-10-31T01:18:44Z verify ok runs/A-11
+2026-10-31T01:18:45Z verify ok runs/R-11
+2026-10-31T01:18:49Z pair done; the analysis names seed 12 next
+2026-10-31T01:18:49Z start runs/A-12
+2026-10-31T09:20:01Z driver started at commit 15cb15100a39db9d815674b0778ab6be30932e56
+2026-10-31T09:20:01Z keeping the finished run runs/A-1
+2026-10-31T09:20:01Z keeping the finished run runs/R-1
+2026-10-31T09:20:03Z verify ok runs/A-1
+2026-10-31T09:20:04Z verify ok runs/R-1
+2026-10-31T09:20:09Z pair done; the analysis names seed 12 next
+2026-10-31T09:20:09Z removing the unfinished run runs/A-12
+2026-10-31T09:20:09Z start runs/A-12
+2026-10-31T09:27:40Z done runs/A-12
+2026-10-31T09:27:40Z start runs/R-12
+2026-10-31T09:32:46Z done runs/R-12
+2026-10-31T09:32:47Z verify ok runs/A-12
+2026-10-31T09:32:48Z verify ok runs/R-12
+2026-10-31T09:32:52Z pair done; the analysis names seed 13 next
+2026-10-31T09:32:52Z start runs/A-13
+2026-10-31T09:40:19Z done runs/A-13
+2026-10-31T09:40:19Z start runs/R-13
+2026-10-31T09:44:58Z done runs/R-13
+2026-10-31T09:44:59Z verify ok runs/A-13
+2026-10-31T09:45:00Z verify ok runs/R-13
+2026-10-31T09:45:05Z pair done; the analysis names seed 14 next
+2026-10-31T09:45:05Z start runs/A-14
+2026-10-31T09:53:17Z done runs/A-14
+2026-10-31T09:53:17Z start runs/R-14
+2026-10-31T09:58:40Z done runs/R-14
+2026-10-31T09:58:42Z verify ok runs/A-14
+2026-10-31T09:58:42Z verify ok runs/R-14
+2026-10-31T09:58:48Z pair done; the analysis names seed 15 next
+2026-10-31T09:58:48Z start runs/A-15
+2026-10-31T10:06:41Z done runs/A-15
+2026-10-31T10:06:41Z start runs/R-15
+2026-10-31T10:11:21Z done runs/R-15
+2026-10-31T10:11:22Z verify ok runs/A-15
+2026-10-31T10:11:22Z verify ok runs/R-15
+2026-10-31T10:11:28Z pair done; the analysis names seed 16 next
+2026-10-31T10:11:28Z start runs/A-16
+2026-10-31T10:17:22Z done runs/A-16
+2026-10-31T10:17:22Z start runs/R-16
+2026-10-31T10:22:25Z done runs/R-16
+2026-10-31T10:22:26Z verify ok runs/A-16
+2026-10-31T10:22:26Z verify ok runs/R-16
+2026-10-31T10:22:33Z pair done; the analysis names seed 17 next
+2026-10-31T10:22:33Z start runs/A-17
+2026-10-31T10:29:08Z done runs/A-17
+2026-10-31T10:29:08Z start runs/R-17
+2026-10-31T10:33:55Z done runs/R-17
+2026-10-31T10:33:56Z verify ok runs/A-17
+2026-10-31T10:33:56Z verify ok runs/R-17
+2026-10-31T10:34:03Z pair done; the analysis names seed 18 next
+2026-10-31T10:34:03Z start runs/A-18
+2026-10-31T10:42:11Z done runs/A-18
+2026-10-31T10:42:11Z start runs/R-18
+2026-10-31T10:46:44Z done runs/R-18
+2026-10-31T10:46:45Z verify ok runs/A-18
+2026-10-31T10:46:46Z verify ok runs/R-18
+2026-10-31T10:46:53Z pair done; the analysis names seed 19 next
+2026-10-31T10:46:53Z start runs/A-19
+2026-10-31T10:53:43Z done runs/A-19
+2026-10-31T10:53:43Z start runs/R-19
+2026-10-31T10:58:36Z done runs/R-19
+2026-10-31T10:58:36Z verify ok runs/A-19
+2026-10-31T10:58:37Z verify ok runs/R-19
+2026-10-31T10:58:44Z pair done; the analysis names seed 20 next
+2026-10-31T10:58:44Z start runs/A-20
+2026-10-31T11:05:11Z done runs/A-20
+2026-10-31T11:05:11Z start runs/R-20
+2026-10-31T11:09:55Z done runs/R-20
+2026-10-31T11:09:56Z verify ok runs/A-20
+2026-10-31T11:09:56Z verify ok runs/R-20
+2026-10-31T11:10:04Z pair done; the analysis names seed 21 next
+2026-10-31T11:10:04Z start runs/A-21
+2026-10-31T11:19:57Z done runs/A-21
+2026-10-31T11:19:57Z start runs/R-21
+2026-10-31T11:25:52Z done runs/R-21
+2026-10-31T11:25:53Z verify ok runs/A-21
+2026-10-31T11:25:54Z verify ok runs/R-21
+2026-10-31T11:26:02Z pair done; the analysis names seed 22 next
+2026-10-31T11:26:02Z start runs/A-22
+2026-10-31T11:33:20Z done runs/A-22
+2026-10-31T11:33:20Z start runs/R-22
+2026-10-31T11:37:40Z done runs/R-22
+2026-10-31T11:37:41Z verify ok runs/A-22
+2026-10-31T11:37:42Z verify ok runs/R-22
+2026-10-31T11:37:50Z pair done; the analysis names seed 23 next
+2026-10-31T11:37:50Z start runs/A-23
+2026-10-31T11:44:15Z done runs/A-23
+2026-10-31T11:44:15Z start runs/R-23
+2026-10-31T11:49:10Z done runs/R-23
+2026-10-31T11:49:11Z verify ok runs/A-23
+2026-10-31T11:49:11Z verify ok runs/R-23
+2026-10-31T11:49:21Z pair done; the analysis names seed 24 next
+2026-10-31T11:49:21Z start runs/A-24
+2026-10-31T11:57:49Z done runs/A-24
+2026-10-31T11:57:49Z start runs/R-24
+2026-10-31T12:03:34Z done runs/R-24
+2026-10-31T12:03:35Z verify ok runs/A-24
+2026-10-31T12:03:36Z verify ok runs/R-24
+2026-10-31T12:03:45Z pair done; the analysis names seed 25 next
+2026-10-31T12:03:45Z start runs/A-25
+2026-10-31T12:11:57Z done runs/A-25
+2026-10-31T12:11:57Z start runs/R-25
+2026-10-31T12:17:38Z done runs/R-25
+2026-10-31T12:17:39Z verify ok runs/A-25
+2026-10-31T12:17:39Z verify ok runs/R-25
+2026-10-31T12:17:49Z pair done; the analysis names seed 26 next
+2026-10-31T12:17:49Z start runs/A-26
+2026-10-31T12:24:46Z done runs/A-26
+2026-10-31T12:24:46Z start runs/R-26
+2026-10-31T12:29:27Z done runs/R-26
+2026-10-31T12:29:28Z verify ok runs/A-26
+2026-10-31T12:29:29Z verify ok runs/R-26
+2026-10-31T12:29:40Z pair done; the analysis names seed 27 next
+2026-10-31T12:29:40Z start runs/A-27
+2026-10-31T12:39:42Z done runs/A-27
+2026-10-31T12:39:42Z start runs/R-27
+2026-10-31T12:44:34Z done runs/R-27
+2026-10-31T12:44:35Z verify ok runs/A-27
+2026-10-31T12:44:35Z verify ok runs/R-27
+2026-10-31T12:44:46Z the rule has stopped; verdicts:
+Primary (ticket 03): E1 = 282429536481/134217728 = 2104.2640 after 27 pair(s); it reached 100 at pair 15.
+Secondary (selection): E2 = 3486784401/33554432 = 103.9143 after 27 pair(s); it reached 100 at pair 27.
+Primary (ticket 03): PROVEN at pair 15. More than half of all seeds pass within 1000 generations.
+Secondary (selection): PROVEN at pair 27. Among untied pairs, arm A passes first more often than arm R.
+2026-10-31T12:44:46Z recount exit 0 (output in recount.txt)
