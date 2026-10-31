@@ -12,7 +12,12 @@
 //! Only models without a thinking mode are on the allow-list for now, so `think_tokens` is
 //! ignored as I5 says for such models. Thinking models (Qwen3, gpt-oss) follow once their
 //! separate caps are built.
+//!
+//! The module `vllm` holds a second backend with the same guarantees for a batching
+//! server with an OpenAI-compatible API (vLLM).
 #![forbid(unsafe_code)]
+
+pub mod vllm;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -39,7 +44,7 @@ pub const DEFAULT_BASE: &str = "http://127.0.0.1:11434";
 /// Hard cap on the bytes of one answer (I6).
 pub const MAX_RESPONSE_BYTES: u64 = 1 << 20;
 
-fn err(msg: String) -> BrutError {
+pub(crate) fn err(msg: String) -> BrutError {
     BrutError::Io(std::io::Error::other(msg))
 }
 
@@ -292,10 +297,9 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
+    use crate::test_http::serve;
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
 
     fn req(max_tokens: u32) -> GenRequest {
         GenRequest {
@@ -306,49 +310,6 @@ mod tests {
             seed: 7,
             think_tokens: 0,
         }
-    }
-
-    /// A one-shot HTTP server on 127.0.0.1 that answers `body` and hands back the request.
-    fn serve(body: &'static str) -> (String, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let base = format!("http://{}", listener.local_addr().expect("addr"));
-        let handle = thread::spawn(move || {
-            let (mut sock, _) = listener.accept().expect("accept");
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-
-            // Read the head, then as many body bytes as Content-Length says.
-            loop {
-                let n = sock.read(&mut chunk).expect("read");
-                buf.extend_from_slice(&chunk[..n]);
-                let text = String::from_utf8_lossy(&buf).to_string();
-
-                if let Some(end) = text.find("\r\n\r\n") {
-                    let len = text
-                        .lines()
-                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
-                        .unwrap_or(0);
-
-                    if buf.len() >= end + 4 + len {
-                        break;
-                    }
-                }
-
-                if n == 0 {
-                    break;
-                }
-            }
-
-            let reply = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-
-            sock.write_all(reply.as_bytes()).expect("write");
-            String::from_utf8_lossy(&buf).to_string()
-        });
-
-        (base, handle)
     }
 
     #[test]
@@ -500,4 +461,56 @@ mod tests {
         assert!(out.text.contains("391"), "{out:?}");
         assert_eq!(out.stop_reason, StopReason::Stop);
     }
+}
+
+/// A one-shot HTTP server for the unit tests of both backends.
+#[cfg(test)]
+pub(crate) mod test_http {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    /// A one-shot HTTP server on 127.0.0.1 that answers `body` and hands back the request.
+    pub(crate) fn serve(body: &'static str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let handle = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+
+            // Read the head, then as many body bytes as Content-Length says.
+            loop {
+                let n = sock.read(&mut chunk).expect("read");
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf).to_string();
+
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                        .unwrap_or(0);
+
+                    if buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+
+                if n == 0 {
+                    break;
+                }
+            }
+
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+
+            sock.write_all(reply.as_bytes()).expect("write");
+            String::from_utf8_lossy(&buf).to_string()
+        });
+
+        (base, handle)
+    }
+
 }
