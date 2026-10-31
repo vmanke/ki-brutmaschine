@@ -21,6 +21,10 @@ vorwärts gerichtete Netze). Sie lösen künstliche Lernaufgaben, zum Beispiel
 zwei ineinander verschlungene Spiralen auseinanderhalten. Diesen Modus nennt
 dieses Dokument den **MLP-Modus**.
 
+Im MLP-Modus kommen **CNNs** als zweite Modellart hinzu, faltende neuronale Netze (englisch
+„convolutional neural networks“). Teil 1 und ein Zwischenstand von Teil 2 sind
+zusammengeführt. Jetzt bauen wir die Mutationen und die Beförderung der Gewinner.
+
 Dazu kommt der **Lerner-Modus** (Stufe 1). Dort ist ein Kandidat kein Netz,
 sondern ein kleiner Lernalgorithmus: ein Programm, das selbst aus Beispielen
 lernt. Die Brutmaschine misst, wie gut so ein Programm *neue Arten* von
@@ -33,9 +37,65 @@ Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
 Beides beschreiben die Abschnitte „Kaskaden-Zucht (Stufe 2c)“ und „Universen, die
 erfinden (Schritt 1)“.
 
+**Schritt 2** soll jedem Worker eine verborgene, vererbte **Seele (Phasenzustand)** geben,
+die sich nur in seinem Charakter zeigt. Ein Urteil wird dann zur Beobachtung: Es rückt die
+Seelen beider Seiten aufeinander zu, so stark, wie die **Kopplungsstärke des Beobachters** κ
+es sagt. Der Entwurf ist zusammengeführt (PR #28 und #29) und seit dem 2026-10-31 im Bau.
+
 Einen bebilderten Überblick gibt der [Atlas](docs/atlas/index.html), eine Seite auf
 Deutsch und Englisch mit Diagrammen, einem Speckle-Simulator und dem Ergebnis von Schritt 1.
 Man öffnet die Datei im Browser.
+
+## Stand und Fahrplan
+
+Stand: 2026-10-31.
+
+**Gebaut**
+
+- **Bis Schritt 1.** MLP-Modus, Lerner-Modus (Stufe 1), Kaskaden-Zucht mit dem simulierten
+  Modell (Stufe 2c, PR #8, #10 und #11) und Schritt 1 mit dem Ergebnis der gezählten Läufe
+  (PR #21). Die Abschnitte unten beschreiben sie.
+- **CNNs, Teil 1 (PR #24).** Die Bibliothek candle, das CNN-Genom und Bildaufgaben (Tickets
+  01 und 02; [Spezifikation](.scratch/cnn-basismodelle/spec.md),
+  [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
+- **CNNs, Teil 2, Zwischenstand (PR #27 und #32).** Ticket 03 ist gebaut, Ticket 04 ist
+  begonnen. PR #32 zog die CNN-Tests auf Ticket 04 nach und korrigierte GoogLeNet und
+  ConvNeXt.
+- **Entwurf von Schritt 2 (PR #28 und #29).** Er beschreibt Seele und Kopplungsstärke κ
+  ([Spezifikation](.scratch/seele-und-kappa/spec.md)). PR #28 war der erste Entwurf, PR #29
+  ist die Endfassung. Die Fragen Q67 bis Q74 wurden am 2026-10-31 mit der jeweils
+  empfohlenen Antwort entschieden: Q67 a, Q68 a, Q69 a, Q70 a, Q71 a, Q72 a, Q73 a und d,
+  Q74 a ([Fragen](.scratch/seele-und-kappa/owner-questions.md)). Die Eigentümerin bzw. der
+  Eigentümer kann jede dieser Entscheidungen aufheben.
+- **Echte Sprachmodelle (PR #33).** Das eigene Paket `backend-ollama` mit dem Programm
+  `brut-breed-ollama`, siehe „Echte Modelle über Ollama“. Die ersten drei Läufe auf der H200
+  fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
+  zusammen (PR #34).
+- **Eigene VM (PR #26, #30 und #31).** `tools/vm-setup.sh` richtet eine Ubuntu-24.04-VM mit
+  einem Befehl ein, siehe „Eigene GPU-VM einrichten (freiwillig)“.
+
+**Im Bau**
+
+- **CNNs, Teil 2.** Ticket 05 (Mutationen, Basismodelle in der Population, Kommandozeile,
+  README, ADR 0008) und Ticket 07 (Beförderung der Gewinner).
+- **Schritt 2.** Die Tickets 01 bis 09 und 12, begonnen am 2026-10-31.
+
+**Geplant**
+
+- **CNNs, Teil 3.** Ticket 06, ARC-Raster als Aufgaben.
+- **Schritt 2, Vergleich.** Vorab-Registrierung (Ticket 10), Pilot (Ticket 11) und gezählte
+  Läufe (Ticket 13).
+- **Sprachmodelle nutzen CNNs (Entwurf geschrieben, Pull-Request folgt).** F1: ein CNN als
+  Worker in einer Kaskade. F2: ein Sprachmodell als Architekt, der Baupläne für CNNs
+  vorschlägt. F3: ein CNN als Werkzeug, welches das Sprachmodell aufruft, mit höchstens 3
+  Aufrufen je Antwort.
+- **Chemische Netze (Recherche läuft).** Chemische Reaktionsnetze als verallgemeinerte
+  neuronale Netze, eine spätere Modellart.
+
+**Geparkt**
+
+- **Quantenneuronale Netze.** Die Idee ruht, bis echte Quantenhardware in Reichweite ist
+  ([Idee 12](.scratch/universum-erfinden/issues/12-quantum-neural-networks-later.md)).
 
 ## Was die Brutmaschine nicht ist
 
@@ -398,8 +458,8 @@ Archiv ist es eine Hash-Kette.
 ## Kaskaden-Zucht (Stufe 2c)
 
 Stand: gebaut mit dem simulierten Modell (PR #8); die Funde zweier Gegenprüfungen sind
-behoben (PR #10 und #11); echte Modelle folgen. Englische
-Fassung: [README.en.md](README.en.md). Beschrieben in
+behoben (PR #10 und #11); echte Modelle bindet seit PR #33 das Paket `backend-ollama` an
+(unten). Englische Fassung: [README.en.md](README.en.md). Beschrieben in
 [docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md) und
 [ADR 0005](docs/adr/0005-cascades-are-bred-by-darwin-goedel-selection-and-every-cascade-is-also-a-judge.md).
 
@@ -752,6 +812,89 @@ Die Datei `.env.example` zeigt das Format beider geheimer Dateien (MLP- und
 Lerner-Modus), nur mit Platzhaltern. Echte Geheimnisse erzeugen `brut init`
 und `brut learner secret-init`. Bitte legen Sie nie echte Geheimnisse ins
 Git-Repository.
+
+## Eigene GPU-VM einrichten (freiwillig)
+
+Echte Läufe mit Sprachmodellen brauchen einen GPU-Server mit Ollama (ADR 0003). Das Skript
+`tools/vm-setup.sh` richtet eine frische Ubuntu-24.04-VM mit einem Befehl ein (PR #26,
+erweitert in PR #30 und #31). Es erledigt Folgendes:
+
+- **Warten.** Es wartet, bis die Einrichtung beim ersten Start (cloud-init) und die
+  automatischen Updates fertig sind.
+- **Pakete.** Build-Werkzeuge, git, curl, python3, tmux und ufw, dazu die
+  GitHub-Kommandozeile `gh` aus der eigenen Paketquelle von GitHub.
+- **Firewall.** Von außen ist nur SSH erreichbar (ufw). Ist Docker installiert,
+  veröffentlicht Docker Ports danach standardmäßig nur auf 127.0.0.1, da ufw diese Ports
+  nicht filtert. Ausgenommen sind Netze von docker compose und Ports mit ausdrücklich
+  `0.0.0.0`.
+- **Werkzeuge.** Rust 1.97.0 mit clippy und rustfmt, cargo-audit und Claude Code.
+- **Repository.** Ein Klon in `~/ki-brutmaschine` und signierte Commits, da `main` nur
+  signierte Commits annimmt. Den SSH-Schlüssel dafür legt das Skript an und meldet ihn bei
+  GitHub an. Die Anmeldung bei GitHub braucht einen einzigen Code, den Sie auf
+  github.com/login/device eingeben.
+- **Dienst.** Der systemd-Dienst `brut-remote-control` startet Claude Remote Control nach
+  jedem Boot in tmux.
+
+Ollama und GPU-Treiber installiert das Skript nicht. Es legt kein Geheimnis im Repository
+ab. API-Schlüssel gehören in die Datei `~/ki-brutmaschine/.env`, die in `.gitignore` steht.
+Das Skript darf jederzeit erneut laufen und überspringt, was schon erledigt ist.
+
+Starten Sie es mit Ihrem normalen Benutzerkonto, nicht als root. Auf einer frischen VM laden
+Sie es an einem festen Commit herunter und prüfen seine SHA-256-Summe. Commit und Summe
+übernehmen Sie aus dem Pull-Request oder Release, in dem beide stehen:
+
+```sh
+COMMIT=<commit>
+SHA256=<sha256>
+curl -fsSL -o vm-setup.sh \
+  "https://raw.githubusercontent.com/vmanke/ki-brutmaschine/$COMMIT/tools/vm-setup.sh"
+echo "$SHA256  vm-setup.sh" | sha256sum -c - && bash vm-setup.sh
+```
+
+Liegt der Klon schon in `~/ki-brutmaschine`, etwa nach einem früheren Lauf des Skripts,
+holen Sie den neuen Stand und starten das Skript von dort:
+
+```sh
+cd ~/ki-brutmaschine && git pull && bash tools/vm-setup.sh
+```
+
+Am Ende nennt das Skript drei Schritte, die Sie einmal von Hand erledigen:
+
+1. **Neu anmelden.** Melden Sie sich mit `exit` ab und verbinden Sie sich erneut per SSH.
+   Erst dann findet die Shell `claude` und `cargo`.
+2. **Bei Claude anmelden.** Nutzen Sie Ihr Konto von claude.ai: `claude auth login`.
+3. **Remote Control starten.** Starten Sie den Dienst und verbinden Sie sich mit seiner
+   tmux-Sitzung. Beantworten Sie dort die ersten Fragen von Remote Control mit `y`:
+
+   ```sh
+   sudo systemctl start brut-remote-control
+   tmux -L brut attach -t brut
+   ```
+
+   Mit Strg+b und danach d verlassen Sie tmux. Remote Control läuft weiter und startet nach
+   einem Ende von selbst neu.
+
+Danach startet der Dienst Remote Control nach jedem Boot. Ein späterer Lauf des Skripts
+schaltet einen abgeschalteten Dienst nicht wieder ein.
+
+```sh
+# Zustand des Dienstes
+systemctl status brut-remote-control
+
+# Zuschauen; verlassen mit Strg+b, dann d
+tmux -L brut attach -t brut
+
+# Abschalten; ein Beenden in tmux genügt nicht, da systemd den Dienst neu startet
+sudo systemctl disable --now brut-remote-control
+```
+
+Die VM der Eigentümerin bzw. des Eigentümers ist eine unterbrechbare Nebius-VM zum
+Spot-Preis mit einer NVIDIA H200. Wir messen dort 143 771 MiB GPU-Speicher, 16 vCPU und
+196 GB Arbeitsspeicher.
+
+**Kosten.** Bei Nebius endet die Abrechnung der GPU erst, wenn Sie die VM in der Konsole
+oder über die API anhalten. Ein Herunterfahren aus der VM heraus beendet sie nicht (laut der
+Dokumentation von Nebius). Die Datenträger kosten auch, solange die VM angehalten ist.
 
 ## Tests
 

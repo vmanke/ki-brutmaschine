@@ -1,16 +1,76 @@
 # Brutmaschine (English)
 
 This page is the English version of the Stage 2c and step 1 parts of the German
-[README.md](README.md). The rest of the project documentation is in German; the code,
-its comments, `CONTEXT.md` and the ADRs are in English.
+[README.md](README.md), with the status, the roadmap and the setup of a GPU VM. The rest
+of the project documentation is in German; the code, its comments, `CONTEXT.md` and the
+ADRs are in English.
+
+CNNs (convolutional neural networks) are coming as a second model kind to the MLP mode,
+which the German README describes. Part 1 and an interim state of part 2 are merged. We
+are now building the mutations and the promotion of winners.
+
+**Step 2** will give every Worker a hidden, inherited **Soul**, which shows itself only in
+the Worker's Character. A judgment then becomes an Observation: it pulls the Souls of both
+sides together, as strongly as the observer's **Coupling strength** κ says. The design is
+merged (PR #28 and #29), and we have been building it since 2026-10-31.
 
 An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
 with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
 
+## Status and roadmap
+
+Status on 2026-10-31.
+
+**Built**
+
+- **Up to step 1.** The MLP mode, the Learner mode (Stage 1), Cascade breeding with the
+  simulated model (Stage 2c, PR #8, #10 and #11) and step 1 with the result of its counted
+  Runs (PR #21). The German README describes the first two, this page the others.
+- **CNNs, part 1 (PR #24).** The library candle, the CNN genome and image tasks (tickets 01
+  and 02; [spec](.scratch/cnn-basismodelle/spec.md),
+  [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
+- **CNNs, part 2, interim state (PR #27 and #32).** Ticket 03 is built, ticket 04 is begun.
+  PR #32 brought the CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt.
+- **Design of step 2 (PR #28 and #29).** It describes the Soul and the Coupling strength κ
+  ([spec](.scratch/seele-und-kappa/spec.md)). PR #28 was the first draft, PR #29 is the
+  final version. The questions Q67 to Q74 were decided by their recommended answers on
+  2026-10-31: Q67 a, Q68 a, Q69 a, Q70 a, Q71 a, Q72 a, Q73 a and d, Q74 a
+  ([questions](.scratch/seele-und-kappa/owner-questions.md), in German). The owner can
+  overrule each of these decisions.
+- **Real language models (PR #33).** The separate package `backend-ollama` with the program
+  `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
+  are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
+  (PR #34, in German).
+- **Own VM (PR #26, #30 and #31).** `tools/vm-setup.sh` sets up an Ubuntu 24.04 VM with one
+  command; see "Setting up your own GPU VM (optional)".
+
+**Being built**
+
+- **CNNs, part 2.** Ticket 05 (mutations, base models in the population, command line,
+  README, ADR 0008) and ticket 07 (promotion of winners).
+- **Step 2.** Tickets 01 to 09 and 12, started on 2026-10-31.
+
+**Planned**
+
+- **CNNs, part 3.** Ticket 06, ARC grids as tasks.
+- **Step 2, comparison.** Pre-registration (ticket 10), pilot (ticket 11) and counted Runs
+  (ticket 13).
+- **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
+  Cascade. F2: a language model as Architect that proposes CNN blueprints. F3: a CNN as a
+  tool that the language model calls, at most 3 calls per answer.
+- **Chemical networks (research running).** Chemical reaction networks as generalized
+  neural networks, a later model kind.
+
+**Parked**
+
+- **Quantum neural networks.** The idea waits until real quantum hardware is in reach
+  ([idea 12](.scratch/universum-erfinden/issues/12-quantum-neural-networks-later.md)).
+
 ## Cascade breeding (Stage 2c)
 
 Status: built with the simulated model (PR #8); the findings of two adversarial reviews
-are fixed (PR #10 and #11); real models follow. Described in
+are fixed (PR #10 and #11); since PR #33 the package `backend-ollama` connects real
+models (below). Described in
 [docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md) and
 [ADR 0005](docs/adr/0005-cascades-are-bred-by-darwin-goedel-selection-and-every-cascade-is-also-a-judge.md).
 
@@ -110,6 +170,88 @@ part of the verified record.
 is the default; `--domain circuits` starts a circuit Run (step 1, below). `--verify`
 recomputes the report of a finished Run from the checkpoint, without a model call,
 including its stop reason.
+
+## Setting up your own GPU VM (optional)
+
+Real Runs with language models need a GPU server with Ollama (ADR 0003). The script
+`tools/vm-setup.sh` sets up a fresh Ubuntu 24.04 VM with one command (PR #26, extended in
+PR #30 and #31). It does this:
+
+- **Waiting.** It waits until the first-boot setup (cloud-init) and the automatic updates
+  are done.
+- **Packages.** Build tools, git, curl, python3, tmux and ufw, and the GitHub CLI `gh` from
+  GitHub's own package source.
+- **Firewall.** Only SSH is reachable from outside (ufw). If Docker is installed, Docker
+  then publishes ports on 127.0.0.1 by default, because ufw does not filter the ports that
+  Docker publishes. Networks of docker compose and ports given explicitly as `0.0.0.0` are
+  not covered.
+- **Tools.** Rust 1.97.0 with clippy and rustfmt, cargo-audit and Claude Code.
+- **Repository.** A clone in `~/ki-brutmaschine`, and signed commits, because `main`
+  accepts only signed commits. The script creates the SSH key for this and registers it
+  with GitHub. The GitHub login needs a single code, which you enter at
+  github.com/login/device.
+- **Service.** The systemd service `brut-remote-control` starts Claude Remote Control in
+  tmux after every boot.
+
+The script installs neither Ollama nor a GPU driver. It stores no secret in the
+repository. API keys belong in the file `~/ki-brutmaschine/.env`, which is in
+`.gitignore`. The script may run again at any time and skips what is already done.
+
+Run it as your normal user, not as root. On a fresh VM, download it at a pinned commit and
+check its SHA-256 sum. Take the commit and the sum from the pull request or release that
+names them:
+
+```sh
+COMMIT=<commit>
+SHA256=<sha256>
+curl -fsSL -o vm-setup.sh \
+  "https://raw.githubusercontent.com/vmanke/ki-brutmaschine/$COMMIT/tools/vm-setup.sh"
+echo "$SHA256  vm-setup.sh" | sha256sum -c - && bash vm-setup.sh
+```
+
+If the clone is already in `~/ki-brutmaschine`, for example after an earlier run of the
+script, update it and run the script from there:
+
+```sh
+cd ~/ki-brutmaschine && git pull && bash tools/vm-setup.sh
+```
+
+At the end, the script names three steps that you do once by hand:
+
+1. **Log in again.** Log out with `exit` and connect with SSH again. Only then does the
+   shell find `claude` and `cargo`.
+2. **Log in to Claude.** Use your claude.ai account: `claude auth login`.
+3. **Start Remote Control.** Start the service and attach to its tmux session. Answer the
+   first questions of Remote Control there with `y`:
+
+   ```sh
+   sudo systemctl start brut-remote-control
+   tmux -L brut attach -t brut
+   ```
+
+   Leave tmux with Ctrl+b, then d. Remote Control keeps running and restarts by itself
+   when it ends.
+
+From then on, the service starts Remote Control after every boot. A later run of the
+script does not turn a disabled service back on.
+
+```sh
+# State of the service
+systemctl status brut-remote-control
+
+# Watch it; leave with Ctrl+b, then d
+tmux -L brut attach -t brut
+
+# Turn it off; ending it inside tmux is not enough, because systemd starts it again
+sudo systemctl disable --now brut-remote-control
+```
+
+The owner's VM is a preemptible Nebius VM at the spot price, with one NVIDIA H200. We
+measured 143 771 MiB of GPU memory, 16 vCPU and 196 GB of RAM on it.
+
+**Costs.** At Nebius, billing of the GPU stops only when you stop the VM in the console or
+through the API. A shutdown from inside the VM does not stop billing (according to the Nebius
+documentation). Disks are billed also while the VM is stopped.
 
 ## Universes that invent (step 1)
 
