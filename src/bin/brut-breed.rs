@@ -57,6 +57,7 @@ use std::fs::{File, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
@@ -71,6 +72,8 @@ use brutmaschine::cascade::circuit_genes::circuit_pool;
 use brutmaschine::cascade::designer::SimDesigner;
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
 use brutmaschine::cascade::puzzle::Grid;
+use brutmaschine::backend::ModelBackend;
+use brutmaschine::cascade::genome::CascadeLimits;
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::cascade::variation::Op;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
@@ -94,7 +97,7 @@ const READ_KEYS: [&str; 3] = ["out", "promote", "verify"];
 /// Exit code: the run waits for LLM answers.
 const EXIT_PENDING: i32 = 3;
 
-fn main() {
+pub fn main() {
     let code = match run() {
         Ok(code) => code,
         Err(BrutError::Invalid(m)) if m.starts_with("usage:") => {
@@ -446,8 +449,12 @@ fn run() -> Result<i32> {
     let verifying = args.contains_key("verify");
 
     match cfg.domain {
-        DomainConfig::Grid if verifying => verify(&out, &cfg, &grid_family()),
-        DomainConfig::Grid => drive(cfg, &grid_family(), &args, &out, resume),
+        DomainConfig::Grid if verifying => verify(&out, &cfg, &grid_family(&cfg.limits)),
+        DomainConfig::Grid => {
+            let family = grid_family(&cfg.limits);
+
+            drive(cfg, &family, &args, &out, resume)
+        }
         DomainConfig::Circuits(_) if verifying => verify(&out, &cfg, &circuit_family()),
         DomainConfig::Circuits(_) => drive(cfg, &circuit_family(), &args, &out, resume),
     }
@@ -910,8 +917,18 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
     Ok(0)
 }
 
-/// Every allow-listed simulated model; a real model tag fails `ModelPool::covers`.
-fn sim_pool() -> ModelPool {
+/// Builds the backend for an allow-listed tag that is not a simulated model, or None. Only
+/// a separate adapter crate sets it (ADR 0001, contract I1): it includes this file as a
+/// module and sets the slot before it calls `main`. The binary `brut-breed` itself never
+/// sets it, so it knows only the simulated models.
+pub static EXTRA_BACKENDS: OnceLock<BackendFactory> = OnceLock::new();
+
+/// See `EXTRA_BACKENDS`.
+pub type BackendFactory = fn(&str) -> Option<Box<dyn ModelBackend>>;
+
+/// Every simulated model, and a backend from `EXTRA_BACKENDS` for every other allow-listed
+/// tag it knows. An allow-listed tag without a backend fails `ModelPool::covers`.
+fn sim_pool(limits: &CascadeLimits) -> ModelPool {
     let mut pool = ModelPool::new();
 
     for m in [SimModel::small(), SimModel::large()] {
@@ -920,15 +937,25 @@ fn sim_pool() -> ModelPool {
         pool.insert(&tag, Box::new(m));
     }
 
+    if let Some(extra) = EXTRA_BACKENDS.get() {
+        for m in &limits.models {
+            if pool.get(&m.tag).is_err()
+                && let Some(backend) = extra(&m.tag)
+            {
+                pool.insert(&m.tag, backend);
+            }
+        }
+    }
+
     pool
 }
 
-/// The grid puzzles of Stage 2c: the grid gene pool and the simulated models. A finished
+/// The grid puzzles of Stage 2c: the grid gene pool and the models of `limits`. A finished
 /// grid run writes nothing besides its report.
-fn grid_family() -> Family<GridDomain> {
+fn grid_family(limits: &CascadeLimits) -> Family<GridDomain> {
     Family {
         genes: GenePool::grid(),
-        pool: sim_pool(),
+        pool: sim_pool(limits),
         after_finish: |_, _| Ok(()),
         check_finish: |_, _, _| Ok(String::new()),
     }
@@ -1208,7 +1235,7 @@ fn promote(out: &Path, cfg: &BreedConfig) -> Result<i32> {
         ));
     }
 
-    let family = grid_family();
+    let family = grid_family(&cfg.limits);
     let (log, cp) = open_run::<GridDomain>(out, cfg)?;
 
     if !out.join(REPORT).exists() {

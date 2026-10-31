@@ -47,6 +47,30 @@ rm runs/k1/STOP
 ./target/release/brut-breed --out runs/k1 --resume
 ```
 
+### Real models through Ollama (`backend-ollama`)
+
+The separate package `backend-ollama` serves a local model through Ollama
+(`docs/STAGE2_BACKEND_CONTRACT.md`); the core crate gains no dependency (ADR 0001). Its
+program `brut-breed-ollama` is `brut-breed` plus one thing: every allow-listed tag
+`ollama:<model>` gets a backend that talks only to a loopback address, with its own model
+allow-list, a timeout and a byte cap. Every Worker call and its full answer go to
+`<out>/llm/worker-calls.jsonl`, and a resume replays them instead of asking the model
+again (contract I7). For now only models without a thinking mode are allowed
+(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`).
+
+```sh
+ollama pull qwen2.5:7b
+cd backend-ollama && cargo build --release && cd ..
+# config.json: a full BreedConfig (for example runs/k1/config.json of a simulated run)
+# with "limits": {"models": [{"tag": "ollama:qwen2.5:7b", "cost_per_call": 0.002}], ...}
+backend-ollama/target/release/brut-breed-ollama --out runs/q1 --config config.json \
+  --seed 1 --generations 2 --children 4 --search 10 --select 10 --max-calls 800
+```
+
+`OLLAMA_URL` (default `http://127.0.0.1:11434`) and `OLLAMA_TIMEOUT_SECS` (default 300)
+set the server and the timeout. The live test:
+`cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
+
 With `--llm-every K`, every K-th generation is an LLM round. If an answer from the
 Mutator is missing, the Run pauses and exits with exit code 3. The requests are then in
 `runs/k1/llm/requests/`. Write each answer as `runs/k1/llm/answers/<schlüssel>.txt`, or

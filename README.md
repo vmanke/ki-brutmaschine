@@ -438,6 +438,31 @@ rm runs/k1/STOP
 ./target/release/brut-breed --out runs/k1 --resume
 ```
 
+### Echte Modelle über Ollama (`backend-ollama`)
+
+Das eigene Paket `backend-ollama` bindet ein lokales Modell über Ollama an
+(`docs/STAGE2_BACKEND_CONTRACT.md`). Das Kernpaket bekommt dadurch keine neue
+Abhängigkeit (ADR 0001). Sein Programm `brut-breed-ollama` ist `brut-breed` mit einem
+Zusatz: Für jeden Tag `ollama:<modell>` in der Erlaubnisliste baut es einen Backend.
+Dieser spricht nur mit einer Loopback-Adresse, kennt eine eigene Modellliste, eine
+Zeitgrenze und eine Bytegrenze. Jeder Worker-Aufruf landet samt voller Antwort in
+`<out>/llm/worker-calls.jsonl`, und ein Fortsetzen spielt ihn ab, statt das Modell neu
+zu fragen (Vertrag I7). Zugelassen sind vorerst nur Modelle ohne Denkmodus
+(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`).
+
+```sh
+ollama pull qwen2.5:7b
+cd backend-ollama && cargo build --release && cd ..
+# config.json: eine vollständige BreedConfig (etwa runs/k1/config.json eines simulierten
+# Laufs) mit "limits": {"models": [{"tag": "ollama:qwen2.5:7b", "cost_per_call": 0.002}], ...}
+backend-ollama/target/release/brut-breed-ollama --out runs/q1 --config config.json \
+  --seed 1 --generations 2 --children 4 --search 10 --select 10 --max-calls 800
+```
+
+`OLLAMA_URL` (Vorgabe `http://127.0.0.1:11434`) und `OLLAMA_TIMEOUT_SECS` (Vorgabe 300)
+stellen den Server und die Zeitgrenze ein. Der Live-Test:
+`cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
+
 Mit `--llm-every K` ist jede K-te Generation eine LLM-Runde. Fehlt eine Antwort des
 Mutators, hält der Lauf an und endet mit Exit-Code 3. Die Anfragen liegen dann unter
 `runs/k1/llm/requests/`. Schreiben Sie (oder eine Claude-Sitzung) jede Antwort als
