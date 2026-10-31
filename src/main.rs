@@ -1,7 +1,7 @@
 //! `brut`: command-line front end of the Brutmaschine.
 //!
 //! Commands:
-//!   brut init <run_dir> [--task spirals|checkerboard|parity|sine] [--seed N]
+//!   brut init <run_dir> [--task <task>] [--seed N]
 //!   brut init <run_dir> --mode learner [--seed N] [--flops X] [--variation V] [--secret F] [--arc-cells]
 //!   brut run <run_dir> [--no-hidden]
 //!   brut status <run_dir>
@@ -14,6 +14,9 @@
 //!   brut learner report <run_dir>
 //!   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
 //!   brut help
+//!
+//! Tasks: spirals, checkerboard, parity, sine, shapes, bars-and-stripes, blob-count,
+//! mirror-symmetry, motif-1d (`TaskKind::from_name`).
 //!
 //! `run`, `status`, `lineage`, `verify` and `approve` work on both run kinds: a directory
 //! with `meta.json` is a learner run, one with `config.json` an MLP run.
@@ -43,7 +46,7 @@ const USAGE: &str = "\
 brut - Brutmaschine, a safe prototype of an AI model incubator
 
 usage:
-  brut init <run_dir> [--task spirals|checkerboard|parity|sine] [--seed N]
+  brut init <run_dir> [--task <task>] [--seed N]
   brut init <run_dir> --mode learner [--seed N] [--flops X]
             [--variation full|constants-only|random-search] [--secret <file>] [--arc-cells]
   brut run <run_dir> [--no-hidden]
@@ -57,6 +60,9 @@ usage:
   brut learner report <run_dir>
   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
   brut help
+
+tasks: spirals, checkerboard, parity, sine (flat inputs); shapes, bars-and-stripes,
+blob-count, mirror-symmetry (16x16 images); motif-1d (one-hot sequences of 64)
 
 learner mode: --secret defaults to $HOME/.brut/learner/hidden.env (create it once with
 brut learner secret-init); run, status, lineage, verify and approve detect the run kind

@@ -274,6 +274,7 @@ mod tests {
         TaskSpec {
             kind: crate::task::TaskKind::TwoSpirals,
             n_in: 2,
+            input: crate::task::InputShape::Flat,
             n_out: 2,
             objective: Objective::Classification { classes: 2 },
             n_train: 4,

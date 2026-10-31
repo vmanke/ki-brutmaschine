@@ -11,11 +11,14 @@
 //! Glue: `config`, `safety`, `evolve`, `util`.
 //!
 //! Stage 2c (ADR 0005): `cascade` breeds Cascades of model Workers.
+//!
+//! CNN models (ADR 0007): `cnn`; its file `ops` is the only one that calls candle.
 
 pub mod arc_data;
 pub mod archive;
 pub mod backend;
 pub mod cascade;
+pub mod cnn;
 pub mod config;
 pub mod evolve;
 pub mod genome;

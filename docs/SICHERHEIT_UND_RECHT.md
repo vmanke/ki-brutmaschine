@@ -316,12 +316,17 @@ Fehler mit.
 
 **Gegenmaßnahmen:**
 
-- Stufe 1 fügt keine Bibliothek hinzu. Ein Test prüft, dass `[dependencies]`
-  in `Cargo.toml` genau `hex`, `rand`, `rand_chacha`, `rayon`, `serde`,
-  `serde_json` und `sha2` enthält und dass es keine weiteren
-  Abhängigkeits-Tabellen und keine Ersetzungen (`[patch]`, `[replace]`) gibt.
+- Stufe 1 fügt keine Bibliothek hinzu. Erst die CNN-Modelle bringen zwei
+  hinzu: `candle-core` und `candle-nn` von GitHub, an einem festen Commit
+  (ADR 0007). Ein Test prüft, dass `[dependencies]` in `Cargo.toml` genau
+  diese beiden und `hex`, `rand`, `rand_chacha`, `rayon`, `serde`,
+  `serde_json` und `sha2` enthält, die beiden nur von diesem Commit, und dass
+  es keine weiteren Abhängigkeits-Tabellen und keine Ersetzungen (`[patch]`,
+  `[replace]`) gibt.
 - Vor jedem Build für Versuche läuft `cargo audit` mit der
-  RustSec-Datenbank. Gefordert sind 0 bekannte Schwachstellen.
+  RustSec-Datenbank. Gefordert sind 0 bekannte Schwachstellen. Mit candle
+  messen wir 0 Schwachstellen über 164 Pakete und eine Warnung: `paste`
+  1.0.15 wird nicht mehr gepflegt (RUSTSEC-2024-0436).
 - Stufe 1 braucht keinen API-Schlüssel und kein Netzwerk.
 
 ## Bekannte Lücken

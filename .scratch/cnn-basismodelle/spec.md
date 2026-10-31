@@ -68,21 +68,31 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   model, are promoted into `candidates/models/` through a draft pull request that a
   human merges, as for Cascades (ADR 0004, ADR 0005). Later runs start with the merged
   models next to the base models of the families, so the pool of base models grows.
-- **Library.** candle (`candle-core`, `candle-nn`, 0.11.0 on crates.io, Hugging Face).
-  It runs on the CPU in Rust and has every operation the families need: 1-D and 2-D
-  convolution with stride, dilation and groups, transposed convolution, max and average
-  pooling, upsampling, batch, layer and group norm, automatic gradients and the AdamW and
-  SGD optimizers. burn (tracel-ai) has a larger layer zoo but a much larger dependency
-  tree; candle suffices and keeps the supply chain smaller. Ticket 01 confirms this
-  before anything else is built.
+- **Library.** candle (`candle-core`, `candle-nn`, Hugging Face), from GitHub at commit
+  `9515d410e3af803fd45efebfef8137f47d85a63d` of its main branch (version 0.11.0), with
+  default features only (CPU), pinned in `Cargo.lock` (ADR 0007). The release 0.11.0 on
+  crates.io is rejected: it requires zip 8.6.0, which has three open advisories; the commit
+  uses zip 9.1.3. candle runs on the CPU in Rust and has every operation the families need:
+  1-D and 2-D convolution with stride, dilation and groups, transposed convolution, max and
+  average pooling, upsampling, batch, layer and group norm, and automatic gradients. Its CPU
+  backward pass is wrong in 17 of 60 checked cases, through 8 defects. `src/cnn/ops.rs` is
+  the only file that calls candle; it replaces each defective operation with one built from
+  correct ones (W1 to W8) and checks every operation it offers against finite differences.
+  burn 0.22.1 (tracel-ai) has a larger layer zoo, but it needs Rust 1.95, brings 133 new
+  crates against candle's 103, and its lockfile fails `cargo audit` as well. Ticket 01
+  settled this (Comments there).
 - **Reproducibility.** The project compares logs byte for byte. Ticket 01 tests whether
   candle trains a fixed genome to byte-equal results at 1 and 4 threads. If not, each
   candidate trains on a fixed number of threads, and the population runs in parallel
   around it.
-- **Security.** Before candle enters `Cargo.toml`, `cargo audit` (RustSec) checks it and
-  every new transitive dependency; a crate with an open advisory is not admitted. The
-  lockfile pins the versions. The RustSec website is outside this session's network
-  allow-list, so the check runs through `cargo audit` or needs that host allowed.
+- **Security.** Before candle entered `Cargo.toml`, `cargo audit` (RustSec, cargo-audit
+  0.22.2, advisory database of 2026-10-30) checked it and every new transitive dependency;
+  a crate with an open advisory is not admitted. With the pinned commit the audit of the
+  repository exits with 0 over 164 packages. Its one warning is RUSTSEC-2024-0436: paste
+  1.0.15, a compile-time macro crate of gemm, is unmaintained. No crate needs a C or C++
+  compiler; `cargo tree -i cc` finds no `cc`. The lockfile pins the versions. `cargo audit`
+  fetches its database from GitHub, so the RustSec website, which is outside this
+  session's network allow-list, is not needed.
 
 ## Tasks
 

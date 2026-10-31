@@ -1,0 +1,4 @@
+{"kind":"TwoSpirals","n_in":2,"n_out":2,"objective":{"Classification":{"classes":2}},"n_train":400,"n_valid":400,"n_hidden":4000,"noise":0.03}
+{"kind":"Checkerboard","n_in":2,"n_out":2,"objective":{"Classification":{"classes":2}},"n_train":1000,"n_valid":1000,"n_hidden":4000,"noise":0.02}
+{"kind":"Parity","n_in":8,"n_out":2,"objective":{"Classification":{"classes":2}},"n_train":256,"n_valid":256,"n_hidden":1024,"noise":0.0}
+{"kind":"SineRegression","n_in":1,"n_out":1,"objective":"Regression","n_train":500,"n_valid":500,"n_hidden":2000,"noise":0.1}

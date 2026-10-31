@@ -148,6 +148,79 @@ fn tiny_run_with_hidden_eval() {
     assert!(state.contains("queries_used"));
 }
 
+/// An MLP run works on every image and sequence task. The MLP reads each sample flattened,
+/// and the hidden evaluator scores it on the hidden split of that task.
+#[test]
+fn tiny_runs_on_the_image_and_sequence_tasks() {
+    let tasks = [
+        TaskKind::Shapes,
+        TaskKind::BarsAndStripes,
+        TaskKind::BlobCount,
+        TaskKind::MirrorSymmetry,
+        TaskKind::Motif1d,
+    ];
+
+    for task in tasks {
+        let dir = fresh_dir(&format!("grid-{}", task.name()));
+        let config = Config {
+            task,
+            population_init: 2,
+            generations: 1,
+            children_per_generation: 2,
+            ..tiny_config(3)
+        };
+        let eval = setup(&dir, &config);
+        let summary = evolve::run(&dir, Some(&eval)).expect("run");
+
+        assert_eq!(summary.stop_reason, "completed", "{task:?}");
+        assert_eq!(summary.candidates, 2 + 2, "{task:?}");
+        assert!(summary.best_fitness.is_finite(), "{task:?}");
+        assert!(!summary.hidden.is_empty(), "{task:?}");
+
+        for h in &summary.hidden {
+            assert!((0.0..=1.0).contains(&h.hidden_primary), "{task:?}");
+        }
+
+        let n = Archive::verify(&dir.join(ARCHIVE_FILE)).expect("verify");
+        let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+        let best = summary.best_id.expect("best id");
+        let file = archive
+            .get(&best)
+            .and_then(|c| c.model_file)
+            .expect("model file");
+        let model: Mlp = serde_json::from_slice(&std::fs::read(dir.join(file)).expect("read"))
+            .expect("model json");
+        let spec = task.spec();
+
+        assert_eq!(n, archive.records().len());
+        assert_eq!(model.sizes.first(), Some(&spec.n_in), "{task:?}");
+        assert_eq!(model.sizes.last(), Some(&spec.n_out), "{task:?}");
+
+        // `brut init` takes the task's CLI name.
+        let run_dir = dir.join("cli");
+        let run = run_dir.to_str().expect("utf8 path");
+
+        assert_eq!(
+            run_brut(&["init", run, "--task", task.name()])
+                .status
+                .code(),
+            Some(0)
+        );
+        assert_eq!(
+            Config::load(&run_dir.join(CONFIG_FILE)).expect("load").task,
+            task
+        );
+    }
+
+    // The help names every task.
+    let help = run_brut(&["help"]);
+    let usage = String::from_utf8_lossy(&help.stdout);
+
+    for task in TaskKind::ALL {
+        assert!(usage.contains(task.name()), "help lacks {}", task.name());
+    }
+}
+
 #[test]
 fn same_seed_gives_same_results() {
     let a = fresh_dir("det-a");
