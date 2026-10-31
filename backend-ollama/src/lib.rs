@@ -200,6 +200,103 @@ pub struct CallRecord {
     pub tag: String,
     pub request: GenRequest,
     pub response: GenResponse,
+    /// True when the answer came from the shared call cache, not from a call made for this
+    /// run. Absent in records written before the cache existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cached: bool,
+}
+
+/// Answers shared by every run on this machine: one JSONL file of `CallRecord`s, keyed like
+/// the run records (model tag + request key). An identical request is computed once, even
+/// across runs and across processes running at the same time: on a miss the cache reads
+/// what other processes appended since its last read. Appends hold an exclusive file lock.
+/// Only successful answers are shared.
+pub struct SharedCache {
+    path: PathBuf,
+    state: Mutex<(u64, BTreeMap<String, GenResponse>)>,
+}
+
+impl SharedCache {
+    /// The cache in `path`; nothing is read until the first lookup.
+    pub fn new(path: &Path) -> SharedCache {
+        SharedCache {
+            path: path.to_path_buf(),
+            state: Mutex::new((0, BTreeMap::new())),
+        }
+    }
+
+    /// Read the complete lines appended since the last read; a line still being written
+    /// (no final newline yet) is left for the next read.
+    fn refresh(&self, state: &mut (u64, BTreeMap<String, GenResponse>)) -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut file = match File::open(&self.path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(BrutError::Io(e)),
+        };
+        let mut fresh = Vec::new();
+
+        file.seek(SeekFrom::Start(state.0)).map_err(BrutError::Io)?;
+        file.read_to_end(&mut fresh).map_err(BrutError::Io)?;
+
+        let complete = fresh.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+
+        for line in fresh[..complete].split(|&b| b == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+
+            // A damaged line costs only its own answer, never the run.
+            if let Ok(rec) = serde_json::from_slice::<CallRecord>(line) {
+                state.1.insert(rec.key, rec.response);
+            }
+        }
+
+        state.0 += complete as u64;
+
+        Ok(())
+    }
+
+    /// The shared answer for `key`, reading new entries first when it is not known yet.
+    pub fn get(&self, key: &str) -> Option<GenResponse> {
+        let mut state = self.state.lock().ok()?;
+
+        if let Some(hit) = state.1.get(key) {
+            return Some(hit.clone());
+        }
+
+        if let Err(e) = self.refresh(&mut state) {
+            eprintln!("brut-breed-ollama: cannot read the call cache {}: {e}", self.path.display());
+        }
+
+        state.1.get(key).cloned()
+    }
+
+    /// Share a successful call.
+    pub fn put(&self, rec: &CallRecord) -> Result<()> {
+        let mut line = serde_json::to_string(&CallRecord { cached: false, ..rec.clone() })
+            .map_err(BrutError::Json)?;
+
+        line.push('\n');
+
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(BrutError::Io)?;
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(BrutError::Io)?;
+
+        file.lock().map_err(BrutError::Io)?;
+
+        let written = file.write_all(line.as_bytes()).and_then(|_| file.flush());
+
+        file.unlock().map_err(BrutError::Io)?;
+        written.map_err(BrutError::Io)
+    }
 }
 
 /// A backend whose answers are filed in a JSONL file and replayed from it. A request it
@@ -213,6 +310,8 @@ pub struct Recorded<B: ModelBackend> {
     path: PathBuf,
     book: Mutex<BTreeMap<String, GenResponse>>,
     errors: std::sync::atomic::AtomicU64,
+    shared: Option<SharedCache>,
+    cache_hits: std::sync::atomic::AtomicU64,
 }
 
 /// One failed call, as filed in `worker-errors.jsonl`.
@@ -255,7 +354,58 @@ impl<B: ModelBackend> Recorded<B> {
             path: path.to_path_buf(),
             book: Mutex::new(book),
             errors: std::sync::atomic::AtomicU64::new(0),
+            shared: None,
+            cache_hits: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    /// Like `open`, and also look up and share answers in the cache file `cache`.
+    pub fn open_with_cache(inner: B, path: &Path, cache: &Path) -> Result<Recorded<B>> {
+        let mut r = Recorded::open(inner, path)?;
+
+        r.shared = Some(SharedCache::new(cache));
+
+        Ok(r)
+    }
+
+    /// Answers this process took from the shared cache instead of calling the model.
+    pub fn cache_hits(&self) -> u64 {
+        self.cache_hits.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// File `response` in this run's record and in the book.
+    fn file_answer(&self, key: String, req: &GenRequest, response: &GenResponse, cached: bool) -> Result<CallRecord> {
+        let rec = CallRecord {
+            key: key.clone(),
+            tag: self.inner.name().to_string(),
+            request: req.clone(),
+            response: response.clone(),
+            cached,
+        };
+        let mut line = serde_json::to_string(&rec).map_err(BrutError::Json)?;
+
+        line.push('\n');
+
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| err("ollama: the record lock is poisoned".to_string()))?;
+
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(BrutError::Io)?;
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(BrutError::Io)?;
+
+        file.write_all(line.as_bytes()).map_err(BrutError::Io)?;
+        file.sync_data().map_err(BrutError::Io)?;
+        book.insert(key, response.clone());
+
+        Ok(rec)
     }
 
     /// Number of answers on file for this backend.
@@ -320,6 +470,13 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
             return Ok(hit);
         }
 
+        if let Some(hit) = self.shared.as_ref().and_then(|c| c.get(&key)) {
+            self.file_answer(key, req, &hit, true)?;
+            self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+            return Ok(hit);
+        }
+
         let response = match self.inner.generate(req) {
             Ok(r) => r,
             Err(e) => {
@@ -327,34 +484,14 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
                 return Err(e);
             }
         };
-        let rec = CallRecord {
-            key: key.clone(),
-            tag: self.inner.name().to_string(),
-            request: req.clone(),
-            response: response.clone(),
-        };
-        let mut line = serde_json::to_string(&rec).map_err(BrutError::Json)?;
+        let rec = self.file_answer(key, req, &response, false)?;
 
-        line.push('\n');
-
-        let mut book = self
-            .book
-            .lock()
-            .map_err(|_| err("ollama: the record lock is poisoned".to_string()))?;
-
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(BrutError::Io)?;
+        if let Some(cache) = &self.shared
+            && let Err(e) = cache.put(&rec)
+        {
+            // The run's own record holds the answer; only the sharing failed.
+            eprintln!("brut-breed-ollama: cannot write the call cache: {e}");
         }
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(BrutError::Io)?;
-
-        file.write_all(line.as_bytes()).map_err(BrutError::Io)?;
-        file.sync_data().map_err(BrutError::Io)?;
-        book.insert(key, response.clone());
 
         Ok(response)
     }
@@ -427,6 +564,65 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].error.contains("HTTP 400"));
         assert_eq!(lines[0].tag, "vllm:qwen2.5-32b");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shared_cache_answers_a_second_run_without_a_call() {
+        let dir = std::env::temp_dir().join(format!("backend-ollama-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = dir.join("cache").join("calls.jsonl");
+        let a = Recorded::open_with_cache(Counter(AtomicUsize::new(0)), &dir.join("a/worker-calls.jsonl"), &cache).expect("a");
+        let b = Recorded::open_with_cache(Counter(AtomicUsize::new(100)), &dir.join("b/worker-calls.jsonl"), &cache).expect("b");
+
+        // b is opened before a answers: it must still see a's answer (read on a miss).
+        let first = a.generate(&req(8)).expect("a call");
+        let second = b.generate(&req(8)).expect("b hit");
+
+        assert_eq!(first, second);
+        assert_eq!(a.inner.0.load(Ordering::SeqCst), 1);
+        assert_eq!(b.inner.0.load(Ordering::SeqCst), 100, "b never called its model");
+        assert_eq!(b.cache_hits(), 1);
+
+        // b's own record holds the answer, marked as cached; a's is not marked.
+        let rec_b: CallRecord = serde_json::from_str(
+            std::fs::read_to_string(dir.join("b/worker-calls.jsonl")).expect("b record").lines().next().expect("line"),
+        )
+        .expect("json");
+        assert!(rec_b.cached);
+        assert!(!std::fs::read_to_string(dir.join("a/worker-calls.jsonl")).expect("a record").contains("\"cached\""));
+
+        // A resumed b replays from its own record, without the cache.
+        let b2 = Recorded::open(Counter(AtomicUsize::new(500)), &dir.join("b/worker-calls.jsonl")).expect("b2");
+        assert_eq!(b2.generate(&req(8)).expect("replay"), first);
+        assert_eq!(b2.inner.0.load(Ordering::SeqCst), 500);
+
+        // Another request misses the cache and is computed.
+        let mut other = req(8);
+        other.seed = 99;
+        b.generate(&other).expect("miss");
+        assert_eq!(b.inner.0.load(Ordering::SeqCst), 101);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shared_cache_skips_a_half_written_line_and_never_shares_failures() {
+        let dir = std::env::temp_dir().join(format!("backend-ollama-cache2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = dir.join("calls.jsonl");
+
+        std::fs::create_dir_all(&dir).expect("dir");
+        // A line without its newline: another process is still writing it.
+        std::fs::write(&cache, "{\"key\":\"half").expect("write");
+
+        let c = SharedCache::new(&cache);
+        assert!(c.get("half").is_none());
+
+        let broken = Recorded::open_with_cache(Broken, &dir.join("run/worker-calls.jsonl"), &cache).expect("open");
+        assert!(broken.generate(&req(8)).is_err());
+        assert_eq!(std::fs::read_to_string(&cache).expect("cache"), "{\"key\":\"half", "a failure is never shared");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
