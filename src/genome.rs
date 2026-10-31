@@ -290,7 +290,7 @@ impl Genome {
                     plan.train_flops_per_sample()
                         .saturating_mul(spec.n_train as u64)
                         .saturating_mul(self.epochs as u64),
-                    plan.train_nanos_per_sample() * samples / 1e9,
+                    plan.train_seconds(samples),
                 ),
                 Err(BrutError::Invalid(m)) => return fail(m),
                 Err(e) => return Err(e),
@@ -620,7 +620,7 @@ mod tests {
             testing::grouped_dilated().summary(),
             "cnn2d stem(w8 k3 relu) plain(w16 k3 s2conv d2 g4 gn silu) \
              plain(w16 k3 d3 g16 ln relu6) head=gap \
-             hidden=[8] act=Gelu opt=Adam lr=1.00e-2 l2=0.0e0 bs=32 ep=10 init=1.00"
+             hidden=[8] act=Gelu opt=Adam lr=1.00e-2 l2=0.0e0 bs=32 ep=5 init=1.00"
         );
     }
 

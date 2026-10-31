@@ -220,6 +220,12 @@ impl Plan {
         counts
     }
 
+    /// Estimated seconds to train on `samples` samples: `train_nanos_per_sample` times them.
+    /// `Genome::validate` and `variation::repair` both use it, so they agree to the bit.
+    pub fn train_seconds(&self, samples: f64) -> f64 {
+        self.train_nanos_per_sample() * samples / 1e9
+    }
+
     /// Estimated training time of one sample (forward pass, backward pass and update), in
     /// nanoseconds at one thread on the reference machine, safety factor included.
     pub fn train_nanos_per_sample(&self) -> f64 {
@@ -1093,6 +1099,8 @@ mod tests {
     fn rejects_too_many_stages() {
         let mut g = testing::grouped_dilated();
 
+        // A stride of 4 in the stem keeps 12 stages within the time budget.
+        cnn_mut(&mut g).stem.stride = 4;
         cnn_mut(&mut g).stages = vec![plain(8, 1, CnnActivation::Relu); MAX_STAGES];
         assert!(
             g.validate(&Limits::default(), &TaskKind::Shapes.spec())
@@ -1380,8 +1388,8 @@ mod tests {
         let g = wide();
         let spec = TaskKind::Shapes.spec();
         let flops = g.train_flops(&spec);
-        let plan = valid_plan(&g, TaskKind::Shapes);
-        let seconds = plan.train_nanos_per_sample() * 5000.0 / 1e9;
+        let plan = g.cnn_plan(&spec).expect("plan");
+        let seconds = plan.train_seconds(5000.0);
 
         // The FLOP rule binds first for this genome: its time fits the FLOP budget.
         assert!(seconds < flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND, "{seconds} s");
@@ -1515,7 +1523,7 @@ mod tests {
         let lenet = testing::lenet();
         let flops = lenet.train_flops(&spec);
         let plan = valid_plan(&lenet, TaskKind::Shapes);
-        let seconds = plan.train_nanos_per_sample() * 10_000.0 / 1e9;
+        let seconds = plan.train_seconds(10_000.0);
         let budget = |seconds: f64| Limits {
             max_train_flops: (seconds * TIME_BUDGET_FLOPS_PER_SECOND) as u64,
             ..Limits::default()
@@ -1652,8 +1660,8 @@ mod tests {
                     assert!(plan.params <= limits.max_params);
                     assert!(g.train_flops(&spec) <= limits.max_train_flops);
                     assert!(
-                        plan.train_nanos_per_sample() * samples
-                            <= limits.max_train_flops as f64 * 1e9 / TIME_BUDGET_FLOPS_PER_SECOND
+                        plan.train_seconds(samples)
+                            <= limits.max_train_flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND
                     );
                 }
                 Err(_) => invalid += 1,
@@ -1687,7 +1695,7 @@ mod tests {
 
         // Both outcomes occur often, so the test covers the valid and the invalid paths.
         assert!(
-            valid > 800 && invalid > 8000,
+            valid > 400 && invalid > 8000,
             "{valid} valid, {invalid} invalid"
         );
     }

@@ -10,6 +10,7 @@
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
+use crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
 use crate::config::Limits;
 use crate::genome::{
     ACTIVATIONS, Arch, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN, LR_MAX,
@@ -342,7 +343,8 @@ pub fn repair(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
     }
 }
 
-/// Cut the epochs of a CNN genome to meet `max_train_flops`, down to `MIN_EPOCHS`.
+/// Cut the epochs of a CNN genome to meet `max_train_flops` and the time budget of
+/// `Genome::validate`, down to `MIN_EPOCHS`.
 ///
 /// Leaves the genome as it is when its shapes do not fit, when it has too many
 /// parameters, or when even `MIN_EPOCHS` epochs cost too much.
@@ -365,8 +367,29 @@ fn fit_cnn_epochs(g: Genome, limits: &Limits, spec: &TaskSpec) -> Genome {
         .checked_div(per_epoch)
         .unwrap_or(u64::MAX);
 
-    if affordable >= MIN_EPOCHS as u64 {
-        g.epochs = g.epochs.min(affordable.min(usize::MAX as u64) as usize);
+    if affordable < MIN_EPOCHS as u64 {
+        return g;
+    }
+
+    // The most epochs whose estimated time fits the budget, by the rule of `validate`.
+    let budget = limits.max_train_flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND;
+    let mut epochs = g.epochs.min(affordable.min(usize::MAX as u64) as usize);
+    let seconds = |epochs: usize| plan.train_seconds(spec.n_train as f64 * epochs as f64);
+
+    if seconds(epochs) > budget {
+        let per_epoch = seconds(1);
+
+        if per_epoch > 0.0 {
+            epochs = epochs.min((budget / per_epoch).floor() as usize);
+        }
+
+        while epochs > MIN_EPOCHS && seconds(epochs) > budget {
+            epochs -= 1;
+        }
+    }
+
+    if epochs >= MIN_EPOCHS && seconds(epochs) <= budget {
+        g.epochs = epochs;
     }
 
     g
@@ -747,8 +770,9 @@ mod tests {
 
         let fixed = repair(g.clone(), &limits, &spec);
 
-        // 2e10 FLOPs / (3 * 405 832 FLOPs * 1000 samples) = 16.4 epochs.
-        assert_eq!(fixed.epochs, 16);
+        // 2e10 FLOPs / (3 * 405 832 FLOPs * 1000 samples) = 16.4 epochs, but the time
+        // budget of 20 s allows 10.7: 1.87 ms per sample by the time model of `cnn::shape`.
+        assert_eq!(fixed.epochs, 10);
         assert_eq!(fixed.learning_rate, 0.01);
         assert_eq!(fixed.batch_size, 256);
         assert_eq!(architecture(&fixed), architecture(&g));

@@ -521,10 +521,10 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
 
+            // The harness may print the name of the test on the same line, before it.
             String::from_utf8_lossy(&out.stdout)
                 .lines()
-                .filter(|line| line.starts_with("FINGERPRINT "))
-                .map(str::to_string)
+                .filter_map(|line| line.find("FINGERPRINT ").map(|at| line[at..].to_string()))
                 .collect()
         };
         let one = run("1");
