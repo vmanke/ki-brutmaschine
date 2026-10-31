@@ -17,7 +17,7 @@ use serde::Deserialize;
 use brutmaschine::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
 use brutmaschine::util::{BrutError, Result};
 
-use crate::{MAX_RESPONSE_BYTES, check_loopback, err};
+use crate::{MAX_RESPONSE_BYTES, check_loopback, err, wire_seed};
 
 /// The prefix of every vLLM model tag in a run's allow-list: `vllm:qwen2.5-32b`.
 pub const TAG_PREFIX: &str = "vllm:";
@@ -96,7 +96,8 @@ impl VllmBackend {
     }
 
     /// The JSON body of `req`: the system prompt and the prompt as two chat messages,
-    /// max_tokens, temperature and seed. `think_tokens` is ignored, as for every model
+    /// max_tokens, temperature and the seed masked to 63 bits (`wire_seed`; vLLM refuses
+    /// larger ones with HTTP 400). `think_tokens` is ignored, as for every model
     /// without a thinking mode (I5).
     pub fn body(&self, req: &GenRequest) -> serde_json::Value {
         serde_json::json!({
@@ -107,7 +108,7 @@ impl VllmBackend {
             ],
             "max_tokens": req.max_tokens,
             "temperature": req.temperature,
-            "seed": req.seed,
+            "seed": wire_seed(req.seed),
             "stream": false,
         })
     }
@@ -218,6 +219,16 @@ mod tests {
     }
 
     #[test]
+    fn a_seed_above_i64_max_reaches_vllm_in_range() {
+        let b = VllmBackend::new("vllm:qwen2.5-32b", DEFAULT_BASE, Duration::from_secs(1)).expect("new");
+        let mut r = req(8);
+
+        r.seed = u64::MAX - 5;
+        assert_eq!(b.body(&r)["seed"], (u64::MAX - 5) & (i64::MAX as u64));
+        assert!(b.body(&r)["seed"].as_u64().expect("seed") <= i64::MAX as u64);
+    }
+
+    #[test]
     fn a_cut_off_answer_is_length() {
         let (base, server) = serve(
             r#"{"choices":[{"message":{"content":"a b c"},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":3}}"#,
@@ -249,13 +260,14 @@ mod tests {
         }
 
         let b = VllmBackend::new("vllm:qwen2.5-32b", DEFAULT_BASE, Duration::from_secs(300)).expect("new");
+        // A seed above i64::MAX, as the core draws them: the server must accept it.
         let out = b
             .generate(&GenRequest {
                 system: "Answer with the number only.".to_string(),
                 prompt: "What is 17 times 23?".to_string(),
                 max_tokens: 16,
                 temperature: 0.0,
-                seed: 1,
+                seed: u64::MAX - 1,
                 think_tokens: 0,
             })
             .expect("generate");
