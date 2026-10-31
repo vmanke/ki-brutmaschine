@@ -204,6 +204,24 @@ _Avoid_: T alone (T also counts T gates), success generation, hitting time
 One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice.
 _Avoid_: condition, group
 
+### Soul and Character (planned, step 2)
+
+**Soul**:
+A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but come from the Task. It is never seen directly, only through the Character it produces.
+_Avoid_: spirit, psyche, mind
+
+**Character**:
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by a strength that the Task sets. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
+_Avoid_: personality, temperament, profile
+
+**Observation**:
+A Worker judging answers of others, in the vote of its own Stage or as a peer judge. It changes the Souls of both sides, with a strength κ that the observer inherits.
+_Avoid_: measurement (alone), look
+
+**Upbringing**:
+What a child receives from its parents' lives besides genes and Soul. In imprinting, its parents observe its first answers and so shift its Soul toward theirs. In teaching, a prompt section is written fresh at birth from its parents' best solved examples and lessons; it is never inherited as a gene.
+_Avoid_: training, education (alone)
+
 ### Records and control
 
 **Run**:
