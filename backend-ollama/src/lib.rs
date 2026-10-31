@@ -9,12 +9,14 @@
 //! - I6: a per-request timeout, a byte cap on the answer, and an allow-list of models.
 //! - I7: `Recorded` files every request and its full answer and replays them.
 //!
-//! Only models without a thinking mode are on the allow-list for now, so `think_tokens` is
-//! ignored as I5 says for such models. Thinking models (Qwen3, gpt-oss) follow once their
-//! separate caps are built.
+//! Only models without a thinking mode are on the Ollama allow-list, so `think_tokens` is
+//! ignored as I5 says for such models.
 //!
 //! The module `vllm` holds a second backend with the same guarantees for a batching
-//! server with an OpenAI-compatible API (vLLM).
+//! server with an OpenAI-compatible API (vLLM). It also serves the one thinking model
+//! (`qwen3.8-27b`) with the separate caps of I5; `Recorded` files what such a model
+//! thought (`Thinking`) beside the answer, through the `Detailed` trait, since the core's
+//! `GenResponse` has no place for it.
 #![forbid(unsafe_code)]
 
 pub mod vllm;
@@ -152,6 +154,8 @@ impl OllamaBackend {
     }
 }
 
+impl Detailed for OllamaBackend {}
+
 impl ModelBackend for OllamaBackend {
     fn name(&self) -> &str {
         &self.tag
@@ -193,13 +197,47 @@ impl ModelBackend for OllamaBackend {
     }
 }
 
-/// One recorded call: the request, which model got it, and its full answer (I7).
+/// What a thinking model did besides its visible answer (I5). `GenResponse` is a core type
+/// and stays as it is, so this part travels beside it, through `Detailed`, into the record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Thinking {
+    /// True when the request turned thinking on (`think_tokens` > 0).
+    pub enabled: bool,
+    /// The reasoning effort the request asked for (`low`, `medium`, `xhigh`); None with
+    /// thinking off.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Tokens of the reasoning, checked against `think_tokens`.
+    pub reasoning_tokens: u32,
+    /// Tokens of the visible answer, checked against `max_tokens`.
+    pub answer_tokens: u32,
+    /// True when the two counts are whitespace-word estimates of the texts, because the
+    /// server did not report the reasoning tokens (I5); false when they are server counts.
+    pub estimated: bool,
+    /// The reasoning text. It never reaches `GenResponse::text`.
+    pub reasoning: String,
+}
+
+/// A backend that can tell more about a call than `GenResponse` holds. `Recorded` files
+/// the extra part with the call (I7). The default says nothing more.
+pub trait Detailed: ModelBackend {
+    /// `generate`, plus what the model thought, if it is a thinking model.
+    fn generate_detailed(&self, req: &GenRequest) -> Result<(GenResponse, Option<Thinking>)> {
+        self.generate(req).map(|r| (r, None))
+    }
+}
+
+/// One recorded call: the request, which model got it, and its full answer (I7), with the
+/// reasoning of a thinking model. Records without `thinking` (all calls of models without
+/// a thinking mode, and every record filed before it existed) read and write as before.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CallRecord {
     pub key: String,
     pub tag: String,
     pub request: GenRequest,
     pub response: GenResponse,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
 }
 
 /// A backend whose answers are filed in a JSONL file and replayed from it. A request it
@@ -308,7 +346,7 @@ impl<B: ModelBackend> Recorded<B> {
     }
 }
 
-impl<B: ModelBackend> ModelBackend for Recorded<B> {
+impl<B: Detailed> ModelBackend for Recorded<B> {
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -320,7 +358,7 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
             return Ok(hit);
         }
 
-        let response = match self.inner.generate(req) {
+        let (response, thinking) = match self.inner.generate_detailed(req) {
             Ok(r) => r,
             Err(e) => {
                 self.file_error(&key, req, &e);
@@ -332,6 +370,7 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
             tag: self.inner.name().to_string(),
             request: req.clone(),
             response: response.clone(),
+            thinking,
         };
         let mut line = serde_json::to_string(&rec).map_err(BrutError::Json)?;
 
@@ -393,6 +432,8 @@ mod tests {
 
     /// Fails every call.
     struct Broken;
+
+    impl Detailed for Broken {}
 
     impl ModelBackend for Broken {
         fn name(&self) -> &str {
@@ -508,6 +549,8 @@ mod tests {
     /// Counts calls and answers with the call number.
     struct Counter(AtomicUsize);
 
+    impl Detailed for Counter {}
+
     impl ModelBackend for Counter {
         fn name(&self) -> &str {
             "ollama:qwen2.5:7b"
@@ -552,7 +595,21 @@ mod tests {
         assert_ne!(second.generate(&other).expect("new").text, a.text);
         assert_eq!(second.len(), 2);
 
+        // A model without a thinking mode files the record format of before.
+        let filed = std::fs::read_to_string(&path).expect("record");
+
+        assert!(!filed.contains("thinking"), "{filed}");
+
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_record_from_before_thinking_still_reads() {
+        let line = r#"{"key":"k","tag":"vllm:qwen2.5-32b","request":{"system":"s","prompt":"p","max_tokens":8,"temperature":0.0,"seed":1},"response":{"text":"t","prompt_tokens":1,"completion_tokens":1,"stop_reason":"stop","backend":"vllm:qwen2.5-32b"}}"#;
+        let rec: CallRecord = serde_json::from_str(line).expect("json");
+
+        assert_eq!(rec.thinking, None);
+        assert_eq!(rec.request.think_tokens, 0);
     }
 
     /// Talks to the real local server. Run with:
