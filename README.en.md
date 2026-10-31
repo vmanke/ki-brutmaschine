@@ -127,7 +127,17 @@ backend-ollama/target/release/brut-breed-ollama --out runs/q1 --config config.js
   --seed 1 --generations 2 --children 4 --search 10 --select 10 --max-calls 800
 ```
 
-`OLLAMA_URL` (default `http://127.0.0.1:11434`) and `OLLAMA_TIMEOUT_SECS` (default 300)
+Tags of the form `vllm:<name>` go to a vLLM server with an OpenAI-compatible API instead
+of Ollama; it decodes the parallel requests of a panel in one batch (on the H200, 40
+times the throughput). The server must serve the model under that name:
+
+```sh
+VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve Qwen/Qwen2.5-32B-Instruct --host 127.0.0.1 \
+  --port 8000 --served-model-name qwen2.5-32b --max-model-len 8192
+# in config.json: "models": [{"tag": "vllm:qwen2.5-32b", "cost_per_call": 0.002}]
+```
+
+`VLLM_URL` (default `http://127.0.0.1:8000`), `OLLAMA_URL` (default `http://127.0.0.1:11434`) and `OLLAMA_TIMEOUT_SECS` (default 300, for both servers)
 set the server and the timeout. The live test:
 `cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
 

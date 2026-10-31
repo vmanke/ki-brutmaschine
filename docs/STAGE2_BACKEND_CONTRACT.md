@@ -110,5 +110,9 @@ Documented for the host, not run here:
   (I5), and the Docker sandbox of section 3.
 - **On the host (an H200 VM, 2026-10-31):** Ollama 0.40.13 as a system service on
   127.0.0.1:11434 and the first real runs (`docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
-  Ollama serves one request at a time there; a batching server (vLLM) is the next
-  step for throughput.
+  Ollama serves one request at a time there.
+- **vLLM (built, 2026-10-31):** the module `backend_ollama::vllm` serves tags
+  `vllm:<served model name>` through `/v1/chat/completions` of a vLLM server on loopback,
+  with the same guarantees (I3, I5 for models without a thinking mode, I6, and I7 through
+  `Recorded`). On the H200 it gives 40 times the throughput of Ollama at 64 parallel
+  requests.

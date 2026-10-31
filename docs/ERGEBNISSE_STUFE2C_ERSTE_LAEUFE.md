@@ -90,11 +90,27 @@ Panels parallel schickt. Acht gleichzeitige Anfragen an `qwen2.5:32b` dauern
 lieferte in unserer Messung aber keinen höheren Durchsatz. Von 141 GB belegen die
 Modelle höchstens 27 GB.
 
+**vLLM.** Mit vLLM 0.32.0 und `Qwen2.5-32B-Instruct` in bf16 (61 GB Gewichte, 8192
+Token Kontext) messen wir am selben Tag:
+
+| Gleichzeitige Anfragen | Dauer | Token/s gesamt |
+|---|---|---|
+| 1 | 2.0 s | 55 |
+| 16 | 2.3 s | 847 |
+| 64 | 2.6 s | 2929 |
+
+Bei 64 Anfragen liefert vLLM damit Faktor 40 mehr Token je Sekunde als Ollama mit
+`qwen2.5:32b`, bei gleicher Wartezeit je Anfrage. Sechs Zuchtläufe zugleich lasten die
+Karte zu 100 % bei 683 W aus. Der Vergleich hinkt in einem Punkt: Ollama rechnet mit
+einer 4-Bit-Fassung des Modells, vLLM mit bf16. vLLM startete erst, nachdem wir den
+FlashInfer-Sampler abschalteten (`VLLM_USE_FLASHINFER_SAMPLER=0`), da auf der VM das
+Bauwerkzeug `ninja` fehlt.
+
 ## 6. Was als Nächstes zählt
 
 | Hebel | Zweck | Stand |
 |---|---|---|
-| vLLM statt Ollama | Durchsatz: parallele Anfragen gebündelt dekodieren | Installation auf der VM steht aus |
+| vLLM statt Ollama | Durchsatz: parallele Anfragen gebündelt dekodieren | gebaut (`vllm:`-Tags), Faktor 40 gemessen |
 | Schlichte Seeds (nur Rolle und Format) | Startpunkt ohne lenkenden Hinweis | berührt `src/cascade/`, nach Absprache |
 | Stärkeres oder denkendes Modell | Seeds auf 30 bis 50 % heben, damit die Selektion ein Signal hat | `qwen2.5:72b` passt; Denkmodelle brauchen I5 im Adapter |
 | Mutator-Runden (`--llm-every`) | Neue Prompts schreiben statt nur Phrasen zu mischen | ungenutzt |
