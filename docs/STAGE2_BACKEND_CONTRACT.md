@@ -30,7 +30,7 @@ The orchestrator depends only on this trait. It uses `StubModel` here and the Ol
 adapter on the host. It checks `GenResponse::is_usable()` (clean stop and non-empty) before
 it parses an answer as a proposal.
 
-## 2. The Ollama adapter (separate crate `backend-ollama`, host only)
+## 2. The Ollama adapter (separate crate `backend-ollama`, host only; built)
 
 MUST hold for the adapter:
 
@@ -87,13 +87,28 @@ Documented for the host, not run here:
 
 - The core builds, tests and clippy stay clean with `backend` present (done).
 - The adapter crate, once added on a host, exchanges a real `GenRequest`/`GenResponse`
-  with a running Ollama server and records both in the archive.
-- A request to any non-loopback host is refused with a `BrutError`.
+  with a running Ollama server and records both in the archive (done, PR #33: the live
+  test against `qwen2.5:7b`, and three breeding runs with 2704 recorded Worker calls,
+  `docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
+- A request to any non-loopback host is refused with a `BrutError` (done, unit test
+  `only_loopback_hosts_pass` and `the_allow_list_and_the_prefix_are_enforced_before_any_call`).
 - With the sandbox, a mutated program that tries to open a socket fails, because the
-  container has no network.
+  container has no network (open: the sandbox is not built; cascade breeding runs no
+  mutated code, so its runs do not need it).
 
 ## 5. What is built here vs on the host
 
-- **Here (this container):** the `ModelBackend` trait, `StubModel`, their tests, and this
-  contract. Nothing calls a network.
-- **On the host:** the `backend-ollama` crate, the Docker sandbox, and the first real run.
+- **In the core crate:** the `ModelBackend` trait, `StubModel`, their tests, and this
+  contract. Nothing calls a network. `brut-breed` offers one slot, `EXTRA_BACKENDS`, for
+  backends of allow-listed tags that are not simulated; the core binary never fills it.
+- **In `backend-ollama/` (built, PR #33, 2026-10-31):** `OllamaBackend` (I2, I3, I5, I6),
+  `Recorded` (I7, file `<out>/llm/worker-calls.jsonl`), and the program
+  `brut-breed-ollama`, which includes `src/bin/brut-breed.rs` as a module and fills the
+  slot for tags `ollama:<model>`. The allow-list holds only models without a thinking
+  mode (`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`), so `think_tokens` is
+  ignored as I5 says for such models. Open: thinking models with their separate caps
+  (I5), and the Docker sandbox of section 3.
+- **On the host (an H200 VM, 2026-10-31):** Ollama 0.40.13 as a system service on
+  127.0.0.1:11434 and the first real runs (`docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
+  Ollama serves one request at a time there; a batching server (vLLM) is the next
+  step for throughput.
