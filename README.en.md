@@ -257,6 +257,62 @@ is the default; `--domain circuits` starts a circuit Run (step 1, below). `--ver
 recomputes the report of a finished Run from the checkpoint, without a model call,
 including its stop reason.
 
+### Control arm: compute-equal majority vote (`vote-control`)
+
+A lead of the best bred finalist mixes breeding with compute, since it often makes more
+Worker calls per puzzle than the seed Cascades
+([docs/STAGE2C_CASCADE_BREEDING.md](docs/STAGE2C_CASCADE_BREEDING.md), "Not
+compute-matched"). The program `vote-control` of `backend-ollama` computes the control
+arm with as many calls: self-consistency after Wang et al. (2022), that is, asking one
+seed Cascade N times and keeping the most frequent grid, cost-equal as in arXiv
+2606.13003 (preprint).
+
+- **Seed Cascade.** By default the seed finalist with the best search fitness. The choice
+  reads no select-panel result.
+- **N.** The champion's (the bred finalist with the best search fitness) average Worker
+  calls per search puzzle, divided by the seed Cascade's, rounded, at least 1. A champion
+  with 3.18 calls per puzzle gives N = 3.
+- **Panel.** The program regenerates the select panel exactly as the arena does and
+  checks it against the checkpoint and the first line of the log.
+- **Votes.** Every sample runs with its own seed through the core's `run_cascade`, so with
+  the prompts and the parser of the Run. The most frequent grid wins, ties to the one seen
+  first. It is scored exactly against the hidden test output.
+
+```sh
+# The plan, without a model call (works on an unfinished Run too)
+backend-ollama/target/release/vote-control --run runs/q1 --dry-run
+# The control arm; the result goes to stdout and to runs/q1/vote-control.json
+backend-ollama/target/release/vote-control --run runs/q1
+```
+
+Per puzzle, the result lists the votes, whether the majority grid is right, and whether
+any sample was. Beside them stand the answers of the champion and of the seed Cascade from
+the Run's select phase. The totals hold the discordant pairs against the champion with an
+exact sign test, and the calls and tokens. `--samples N` fixes N, `--cascade ID` picks
+another archive member, `--temperature T` sets the temperature of every Worker (another
+Cascade, with its own id), `--puzzles K` scores only the first K puzzles as a smoke test
+and writes no file, `--jobs J` (default 16) sets the samples run at a time. Real models go
+through `Recorded` into `<run>/vote-control/worker-calls.jsonl`, apart from the Run's own
+record. A repeat replays them, and a larger N reuses the samples of a smaller one. Exit
+code 2 means wrong usage, also for an unfinished Run.
+
+- **Failed calls.** A failed call counts as an abstention, is filed in
+  `worker-errors.jsonl` beside the record and sets exit code 1; running again retries it.
+  So does an answer that cannot be filed, for example on a full disk. Such a result is
+  incomplete (`complete` is false): it does not go to `vote-control.json` but to stdout
+  and to `<run>/vote-control/incomplete.json`, so an earlier complete result stays.
+- **Only healthy Runs as a baseline.** The Run's own select answers are the baseline,
+  while the samples run with 63-bit seeds and never fail for that reason. Runs from before
+  d79c93f (63-bit seed, #40) therefore cannot be used as a baseline: vLLM refused every
+  call with a seed above i64::MAX there, about half of them, without a record. In
+  `v-dgm-11` we measure 3475 recorded calls of 6966, and none of the 3475 seeds lies above
+  i64::MAX. `vote-control` refuses such a Run with exit code 2, `--dry-run` included, and
+  likewise a Run with entries in its own `llm/worker-errors.jsonl`. A Run counts as old
+  when it allows a `vllm:` model and its `llm/worker-calls.jsonl` holds at least 32 vLLM
+  calls, none with a seed above i64::MAX; a new Run looks like that with probability
+  2^-32. `--allow-degraded-run` computes anyway, and the plan and the result say so in
+  `run_failed_calls` and `predates_seed_fix`.
+
 ## Setting up your own GPU VM (optional)
 
 Real Runs with language models need a GPU server with Ollama (ADR 0003). The script

@@ -20,10 +20,13 @@
 //! The module `mutator` answers the Mutator
 //! requests of a paused run with one of these backends (program `brut-mutator`), recorded
 //! in `<out>/llm/mutator-calls.jsonl`.
+//! The module `vote` holds the compute-equal majority-vote control of a finished run
+//! (binary `vote-control`).
 #![forbid(unsafe_code)]
 
 pub mod mutator;
 pub mod vllm;
+pub mod vote;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -348,7 +351,8 @@ impl SharedCache {
 /// are not filed as answers: each one goes to an errors file beside the record (see
 /// `error_path`) and to stderr, because the core counts a failed Worker call as an
 /// unsolved puzzle without a word, which hid a fault that failed half of all calls in the
-/// first vLLM runs.
+/// first vLLM runs. An answer that cannot be filed (a full disk) is a failed call as well,
+/// filed and counted the same.
 pub struct Recorded<B: ModelBackend> {
     inner: B,
     path: PathBuf,
@@ -434,27 +438,50 @@ impl<B: ModelBackend> Recorded<B> {
             cached,
             thinking,
         };
-        let mut line = serde_json::to_string(&rec).map_err(BrutError::Json)?;
+        let mut book = match self.book.lock() {
+            Ok(b) => b,
+            Err(_) => {
+                let e = err("ollama: the record lock is poisoned".to_string());
 
-        line.push('\n');
+                self.file_error(&key, req, &e);
+                return Err(e);
+            }
+        };
+        // An answer that cannot be filed is a failed call too: the core would count it as
+        // an unsolved puzzle without a word, as it does any error (a full disk, a
+        // read-only directory). A partly written line is taken back, so the record still
+        // reads and a repeat retries the call.
+        let filed = (|| -> Result<()> {
+            let io = |e: std::io::Error| err(format!("ollama: filing the answer in {}: {e}", self.path.display()));
+            let mut line = serde_json::to_string(&rec).map_err(BrutError::Json)?;
 
-        let mut book = self
-            .book
-            .lock()
-            .map_err(|_| err("ollama: the record lock is poisoned".to_string()))?;
+            line.push('\n');
 
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(BrutError::Io)?;
+            if let Some(dir) = self.path.parent() {
+                std::fs::create_dir_all(dir).map_err(io)?;
+            }
+
+            let mut f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)
+                .map_err(io)?;
+            let start = f.metadata().map_err(io)?.len();
+
+            if let Err(e) = f.write_all(line.as_bytes()).and_then(|()| f.sync_data()) {
+                let _ = f.set_len(start);
+                return Err(io(e));
+            }
+
+            Ok(())
+        })();
+
+        if let Err(e) = filed {
+            drop(book);
+            self.file_error(&key, req, &e);
+            return Err(e);
         }
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(BrutError::Io)?;
-
-        file.write_all(line.as_bytes()).map_err(BrutError::Io)?;
-        file.sync_data().map_err(BrutError::Io)?;
         book.insert(key, response.clone());
 
         Ok(rec)
@@ -705,6 +732,44 @@ mod tests {
         let broken = Recorded::open_with_cache(Broken, &dir.join("run/worker-calls.jsonl"), &cache).expect("open");
         assert!(broken.generate(&req(8)).is_err());
         assert_eq!(std::fs::read_to_string(&cache).expect("cache"), "{\"key\":\"half", "a failure is never shared");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_answer_that_cannot_be_filed_is_a_failed_call() {
+        let dir = std::env::temp_dir().join(format!("backend-ollama-unfiled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+
+        // The record's parent is a regular file, so no directory can be made for it.
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "not a directory").expect("write");
+
+        let b = Recorded::open(Counter(AtomicUsize::new(0)), &blocker.join("worker-calls.jsonl")).expect("open");
+        let got = b.generate(&req(8));
+
+        assert!(got.as_ref().is_err_and(|e| e.to_string().contains("filing the answer")), "{got:?}");
+        assert_eq!(b.inner.0.load(Ordering::SeqCst), 1, "the model was asked");
+        assert_eq!(b.errors(), 1, "an unfiled answer counts as a failed call");
+        assert_eq!(b.len(), 0, "and is not served from the book either");
+
+        // A full disk: every write to /dev/full fails with ENOSPC (Linux). Only without
+        // root, since the error file would land in /dev beside it.
+        let full = Path::new("/dev/full");
+        let root = std::fs::read_to_string("/proc/self/status").map_or(true, |s| {
+            s.lines().any(|l| l.starts_with("Uid:") && l.split_whitespace().nth(1) == Some("0"))
+        });
+
+        if !root && OpenOptions::new().append(true).open(full).is_ok() {
+            let mut b = Recorded::open(Counter(AtomicUsize::new(0)), &dir.join("worker-calls.jsonl")).expect("open");
+            b.path = full.to_path_buf();
+            let got = b.generate(&req(8));
+
+            assert!(got.as_ref().is_err_and(|e| e.to_string().contains("No space left")), "{got:?}");
+            assert_eq!(b.errors(), 1);
+            assert_eq!(b.len(), 0);
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

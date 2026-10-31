@@ -652,6 +652,66 @@ steht in `timings.jsonl`; diese Datei gehört nicht zum geprüften Protokoll.
 (Schritt 1, unten). `--verify` rechnet den Bericht eines fertigen Laufs ohne Modellaufruf
 aus dem Checkpoint nach, auch seinen Stoppgrund.
 
+### Kontrollarm Mehrheitsvotum bei gleichem Aufwand (`vote-control`)
+
+Ein Vorsprung des besten gezüchteten Finalisten mischt Zucht mit Rechenaufwand, da er
+oft mehr Worker-Aufrufe je Rätsel macht als die Startprogramme
+([docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md), „Nicht rechenmäßig
+abgeglichen“). Das Programm `vote-control` aus `backend-ollama` rechnet dafür den
+Kontrollarm mit gleich vielen Aufrufen: Self-Consistency nach Wang et al. (2022), also
+ein Startprogramm N-mal fragen und das häufigste Gitter nehmen, kostengleich wie in
+arXiv 2606.13003 (Vorabdruck).
+
+- **Startprogramm.** Vorgabe ist der Start-Finalist mit der besten Such-Fitness. Die
+  Wahl liest kein Ergebnis des Auswahl-Panels.
+- **N.** Die mittleren Worker-Aufrufe je Such-Rätsel des Champions (des gezüchteten
+  Finalisten mit der besten Such-Fitness), geteilt durch die des Startprogramms,
+  gerundet, mindestens 1. Bei einem Champion mit 3.18 Aufrufen je Rätsel ist N = 3.
+- **Panel.** Das Programm erzeugt das Auswahl-Panel genau wie die Arena neu und prüft
+  es gegen den Checkpoint und die erste Zeile des Protokolls.
+- **Stimmen.** Jede Stichprobe läuft mit eigenem Seed durch `run_cascade` des Kerns, also
+  mit denselben Prompts und demselben Parser wie im Lauf. Das häufigste Gitter gewinnt,
+  bei Gleichstand das zuerst gesehene. Bewertet wird exakt gegen die verdeckte
+  Testausgabe.
+
+```sh
+# Plan ansehen, ohne Modellaufruf (geht auch bei einem unfertigen Lauf)
+backend-ollama/target/release/vote-control --run runs/q1 --dry-run
+# Kontrollarm rechnen; Ergebnis auf stdout und in runs/q1/vote-control.json
+backend-ollama/target/release/vote-control --run runs/q1
+```
+
+Das Ergebnis nennt je Rätsel die Stimmen, ob das Mehrheitsgitter stimmt und ob
+irgendeine Stichprobe stimmte. Zum Vergleich stehen daneben die Antworten von Champion und
+Startprogramm aus der Auswahlphase des Laufs. Die Summen enthalten die diskordanten Paare
+gegen den Champion mit exaktem Vorzeichentest sowie Aufrufe und Tokens. `--samples N`
+setzt N fest, `--cascade ID` wählt ein anderes Archivmitglied, `--temperature T` setzt
+die Temperatur aller Worker (eine andere Kaskade mit eigener Id), `--puzzles K` rechnet
+als Rauchtest nur die ersten K Rätsel und schreibt keine Datei, `--jobs J` (Vorgabe 16)
+legt die gleichzeitigen Stichproben fest. Echte Modelle laufen über `Recorded` in
+`<run>/vote-control/worker-calls.jsonl`, getrennt vom Protokoll des Laufs. Eine
+Wiederholung spielt sie ab, und ein größeres N nutzt die Stichproben eines kleineren mit.
+Exit-Code 2 heißt falsche Bedienung, auch bei einem unfertigen Lauf.
+
+- **Gescheiterte Aufrufe.** Ein gescheiterter Aufruf zählt als Enthaltung, steht in
+  `worker-errors.jsonl` daneben und setzt den Exit-Code 1; ein erneuter Aufruf holt ihn
+  nach. Das gilt auch für eine Antwort, welche sich nicht ablegen lässt, etwa bei voller
+  Platte. Ein solches Ergebnis ist unvollständig (`complete` ist false) und landet nicht
+  in `vote-control.json`, sondern auf stdout und in `<run>/vote-control/incomplete.json`.
+  Ein früheres vollständiges Ergebnis bleibt so stehen.
+- **Nur gesunde Läufe als Vergleich.** Die Auswahl-Antworten des Laufs sind die
+  Vergleichsbasis, die Stichproben laufen dagegen mit 63-Bit-Seeds und scheitern daran
+  nie. Läufe von vor d79c93f (Seed auf 63 Bit, #40) taugen deshalb nicht als Vergleich,
+  da vLLM dort jeden Aufruf mit einem Seed über i64::MAX ablehnte, also etwa die Hälfte,
+  ohne Eintrag. In `v-dgm-11` messen wir 3475 abgelegte Aufrufe von 6966, und keiner der
+  3475 Seeds liegt über i64::MAX. `vote-control` weist einen solchen Lauf mit Exit-Code 2
+  ab, auch beim `--dry-run`, ebenso einen Lauf mit Einträgen in seinem eigenen
+  `llm/worker-errors.jsonl`. Als alter Lauf gilt, wer ein `vllm:`-Modell erlaubt und in
+  `llm/worker-calls.jsonl` mindestens 32 vLLM-Aufrufe hält, keinen mit Seed über
+  i64::MAX; ein neuer Lauf sieht mit Wahrscheinlichkeit 2^-32 so aus.
+  `--allow-degraded-run` rechnet trotzdem, und Plan und Ergebnis nennen das in
+  `run_failed_calls` und `predates_seed_fix`.
+
 ## Universen, die erfinden (Schritt 1)
 
 Stand: gebaut; das gezählte Experiment ist gelaufen. Die sechs Entscheidungen unten wurden
