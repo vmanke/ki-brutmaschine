@@ -181,8 +181,11 @@ The script resumes with `--resume` and those of the options a resume accepts
 own exits with 0 (everything answered, or stopped cleanly), 1 (a call failed; the other
 answers stay), 2 (wrong usage, a path outside the run, the lock is held) or 4 (nothing to
 answer). `--parallel P` (default 4) sends P requests at once, `--max-requests N`
-(default 64) caps one round. A cut-off answer (it reached `max_tokens`) is written
-unchanged and reported; the core rejects it unless it holds a complete Cascade.
+(default 64) caps one round. An answer that did not end cleanly (for example because it
+reached `max_tokens`) is written as an empty file and reported. The core reads every
+answer file as a clean stop; it rejects an empty one as unusable and puts a random child
+in its place, so it never parses a cut-off answer. `mutator-calls.jsonl` keeps the full
+text and the actual stop reason.
 
 `--resume` may change only `--generations`, `--max-calls`, `--max-seconds` and
 `--llm-answers`; everything else defines the experiment. Before each generation, the

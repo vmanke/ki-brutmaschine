@@ -11,13 +11,20 @@
 //! - sends each request unchanged to a backend, normally wrapped in `Recorded`, so that
 //!   every request and its full answer land in `<out>/llm/mutator-calls.jsonl` and a
 //!   repeated round replays them instead of calling the model again (ADR 0002, I7);
-//! - writes the answer text as it came, atomically, and never over an existing answer;
+//! - writes the text of an answer that ended cleanly as it came, atomically, and never
+//!   over an existing answer;
+//! - writes an answer that did not end cleanly (cut off at `max_tokens`, a refusal, an
+//!   error) as an empty file;
 //! - reads and writes only inside the run directory.
 //!
-//! It checks nothing the core does not check: an answer that is not a valid Cascade is
-//! rejected by the core on resume and replaced by a random child. A failed call writes
-//! no answer, so its request stays pending. The backends keep I3 (loopback only) and I6
-//! (timeout, byte cap, allow-list).
+//! The core reads every answer file as a clean stop (`AnswerBook`), so it cannot see a
+//! cut-off itself. An empty file is the core's own form of an unusable answer: it logs
+//! the exchange as not accepted and fills a random child, as it does through
+//! `LiveMutator`, and never parses a cut-off answer (I5). The full text and the real stop
+//! reason stay in the record. Beyond that the module checks nothing the core does not
+//! check: an answer that is not a valid Cascade is rejected by the core on resume and
+//! replaced by a random child. A failed call writes no answer, so its request stays
+//! pending. The backends keep I3 (loopback only) and I6 (timeout, byte cap, allow-list).
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
@@ -329,8 +336,9 @@ pub struct Round {
     pub written: Vec<String>,
     /// Answers that appeared meanwhile and were left as they were.
     pub kept: Vec<String>,
-    /// Written answers the model cut off at `max_tokens` (also in `written`).
-    pub cut: Vec<String>,
+    /// Answers that did not end cleanly, with their stop reason (also in `written`). Their
+    /// files are empty, so the core rejects them; the full answer is in the record.
+    pub unusable: Vec<(String, StopReason)>,
     /// Requests whose call or write failed, with the error; they stay pending.
     pub failed: Vec<(String, String)>,
     /// Requests not tried because the stop signal fired.
@@ -338,8 +346,9 @@ pub struct Round {
 }
 
 /// Answer every request in `todo` through `backend`, at most `parallel` at a time, and
-/// write each answer as soon as it arrives. `stop` is asked before each call; calls in
-/// flight finish and their answers are written.
+/// write each answer as soon as it arrives: the text if the answer ended cleanly, else an
+/// empty file. `stop` is asked before each call; calls in flight finish and their answers
+/// are written.
 pub fn answer(
     backend: &dyn ModelBackend,
     answers: &Path,
@@ -369,19 +378,28 @@ pub fn answer(
                     };
                     let key = p.key.clone();
 
-                    match backend.generate(&p.request) {
-                        Err(e) => note(&mut |r| r.failed.push((key.clone(), e.to_string()))),
-                        Ok(resp) => match write_answer(answers, &key, &resp.text) {
-                            Ok(Written::New) => note(&mut |r| {
-                                if resp.stop_reason == StopReason::Length {
-                                    r.cut.push(key.clone());
-                                }
+                    let resp = match backend.generate(&p.request) {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            note(&mut |r| r.failed.push((key.clone(), e.to_string())));
+                            continue;
+                        }
+                    };
+                    // The core takes every answer file for a clean stop; an empty one is
+                    // unusable to it, so a cut-off answer is never parsed (I5).
+                    let clean = resp.stop_reason == StopReason::Stop;
+                    let text = if clean { resp.text.as_str() } else { "" };
 
-                                r.written.push(key.clone());
-                            }),
-                            Ok(Written::Kept) => note(&mut |r| r.kept.push(key.clone())),
-                            Err(e) => note(&mut |r| r.failed.push((key.clone(), e.to_string()))),
-                        },
+                    match write_answer(answers, &key, text) {
+                        Ok(Written::New) => note(&mut |r| {
+                            if !clean {
+                                r.unusable.push((key.clone(), resp.stop_reason));
+                            }
+
+                            r.written.push(key.clone());
+                        }),
+                        Ok(Written::Kept) => note(&mut |r| r.kept.push(key.clone())),
+                        Err(e) => note(&mut |r| r.failed.push((key.clone(), e.to_string()))),
                     }
                 }
             });
@@ -394,7 +412,7 @@ pub fn answer(
     r.skipped = todo.len().saturating_sub(tried);
     r.written.sort();
     r.kept.sort();
-    r.cut.sort();
+    r.unusable.sort_by(|a, b| a.0.cmp(&b.0));
     r.failed.sort();
 
     r
@@ -723,16 +741,43 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_off_answer_is_written_as_it_came_and_reported() {
+    fn a_cut_off_answer_is_written_empty_recorded_in_full_and_reported() {
         let out = run_dir("cut");
         let key = file_request(&out, &request(99));
+        let clean = file_request(&out, &request(98));
         let dirs = RunDirs::new(&out, None).expect("dirs");
         let todo = scan(&dirs).expect("scan").pending;
-        let round = answer(&Counter(AtomicUsize::new(0)), &dirs.answers, &todo, 1, &never);
+        let backend = Recorded::open(Counter(AtomicUsize::new(0)), &dirs.record).expect("open");
+        let round = answer(&backend, &dirs.answers, &todo, 1, &never);
 
-        assert_eq!(round.written, vec![key.clone()]);
-        assert_eq!(round.cut, vec![key.clone()]);
-        assert_eq!(std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"), "answer 0 to seed 99");
+        let mut both = vec![key.clone(), clean.clone()];
+        both.sort();
+        assert_eq!(round.written, both);
+        assert_eq!(round.unusable, vec![(key.clone(), StopReason::Length)]);
+        assert_eq!(std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"), "");
+        assert!(std::fs::read_to_string(dirs.answer_path(&clean)).expect("answer").ends_with("to seed 98"));
+
+        // The record keeps the full text and the real stop reason.
+        let lines = std::fs::read_to_string(&dirs.record).expect("record");
+        let recorded: Vec<crate::CallRecord> =
+            lines.lines().map(|l| serde_json::from_str(l).expect("json")).collect();
+        let cut = recorded.iter().find(|c| c.request == request(99)).expect("recorded");
+        assert_eq!(cut.response.stop_reason, StopReason::Length);
+        assert!(cut.response.text.ends_with("to seed 99"), "{}", cut.response.text);
+
+        // The core's own lookup gives empty text for it, which it never parses.
+        let mut book = AnswerBook::new();
+        book.insert(&key, std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"));
+        assert!(!book.answer(&request(99)).expect("found").is_usable());
+
+        // A repeat replays the record and writes the same empty file, without a new call.
+        std::fs::remove_file(dirs.answer_path(&key)).expect("rm");
+        let todo = scan(&dirs).expect("scan").pending;
+        assert!(backend.contains(&todo[0].request));
+        let again = answer(&backend, &dirs.answers, &todo, 1, &never);
+        assert_eq!(again.unusable, vec![(key.clone(), StopReason::Length)]);
+        assert_eq!(std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"), "");
+        assert_eq!(std::fs::read_to_string(&dirs.record).expect("record").lines().count(), 2);
 
         let _ = std::fs::remove_dir_all(&out);
     }

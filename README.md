@@ -575,8 +575,11 @@ weiter), sobald `<lauf>/STOP` existiert (Exit-Code 0), wenn eine Mutator-Runde s
 Aufruf scheiterte; die übrigen Antworten bleiben), 2 (falsche Bedienung, Pfad außerhalb
 des Laufs, Sperre belegt) oder 4 (nichts zu beantworten). `--parallel P` (Vorgabe 4)
 schickt P Anfragen zugleich, `--max-requests N` (Vorgabe 64) begrenzt eine Runde. Eine
-abgeschnittene Antwort (Länge `max_tokens` erreicht) schreibt es unverändert und meldet
-sie; der Kern verwirft sie, wenn sie keine vollständige Kaskade enthält.
+Antwort, welche nicht sauber endete (etwa weil sie die Länge `max_tokens` erreichte),
+schreibt es als leere Datei und meldet sie. Der Kern liest jede Antwortdatei als sauber
+beendet; eine leere verwirft er als unbrauchbar und setzt ein zufälliges Kind an ihre
+Stelle, sodass er eine abgeschnittene Antwort nie auswertet. Den vollen Text und den
+tatsächlichen Abbruchgrund behält `mutator-calls.jsonl`.
 
 `--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
 `--llm-answers` ändern; alles andere legt das Experiment fest. Vor jeder Generation

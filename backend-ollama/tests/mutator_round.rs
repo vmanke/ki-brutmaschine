@@ -56,6 +56,12 @@ type Seen = Arc<Mutex<Vec<serde_json::Value>>>;
 /// prose. The Cascade depends only on the request's seed, so equal requests get equal
 /// answers in every run.
 fn fake_vllm() -> (String, Seen) {
+    fake_vllm_ending("stop")
+}
+
+/// As `fake_vllm`, with `finish` as the finish_reason of every answer. For "length" the
+/// closed Cascade is followed by prose that breaks off, as at the max_tokens cap.
+fn fake_vllm_ending(finish: &'static str) -> (String, Seen) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let base = format!("http://{}", listener.local_addr().expect("addr"));
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
@@ -66,14 +72,14 @@ fn fake_vllm() -> (String, Seen) {
             let Ok(sock) = sock else { continue };
             let log = log.clone();
 
-            thread::spawn(move || serve_one(sock, &log));
+            thread::spawn(move || serve_one(sock, &log, finish));
         }
     });
 
     (base, seen)
 }
 
-fn serve_one(mut sock: TcpStream, log: &Mutex<Vec<serde_json::Value>>) {
+fn serve_one(mut sock: TcpStream, log: &Mutex<Vec<serde_json::Value>>, finish: &str) {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
 
@@ -109,9 +115,13 @@ fn serve_one(mut sock: TcpStream, log: &Mutex<Vec<serde_json::Value>>) {
             {{"name":"format","text":"Answer with the line ANSWER followed by the output grid."}}],
           "traits":{{"think_tokens":{think},"temperature":0.0,"answer_tokens":512,"self_check":true}}}}]}}]}}"#
     );
-    let content = format!("Here is the new Cascade:\n```json\n{cascade}\n```\n");
+    let content = if finish == "length" {
+        format!("Here is the new Cascade:\n{cascade}\nIt keeps the role and widens the strategy, since the parent")
+    } else {
+        format!("Here is the new Cascade:\n```json\n{cascade}\n```\n")
+    };
     let reply = serde_json::json!({
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish}],
         "usage": {"prompt_tokens": 900, "completion_tokens": 120},
     })
     .to_string();
@@ -257,6 +267,87 @@ fn a_paused_run_goes_on_with_model_answers_and_a_repeat_replays_them() {
     assert_eq!(std::fs::read_to_string(&path).expect("answer"), before);
     assert_eq!(seen.lock().expect("seen").len(), 4, "no new call");
     assert_eq!(records(&dir).len(), 4);
+    assert!(Command::new(BREED).args(["--out", out, "--verify"]).status().expect("verify").success());
+}
+
+#[test]
+fn a_cut_off_answer_reaches_the_core_empty_and_is_rejected_there() {
+    let (base, seen) = fake_vllm_ending("length");
+    let dir = fresh("cut-off");
+    let out = dir.to_str().expect("path");
+    let mut args = vec!["--out", out];
+
+    args.extend_from_slice(&SMALL);
+
+    let first = breed(&args);
+
+    assert_eq!(first.status.code(), Some(3), "{}", text(&first));
+
+    // The round succeeds, says what it did with the answers, and writes them empty.
+    let m = mutator(&base, &["--out", out, "--tag", TAG]);
+    let stderr = String::from_utf8_lossy(&m.stderr).to_string();
+
+    assert_eq!(m.status.code(), Some(0), "{}", text(&m));
+    assert_eq!(stderr.matches("it reached max_tokens").count(), 2, "{}", text(&m));
+    assert!(stderr.contains("written empty, so the core rejects it"), "{}", text(&m));
+
+    let mut last = breed(&["--out", out, "--resume"]);
+    let mut rounds = 1;
+
+    while last.status.code() == Some(3) {
+        assert!(rounds < 5, "too many rounds");
+
+        let m = mutator(&base, &["--out", out, "--tag", TAG]);
+
+        assert_eq!(m.status.code(), Some(0), "{}", text(&m));
+        rounds += 1;
+        last = breed(&["--out", out, "--resume"]);
+    }
+
+    assert_eq!(last.status.code(), Some(0), "{}", text(&last));
+    assert_eq!(rounds, 2, "generations 1 and 2 are LLM rounds");
+
+    // Each answer file is empty; the record keeps the full text and the real stop reason.
+    let reqs = requests(&dir);
+    let recs = records(&dir);
+
+    assert_eq!(reqs.len(), 4);
+    assert_eq!(recs.len(), 4);
+    assert_eq!(seen.lock().expect("seen").len(), 4);
+
+    for (key, req) in &reqs {
+        let rec = recs.iter().find(|r| &r.request == req).expect("recorded");
+        let answer = std::fs::read_to_string(dir.join("llm").join("answers").join(format!("{key}.txt"))).expect("answer");
+
+        assert_eq!(answer, "", "{key}");
+        assert_eq!(rec.response.stop_reason, brutmaschine::backend::StopReason::Length);
+        assert!(rec.response.text.contains("\"stages\""), "{}", rec.response.text);
+    }
+
+    // The core rejected every exchange as unusable and filled random children instead.
+    let log = std::fs::read_to_string(dir.join("events.jsonl")).expect("log");
+    let exchanges: Vec<&str> = log.lines().filter(|l| l.contains("\"kind\":\"llm_exchange\"")).collect();
+
+    assert_eq!(exchanges.len(), 4);
+
+    for l in &exchanges {
+        assert!(l.contains("\"accepted\":false"), "{l}");
+        assert!(l.contains("unusable answer"), "{l}");
+    }
+
+    assert!(dir.join("report.json").is_file());
+
+    // A repeat writes the same empty answer from the record, without a new call.
+    let (key, _) = &reqs[0];
+    let path = dir.join("llm").join("answers").join(format!("{key}.txt"));
+
+    std::fs::remove_file(&path).expect("rm");
+
+    let replay = mutator(&base, &["--out", out, "--tag", TAG]);
+
+    assert_eq!(replay.status.code(), Some(0), "{}", text(&replay));
+    assert_eq!(std::fs::read_to_string(&path).expect("answer"), "");
+    assert_eq!(seen.lock().expect("seen").len(), 4, "no new call");
     assert!(Command::new(BREED).args(["--out", out, "--verify"]).status().expect("verify").success());
 }
 

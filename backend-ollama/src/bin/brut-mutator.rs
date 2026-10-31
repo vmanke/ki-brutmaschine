@@ -7,8 +7,12 @@
 //! reads it. Every call and its full answer are recorded in `<out>/llm/mutator-calls.jsonl`
 //! (failed calls in `mutator-errors.jsonl`); a request on file there is answered from the
 //! record without a new call (ADR 0002, contract I7). An existing answer is never
-//! overwritten, and nothing is read or written outside `<out>`. The core parses the answers
-//! itself and rejects those that are no valid Cascade; this program checks none of them.
+//! overwritten, and nothing is read or written outside `<out>`. An answer that did not end
+//! cleanly (it reached `max_tokens`) is written as an empty file: the core reads every
+//! answer file as a clean stop, and an empty one is an unusable answer to it, which it
+//! rejects and replaces by a random child, so it never parses a cut-off answer (I5). The
+//! core parses the other answers itself and rejects those that are no valid Cascade; this
+//! program checks none of them.
 //!
 //! Usage:
 //!   brut-mutator --out <dir> --tag <vllm:<model>|ollama:<model>> [--llm-answers <dir>]
@@ -39,7 +43,7 @@ use std::time::Duration;
 use backend_ollama::mutator::{self, Pending, RunDirs};
 use backend_ollama::vllm::{self, VllmBackend};
 use backend_ollama::{DEFAULT_BASE, OllamaBackend, Recorded, TAG_PREFIX};
-use brutmaschine::backend::ModelBackend;
+use brutmaschine::backend::{ModelBackend, StopReason};
 use brutmaschine::util::{BrutError, Result};
 
 /// Exit code: no request waits for an answer.
@@ -162,9 +166,18 @@ fn round<B: ModelBackend>(
     let stop = || stop_file.exists();
     let r = mutator::answer(&recorded, &dirs.answers, &todo, parallel, &stop);
 
-    for key in &r.cut {
+    for (key, why) in &r.unusable {
+        let why = match why {
+            StopReason::Length => "it reached max_tokens",
+            StopReason::Refusal => "the model declined",
+            StopReason::Error => "the backend reported an error",
+            StopReason::Stop => "it ended cleanly",
+        };
+
         eprintln!(
-            "brut-mutator: {key}: the answer reached max_tokens; written as it came, the core parses or rejects it"
+            "brut-mutator: {key}: the answer did not end cleanly ({why}); written empty, so the core \
+             rejects it; the full answer is in {}",
+            dirs.record.display()
         );
     }
 
