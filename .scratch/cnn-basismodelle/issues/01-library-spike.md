@@ -53,8 +53,9 @@ determinism test at that commit.
   release needed a C compiler for Oniguruma). No new crate declares a Rust version above
   1.88; we built with 1.97.0 only.
 - **Gradients.** In f64 against finite differences, 17 of 60 native backward cases are
-  wrong or fail, through 8 defects (D1 to D8), at the release and at the commit. Each has a
-  replacement (W1 to W8); all 30 replacement cases are correct. `src/cnn/ops.rs` now holds
+  wrong or fail, through 7 defects (D1 to D7), at the release and at the commit. An eighth
+  defect, D8, is that candle cannot seed its CPU generator. Each defect has a replacement
+  (W1 to W8); all 30 replacement cases are correct. `src/cnn/ops.rs` now holds
   them, with the same check on every public operation.
 - **Determinism.** Training is byte-equal at every thread setting tested: 19 settings
   (RAYON_NUM_THREADS 1 to 4 and unset, installed pools, `Device::with_context`,
@@ -69,4 +70,6 @@ determinism test at that commit.
 - **burn, for comparison.** burn 0.22.1 (std, ndarray, autodiff, optim) declares Rust 1.95
   and compiles 144 crates, 133 of them new. Its lockfile of 608 packages fails cargo audit
   as well: exit 1, 4 vulnerabilities (zip 0.6.6, zstd-safe 5.0.2) and 9 warnings, through
-  tch and torch-sys, which these features do not compile.
+  tch and torch-sys, which these features do not compile. burn was compared on these points
+  only: it was not built, so its gradients, determinism and speed were not checked. It was
+  rejected for Rust 1.95, its 133 new crates and the failing audit.

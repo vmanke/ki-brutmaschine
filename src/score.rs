@@ -45,8 +45,15 @@ fn chunk_rows(sizes: &[usize]) -> usize {
 
 /// Rows per chunk for a model that keeps `per_row` activation values per row: at most
 /// `EVAL_CHUNK`, at least 1, and small enough that one chunk needs at most
-/// `EVAL_MAX_FLOATS` activation values. Chunking does not change the result: rows are
-/// scored independently and summed in order.
+/// `EVAL_MAX_FLOATS` activation values.
+///
+/// For an MLP, chunking does not change the result: rows are scored independently and
+/// summed in order. For a CNN it does. candle's matrix products (gemm) may sum in another
+/// order when the number of rows changes, so a row's outputs can differ in the last bits
+/// between chunk sizes; the dense layers of the head show this. The scores of a CNN are
+/// therefore reproducible for this rule only: `rows_per_chunk` of
+/// `Evaluator::values_per_row`, with `EVAL_CHUNK` and `EVAL_MAX_FLOATS`. A change of any of
+/// them changes the bits of CNN validation and hidden scores, not those of MLPs.
 fn rows_per_chunk(per_row: usize) -> usize {
     (EVAL_MAX_FLOATS / per_row.max(1)).clamp(1, EVAL_CHUNK)
 }

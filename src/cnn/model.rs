@@ -3,17 +3,17 @@
 //!
 //! The file is the JSON of `CnnModel`. It starts with `"kind":"cnn"`, which tells it from
 //! the file of an MLP (`model::Model`). Unknown fields are refused, here and in the genome
-//! parts. Reading a file allocates little for its values: the value lists hold at most
-//! `HARD_MAX_PARAMS` numbers in all, which is the most any valid model has. `check`
-//! compares the file with the network its architecture describes on a task, before any
-//! tensor is built.
+//! parts. Reading a file allocates little for its values: the lists of trained values hold
+//! at most `HARD_MAX_PARAMS` numbers in all, and the lists of running statistics at most
+//! `MAX_RUNNING_VALUES`. These are the most any valid model has. `check` compares the file
+//! with the network its architecture describes on a task, before any tensor is built.
 
 use std::fmt;
 
 use serde::de::{DeserializeSeed, Error as _, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::cnn::genome::CnnGenome;
+use crate::cnn::genome::{CnnGenome, MAX_CHANNELS, MAX_STAGES};
 use crate::cnn::net::{self, Net, ParamSpec, Values};
 use crate::cnn::ops::Tensor;
 use crate::cnn::shape::Plan;
@@ -21,6 +21,13 @@ use crate::config::HARD_MAX_PARAMS;
 use crate::genome::Activation;
 use crate::task::TaskSpec;
 use crate::util::{BrutError, Result};
+
+/// The most running statistics a valid model has: a mean and a variance for each channel of
+/// a batch norm in the stem and in every stage, at the widest width.
+///
+/// The stem and each stage have at most one norm today. A block with more norms (tickets 03
+/// and 04) must raise this bound.
+pub const MAX_RUNNING_VALUES: usize = 2 * (MAX_STAGES + 1) * MAX_CHANNELS;
 
 /// The tag of a CNN file: the value `"cnn"` of its `"kind"` key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,10 +53,10 @@ pub struct CnnModel {
     /// convolution has its kernel (outputs, inputs / groups, k, k), or (outputs, inputs /
     /// groups, k) along a sequence, then its bias if it has one. A norm has its scale, then
     /// its shift. A dense layer has its matrix (outputs, inputs), then its bias.
-    #[serde(deserialize_with = "read_lists")]
+    #[serde(deserialize_with = "read_params")]
     pub params: Vec<Vec<f32>>,
     /// For each batch norm in plan order: its running mean, then its running variance.
-    #[serde(deserialize_with = "read_lists")]
+    #[serde(deserialize_with = "read_running")]
     pub batch_norm: Vec<Vec<f32>>,
 }
 
@@ -129,12 +136,23 @@ impl CnnModel {
             )));
         }
 
+        // The counts only, so that the message stays short whatever the file holds.
         let wanted: Vec<usize> = channels.iter().flat_map(|&c| [c, c]).collect();
-        let given: Vec<usize> = self.batch_norm.iter().map(Vec::len).collect();
 
-        if given != wanted {
+        if self.batch_norm.len() != wanted.len() {
             return Err(invalid(format!(
-                "running statistics of lengths {given:?}, the batch norms need {wanted:?}"
+                "{} lists of running statistics, the batch norms need {}",
+                self.batch_norm.len(),
+                wanted.len()
+            )));
+        }
+
+        if let Some(i) = (0..wanted.len()).find(|&i| self.batch_norm[i].len() != wanted[i]) {
+            return Err(invalid(format!(
+                "list {} of running statistics has {} values, the batch norm needs {}",
+                i + 1,
+                self.batch_norm[i].len(),
+                wanted[i]
             )));
         }
 
@@ -168,7 +186,8 @@ impl CnnModel {
             .collect();
         let values = Values::from_plan_order(&specs, &self.params, running);
         let net = Net::new(&plan, &specs, &values)?;
-        let values_per_row = plan.steps.iter().fold(plan.input.positions(), |acc, step| {
+        let input = plan.input.channels.saturating_mul(plan.input.positions());
+        let values_per_row = plan.steps.iter().fold(input, |acc, step| {
             acc.saturating_add(step.output.channels.saturating_mul(step.output.positions()))
         });
 
@@ -206,14 +225,19 @@ impl CnnModel {
 /// The forward pass of a checked model in evaluation mode, for scoring (`score::evaluate`).
 pub(crate) struct Evaluator {
     net: Net,
-    /// Values of one sample in the input and after every layer: a bound on the memory one
-    /// row needs.
+    /// Values of one sample in the input (all channels) and after every layer.
     values_per_row: usize,
     outputs: usize,
 }
 
 impl Evaluator {
-    /// Values of one sample in the input and after every layer of the network.
+    /// Values of one sample in the input (all channels) and after every layer of the
+    /// network. `score::evaluate` sizes its chunks of rows by it.
+    ///
+    /// It is not the memory of a row: the evaluation records no graph (`Net::forward_eval`),
+    /// so it holds only a few layer outputs at a time, besides the buffers candle needs
+    /// inside one operation. The scored bits of a CNN depend on the chunk sizes (see
+    /// `score`), so a change of this count changes them.
     pub(crate) fn values_per_row(&self) -> usize {
         self.values_per_row
     }
@@ -245,34 +269,51 @@ fn invalid(what: String) -> BrutError {
     BrutError::Invalid(format!("cnn model: {what}"))
 }
 
-/// Reads lists of values: at most `HARD_MAX_PARAMS` values in all, and no empty list.
+/// Reads the trained values: at most `HARD_MAX_PARAMS` values in all, and no empty list.
 ///
 /// Every tensor of a network holds a value, and no valid model holds more values than
 /// `HARD_MAX_PARAMS`. So the reader stops a hostile file before it allocates more.
-fn read_lists<'de, D: Deserializer<'de>>(
+fn read_params<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Vec<Vec<f32>>, D::Error> {
-    deserializer.deserialize_seq(Lists)
+    deserializer.deserialize_seq(Lists {
+        cap: HARD_MAX_PARAMS,
+    })
 }
 
-/// The visitor of `read_lists`.
-struct Lists;
+/// Reads the running statistics: at most `MAX_RUNNING_VALUES` values in all, and no empty
+/// list.
+fn read_running<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Vec<f32>>, D::Error> {
+    deserializer.deserialize_seq(Lists {
+        cap: MAX_RUNNING_VALUES,
+    })
+}
+
+/// The visitor of `read_params` and `read_running`: lists of at most `cap` values in all.
+struct Lists {
+    cap: usize,
+}
 
 impl<'de> Visitor<'de> for Lists {
     type Value = Vec<Vec<f32>>;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "lists of at most {HARD_MAX_PARAMS} numbers in all")
+        write!(f, "lists of at most {} numbers in all", self.cap)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(
         self,
         mut seq: A,
     ) -> std::result::Result<Self::Value, A::Error> {
-        let mut left = HARD_MAX_PARAMS;
+        let mut left = self.cap;
         let mut lists = Vec::new();
 
-        while let Some(list) = seq.next_element_seed(List { left: &mut left })? {
+        while let Some(list) = seq.next_element_seed(List {
+            cap: self.cap,
+            left: &mut left,
+        })? {
             lists.push(list);
         }
 
@@ -280,8 +321,9 @@ impl<'de> Visitor<'de> for Lists {
     }
 }
 
-/// One list of `read_lists`; `left` counts the values still allowed.
+/// One list of `Lists`; `left` counts the values still allowed of `cap`.
 struct List<'a> {
+    cap: usize,
     left: &'a mut usize,
 }
 
@@ -308,9 +350,7 @@ impl<'de> Visitor<'de> for List<'_> {
 
         while let Some(value) = seq.next_element::<f32>()? {
             if *self.left == 0 {
-                return Err(A::Error::custom(format!(
-                    "more than {HARD_MAX_PARAMS} values"
-                )));
+                return Err(A::Error::custom(format!("more than {} values", self.cap)));
             }
 
             *self.left -= 1;
@@ -363,7 +403,9 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::untrained;
     use super::*;
-    use crate::cnn::genome::testing;
+    use crate::cnn::genome::{
+        CnnActivation, Dims, Downsample, Head, Norm, Stage, Stem, testing,
+    };
     use crate::task::TaskKind;
 
     /// The VGG-like test genome on the shapes task: batch norm, max pooling, flatten.
@@ -506,6 +548,81 @@ mod tests {
             .to_string();
 
         assert!(message.contains("an empty list"), "{message}");
+    }
+
+    /// A model file whose running statistics are these many lists of one value each.
+    fn file_with_running_lists(lists: usize) -> String {
+        let (model, _) = vgg();
+
+        serde_json::to_string(&CnnModel {
+            batch_norm: vec![vec![1.0]; lists],
+            ..model
+        })
+        .expect("json")
+    }
+
+    #[test]
+    fn the_running_statistics_have_their_own_small_cap() {
+        // The widest layout: the stem and every stage with a batch norm at the widest width.
+        let wide = Stage {
+            norm: Norm::Batch,
+            ..testing::plain(MAX_CHANNELS, 1, CnnActivation::Relu)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: MAX_CHANNELS,
+                kernel: 1,
+                stride: 1,
+                down: Downsample::Conv,
+                norm: Norm::Batch,
+                activation: CnnActivation::Relu,
+            },
+            stages: vec![wide; MAX_STAGES],
+            head: Head::GlobalAvgPool,
+        };
+        let genome = testing::genome(cnn, Vec::new(), Activation::Relu);
+        let plan = genome.cnn_plan(&TaskKind::Shapes.spec()).expect("plan");
+        let running: usize = net::batch_norm_channels(&plan).iter().map(|c| 2 * c).sum();
+
+        assert_eq!(running, MAX_RUNNING_VALUES);
+
+        // The reader takes that many values, and stops at one more.
+        assert!(serde_json::from_str::<CnnModel>(&file_with_running_lists(MAX_RUNNING_VALUES)).is_ok());
+
+        let message = serde_json::from_str::<CnnModel>(&file_with_running_lists(
+            MAX_RUNNING_VALUES + 1,
+        ))
+        .expect_err("over the cap")
+        .to_string();
+
+        assert!(
+            message.contains(&format!("more than {MAX_RUNNING_VALUES} values")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_of_many_lists_gives_a_short_message() {
+        let (model, spec) = vgg();
+        let many: CnnModel =
+            serde_json::from_str(&file_with_running_lists(MAX_RUNNING_VALUES)).expect("parse");
+        let message = many.check(&spec).expect_err("too many lists").to_string();
+
+        assert!(
+            message.contains(&format!("{MAX_RUNNING_VALUES} lists of running statistics")),
+            "{message}"
+        );
+        assert!(message.len() < 120, "{message}");
+
+        let mut long = model.clone();
+
+        long.batch_norm[2] = vec![1.0; 1000];
+
+        let message = long.check(&spec).expect_err("a long list").to_string();
+
+        assert!(message.contains("list 3 of running statistics has 1000 values"), "{message}");
+        assert!(message.len() < 120, "{message}");
     }
 
     #[test]

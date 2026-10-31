@@ -37,7 +37,10 @@ Oniguruma code of tokenizers. No new crate is a network library: none of ureq, r
 hyper, hf-hub, rustls, native-tls, openssl or tokio is in the tree, so ADR 0001 holds. No
 new crate declares a Rust version above 1.88 (zip). The repository declares 1.89; we build
 with 1.97.0 only. The two crates amend invariant I1 of
-the Stage 1 contract (`docs/STAGE1_CONTRACT.md`, no new dependencies). Its test,
+the Stage 1 contract (`docs/STAGE1_CONTRACT.md`, no new dependencies) and invariant I1 of
+the backend contract (`docs/STAGE2_BACKEND_CONTRACT.md`: the core crate gains no new
+dependency of any kind). Errata E15 (`docs/STAGE1_CONTRACT_ERRATA.md`) records this, and
+both contracts point to it. The test of I1,
 `t_sec_3_dependencies_unchanged` in `tests/learner_security.rs`, now admits candle-core and
 candle-nn, and only from this commit, without a branch, tag, path or feature list.
 
@@ -47,13 +50,15 @@ ndarray, autodiff and optim has the larger layer zoo. But it declares Rust 1.95,
 candle. Its lockfile of 608 packages fails cargo audit as well: 4 vulnerabilities (zip 0.6.6
 with the same three advisories, zstd-safe 5.0.2 with RUSTSEC-2026-0403) and 9 warnings. Those
 crates come in only through tch and torch-sys, which these features do not compile, but the
-lockfile would carry them.
+lockfile would carry them. burn was compared on these points only: it was not built, so
+its gradients, determinism and speed were not checked.
 
 **candle has eight defects, and each has a replacement.** The spike checked every operation
 the families need, in f64, against a four-point central difference with step 1e-3. An entry
 fails when |a - n| / max(|a|, |n|, 1e-3 times the largest numeric gradient) reaches 1e-6.
 Of 60 native cases, 43 are correct (the worst at 2.0e-9) and 17 are wrong or fail. They
-trace back to eight defects. The run at the pinned commit found the same 17, and all 30
+trace back to seven defects, D1 to D7. An eighth defect, D8, is that candle cannot seed its
+CPU generator; it is not one of the 60 cases. The run at the pinned commit found the same 17, and all 30
 cases of the replacements correct (the worst at 5.9e-10). The lines below are paths in the
 candle repository at that commit.
 

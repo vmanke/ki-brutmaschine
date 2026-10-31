@@ -483,14 +483,26 @@ impl Net {
     }
 
     /// The forward pass in evaluation mode: each batch norm uses its running statistics.
+    ///
+    /// It records no graph, since it reads the parameters cut off from it (`Param::value`).
+    /// So each layer output is freed once the next layer has read it.
     pub(crate) fn forward_eval(&self, x: &Tensor) -> Result<Tensor> {
         self.forward(x, None)
     }
 
     /// The forward pass of `x` (rows, then the axes of `sample`) to the outputs (rows,
-    /// n_out). With `train`, the running statistics there are updated.
+    /// n_out). With `train`, the running statistics there are updated, and the operations
+    /// record the graph for the backward pass.
     fn forward(&self, x: &Tensor, mut train: Option<&mut Vec<(Tensor, Tensor)>>) -> Result<Tensor> {
         let one_d = self.sample.len() == 2;
+        let training = train.is_some();
+        let read = |param: &Param| {
+            if training {
+                param.tensor()
+            } else {
+                param.value()
+            }
+        };
         let mut h = x.clone();
 
         for unit in &self.units {
@@ -503,7 +515,7 @@ impl Net {
                     dilation,
                     groups,
                 } => {
-                    let kernel = self.weights[*kernel].tensor();
+                    let kernel = read(&self.weights[*kernel]);
                     let out = if one_d {
                         ops::conv1d(&h, &kernel, *padding, *stride, *dilation, *groups)?
                     } else {
@@ -512,7 +524,7 @@ impl Net {
 
                     match bias {
                         Some(bias) => {
-                            let bias = self.biases[*bias].tensor();
+                            let bias = read(&self.biases[*bias]);
                             let mut shape = vec![1; out.dims().len()];
 
                             shape[1] = bias.dims()[0];
@@ -528,8 +540,8 @@ impl Net {
                     shift,
                     batch,
                 } => {
-                    let gamma = self.biases[*scale].tensor();
-                    let beta = self.biases[*shift].tensor();
+                    let gamma = read(&self.biases[*scale]);
+                    let beta = read(&self.biases[*shift]);
 
                     match (norm, batch) {
                         (Norm::Batch, Some(index)) => match train.as_deref_mut() {
@@ -569,8 +581,8 @@ impl Net {
                 Unit::Flatten => ops::flatten(&h)?,
                 Unit::Dense { matrix, bias } => ops::linear(
                     &h,
-                    &self.weights[*matrix].tensor(),
-                    &self.biases[*bias].tensor(),
+                    &read(&self.weights[*matrix]),
+                    &read(&self.biases[*bias]),
                 )?,
             };
         }

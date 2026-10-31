@@ -75,12 +75,14 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   uses zip 9.1.3. candle runs on the CPU in Rust and has every operation the families need:
   1-D and 2-D convolution with stride, dilation and groups, transposed convolution, max and
   average pooling, upsampling, batch, layer and group norm, and automatic gradients. Its CPU
-  backward pass is wrong in 17 of 60 checked cases, through 8 defects. `src/cnn/ops.rs` is
-  the only file that calls candle; it replaces each defective operation with one built from
-  correct ones (W1 to W8) and checks every operation it offers against finite differences.
-  burn 0.22.1 (tracel-ai) has a larger layer zoo, but it needs Rust 1.95, brings 133 new
-  crates against candle's 103, and its lockfile fails `cargo audit` as well. Ticket 01
-  settled this (Comments there).
+  backward pass is wrong in 17 of 60 checked cases, through 7 defects (D1 to D7); an eighth
+  defect, D8, is that candle cannot seed its CPU generator. `src/cnn/ops.rs` is the only file
+  that calls candle; it replaces each defective operation with one built from correct ones
+  (W1 to W8) and checks every operation it offers against finite differences. burn 0.22.1
+  (tracel-ai) has a larger layer zoo, but it needs Rust 1.95, brings 133 new crates against
+  candle's 103, and its lockfile fails `cargo audit` as well. burn was rejected for these
+  three reasons alone: it was not built, so its gradients, determinism and speed were not
+  checked. Ticket 01 settled this (Comments there).
 - **Reproducibility.** The project compares logs byte for byte. CNN training gives the
   same bits at any thread count on one machine: ticket 01 checked 19 thread settings, and
   the tests of ticket 02 compare every step's loss and the model file across runs and

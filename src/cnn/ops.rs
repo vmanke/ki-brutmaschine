@@ -2,7 +2,8 @@
 //!
 //! The crate depends on candle at commit 9515d410 of its main branch (ADR 0007).
 //! At that commit candle's CPU backend computes 17 of 60 checked backward cases
-//! wrongly, through 8 defects (D1 to D8). This file wraps candle's tensor in its
+//! wrongly, through 7 defects (D1 to D7); an eighth defect, D8, is that candle
+//! cannot seed its CPU generator. This file wraps candle's tensor in its
 //! own `Tensor` type, so code outside it can only use the functions below. They
 //! are either native candle operations whose backward pass we checked, or a
 //! replacement (W1 to W8) for one of the defects. Each replacement names its
@@ -107,6 +108,13 @@ impl Param {
     /// The current value. Operations on it record the graph for `backward`.
     pub fn tensor(&self) -> Tensor {
         Tensor(self.0.as_tensor().clone())
+    }
+
+    /// The current value, cut off from the graph: it shares the values, but operations on
+    /// it record nothing. So their results are freed as soon as they are dropped. For
+    /// evaluation, which needs no gradient.
+    pub fn value(&self) -> Tensor {
+        Tensor(self.0.as_tensor().detach())
     }
 
     /// Overwrites the value with `value`, which must have the same shape.
