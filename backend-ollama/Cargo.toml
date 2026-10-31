@@ -1,0 +1,25 @@
+[package]
+name = "backend-ollama"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "The Ollama adapter of docs/STAGE2_BACKEND_CONTRACT.md: a local model behind the ModelBackend trait"
+license = "MIT"
+publish = false
+
+# A separate package (ADR 0001, contract I1): the core crate gains no dependency. Only this
+# package opens a network socket, and only to a loopback address (I3).
+[dependencies]
+brutmaschine = { path = ".." }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# Contract I2: ureq 3, no async runtime. Without default features: no TLS, http only, which
+# is all a loopback Ollama needs.
+ureq = { version = "3", default-features = false }
+
+[[bin]]
+name = "brut-breed-ollama"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
