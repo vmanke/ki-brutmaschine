@@ -79,11 +79,15 @@ including its stop reason.
 
 ## Universes that invent (step 1)
 
-Status: built, with pilot Runs. The six decisions below were confirmed on 2026-10-30,
-decision 5 first with the threshold 20 and at most 60 pairs. Its scientifically
-load-bearing version (proof threshold 100, at most 120 seed pairs), whose numbers Claude
-chose, is confirmed with the merge that freezes the pre-registration. Counted Runs start
-once the pre-registration is frozen.
+Status: built; the counted experiment has run. The six decisions below were confirmed on
+2026-10-30, decision 5 first with the threshold 20 and at most 60 pairs. Its
+scientifically load-bearing version (proof threshold 100, at most 120 seed pairs), whose
+numbers Claude chose, was confirmed with the merge of pull request #19, which froze the
+pre-registration. Then the counted experiment ran, and the rule stopped after 27 seed
+pairs. The primary claim is proven at pair 15, the claim about selection at pair 27
+([docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 7; data in
+[docs/step1-counted/](docs/step1-counted/README.md)). The experiment is a positive control
+with the simulated designer and says nothing about real language models.
 Described in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md) and
 [ADR 0006](docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md);
 the experiment is pre-registered in
@@ -134,11 +138,12 @@ Built:
   from the checkpoint. The frozen analysis is `examples/circuit_positive_control.rs`.
 
 The pilot Runs are in [docs/pilot-step1/](docs/pilot-step1/README.md): the first pilot on
-seeds 101 and 102 and four later batches. Pilot Runs never count. The owner confirmed six
+seeds 101 and 102 and four later batches. Pilot Runs never count; the data of the counted
+Runs are in [docs/step1-counted/](docs/step1-counted/README.md). The owner confirmed six
 decisions on 2026-10-30. Later that day the owner asked for the scientifically
 load-bearing version of decision 5. Claude, the AI assistant, chose its numbers after a
-review of 16 designs; the owner confirms them with the merge of the pull request, which
-freezes the pre-registration. Decision 5 is shown in that version:
+review of 16 designs; the owner confirmed them with the merge of pull request #19, which
+froze the pre-registration. Decision 5 is shown in that version:
 
 1. Exact equality decides what is correct.
 2. Scoring goes by T count first, then by CNOT count.
@@ -193,7 +198,8 @@ access; `tests/cascade.rs` checks that.
 
 - The simulated models (`sim:small`, `sim:large`) are positive controls. Their numbers
   show that breeding works, not how good real models would be.
-- Step 1: the pilot Runs estimate the pass rate only roughly. By generation 1000, arm A
-  passed in 9 of 11 Runs, with a 95 % confidence interval of 0.48 to 0.98. What the pilot
-  shows and what it does not is in [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md),
-  section 8.
+- Step 1: the counted experiment is a positive control with the simulated designer. Its
+  primary claim says that more than half of all seeds pass by generation 1000; it does not
+  estimate how high the pass rate is, and it says nothing about real language models. What
+  the experiment and the pilot show and what they do not is in
+  [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 8.

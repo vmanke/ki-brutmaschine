@@ -1,6 +1,6 @@
 # Step 1 pilot runs
 
-These are pilot runs of the step 1 circuit experiment, not counted runs. Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402 (docs/PREREG_STEP1_CIRCUITS.md, section 10). The counted runs use the seeds 1 to 100, then 111 to 130, in this order, and have not been run; the list skips the pilot seeds 101 to 110. This folder holds the first pilot, on seeds 101 and 102, with its data in `pilot.json`. The later batches, which chose the design of the counted experiment, are described below with the pass time of every run.
+These are pilot runs of the step 1 circuit experiment, not counted runs. Pilot seeds never count: 101 to 110, 201 to 210, 301 to 310, 401 and 402 (docs/PREREG_STEP1_CIRCUITS.md, section 10). The counted seeds are 1 to 100, then 111 to 130, in this order; the list skips the pilot seeds 101 to 110. The counted experiment ran on 2026-10-30 and 2026-10-31, and its rule stopped after 27 pairs, on the seeds 1 to 27; its data are in [docs/step1-counted/](../step1-counted/README.md). This folder holds the first pilot, on seeds 101 and 102, with its data in `pilot.json`. The later batches, which chose the design of the counted experiment, are described below with the pass time of every run.
 
 ## First pilot: seeds 101 and 102
 
