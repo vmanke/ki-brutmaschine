@@ -764,7 +764,7 @@ mod tests {
 
     use super::*;
     use crate::cnn::genome::testing::{self, plain};
-    use crate::cnn::genome::{BLOCKS, Block, Stage};
+    use crate::cnn::genome::{BLOCKS, Block, Stage, Stem};
     use crate::config::Limits;
     use crate::genome::{Arch, Genome};
     use crate::task::TaskKind;
@@ -1345,11 +1345,48 @@ mod tests {
         assert!(g.validate(&limits, &TaskKind::Shapes.spec()).is_ok());
     }
 
+    /// A CNN of wide 3x3 convolutions, so that its FLOPs, not its time, reach the budget
+    /// first: 32 channels, three stages with batch norm, at 16x16.
+    fn wide() -> Genome {
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 32,
+                kernel: 3,
+                stride: 1,
+                down: Downsample::Conv,
+                norm: Norm::Batch,
+                activation: CnnActivation::Relu,
+            },
+            stages: vec![
+                Stage {
+                    norm: Norm::Batch,
+                    ..plain(32, 3, CnnActivation::Relu)
+                };
+                3
+            ],
+            head: Head::GlobalAvgPool,
+        };
+        let mut g = testing::genome(cnn, Vec::new(), Activation::Relu);
+
+        g.epochs = 5;
+
+        g
+    }
+
     #[test]
     fn rejects_too_many_flops() {
-        let g = testing::lenet();
-        let flops = g.train_flops(&TaskKind::Shapes.spec());
+        let g = wide();
+        let spec = TaskKind::Shapes.spec();
+        let flops = g.train_flops(&spec);
+        let plan = valid_plan(&g, TaskKind::Shapes);
+        let seconds = plan.train_nanos_per_sample() * 5000.0 / 1e9;
+
+        // The FLOP rule binds first for this genome: its time fits the FLOP budget.
+        assert!(seconds < flops as f64 / TIME_BUDGET_FLOPS_PER_SECOND, "{seconds} s");
+
         let limits = Limits {
+            max_params: 100_000,
             max_train_flops: flops - 1,
             ..Limits::default()
         };
@@ -1357,11 +1394,140 @@ mod tests {
         assert_rejected_with(&g, TaskKind::Shapes, &limits, "train FLOPs > max");
 
         let limits = Limits {
+            max_params: 100_000,
             max_train_flops: flops,
             ..Limits::default()
         };
 
-        assert!(g.validate(&limits, &TaskKind::Shapes.spec()).is_ok());
+        assert!(g.validate(&limits, &spec).is_ok());
+    }
+
+    #[test]
+    fn the_time_model_counts_by_hand() {
+        // LeNet, as in `lenet_counts_match_a_hand_count`.
+        let lenet = valid_plan(&testing::lenet(), TaskKind::Shapes);
+
+        // Taps: 5x5 cells of 1 channel at 16x16, and 5x5 cells of 6 channels at 8x8.
+        // Values: 6 x 256 twice (convolution, tanh), 6 x 64, 16 x 64 twice, 16 x 16,
+        // 256 (flatten), 32 twice, 4. Pooling: 2x2 cells per output value, 6 x 64 and
+        // 16 x 16 of them. One matrix product per convolution, 10 layers, no groups.
+        assert_eq!(
+            lenet.counts(),
+            Counts {
+                taps: 25 * 256 + 25 * 6 * 64,
+                values: 2 * 6 * 256 + 6 * 64 + 2 * 16 * 64 + 16 * 16 + 256 + 2 * 32 + 4,
+                pool_taps: 4 * 6 * 64 + 4 * 16 * 16,
+                group_inputs: 0,
+                tiles: 2,
+                calls: 10,
+            }
+        );
+
+        // Groups: 8 -> 16 in 4 groups at 16x16 (output 8x8), then 16 -> 16 in 16 groups at
+        // 8x8. Each group reads the whole input once in the backward pass and is its own
+        // matrix product; each group is a call.
+        let grouped = valid_plan(&testing::grouped_dilated(), TaskKind::Shapes).counts();
+
+        assert_eq!(grouped.taps, 9 * 256 + 9 * 8 * 64 + 9 * 16 * 64);
+        assert_eq!(grouped.group_inputs, 4 * 8 * 256 + 16 * 16 * 64);
+        assert_eq!(grouped.tiles, 1 + 4 + 16);
+        assert_eq!(grouped.calls, 1 + 1 + 4 + 2 + 16 + 2 + 1 + 3);
+
+        // The estimates are these counts at their prices.
+        let c = lenet.counts();
+        let train = TRAIN_NANOS_PER_FLOP * lenet.train_flops_per_sample() as f64
+            + TRAIN_NANOS_PER_TAP * c.taps as f64
+            + TRAIN_NANOS_PER_VALUE * c.values as f64
+            + TRAIN_NANOS_PER_POOL_TAP * c.pool_taps as f64
+            + TRAIN_NANOS_PER_TILE * c.tiles as f64;
+
+        assert_eq!(lenet.train_nanos_per_sample(), train);
+
+        // 2000 rows in chunks of 512: 4 chunks.
+        let per_row = EVAL_NANOS_PER_FLOP * lenet.forward_flops as f64
+            + EVAL_NANOS_PER_TAP * c.taps as f64
+            + EVAL_NANOS_PER_VALUE * c.values as f64
+            + EVAL_NANOS_PER_POOL_TAP * c.pool_taps as f64
+            + EVAL_NANOS_PER_TILE * c.tiles as f64;
+
+        assert_eq!(
+            lenet.eval_nanos(2000, 512),
+            2000.0 * per_row + 4.0 * EVAL_NANOS_PER_CALL * c.calls as f64
+        );
+
+        // Values per row: the input, then every layer.
+        assert_eq!(lenet.values_per_row() as u64, 256 + c.values);
+    }
+
+    /// The two slow CNNs of the review of ticket 02, with as many epochs as
+    /// `max_train_flops` allows: before the time rule they passed `validate` and then took
+    /// 30 s at one thread, so the clock stopped them.
+    fn slow_cnns_of_the_review() -> Vec<Genome> {
+        let narrow = |width: usize, kernel: usize, norm: Norm| {
+            let stage = Stage {
+                norm,
+                ..plain(width, kernel, CnnActivation::Relu)
+            };
+            let cnn = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width,
+                    kernel,
+                    stride: 1,
+                    down: Downsample::Conv,
+                    norm,
+                    activation: CnnActivation::Relu,
+                },
+                stages: vec![stage; 12],
+                head: Head::GlobalAvgPool,
+            };
+            let mut g = testing::genome(cnn, Vec::new(), Activation::Relu);
+            let spec = TaskKind::Shapes.spec();
+            let per_epoch = g.cnn_plan(&spec).expect("plan").train_flops_per_sample()
+                * spec.n_train as u64;
+
+            g.batch_size = 16;
+            g.epochs = (Limits::default().max_train_flops / per_epoch) as usize;
+
+            g
+        };
+
+        vec![narrow(1, 11, Norm::None), narrow(4, 3, Norm::Batch)]
+    }
+
+    #[test]
+    fn rejects_a_cnn_too_slow_for_its_flop_budget() {
+        let spec = TaskKind::Shapes.spec();
+
+        for g in slow_cnns_of_the_review() {
+            assert!(g.epochs >= 6, "{}", g.summary());
+            assert!(g.train_flops(&spec) <= Limits::default().max_train_flops);
+            assert_rejected_with(
+                &g,
+                TaskKind::Shapes,
+                &Limits::default(),
+                "estimated training time",
+            );
+        }
+
+        // LeNet with 10 epochs: its FLOPs fit 1.3e10, but its time does not.
+        let lenet = testing::lenet();
+        let flops = lenet.train_flops(&spec);
+        let plan = valid_plan(&lenet, TaskKind::Shapes);
+        let seconds = plan.train_nanos_per_sample() * 10_000.0 / 1e9;
+        let budget = |seconds: f64| Limits {
+            max_train_flops: (seconds * TIME_BUDGET_FLOPS_PER_SECOND) as u64,
+            ..Limits::default()
+        };
+
+        assert!(flops < budget(seconds * 0.99).max_train_flops);
+        assert_rejected_with(
+            &lenet,
+            TaskKind::Shapes,
+            &budget(seconds * 0.99),
+            "estimated training time",
+        );
+        assert!(lenet.validate(&budget(seconds * 1.01), &spec).is_ok());
     }
 
     #[test]
@@ -1479,10 +1645,15 @@ mod tests {
                     valid += 1;
 
                     let plan = g.cnn_plan(&spec).expect("a valid genome has a plan");
+                    let samples = spec.n_train as f64 * g.epochs as f64;
 
                     assert_eq!(g.param_count(&spec), plan.params);
                     assert!(plan.params <= limits.max_params);
                     assert!(g.train_flops(&spec) <= limits.max_train_flops);
+                    assert!(
+                        plan.train_nanos_per_sample() * samples
+                            <= limits.max_train_flops as f64 * 1e9 / TIME_BUDGET_FLOPS_PER_SECOND
+                    );
                 }
                 Err(_) => invalid += 1,
             }
