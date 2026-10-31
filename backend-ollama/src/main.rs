@@ -12,9 +12,14 @@
 //! Tags `vllm:<served model name>` go to a vLLM server instead (module `vllm`), which
 //! decodes the parallel requests of a panel in one batch.
 //!
+//! Answers are shared across runs through a call cache (`SharedCache`): a request that any
+//! run on this machine already answered is taken from there, filed in this run's record
+//! with `"cached": true`, and not sent to the model again.
+//!
 //! Environment: `OLLAMA_URL` (default http://127.0.0.1:11434), `VLLM_URL` (default
-//! http://127.0.0.1:8000), both loopback only, and `OLLAMA_TIMEOUT_SECS` (default 300, for
-//! both servers).
+//! http://127.0.0.1:8000), both loopback only, `OLLAMA_TIMEOUT_SECS` (default 300, for
+//! both servers), and `BRUT_CALL_CACHE`: the cache file (default
+//! `~/.cache/brut/calls.jsonl`), or `off` for no cache.
 #![forbid(unsafe_code)]
 
 #[path = "../../src/bin/brut-breed.rs"]
@@ -33,6 +38,7 @@ struct Settings {
     vllm_base: String,
     timeout: Duration,
     record: Option<PathBuf>,
+    cache: Option<PathBuf>,
 }
 
 static SETTINGS: OnceLock<Settings> = OnceLock::new();
@@ -66,9 +72,16 @@ fn recorded<B: ModelBackend + 'static>(
     let tag = backend.name().to_string();
 
     match &s.record {
-        Some(path) => match Recorded::open(backend, path) {
+        Some(path) => match match &s.cache {
+            Some(cache) => Recorded::open_with_cache(backend, path, cache),
+            None => Recorded::open(backend, path),
+        } {
             Ok(r) => {
-                eprintln!("brut-breed-ollama: {tag}: {} recorded call(s) loaded", r.len());
+                eprintln!(
+                    "brut-breed-ollama: {tag}: {} recorded call(s) loaded; call cache: {}",
+                    r.len(),
+                    s.cache.as_ref().map_or("off".to_string(), |c| c.display().to_string())
+                );
                 Some(Box::new(r))
             }
             Err(e) => {
@@ -97,6 +110,13 @@ fn main() {
         vllm_base: std::env::var("VLLM_URL").unwrap_or_else(|_| vllm::DEFAULT_BASE.to_string()),
         timeout: Duration::from_secs(timeout),
         record: out.map(|o| o.join("llm").join("worker-calls.jsonl")),
+        cache: match std::env::var("BRUT_CALL_CACHE") {
+            Ok(v) if v == "off" => None,
+            Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
+            _ => std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".cache").join("brut").join("calls.jsonl")),
+        },
     });
     let _ = breed::EXTRA_BACKENDS.set(ollama);
 

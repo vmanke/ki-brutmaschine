@@ -531,7 +531,7 @@ VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve Qwen/Qwen2.5-32B-Instruct --host 127.0.
 # in config.json: "models": [{"tag": "vllm:qwen2.5-32b", "cost_per_call": 0.002}]
 ```
 
-`VLLM_URL` (Vorgabe `http://127.0.0.1:8000`), `OLLAMA_URL` (Vorgabe `http://127.0.0.1:11434`) und `OLLAMA_TIMEOUT_SECS` (Vorgabe 300, für beide Server)
+`VLLM_URL` (Vorgabe `http://127.0.0.1:8000`), `OLLAMA_URL` (Vorgabe `http://127.0.0.1:11434`) und `OLLAMA_TIMEOUT_SECS` (Vorgabe 300, für beide Server); `BRUT_CALL_CACHE` nennt den Antwort-Cache, den alle Läufe auf einem Rechner teilen (Vorgabe `~/.cache/brut/calls.jsonl`, `off` schaltet ihn ab). Eine Anfrage, die ein Lauf schon beantwortet bekam, geht nicht noch einmal ans Modell; der Lauf legt die Antwort mit `"cached": true` in seiner eigenen Aufzeichnung ab
 stellen den Server und die Zeitgrenze ein. Der Live-Test:
 `cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
 
