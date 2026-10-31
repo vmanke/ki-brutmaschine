@@ -92,8 +92,10 @@ const NEW_TOP_LEVEL_FILES: [&str; 8] = [
 /// Markers that must be gone from library code before acceptance (contract I5, errata E14).
 const STUB_MARKERS: [&str; 4] = ["todo!(", "unimplemented!(", ".unwrap()", "WP0 stub"];
 
-/// The only allowed `[dependencies]` (contract I1).
-const ALLOWED_DEPENDENCIES: [&str; 7] = [
+/// The only allowed `[dependencies]` (contract I1; ADR 0007 added candle's two crates).
+const ALLOWED_DEPENDENCIES: [&str; 9] = [
+    "candle-core",
+    "candle-nn",
     "hex",
     "rand",
     "rand_chacha",
@@ -102,6 +104,12 @@ const ALLOWED_DEPENDENCIES: [&str; 7] = [
     "serde_json",
     "sha2",
 ];
+
+/// candle's crates, admitted for the CNN models at one reviewed commit (ADR 0007).
+const CANDLE_CRATES: [&str; 2] = ["candle-core", "candle-nn"];
+
+/// The source each candle crate must name in `Cargo.toml`, with default features only.
+const CANDLE_SOURCE: &str = r#"git = "https://github.com/huggingface/candle", rev = "9515d410e3af803fd45efebfef8137f47d85a63d""#;
 
 const FORBID_LINE: &str = "#![forbid(unsafe_code)]";
 
@@ -323,6 +331,25 @@ fn t_sec_3_dependencies_unchanged() {
 
     if deps != allowed {
         violations.push(format!("[dependencies] are {deps:?}, allowed {allowed:?}"));
+    }
+
+    // A candle crate comes from the reviewed commit only, with no branch, tag, path or features.
+    for name in CANDLE_CRATES {
+        let prefix = format!("{name} =");
+        let entry = toml
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&prefix));
+        let pinned = entry.is_some_and(|line| {
+            line.contains(CANDLE_SOURCE)
+                && !["branch", "tag", "path", "features"]
+                    .iter()
+                    .any(|key| line.contains(key))
+        });
+
+        if !pinned {
+            violations.push(format!("{name} must name exactly {CANDLE_SOURCE}"));
+        }
     }
 
     assert_no_violations("I1", &violations);

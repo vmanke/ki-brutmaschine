@@ -472,3 +472,23 @@ query, learner secret or `brut-eval` call was made for this change.
   run. Everything merges in a fixed order and is independent of the thread count, so the
   archive and the lineage-chunk SHA-256 stay reproducible. This changes the search dynamics
   (new programs survive, breed and ship) — that is the intended effect of K3.
+
+## Amendment by ADR 0007 (CNN models, 2026-10-31)
+
+### E15. I1 admits candle-core and candle-nn at one commit
+
+I1 says that `[dependencies]` in `Cargo.toml` stays exactly the seven crates `hex, rand,
+rand_chacha, rayon, serde, serde_json, sha2`. T-SEC-3 tests this, and AC-1 asks for it. The
+CNN models of the MLP mode need convolutions and automatic gradients, which none of the
+seven crates has.
+
+Decision: ADR 0007 admits two more crates, `candle-core` and `candle-nn`. They come from
+GitHub at commit 9515d410e3af803fd45efebfef8137f47d85a63d of candle's main branch only,
+with default features, and `Cargo.lock` pins that commit. No branch, tag, path or feature
+list is allowed. `t_sec_3_dependencies_unchanged` in `tests/learner_security.rs` enforces
+this: it allows the nine crates and checks the source line of both candle crates. Every
+other part of I1 holds: no further crate may enter `[dependencies]`.
+
+The same decision amends I1 of `docs/STAGE2_BACKEND_CONTRACT.md` ("the core crate gains no
+new dependency of any kind"). candle brings no network library, so ADR 0001 holds. A
+change of the commit is a new decision, with a new audit (ADR 0007).

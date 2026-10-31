@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::genome::{Activation, Genome, MIN_EPOCHS, Optimizer};
+use crate::genome::{Activation, Arch, Genome, MIN_EPOCHS, Optimizer};
 use crate::hidden_eval::MIN_HIDDEN_SCORE_STEP;
 use crate::task::TaskKind;
 use crate::util::{BrutError, Result, write_atomic};
@@ -40,7 +40,8 @@ pub struct Limits {
     pub max_params: usize,
     /// Max training epochs for one candidate.
     pub max_epochs: usize,
-    /// Max estimated training FLOPs for one candidate.
+    /// Max estimated training FLOPs for one candidate. A CNN's estimated training time
+    /// must also stay within it at 1 GFLOP/s (`cnn::shape`, "Time").
     pub max_train_flops: u64,
     /// Max wall-clock seconds for training one candidate.
     pub max_candidate_seconds: f64,
@@ -113,6 +114,12 @@ pub struct Config {
     pub hidden_score_step: f64,
     /// Worker threads for parallel training. 0 means all cores.
     pub threads: usize,
+    /// Genomes that join generation 0 before the `population_init` random ones, such as
+    /// CNNs, which no random genome is. Each must pass `Genome::validate` for `limits` and
+    /// the task. The JSON leaves an empty list out, so configs without base genomes keep
+    /// their bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_genomes: Vec<Genome>,
 }
 
 impl Default for Config {
@@ -131,6 +138,7 @@ impl Default for Config {
             hidden_query_budget: 30,
             hidden_score_step: 0.01,
             threads: 0,
+            base_genomes: Vec::new(),
         }
     }
 }
@@ -291,6 +299,7 @@ impl Config {
 
         let spec = self.task.spec();
         let smallest = Genome {
+            arch: Arch::Mlp,
             hidden: Vec::new(),
             activation: Activation::Relu,
             optimizer: Optimizer::Sgd,
@@ -308,6 +317,19 @@ impl Config {
             return fail(
                 "limits too small: even a linear model with MIN_EPOCHS does not fit".into(),
             );
+        }
+
+        if self.base_genomes.len() > HARD_MAX_POPULATION {
+            return fail(format!(
+                "{} base genomes > {HARD_MAX_POPULATION}",
+                self.base_genomes.len()
+            ));
+        }
+
+        for (i, genome) in self.base_genomes.iter().enumerate() {
+            if let Err(e) = genome.validate(l, &spec) {
+                return fail(format!("base genome {}: {e}", i + 1));
+            }
         }
 
         Ok(())
@@ -352,6 +374,60 @@ pub(crate) fn diff_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_genomes_are_left_out_when_empty_and_checked_when_given() {
+        let plain = Config::default();
+        let text = serde_json::to_string(&plain).expect("json");
+
+        assert!(!text.contains("base_genomes"), "{text}");
+
+        let cnn = crate::cnn::genome::testing::lenet();
+        let with_cnn = Config {
+            task: TaskKind::Shapes,
+            base_genomes: vec![cnn.clone()],
+            ..Config::default()
+        };
+        let text = serde_json::to_string(&with_cnn).expect("json");
+
+        assert!(with_cnn.validate().is_ok());
+        assert_eq!(
+            serde_json::from_str::<Config>(&text).expect("parse"),
+            with_cnn
+        );
+        assert_eq!(
+            with_cnn.resume_conflicts(&Config {
+                task: TaskKind::Shapes,
+                ..Config::default()
+            }),
+            vec!["base_genomes".to_string()]
+        );
+
+        // A CNN does not fit the flat inputs of two spirals.
+        let message = Config {
+            base_genomes: vec![cnn.clone()],
+            ..Config::default()
+        }
+        .validate()
+        .expect_err("refused")
+        .to_string();
+
+        assert!(message.contains("base genome 1: "), "{message}");
+
+        let mut over = cnn;
+
+        over.epochs = Limits::default().max_epochs + 1;
+
+        assert!(
+            Config {
+                task: TaskKind::Shapes,
+                base_genomes: vec![over],
+                ..Config::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
 
     #[test]
     fn resume_conflicts_names_experiment_fields_only() {

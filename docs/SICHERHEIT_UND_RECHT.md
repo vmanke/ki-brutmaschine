@@ -162,8 +162,8 @@ belegt sehr viel Speicher oder führt Code aus.
 
 **Gegenmaßnahmen im Code:**
 
-- Modelle sind reines JSON (`nn::Mlp`): Zahlenlisten, kein ausführbares
-  Format.
+- Modelle sind reines JSON (`nn::Mlp`, für Faltungsnetze
+  `cnn::model::CnnModel`): Zahlenlisten, kein ausführbares Format.
 - `brut-eval` liest nur Modelldateien im Ordner `models/` des
   Lauf-Verzeichnisses (oder in dem Ordner, den `BRUT_MODELS_DIR` in der
   geheimen Datei nennt). Symbolische Links und `..` werden vorher aufgelöst.
@@ -179,10 +179,43 @@ belegt sehr viel Speicher oder führt Code aus.
   passende Ein- und Ausgabegröße. Gemessen: Ein Modell mit einer Schicht aus
   399 999 Neuronen belegte vorher 3.1 GB Speicher und brauchte 34 Sekunden;
   jetzt wird es sofort abgewiesen.
+- Eine Datei mit `"kind": "cnn"` ist ein Faltungsnetz. Sie darf keine
+  unbekannten Felder enthalten, auch nicht im Genom. Der Leser bricht ab,
+  sobald die Listen der trainierten Werte zusammen mehr als 2 000 000 Zahlen
+  halten oder die Listen der laufenden Statistiken mehr als 6656
+  (`MAX_RUNNING_VALUES`), denn mehr Werte hat kein gültiges Modell. Bevor
+  `brut-eval` einen Tensor anlegt, prüft es die Architektur: die Formprüfung
+  des Genoms gegen die Aufgabe, die Parameterzahl (höchstens 2 000 000), Tiefe
+  und Breite des dichten Kopfes wie beim MLP und die Rechenkosten. Der
+  Vorwärtslauf über den verborgenen Teil darf höchstens 1e11 FLOPs kosten
+  (`MAX_EVAL_FLOPS`), da ein Faltungsnetz jedes Gewicht an jeder Bildstelle
+  wiederverwendet und die Parameterzahl seine Kosten nicht begrenzt. Die FLOPs
+  allein begrenzen die Zeit jedoch nicht: Eine Datei aus Faltungen je Kanal
+  mit Schichtnorm und GELU kostete 9.2e10 FLOPs und hätte etwa 179 Sekunden
+  gebraucht (ein Thread; 200 der 2000 Zeilen brauchten 17.9 Sekunden), länger
+  als die 120 Sekunden, nach denen der Orchestrator `brut-eval` beendet.
+  Deshalb schätzt `brut-eval` die Zeit der Bewertung mit dem Zeitmodell aus
+  `cnn::shape`, welches auch die kopierten Fensterwerte, die Zwischenwerte und
+  die Aufrufe je Gruppe zählt, und weist eine Datei ab, deren Schätzung 60
+  Sekunden übersteigt (`MAX_EVAL_SECONDS`). In unseren Messungen blieb jede
+  Bewertung unter 0.91 ihrer Schätzung; zwei Dateien knapp unter der Grenze
+  brauchten 17 und 42 Sekunden. Nach unserer Rechnung braucht ein Faltungsnetz
+  innerhalb der voreingestellten Grenzen auf den Bild- und Sequenzaufgaben
+  weniger als 3 % der FLOP-Grenze. Danach prüft `brut-eval` jede Werteliste
+  gegen ihre Tensorform, auf endliche Werte und auf laufende Varianzen nicht
+  unter 0. Eine Fehlermeldung nennt nur Anzahlen, nicht die Listen selbst,
+  sodass sie kurz bleibt. Eine abgewiesene Datei kostet keine Abfrage.
 - Beim Bewerten rechnet `score::evaluate` in Blöcken, deren Größe von der
-  Netzbreite abhängt. Ein Block braucht höchstens etwa 8 MiB für
-  Zwischenwerte. Puffer für die Rückwärtsrechnung legt die reine Bewertung
-  nicht an.
+  Netzbreite abhängt. Bei einem MLP braucht ein Block höchstens etwa 8 MiB für
+  Zwischenwerte; Puffer für die Rückwärtsrechnung legt die reine Bewertung
+  nicht an. Bei einem Faltungsnetz legt candle beim Bewerten keinen
+  Rechengraphen an (`Param::value`), sodass jede Zwischenschicht frei wird,
+  sobald die nächste sie gelesen hat. Hinzu kommen die Puffer, in welche
+  candle die Fenster einer Faltung kopiert: einer je Thread und je 512
+  Bildstellen. Die Zeitgrenze hält einen solchen Puffer unter etwa 16 MB.
+  Gemessen (opt-level 2): Eine Datei knapp unter der Zeitgrenze belegte mit
+  einem Thread höchstens 25 MiB, mit vier Threads 111 MiB; ein kleines
+  Faltungsnetz belegte 11 MiB.
 - Der Orchestrator wartet höchstens 120 Sekunden auf eine Antwort von
   `brut-eval` (`hidden_eval::EVAL_TIMEOUT_SECONDS`). Danach beendet er den
   Prozess und vermerkt den Fehler im Archiv.
@@ -316,12 +349,17 @@ Fehler mit.
 
 **Gegenmaßnahmen:**
 
-- Stufe 1 fügt keine Bibliothek hinzu. Ein Test prüft, dass `[dependencies]`
-  in `Cargo.toml` genau `hex`, `rand`, `rand_chacha`, `rayon`, `serde`,
-  `serde_json` und `sha2` enthält und dass es keine weiteren
-  Abhängigkeits-Tabellen und keine Ersetzungen (`[patch]`, `[replace]`) gibt.
+- Stufe 1 fügt keine Bibliothek hinzu. Erst die CNN-Modelle bringen zwei
+  hinzu: `candle-core` und `candle-nn` von GitHub, an einem festen Commit
+  (ADR 0007). Ein Test prüft, dass `[dependencies]` in `Cargo.toml` genau
+  diese beiden und `hex`, `rand`, `rand_chacha`, `rayon`, `serde`,
+  `serde_json` und `sha2` enthält, die beiden nur von diesem Commit, und dass
+  es keine weiteren Abhängigkeits-Tabellen und keine Ersetzungen (`[patch]`,
+  `[replace]`) gibt.
 - Vor jedem Build für Versuche läuft `cargo audit` mit der
-  RustSec-Datenbank. Gefordert sind 0 bekannte Schwachstellen.
+  RustSec-Datenbank. Gefordert sind 0 bekannte Schwachstellen. Mit candle
+  messen wir 0 Schwachstellen über 164 Pakete und eine Warnung: `paste`
+  1.0.15 wird nicht mehr gepflegt (RUSTSEC-2024-0436).
 - Stufe 1 braucht keinen API-Schlüssel und kein Netzwerk.
 
 ## Bekannte Lücken

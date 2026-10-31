@@ -36,7 +36,9 @@ MUST hold for the adapter:
 
 - I1. **Separate crate.** It lives in its own Cargo package and depends on the core crate
   for the `ModelBackend` trait and its types. The core crate gains no network dependency
-  and no new dependency of any kind (ADR 0001).
+  and no new dependency of any kind (ADR 0001). Amended by ADR 0007 (errata E15 in
+  `docs/STAGE1_CONTRACT_ERRATA.md`): the core crate admits `candle-core` and `candle-nn` from
+  commit 9515d410 only. They bring no network library.
 - I2. **HTTP client.** `ureq` 3.x, which pulls no async runtime and has a small dependency
   tree; the plan found it clean under `cargo audit`. No `reqwest`, no `tokio`.
 - I3. **Localhost only.** The adapter reads the Ollama base URL from its own configuration

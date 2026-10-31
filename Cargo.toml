@@ -5,6 +5,11 @@ edition = "2024"
 rust-version = "1.89"
 
 [dependencies]
+# CNNs train through candle on the CPU (ADR 0007). We pin a commit of its main branch,
+# not the release 0.11.0: that release needs zip 8.6.0, which has three open advisories
+# (RUSTSEC-2026-0367, -0368, -0369); this commit uses zip 9.1.3. Default features only.
+candle-core = { git = "https://github.com/huggingface/candle", rev = "9515d410e3af803fd45efebfef8137f47d85a63d" }
+candle-nn = { git = "https://github.com/huggingface/candle", rev = "9515d410e3af803fd45efebfef8137f47d85a63d" }
 hex = "0.4.3"
 rand = "0.9"
 rand_chacha = "0.9"

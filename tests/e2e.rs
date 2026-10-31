@@ -5,13 +5,21 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use brutmaschine::archive::{Archive, CandidateStatus, RecordKind};
+use brutmaschine::cnn::genome::{
+    Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
+};
 use brutmaschine::config::{Config, Limits, ScoreWeights};
-use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup, MODELS_DIR, RunSummary};
+use brutmaschine::evolve::{
+    self, ARCHIVE_FILE, BASE_GENERATOR, CONFIG_FILE, EvalSetup, MODELS_DIR, RunSummary,
+};
+use brutmaschine::genome::{Activation, Arch, Genome, Optimizer};
 use brutmaschine::hidden_eval::create_secret;
+use brutmaschine::model::Model;
 use brutmaschine::nn::Mlp;
 use brutmaschine::safety;
-use brutmaschine::task::TaskKind;
-use brutmaschine::util::BrutError;
+use brutmaschine::score;
+use brutmaschine::task::{self, Split, TaskKind};
+use brutmaschine::util::{BrutError, derive_seed};
 
 const EVAL_BIN: &str = env!("CARGO_BIN_EXE_brut-eval");
 const BRUT_BIN: &str = env!("CARGO_BIN_EXE_brut");
@@ -146,6 +154,424 @@ fn tiny_run_with_hidden_eval() {
     let state = std::fs::read_to_string(dir.join("secret").join("eval_state.json")).expect("state");
 
     assert!(state.contains("queries_used"));
+}
+
+/// An MLP run works on every image and sequence task. The MLP reads each sample flattened,
+/// and the hidden evaluator scores it on the hidden split of that task.
+#[test]
+fn tiny_runs_on_the_image_and_sequence_tasks() {
+    let tasks = [
+        TaskKind::Shapes,
+        TaskKind::BarsAndStripes,
+        TaskKind::BlobCount,
+        TaskKind::MirrorSymmetry,
+        TaskKind::Motif1d,
+    ];
+
+    for task in tasks {
+        let dir = fresh_dir(&format!("grid-{}", task.name()));
+        let config = Config {
+            task,
+            population_init: 2,
+            generations: 1,
+            children_per_generation: 2,
+            ..tiny_config(3)
+        };
+        let eval = setup(&dir, &config);
+        let summary = evolve::run(&dir, Some(&eval)).expect("run");
+
+        assert_eq!(summary.stop_reason, "completed", "{task:?}");
+        assert_eq!(summary.candidates, 2 + 2, "{task:?}");
+        assert!(summary.best_fitness.is_finite(), "{task:?}");
+        assert!(!summary.hidden.is_empty(), "{task:?}");
+
+        for h in &summary.hidden {
+            assert!((0.0..=1.0).contains(&h.hidden_primary), "{task:?}");
+        }
+
+        let n = Archive::verify(&dir.join(ARCHIVE_FILE)).expect("verify");
+        let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+        let best = summary.best_id.expect("best id");
+        let file = archive
+            .get(&best)
+            .and_then(|c| c.model_file)
+            .expect("model file");
+        let model: Mlp = serde_json::from_slice(&std::fs::read(dir.join(file)).expect("read"))
+            .expect("model json");
+        let spec = task.spec();
+
+        assert_eq!(n, archive.records().len());
+        assert_eq!(model.sizes.first(), Some(&spec.n_in), "{task:?}");
+        assert_eq!(model.sizes.last(), Some(&spec.n_out), "{task:?}");
+
+        // `brut init` takes the task's CLI name.
+        let run_dir = dir.join("cli");
+        let run = run_dir.to_str().expect("utf8 path");
+
+        assert_eq!(
+            run_brut(&["init", run, "--task", task.name()])
+                .status
+                .code(),
+            Some(0)
+        );
+        assert_eq!(
+            Config::load(&run_dir.join(CONFIG_FILE)).expect("load").task,
+            task
+        );
+    }
+
+    // The help names every task.
+    let help = run_brut(&["help"]);
+    let usage = String::from_utf8_lossy(&help.stdout);
+
+    for task in TaskKind::ALL {
+        assert!(usage.contains(task.name()), "help lacks {}", task.name());
+    }
+}
+
+/// A small CNN for a 1 x 16 x 16 image: a 3x3 convolution of 4 channels with batch norm,
+/// ReLU and 2x2 max pooling, a 3x3 convolution of 8 channels with ReLU and 2x2 average
+/// pooling, then flatten and the output layer. 598 parameters for 2 classes.
+fn small_cnn() -> Genome {
+    let stage = Stage {
+        block: Block::Plain,
+        width: 8,
+        kernel: 3,
+        stride: 2,
+        down: Downsample::AvgPool,
+        dilation: 1,
+        groups: 1,
+        se: false,
+        residual: false,
+        norm: Norm::None,
+        activation: CnnActivation::Relu,
+    };
+
+    Genome {
+        arch: Arch::Cnn(CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Relu,
+            },
+            stages: vec![stage],
+            head: Head::Flatten,
+        }),
+        hidden: Vec::new(),
+        activation: Activation::Relu,
+        optimizer: Optimizer::Adam,
+        learning_rate: 0.01,
+        l2: 0.0,
+        batch_size: 64,
+        epochs: 5,
+        init_scale: 1.0,
+        seed: 5,
+    }
+}
+
+/// `tiny_config` on bars and stripes with `small_cnn` as a base genome: generation 0 holds
+/// the CNN and 1 random MLP, generation 1 two children by mutation. All 4 candidates go to
+/// the hidden evaluation. With master seed 16 both children have the CNN as their parent
+/// (on the machine that wrote this test; seeds 13 to 19 all gave at least one).
+fn cnn_config(threads: usize) -> Config {
+    Config {
+        task: TaskKind::BarsAndStripes,
+        population_init: 1,
+        generations: 1,
+        children_per_generation: 2,
+        crossover_rate: 0.0,
+        hidden_eval_top_k: 4,
+        threads,
+        base_genomes: vec![small_cnn()],
+        ..tiny_config(16)
+    }
+}
+
+/// A CNN through the whole run: the base genome trains, its model file is a CNN file that
+/// gives back its validation score, and `brut-eval` loads and scores it on the hidden split.
+#[test]
+fn a_cnn_base_genome_trains_is_saved_and_scored_in_a_run() {
+    let dir = fresh_dir("cnn-run");
+    let config = cnn_config(2);
+    let eval = setup(&dir, &config);
+    let summary = evolve::run(&dir, Some(&eval)).expect("run");
+    let spec = config.task.spec();
+    let genome = small_cnn();
+
+    assert_eq!(summary.stop_reason, "completed");
+    assert_eq!(summary.candidates, 1 + 1 + 2);
+    assert_eq!(
+        Archive::verify(&dir.join(ARCHIVE_FILE)).expect("verify"),
+        Archive::open(&dir.join(ARCHIVE_FILE))
+            .expect("open")
+            .records()
+            .len()
+    );
+
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+    let base = archive
+        .candidates()
+        .into_iter()
+        .find(|c| c.generator == BASE_GENERATOR)
+        .expect("the base genome is a candidate");
+
+    assert_eq!(base.generation, 0);
+    assert_eq!(base.genome, genome);
+    assert_eq!(base.id, genome.id());
+    assert_eq!(base.status, CandidateStatus::Ok);
+    assert_eq!(base.params, genome.param_count(&spec));
+    assert_eq!(base.train.flops, genome.train_flops(&spec));
+
+    // The model file is a CNN file, and it gives back the archived validation score.
+    let bytes = std::fs::read(dir.join(base.model_file.as_deref().expect("model file")))
+        .expect("read model");
+
+    assert!(bytes.starts_with(b"{\"kind\":\"cnn\","));
+
+    let model = Model::from_json(&bytes).expect("parse");
+    let Model::Cnn(cnn) = &model else {
+        panic!("the CNN was saved as another kind");
+    };
+    let valid = task::generate(&spec, Split::Valid, derive_seed(config.master_seed, "data"));
+
+    assert_eq!(cnn.param_count(), base.params);
+    assert_eq!(score::evaluate(&model, &spec, &valid), base.valid);
+    assert!(base.valid.primary > 0.6, "{:?}", base.valid);
+
+    // brut-eval loaded and scored it.
+    let hidden = summary
+        .hidden
+        .iter()
+        .find(|h| h.candidate_id == base.id)
+        .expect("a hidden result for the CNN");
+
+    assert!((0.0..=1.0).contains(&hidden.hidden_primary));
+    assert_eq!(summary.hidden.len(), 4);
+
+    // A child of a CNN is a CNN, and it trains and gets its CNN file as well.
+    let children: Vec<_> = archive
+        .candidates()
+        .into_iter()
+        .filter(|c| c.generation == 1 && c.parents == [base.id.clone()])
+        .collect();
+
+    assert!(!children.is_empty(), "no child of the CNN");
+
+    for child in children {
+        let file = child.model_file.as_deref().expect("model file");
+        let bytes = std::fs::read(dir.join(file)).expect("read model");
+
+        assert!(matches!(child.genome.arch, Arch::Cnn(_)), "{}", child.id);
+        assert_eq!(child.status, CandidateStatus::Ok);
+        assert!(bytes.starts_with(b"{\"kind\":\"cnn\","));
+    }
+
+    // The base genome is part of the stored experiment.
+    let stored = std::fs::read_to_string(dir.join(CONFIG_FILE)).expect("config");
+
+    assert!(stored.contains("\"base_genomes\""));
+}
+
+/// The id and the bytes of every model file of the run in `dir`.
+fn model_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+
+    archive
+        .candidates()
+        .into_iter()
+        .filter_map(|c| c.model_file.map(|f| (c.id, f)))
+        .map(|(id, f)| (id, std::fs::read(dir.join(f)).expect("read")))
+        .collect()
+}
+
+/// The same CNN run trains to the same candidates and model files with 1 or 2 worker
+/// threads (`Config::threads`, the pool that trains candidates side by side).
+///
+/// This does not change the threads of candle's matrix products; see
+/// `a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads`.
+#[test]
+fn a_cnn_run_does_not_depend_on_the_worker_threads() {
+    let files = model_files;
+    let a = fresh_dir("cnn-threads-a");
+    let b = fresh_dir("cnn-threads-b");
+
+    setup(&a, &cnn_config(2));
+    setup(&b, &cnn_config(1));
+    evolve::run(&a, None).expect("run a");
+    evolve::run(&b, None).expect("run b");
+
+    assert_eq!(fitness_list(&a), fitness_list(&b));
+    assert_eq!(files(&a), files(&b));
+    assert!(
+        files(&a)
+            .iter()
+            .any(|(_, bytes)| bytes.starts_with(b"{\"kind\":\"cnn\","))
+    );
+}
+
+/// A CNN with every norm and pool of ticket 02, for a 16 x 16 image: a stem with batch norm
+/// and max pooling, a dilated group convolution with group norm and SiLU, and a convolution
+/// with layer norm, GELU and average pooling.
+fn normed_cnn() -> Genome {
+    let stage = |width: usize, stride: usize, down: Downsample, norm: Norm| Stage {
+        block: Block::Plain,
+        width,
+        kernel: 3,
+        stride,
+        down,
+        dilation: 1,
+        groups: 1,
+        se: false,
+        residual: false,
+        norm,
+        activation: CnnActivation::Gelu,
+    };
+
+    Genome {
+        arch: Arch::Cnn(CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 8,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Relu,
+            },
+            stages: vec![
+                Stage {
+                    dilation: 2,
+                    groups: 2,
+                    activation: CnnActivation::Silu,
+                    ..stage(8, 1, Downsample::Conv, Norm::Group)
+                },
+                stage(12, 2, Downsample::AvgPool, Norm::Layer),
+            ],
+            head: Head::GlobalAvgPool,
+        }),
+        hidden: vec![6],
+        epochs: 5,
+        ..small_cnn()
+    }
+}
+
+/// A CNN run gives the same candidates and model files when candle splits its matrix
+/// products into 1 or 3 parts.
+///
+/// candle reads that number from `RAYON_NUM_THREADS` when a product starts, not from the
+/// rayon pool around it, and 1 means no split at all. A test cannot change the
+/// environment of its own process, so each run is a child process `brut run --no-hidden`
+/// with its own value. One worker thread trains the candidates in both.
+#[test]
+fn a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads() {
+    let run = |name: &str, threads: &str| {
+        let dir = fresh_dir(name);
+        let config = Config {
+            base_genomes: vec![small_cnn(), normed_cnn()],
+            ..cnn_config(1)
+        };
+
+        config.save(&dir.join(CONFIG_FILE)).expect("save config");
+
+        let out = Command::new(BRUT_BIN)
+            .arg("run")
+            .arg(&dir)
+            .arg("--no-hidden")
+            .env("RAYON_NUM_THREADS", threads)
+            .output()
+            .expect("start brut");
+
+        assert!(
+            out.status.success(),
+            "brut run failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        dir
+    };
+    let one = run("cnn-matrix-1", "1");
+    let three = run("cnn-matrix-3", "3");
+    let cnn_files = model_files(&one)
+        .iter()
+        .filter(|(_, bytes)| bytes.starts_with(b"{\"kind\":\"cnn\","))
+        .count();
+
+    assert_eq!(fitness_list(&one), fitness_list(&three));
+    assert_eq!(model_files(&one), model_files(&three));
+    assert!(cnn_files >= 3, "{cnn_files} CNN files");
+}
+
+/// A run directory that `brut run --no-hidden` wrote at commit bec9aa1, before CNNs: the
+/// config of `tiny_config(3)` with 1 thread, its archive and its 10 model files.
+const PRE_CNN_RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pre_cnn_run");
+
+/// A run written before CNNs still opens and verifies, its model files give back their
+/// archived validation scores, and it resumes for one more generation.
+#[test]
+fn a_run_written_before_cnns_opens_scores_and_resumes() {
+    let dir = fresh_dir("pre-cnn");
+    let fixture = Path::new(PRE_CNN_RUN);
+
+    std::fs::create_dir_all(dir.join(MODELS_DIR)).expect("models dir");
+
+    for name in [CONFIG_FILE, ARCHIVE_FILE, "archive.head"] {
+        std::fs::copy(fixture.join(name), dir.join(name)).expect("copy");
+    }
+
+    for entry in std::fs::read_dir(fixture.join(MODELS_DIR)).expect("models") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().expect("file name");
+
+        std::fs::copy(&path, dir.join(MODELS_DIR).join(name)).expect("copy model");
+    }
+
+    let records = Archive::verify(&dir.join(ARCHIVE_FILE)).expect("verify");
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+    let config = Config::load(&dir.join(CONFIG_FILE)).expect("config");
+    let spec = config.task.spec();
+    let valid = task::generate(&spec, Split::Valid, derive_seed(config.master_seed, "data"));
+    let candidates = archive.candidates();
+
+    assert_eq!(records, 12);
+    assert_eq!(candidates.len(), 4 + 2 * 3);
+    assert!(config.base_genomes.is_empty());
+
+    let mut scored = 0;
+
+    for c in &candidates {
+        assert!(c.genome.arch.is_mlp(), "{}", c.id);
+
+        if let Some(file) = &c.model_file {
+            let model = Model::from_json(&std::fs::read(dir.join(file)).expect("read"))
+                .expect("an old model file parses");
+
+            assert!(matches!(model, Model::Mlp(_)), "{}", c.id);
+            assert_eq!(score::evaluate(&model, &spec, &valid), c.valid, "{}", c.id);
+            scored += 1;
+        }
+    }
+
+    assert_eq!(scored, 10);
+
+    // One more generation on top of the old archive.
+    let more = Config {
+        generations: 3,
+        ..config
+    };
+
+    more.save(&dir.join(CONFIG_FILE)).expect("save");
+
+    let summary = evolve::run(&dir, None).expect("resume");
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+
+    assert_eq!(summary.stop_reason, "completed");
+    assert_eq!(summary.candidates, 10 + 3);
+    assert!(archive.candidates().iter().any(|c| c.generation == 3));
+    assert!(Archive::verify(&dir.join(ARCHIVE_FILE)).is_ok());
 }
 
 #[test]
