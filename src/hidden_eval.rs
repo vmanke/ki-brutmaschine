@@ -1048,6 +1048,127 @@ mod tests {
     }
 
     #[test]
+    fn cnn_files_are_scored_and_bad_ones_cost_no_query() {
+        use crate::cnn::genome::{
+            Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
+        };
+
+        let (dir, secret, models) = layout("cnn");
+        let spec = TaskKind::Shapes.spec();
+        let good = crate::cnn::model::testing::untrained(&crate::cnn::genome::testing::vgg(), &spec, 1);
+        let good_path = models.join("good.json");
+
+        create_secret(&secret).expect("secret");
+        std::fs::write(&good_path, serde_json::to_vec(&Model::Cnn(good.clone())).expect("json"))
+            .expect("write");
+
+        let req = |path: &Path| EvalRequest {
+            candidate_id: "cnn".into(),
+            model_path: path.to_path_buf(),
+            task: TaskKind::Shapes,
+        };
+        let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
+        let resp = ev.evaluate(&req(&good_path)).expect("a valid CNN file");
+
+        assert!((0.0..=1.0).contains(&resp.hidden_primary));
+        assert_eq!(resp.queries_used, 1);
+
+        // Architectures without trained values: they must be refused before the values.
+        let wide = |width: usize, kernel: usize, stages: usize| {
+            let stage = Stage {
+                block: Block::Plain,
+                width,
+                kernel,
+                stride: 1,
+                down: Downsample::Conv,
+                dilation: 1,
+                groups: 1,
+                se: false,
+                residual: false,
+                norm: Norm::None,
+                activation: CnnActivation::Relu,
+            };
+            let arch = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width: 64,
+                    kernel: 3,
+                    stride: 1,
+                    down: Downsample::Conv,
+                    norm: Norm::None,
+                    activation: CnnActivation::Relu,
+                },
+                stages: vec![stage; stages],
+                head: Head::GlobalAvgPool,
+            };
+
+            CnnModel::new(arch, Vec::new(), Activation::Relu, Vec::new(), Vec::new())
+        };
+        let text = |model: &CnnModel| serde_json::to_string(model).expect("json");
+        let good_text = text(&good);
+        let mut short = good.clone();
+
+        short.params[0].pop();
+
+        let mut one_d = good.clone();
+
+        one_d.arch.dims = Dims::OneD;
+
+        let mut deep = good.clone();
+
+        deep.hidden = vec![1; HARD_MAX_HIDDEN_LAYERS + 1];
+
+        let over_cap = format!("[{}]", vec!["0"; HARD_MAX_PARAMS + 1].join(","));
+        let bad: Vec<(&str, String, &str)> = vec![
+            ("only the kind", "{\"kind\":\"cnn\"}".into(), "not a valid CNN model"),
+            (
+                "an unknown field",
+                good_text.replacen("\"hidden\":", "\"extra\":0,\"hidden\":", 1),
+                "not a valid CNN model",
+            ),
+            (
+                "an unknown kind",
+                good_text.replacen("\"cnn\"", "\"rnn\"", 1),
+                "not a valid model",
+            ),
+            (
+                "too many values",
+                good_text.replacen("\"batch_norm\":[", &format!("\"batch_norm\":[{over_cap},"), 1),
+                "not a valid CNN model",
+            ),
+            ("too costly to score", text(&wide(256, 3, 2)), "FLOPs, max"),
+            ("too many parameters", text(&wide(256, 11, 2)), "parameters"),
+            ("too deep a head", text(&deep), "hidden layers"),
+            ("a tensor too short", text(&short), "tensor 1 has"),
+            ("a 1-D genome on an image", text(&one_d), "needs a sequence"),
+            // serde_json refuses a number beyond the range of f32 while it parses.
+            (
+                "a value beyond f32",
+                good_text.replacen("[1.0,", "[1e40,", 1),
+                "not a valid CNN model",
+            ),
+        ];
+
+        for (what, contents, expected) in bad {
+            let path = models.join("bad.json");
+
+            std::fs::write(&path, &contents).expect("write");
+
+            let message = match ev.evaluate(&req(&path)) {
+                Err(BrutError::Invalid(m)) => m,
+                other => panic!("{what}: expected Invalid, got {other:?}"),
+            };
+
+            assert!(message.contains(expected), "{what}: {message}");
+        }
+
+        // None of the refused files cost a query.
+        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn concurrent_queries_are_counted_exactly() {
         let (dir, secret, models) = layout("concurrent");
         let model = models.join("m.json");

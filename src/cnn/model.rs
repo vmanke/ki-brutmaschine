@@ -317,18 +317,17 @@ impl<'de> Visitor<'de> for List<'_> {
     }
 }
 
+/// Models for the tests of the crate.
 #[cfg(test)]
-mod tests {
+pub(crate) mod testing {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::cnn::genome::testing;
     use crate::genome::Genome;
-    use crate::task::TaskKind;
 
     /// The untrained model of `genome` on `spec`, with values drawn from `seed`.
-    fn untrained(genome: &Genome, spec: &TaskSpec, seed: u64) -> CnnModel {
+    pub(crate) fn untrained(genome: &Genome, spec: &TaskSpec, seed: u64) -> CnnModel {
         let plan = genome.cnn_plan(spec).expect("plan");
         let specs = net::param_specs(&plan, genome.activation);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -350,6 +349,14 @@ mod tests {
             &values,
         )
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::untrained;
+    use super::*;
+    use crate::cnn::genome::testing;
+    use crate::task::TaskKind;
 
     /// The VGG-like test genome on the shapes task: batch norm, max pooling, flatten.
     fn vgg() -> (CnnModel, TaskSpec) {
