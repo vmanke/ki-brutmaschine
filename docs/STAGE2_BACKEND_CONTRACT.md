@@ -106,8 +106,7 @@ Documented for the host, not run here:
   `brut-breed-ollama`, which includes `src/bin/brut-breed.rs` as a module and fills the
   slot for tags `ollama:<model>`. The allow-list holds only models without a thinking
   mode (`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`), so `think_tokens` is
-  ignored as I5 says for such models. Open: thinking models with their separate caps
-  (I5), and the Docker sandbox of section 3.
+  ignored as I5 says for such models. Open: the Docker sandbox of section 3.
 - **On the host (an H200 VM, 2026-10-31):** Ollama 0.40.13 as a system service on
   127.0.0.1:11434 and the first real runs (`docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
   Ollama serves one request at a time there.
@@ -116,3 +115,13 @@ Documented for the host, not run here:
   with the same guarantees (I3, I5 for models without a thinking mode, I6, and I7 through
   `Recorded`). On the H200 it gives 40 times the throughput of Ollama at 64 parallel
   requests.
+- **Thinking model (built, 2026-10-31):** `vllm:qwen3.8-27b` follows I5: `think_tokens` 0
+  turns thinking off; a budget above 0 turns it on and picks `reasoning_effort` by the
+  thresholds recorded in `backend_ollama::vllm` (1 to 2048 low, to 3072 medium, to 4096
+  xhigh); the request asks for `max_tokens + think_tokens` and the adapter checks each part
+  on its own (reasoning above `think_tokens`, or answer above `max_tokens`, is `Length`).
+  The record keeps the reasoning, the level and both token counts (`thinking`).
+- **Mutator and control (built, 2026-10-31):** `brut-mutator` answers the Mutator requests
+  of a paused run with a local model (recorded in `llm/mutator-calls.jsonl`); `vote-control`
+  measures the compute-equal majority vote of a seed cascade on a finished run's select
+  panel. Both live in `backend-ollama/`.
