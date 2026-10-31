@@ -89,8 +89,9 @@ Stand: 2026-10-31.
   Worker in einer Kaskade. F2: ein Sprachmodell als Architekt, der Baupläne für CNNs
   vorschlägt. F3: ein CNN als Werkzeug, welches das Sprachmodell aufruft, mit höchstens 3
   Aufrufen je Antwort.
-- **Chemische Netze (Recherche läuft).** Chemische Reaktionsnetze als verallgemeinerte
-  neuronale Netze, eine spätere Modellart.
+- **Chemische Netze (Recherche fertig, PR #37).** Chemische Reaktionsnetze als verallgemeinerte
+  neuronale Netze, eine spätere Modellart. Die Notiz mit 74 Quellen und vier Tickets für
+  erste Prototypen liegen in [.scratch/chemische-netze/](.scratch/chemische-netze/map.md).
 
 **Geparkt**
 

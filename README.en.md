@@ -58,8 +58,9 @@ Status on 2026-10-31.
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
   Cascade. F2: a language model as Architect that proposes CNN blueprints. F3: a CNN as a
   tool that the language model calls, at most 3 calls per answer.
-- **Chemical networks (research running).** Chemical reaction networks as generalized
-  neural networks, a later model kind.
+- **Chemical networks (research done, PR #37).** Chemical reaction networks as generalized
+  neural networks, a later model kind. The note with 74 sources and four tickets for first
+  prototypes are in [.scratch/chemische-netze/](.scratch/chemische-netze/map.md).
 
 **Parked**
 
