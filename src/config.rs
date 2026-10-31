@@ -113,6 +113,12 @@ pub struct Config {
     pub hidden_score_step: f64,
     /// Worker threads for parallel training. 0 means all cores.
     pub threads: usize,
+    /// Genomes that join generation 0 before the `population_init` random ones, such as
+    /// CNNs, which no random genome is. Each must pass `Genome::validate` for `limits` and
+    /// the task. The JSON leaves an empty list out, so configs without base genomes keep
+    /// their bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_genomes: Vec<Genome>,
 }
 
 impl Default for Config {
@@ -131,6 +137,7 @@ impl Default for Config {
             hidden_query_budget: 30,
             hidden_score_step: 0.01,
             threads: 0,
+            base_genomes: Vec::new(),
         }
     }
 }
@@ -309,6 +316,19 @@ impl Config {
             return fail(
                 "limits too small: even a linear model with MIN_EPOCHS does not fit".into(),
             );
+        }
+
+        if self.base_genomes.len() > HARD_MAX_POPULATION {
+            return fail(format!(
+                "{} base genomes > {HARD_MAX_POPULATION}",
+                self.base_genomes.len()
+            ));
+        }
+
+        for (i, genome) in self.base_genomes.iter().enumerate() {
+            if let Err(e) = genome.validate(l, &spec) {
+                return fail(format!("base genome {}: {e}", i + 1));
+            }
         }
 
         Ok(())

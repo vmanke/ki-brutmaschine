@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::cnn::model::CnnModel;
 use crate::config::ScoreWeights;
+use crate::model::Model;
 use crate::nn::{Mlp, Workspace};
 use crate::task::{Dataset, Objective, Targets, TaskSpec};
 
@@ -31,15 +33,21 @@ const EVAL_CHUNK: usize = 512;
 /// or deep models use smaller chunks. About 8 MiB for pre-activations and activations.
 const EVAL_MAX_FLOATS: usize = 1 << 20;
 
-/// Rows per chunk for a model with these layer sizes: at most `EVAL_CHUNK`, at least 1,
-/// and small enough that one chunk needs at most `EVAL_MAX_FLOATS` activation values.
-/// Chunking does not change the result: rows are scored independently and summed in order.
+/// Rows per chunk for an MLP with these layer sizes (see `rows_per_chunk`).
 fn chunk_rows(sizes: &[usize]) -> usize {
     let per_row = sizes
         .iter()
         .skip(1)
         .fold(0usize, |acc, &w| acc.saturating_add(w));
 
+    rows_per_chunk(per_row)
+}
+
+/// Rows per chunk for a model that keeps `per_row` activation values per row: at most
+/// `EVAL_CHUNK`, at least 1, and small enough that one chunk needs at most
+/// `EVAL_MAX_FLOATS` activation values. Chunking does not change the result: rows are
+/// scored independently and summed in order.
+fn rows_per_chunk(per_row: usize) -> usize {
     (EVAL_MAX_FLOATS / per_row.max(1)).clamp(1, EVAL_CHUNK)
 }
 
@@ -58,9 +66,17 @@ impl Metrics {
 }
 
 /// Evaluate `model` on `data`. Non-finite outputs give primary = 0 and loss = MAX_LOSS.
-/// All returned numbers are finite.
-pub fn evaluate(model: &Mlp, spec: &TaskSpec, data: &Dataset) -> Metrics {
-    let failed = Metrics::failed(spec.objective);
+/// All returned numbers are finite. A model that does not fit the task or the data gives
+/// `Metrics::failed`.
+pub fn evaluate(model: &Model, spec: &TaskSpec, data: &Dataset) -> Metrics {
+    match model {
+        Model::Mlp(mlp) => evaluate_mlp(mlp, spec, data),
+        Model::Cnn(cnn) => evaluate_cnn(cnn, spec, data),
+    }
+}
+
+/// `evaluate` for an MLP.
+fn evaluate_mlp(model: &Mlp, spec: &TaskSpec, data: &Dataset) -> Metrics {
     let n = data.n;
     let n_in = data.n_in;
     let n_out = data.n_out;
@@ -72,36 +88,79 @@ pub fn evaluate(model: &Mlp, spec: &TaskSpec, data: &Dataset) -> Metrics {
         && data.x.len() == n * n_in;
 
     if !shapes_ok {
-        return failed;
+        return Metrics::failed(spec.objective);
     }
+
+    let rows = chunk_rows(&model.sizes);
+    let mut ws = Workspace::new();
+
+    metrics(spec, data, rows, |x, rows| {
+        model.forward_into(x, rows, &mut ws).map(<[f32]>::to_vec)
+    })
+}
+
+/// `evaluate` for a CNN: the forward pass in evaluation mode, after `CnnModel::check`.
+fn evaluate_cnn(model: &CnnModel, spec: &TaskSpec, data: &Dataset) -> Metrics {
+    let n = data.n;
+    let shapes_ok = n > 0
+        && data.n_in == spec.n_in
+        && data.n_out == spec.n_out
+        && data.x.len() == n * data.n_in;
+
+    let evaluator = match model.evaluator(spec) {
+        Ok(evaluator) if shapes_ok => evaluator,
+        _ => return Metrics::failed(spec.objective),
+    };
+    let rows = rows_per_chunk(evaluator.values_per_row());
+
+    metrics(spec, data, rows, |x, rows| evaluator.outputs(x, rows).ok())
+}
+
+/// Metrics from the raw outputs of a model. `forward` maps `rows` input rows to their
+/// outputs, row-major, or to None when it fails; it is called on chunks of at most `rows`.
+fn metrics(
+    spec: &TaskSpec,
+    data: &Dataset,
+    rows: usize,
+    forward: impl FnMut(&[f32], usize) -> Option<Vec<f32>>,
+) -> Metrics {
+    let n = data.n;
+    let n_out = data.n_out;
 
     let result = match (spec.objective, &data.targets) {
         (Objective::Classification { classes }, Targets::Labels(labels))
             if classes == n_out && labels.len() == n =>
         {
-            classification(model, data, labels)
+            classification(forward, rows, data, labels)
         }
         (Objective::Regression, Targets::Values(values)) if values.len() == n * n_out => {
-            regression(model, data, values)
+            regression(forward, rows, data, values)
         }
         _ => None,
     };
 
-    result.unwrap_or(failed)
+    result.unwrap_or(Metrics::failed(spec.objective))
 }
 
 /// Cross-entropy and accuracy. None on non-finite output or bad label.
-fn classification(model: &Mlp, data: &Dataset, labels: &[u32]) -> Option<Metrics> {
+fn classification(
+    mut forward: impl FnMut(&[f32], usize) -> Option<Vec<f32>>,
+    rows: usize,
+    data: &Dataset,
+    labels: &[u32],
+) -> Option<Metrics> {
     let n_in = data.n_in;
     let n_out = data.n_out;
-    let rows = chunk_rows(&model.sizes);
-    let mut ws = Workspace::new();
     let mut loss = 0.0f64;
     let mut correct = 0usize;
 
     for (x_chunk, l_chunk) in data.x.chunks(rows * n_in).zip(labels.chunks(rows)) {
         let rows = l_chunk.len();
-        let out = model.forward_into(x_chunk, rows, &mut ws)?;
+        let out = forward(x_chunk, rows)?;
+
+        if out.len() != rows * n_out {
+            return None;
+        }
 
         for (row, &label) in out.chunks_exact(n_out).zip(l_chunk) {
             let label = label as usize;
@@ -142,7 +201,12 @@ fn classification(model: &Mlp, data: &Dataset, labels: &[u32]) -> Option<Metrics
 }
 
 /// MSE and R^2. None on non-finite output.
-fn regression(model: &Mlp, data: &Dataset, values: &[f32]) -> Option<Metrics> {
+fn regression(
+    mut forward: impl FnMut(&[f32], usize) -> Option<Vec<f32>>,
+    rows: usize,
+    data: &Dataset,
+    values: &[f32],
+) -> Option<Metrics> {
     let n_in = data.n_in;
     let n_out = data.n_out;
     let mut means = vec![0.0f64; n_out];
@@ -157,14 +221,16 @@ fn regression(model: &Mlp, data: &Dataset, values: &[f32]) -> Option<Metrics> {
         *m /= data.n as f64;
     }
 
-    let rows = chunk_rows(&model.sizes);
-    let mut ws = Workspace::new();
     let mut ss_res = 0.0f64;
     let mut ss_tot = 0.0f64;
 
     for (x_chunk, v_chunk) in data.x.chunks(rows * n_in).zip(values.chunks(rows * n_out)) {
         let rows = v_chunk.len() / n_out;
-        let out = model.forward_into(x_chunk, rows, &mut ws)?;
+        let out = forward(x_chunk, rows)?;
+
+        if out.len() != rows * n_out {
+            return None;
+        }
 
         for (o_row, t_row) in out.chunks_exact(n_out).zip(v_chunk.chunks_exact(n_out)) {
             for ((&o, &t), &m) in o_row.iter().zip(t_row).zip(&means) {
@@ -296,7 +362,7 @@ mod tests {
 
     #[test]
     fn classification_metrics() {
-        let m = evaluate(&identity(), &cls_spec(), &cls_data());
+        let m = evaluate(&Model::Mlp(identity()), &cls_spec(), &cls_data());
 
         assert_eq!(m.accuracy, Some(0.75));
         assert_eq!(m.primary, 0.75);
@@ -325,7 +391,7 @@ mod tests {
             n_in: 1,
             n_out: 1,
         };
-        let m = evaluate(&model, &spec, &perfect);
+        let m = evaluate(&Model::Mlp(model.clone()), &spec, &perfect);
 
         assert_eq!(m.r2, Some(1.0));
         assert_eq!(m.primary, 1.0);
@@ -335,7 +401,7 @@ mod tests {
             targets: Targets::Values(vec![3.0, 2.0, 1.0]),
             ..perfect
         };
-        let m = evaluate(&model, &spec, &bad);
+        let m = evaluate(&Model::Mlp(model), &spec, &bad);
 
         // ss_res = 8, ss_tot = 2 -> r2 = -3, primary clipped to 0.
         assert_eq!(m.r2, Some(-3.0));
@@ -348,7 +414,7 @@ mod tests {
 
         model.biases[0][0] = f32::NAN;
 
-        let m = evaluate(&model, &cls_spec(), &cls_data());
+        let m = evaluate(&Model::Mlp(model), &cls_spec(), &cls_data());
 
         assert_eq!(m.primary, 0.0);
         assert_eq!(m.loss, MAX_LOSS);
@@ -360,13 +426,19 @@ mod tests {
 
         model.sizes = vec![3, 2];
 
-        assert_eq!(evaluate(&model, &cls_spec(), &cls_data()).primary, 0.0);
+        assert_eq!(
+            evaluate(&Model::Mlp(model), &cls_spec(), &cls_data()).primary,
+            0.0
+        );
 
         let mut data = cls_data();
 
         data.targets = Targets::Labels(vec![0, 9, 0, 0]);
 
-        assert_eq!(evaluate(&identity(), &cls_spec(), &data).primary, 0.0);
+        assert_eq!(
+            evaluate(&Model::Mlp(identity()), &cls_spec(), &data).primary,
+            0.0
+        );
     }
 
     #[test]
@@ -384,7 +456,10 @@ mod tests {
             n_out: 2,
         };
 
-        assert_eq!(evaluate(&identity(), &cls_spec(), &data).primary, 1.0);
+        assert_eq!(
+            evaluate(&Model::Mlp(identity()), &cls_spec(), &data).primary,
+            1.0
+        );
     }
 
     #[test]

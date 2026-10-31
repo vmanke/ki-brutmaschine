@@ -14,7 +14,7 @@ use crate::archive::{Archive, CandidateEntry, CandidateStatus, RecordKind};
 use crate::config::Config;
 use crate::genome::Genome;
 use crate::hidden_eval::{EVAL_TIMEOUT_SECONDS, EvalRequest, request_hidden_eval};
-use crate::nn::Mlp;
+use crate::model::Model;
 use crate::safety::{self, Guard, StopSignal};
 use crate::score::{self, Metrics, WORST_FITNESS};
 use crate::task::{self, Dataset, Split, TaskSpec};
@@ -29,6 +29,9 @@ pub const MODELS_DIR: &str = "models";
 
 /// Generator name of the random initial population.
 pub const INIT_GENERATOR: &str = "init";
+
+/// Generator name of the base genomes of the config (`Config::base_genomes`).
+pub const BASE_GENERATOR: &str = "base";
 
 /// Generator name of random children made when no parent is eligible.
 pub const RESTART_GENERATOR: &str = "random-restart";
@@ -74,7 +77,7 @@ struct Plan {
 /// One trained (or failed) child.
 struct Outcome {
     entry: CandidateEntry,
-    model: Option<Mlp>,
+    model: Option<Model>,
     error: Option<String>,
 }
 
@@ -97,7 +100,8 @@ struct Context<'a> {
 ///
 /// Steps:
 /// 1. Load config, create or reopen the archive (resume: continue after the last generation).
-/// 2. Initial population (`population_init` random genomes), generation 0.
+/// 2. Initial population, generation 0: the base genomes of the config, if any, then
+///    `population_init` random genomes.
 /// 3. Per generation: guard check; select parents; propose children (mutation or crossover by
 ///    `crossover_rate`); skip duplicates by genome id; skip children that do not fit the FLOP budget;
 ///    train children in parallel, largest estimated cost first (rayon, `threads`); score on Valid; save Ok models; append records
@@ -269,7 +273,8 @@ fn run_inner(
             &format!("gen/{generation}"),
         ));
         let proposals = propose(generation, &ctx, archive, &mut rng);
-        let plans = filter_plans(proposals, &spec, &guard, &mut seen);
+        let wanted = wanted_children(config, generation);
+        let plans = filter_plans(proposals, wanted, &spec, &guard, &mut seen);
 
         if plans.skipped_budget > 0 {
             log_event(
@@ -354,7 +359,20 @@ fn run_inner(
     Ok(summarize(archive, &guard, stop_reason))
 }
 
+/// How many new children generation `generation` wants: the base genomes and
+/// `population_init` random ones in generation 0, `children_per_generation` later.
+fn wanted_children(config: &Config, generation: usize) -> usize {
+    if generation == 0 {
+        config.base_genomes.len() + config.population_init
+    } else {
+        config.children_per_generation
+    }
+}
+
 /// Make the raw proposals of one generation (before dedup and budget filtering).
+///
+/// Generation 0 starts with the base genomes of the config. They draw nothing from `rng`,
+/// so without base genomes the random genomes are the same as before they existed.
 fn propose(
     generation: usize,
     ctx: &Context<'_>,
@@ -366,14 +384,20 @@ fn propose(
 
     if generation == 0 {
         let count = config.population_init * ATTEMPTS_PER_CHILD;
-
-        return (0..count)
+        let base = config.base_genomes.iter().map(|genome| Plan {
+            genome: genome.clone(),
+            parents: Vec::new(),
+            generator: BASE_GENERATOR.to_string(),
+        });
+        let random: Vec<Plan> = (0..count)
             .map(|_| Plan {
                 genome: Genome::random(rng, limits, ctx.spec),
                 parents: Vec::new(),
                 generator: INIT_GENERATOR.to_string(),
             })
             .collect();
+
+        return base.chain(random).collect();
     }
 
     let mutator = RandomMutator::default();
@@ -421,14 +445,14 @@ struct Filtered {
     skipped_budget: usize,
 }
 
-/// Keep the first wanted number of new, affordable plans. Updates `seen`.
+/// Keep the first `wanted` new, affordable plans. Updates `seen`.
 fn filter_plans(
     proposals: Vec<Plan>,
+    wanted: usize,
     spec: &TaskSpec,
     guard: &Guard,
     seen: &mut HashSet<String>,
 ) -> Filtered {
-    let wanted = proposals.len() / ATTEMPTS_PER_CHILD;
     let mut kept = Vec::with_capacity(wanted);
     let mut planned_flops = 0u64;
     let mut skipped_budget = 0;
@@ -893,7 +917,7 @@ mod tests {
 
         seen.insert(plan(9, 4).genome.id());
 
-        // 8 proposals -> 2 wanted (ATTEMPTS_PER_CHILD = 4).
+        // 8 proposals, 2 wanted (as many as ATTEMPTS_PER_CHILD = 4 makes for 2 children).
         let proposals = vec![
             plan(9, 4),
             plan(1, 4),
@@ -904,7 +928,7 @@ mod tests {
             plan(5, 4),
             plan(6, 4),
         ];
-        let out = filter_plans(proposals, &spec, &guard, &mut seen);
+        let out = filter_plans(proposals, 2, &spec, &guard, &mut seen);
         let seeds: Vec<u64> = out.kept.iter().map(|p| p.genome.seed).collect();
 
         assert_eq!(seeds, vec![1, 3]);

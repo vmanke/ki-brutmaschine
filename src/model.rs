@@ -114,21 +114,9 @@ mod tests {
     #[test]
     fn a_cnn_file_starts_with_its_kind_and_parses_back_equal() {
         let spec = TaskKind::Shapes.spec();
-        let data = generate(&spec, Split::Train, 1);
-        let mut genome = testing::vgg();
-
-        genome.epochs = 5;
-
-        let mut small = data.clone();
-
-        small.n = 64;
-        small.x.truncate(64 * data.n_in);
-
-        if let crate::task::Targets::Labels(labels) = &mut small.targets {
-            labels.truncate(64);
-        }
-
-        let (model, _) = train::train(&genome, &spec, &small, &Limits::default()).expect("train");
+        let data = crate::cnn::train::testing::head(&generate(&spec, Split::Train, 1), 64);
+        let genome = testing::vgg();
+        let (model, _) = train::train(&genome, &spec, &data, &Limits::default()).expect("train");
         let text = serde_json::to_string(&model).expect("json");
 
         assert!(text.starts_with("{\"kind\":\"cnn\",\"arch\":{"), "{}", &text[..40]);

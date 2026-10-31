@@ -4,7 +4,7 @@
 //! 1. Variant generator   -> `variation`, `genome`
 //! 2. Task environment    -> `task`
 //! 3. Scoring             -> `score`
-//! 4. Training            -> `train`, `nn`
+//! 4. Training            -> `train`, `nn`, `cnn`; the trained `model`
 //! 5. Hidden evaluation   -> `hidden_eval` (+ binary `brut-eval`)
 //! 6. Lineage archive     -> `archive`
 //!
@@ -30,6 +30,7 @@ pub mod ledger;
 pub mod lineage_store;
 pub mod meta_evolve;
 pub mod meta_report;
+pub mod model;
 pub mod nn;
 // Universes that invent (spec .scratch/universum-erfinden): exact qubit simulator.
 pub mod quantum;

@@ -1,4 +1,9 @@
 //! Training of one candidate under hard budgets.
+//!
+//! An MLP trains with the hand-written backprop of `nn`, a CNN through candle
+//! (`cnn::train`). Both run the same loop (`run_epochs`): mini-batches in an order shuffled
+//! from the genome's seed each epoch, the same cosine decay of the learning rate, the same
+//! FLOP and time budgets, kill switch and divergence rules, and the same optimizers.
 
 use std::time::Instant;
 
@@ -6,8 +11,10 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::cnn::train::CnnLearner;
 use crate::config::Limits;
-use crate::genome::Genome;
+use crate::genome::{Arch, Genome};
+use crate::model::Model;
 use crate::nn::{Gradients, Mlp, OptimizerState, TargetsRef, Workspace};
 use crate::task::{Dataset, Objective, Targets, TaskSpec};
 use crate::util::{BrutError, Result, derive_seed};
@@ -22,7 +29,9 @@ const TIME_CHECK_STEPS: u64 = 32;
 pub struct TrainStats {
     pub epochs_done: usize,
     pub steps: u64,
-    /// Estimated FLOPs actually spent (6 * params * samples seen).
+    /// Estimated FLOPs actually spent: the training FLOPs per sample times the samples
+    /// seen. For an MLP 6 * params per sample, for a CNN 3 times the forward FLOPs of its
+    /// plan (`cnn::shape`).
     pub flops: u64,
     pub wall_seconds: f64,
     /// Always finite: f32::MAX when training diverged (JSON cannot store NaN).
@@ -36,12 +45,13 @@ pub struct TrainStats {
     pub stopped_by_kill_switch: bool,
 }
 
-/// Train an MLP described by `genome` on `data` (the Train split).
+/// Train the network described by `genome` on `data` (the Train split).
 ///
 /// Errors if the genome is invalid for `limits` (call `Genome::validate` first).
 /// Mini-batch training with per-epoch shuffling from `genome.seed`.
 /// Checks the wall-clock and FLOP budgets at least once per epoch and stops cleanly.
-/// Deterministic for equal inputs (wall-clock stops aside).
+/// Deterministic for equal inputs (wall-clock stops aside). A CNN is deterministic on one
+/// machine at any thread count; another CPU can give other bits (see `cnn::train`).
 ///
 /// The learning rate follows a cosine decay from `learning_rate` down to `LR_FLOOR` times it.
 pub fn train(
@@ -49,7 +59,7 @@ pub fn train(
     spec: &TaskSpec,
     data: &Dataset,
     limits: &Limits,
-) -> Result<(Mlp, TrainStats)> {
+) -> Result<(Model, TrainStats)> {
     train_with_stop(genome, spec, data, limits, &|| false)
 }
 
@@ -62,31 +72,91 @@ pub fn train_with_stop(
     data: &Dataset,
     limits: &Limits,
     stop: &dyn Fn() -> bool,
-) -> Result<(Mlp, TrainStats)> {
+) -> Result<(Model, TrainStats)> {
+    train_inner(genome, spec, data, limits, stop, None)
+}
+
+/// Like `train`, and also returns the loss of every step, for tests.
+#[cfg(test)]
+pub(crate) fn train_logged(
+    genome: &Genome,
+    spec: &TaskSpec,
+    data: &Dataset,
+    limits: &Limits,
+) -> Result<(Model, TrainStats, Vec<f32>)> {
+    let mut losses = Vec::new();
+    let (model, stats) = train_inner(genome, spec, data, limits, &|| false, Some(&mut losses))?;
+
+    Ok((model, stats, losses))
+}
+
+/// `train_with_stop`; pushes the loss of every step to `losses` when given.
+fn train_inner(
+    genome: &Genome,
+    spec: &TaskSpec,
+    data: &Dataset,
+    limits: &Limits,
+    stop: &dyn Fn() -> bool,
+    losses: Option<&mut Vec<f32>>,
+) -> Result<(Model, TrainStats)> {
     genome.validate(limits, spec)?;
     check_data(spec, data)?;
 
     let started = Instant::now();
-    let sizes = genome.layer_sizes(spec)?;
-    let mut init_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "init"));
-    let mut shuffle_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "shuffle"));
-    let mut model = Mlp::new(&sizes, genome.activation, genome.init_scale, &mut init_rng);
-    let mut opt = OptimizerState::new(genome.optimizer, &model);
 
-    let n = data.n;
-    let n_in = data.n_in;
-    let n_out = data.n_out;
+    match &genome.arch {
+        Arch::Mlp => {
+            let mut learner = MlpLearner::new(genome, spec, data)?;
+            let stats = run_epochs(genome, data.n, limits, stop, started, &mut learner, losses)?;
+
+            Ok((Model::Mlp(learner.model), stats))
+        }
+        Arch::Cnn(cnn) => {
+            let mut learner = CnnLearner::new(genome, cnn, spec, data)?;
+            let stats = run_epochs(genome, data.n, limits, stop, started, &mut learner, losses)?;
+
+            Ok((Model::Cnn(learner.into_model()?), stats))
+        }
+    }
+}
+
+/// A network under training, as the loop of `run_epochs` drives it.
+pub(crate) trait Learner {
+    /// Training FLOPs per sample (forward and backward pass), for the budget.
+    fn flops_per_sample(&self) -> u64;
+
+    /// The mean loss of the train rows `rows` (one mini-batch) and its gradients, which
+    /// the learner keeps for `update`. A non-finite loss means the training diverged.
+    fn loss_and_grad(&mut self, rows: &[usize]) -> Result<f32>;
+
+    /// One optimizer step with learning rate `lr` and weight decay `l2`, from the
+    /// gradients of the last `loss_and_grad`.
+    fn update(&mut self, lr: f32, l2: f32) -> Result<()>;
+
+    /// True if every trained value is finite.
+    fn is_finite(&self) -> Result<bool>;
+}
+
+/// The training loop: `genome.epochs` epochs of mini-batches over the `n` train rows.
+///
+/// Each epoch first checks the budgets and the kill switch, then shuffles the rows with
+/// the stream `derive_seed(genome.seed, "shuffle")`. A non-finite loss, or a non-finite
+/// value after an epoch, ends the training as diverged.
+fn run_epochs<L: Learner>(
+    genome: &Genome,
+    n: usize,
+    limits: &Limits,
+    stop: &dyn Fn() -> bool,
+    started: Instant,
+    learner: &mut L,
+    mut losses: Option<&mut Vec<f32>>,
+) -> Result<TrainStats> {
+    let mut shuffle_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "shuffle"));
     let batch = genome.batch_size.min(n).max(1);
-    let flops_per_sample = 6u64.saturating_mul(model.param_count() as u64);
+    let flops_per_sample = learner.flops_per_sample();
     let flops_per_epoch = flops_per_sample.saturating_mul(n as u64);
     let total_steps = (genome.epochs * n.div_ceil(batch)).max(1) as f32;
-
-    let mut ws = Workspace::new();
-    let mut grads = Gradients::zeros_like(&model);
     let mut order: Vec<usize> = (0..n).collect();
-    let mut xb = vec![0.0f32; batch * n_in];
-    let mut lb = vec![0u32; batch];
-    let mut vb = vec![0.0f32; batch * n_out];
 
     let mut stats = TrainStats {
         epochs_done: 0,
@@ -116,38 +186,11 @@ pub fn train_with_stop(
 
         for chunk in order.chunks(batch) {
             let m = chunk.len();
+            let loss = learner.loss_and_grad(chunk)?;
 
-            // Gather the batch into the reusable buffers.
-            for (row, &i) in chunk.iter().enumerate() {
-                xb[row * n_in..(row + 1) * n_in].copy_from_slice(&data.x[i * n_in..(i + 1) * n_in]);
+            if let Some(losses) = losses.as_deref_mut() {
+                losses.push(loss);
             }
-
-            let targets = match &data.targets {
-                Targets::Labels(labels) => {
-                    for (row, &i) in chunk.iter().enumerate() {
-                        lb[row] = labels[i];
-                    }
-
-                    TargetsRef::Labels(&lb[..m])
-                }
-                Targets::Values(values) => {
-                    for (row, &i) in chunk.iter().enumerate() {
-                        vb[row * n_out..(row + 1) * n_out]
-                            .copy_from_slice(&values[i * n_out..(i + 1) * n_out]);
-                    }
-
-                    TargetsRef::Values(&vb[..m * n_out])
-                }
-            };
-
-            let loss = model.loss_and_grad_into(
-                &xb[..m * n_in],
-                targets,
-                m,
-                spec.objective,
-                &mut ws,
-                &mut grads,
-            );
 
             if !loss.is_finite() {
                 stats.diverged = true;
@@ -158,7 +201,7 @@ pub fn train_with_stop(
             let cosine = 0.5 * (1.0 + (std::f32::consts::PI * progress).cos());
             let lr = genome.learning_rate * (LR_FLOOR + (1.0 - LR_FLOOR) * cosine);
 
-            opt.step(&mut model, &grads, lr, genome.l2);
+            learner.update(lr, genome.l2)?;
 
             stats.steps += 1;
             stats.flops = stats
@@ -179,7 +222,7 @@ pub fn train_with_stop(
             }
         }
 
-        if !model.is_finite() {
+        if !learner.is_finite()? {
             stats.diverged = true;
             break;
         }
@@ -194,7 +237,100 @@ pub fn train_with_stop(
 
     stats.wall_seconds = started.elapsed().as_secs_f64();
 
-    Ok((model, stats))
+    Ok(stats)
+}
+
+/// An MLP under training: the model, its optimizer and the reusable buffers.
+struct MlpLearner<'a> {
+    model: Mlp,
+    opt: OptimizerState,
+    data: &'a Dataset,
+    objective: Objective,
+    ws: Workspace,
+    grads: Gradients,
+    xb: Vec<f32>,
+    lb: Vec<u32>,
+    vb: Vec<f32>,
+}
+
+impl<'a> MlpLearner<'a> {
+    /// The MLP of `genome` on `spec`, with its initial weights drawn from the stream
+    /// `derive_seed(genome.seed, "init")`.
+    fn new(genome: &Genome, spec: &TaskSpec, data: &'a Dataset) -> Result<MlpLearner<'a>> {
+        let sizes = genome.layer_sizes(spec)?;
+        let mut init_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "init"));
+        let model = Mlp::new(&sizes, genome.activation, genome.init_scale, &mut init_rng);
+        let opt = OptimizerState::new(genome.optimizer, &model);
+        let batch = genome.batch_size.min(data.n).max(1);
+        let grads = Gradients::zeros_like(&model);
+
+        Ok(MlpLearner {
+            model,
+            opt,
+            data,
+            objective: spec.objective,
+            ws: Workspace::new(),
+            grads,
+            xb: vec![0.0f32; batch * data.n_in],
+            lb: vec![0u32; batch],
+            vb: vec![0.0f32; batch * data.n_out],
+        })
+    }
+}
+
+impl Learner for MlpLearner<'_> {
+    fn flops_per_sample(&self) -> u64 {
+        6u64.saturating_mul(self.model.param_count() as u64)
+    }
+
+    fn loss_and_grad(&mut self, rows: &[usize]) -> Result<f32> {
+        let m = rows.len();
+        let n_in = self.data.n_in;
+        let n_out = self.data.n_out;
+
+        // Gather the batch into the reusable buffers.
+        for (row, &i) in rows.iter().enumerate() {
+            self.xb[row * n_in..(row + 1) * n_in]
+                .copy_from_slice(&self.data.x[i * n_in..(i + 1) * n_in]);
+        }
+
+        let targets = match &self.data.targets {
+            Targets::Labels(labels) => {
+                for (row, &i) in rows.iter().enumerate() {
+                    self.lb[row] = labels[i];
+                }
+
+                TargetsRef::Labels(&self.lb[..m])
+            }
+            Targets::Values(values) => {
+                for (row, &i) in rows.iter().enumerate() {
+                    self.vb[row * n_out..(row + 1) * n_out]
+                        .copy_from_slice(&values[i * n_out..(i + 1) * n_out]);
+                }
+
+                TargetsRef::Values(&self.vb[..m * n_out])
+            }
+        };
+
+        Ok(self.model.loss_and_grad_into(
+            &self.xb[..m * n_in],
+            targets,
+            m,
+            self.objective,
+            &mut self.ws,
+            &mut self.grads,
+        ))
+    }
+
+    fn update(&mut self, lr: f32, l2: f32) -> Result<()> {
+        self.opt.step(&mut self.model, &self.grads, lr, l2);
+
+        Ok(())
+    }
+
+    fn is_finite(&self) -> Result<bool> {
+        Ok(self.model.is_finite())
+    }
 }
 
 /// True if one more epoch would break the FLOP or time limit.
@@ -290,6 +426,14 @@ mod tests {
         }
     }
 
+    /// The MLP inside `model`.
+    fn mlp(model: Model) -> Mlp {
+        match model {
+            Model::Mlp(mlp) => mlp,
+            Model::Cnn(_) => panic!("expected an MLP"),
+        }
+    }
+
     /// Accuracy computed by hand, so this test does not depend on `score`.
     fn accuracy(model: &Mlp, data: &Dataset) -> f64 {
         let out = model.forward(&data.x, data.n);
@@ -325,7 +469,7 @@ mod tests {
         assert!(!stats.stopped_by_budget);
         assert_eq!(stats.epochs_done, 150);
         assert!(stats.final_train_loss < 0.3, "{}", stats.final_train_loss);
-        assert!(accuracy(&model, &data) > 0.9);
+        assert!(accuracy(&mlp(model), &data) > 0.9);
     }
 
     #[test]
@@ -363,21 +507,27 @@ mod tests {
     }
 
     #[test]
-    fn a_cnn_genome_is_never_trained_as_an_mlp() {
-        // Its `hidden` holds only the dense layers of its head. Until CNN training is
-        // built, `train` refuses the genome instead of building an MLP from them.
+    fn a_cnn_genome_trains_as_a_cnn() {
+        // Its `hidden` holds only the dense layers of its head, so an MLP built from them
+        // would be the wrong network. `train` builds the CNN of its plan instead.
         let spec = TaskKind::Shapes.spec();
-        let data = generate(&spec, Split::Train, 1);
-        let g = crate::cnn::genome::testing::lenet();
+        let data = crate::cnn::train::testing::head(&generate(&spec, Split::Train, 1), 96);
+        let mut g = crate::cnn::genome::testing::lenet();
 
-        assert!(g.validate(&Limits::default(), &spec).is_ok());
+        g.epochs = 5;
 
-        let message = train(&g, &spec, &data, &Limits::default()).expect_err("refused");
+        let (model, stats) = train(&g, &spec, &data, &Limits::default()).expect("trained");
+        let Model::Cnn(cnn) = model else {
+            panic!("a CNN genome gave an MLP");
+        };
+        let plan = g.cnn_plan(&spec).expect("plan");
 
-        assert!(
-            message.to_string().contains("this genome is a CNN"),
-            "{message}"
-        );
+        assert_eq!(cnn.param_count(), plan.params);
+        assert_eq!(cnn.param_count(), g.param_count(&spec));
+        assert_eq!(stats.epochs_done, 5);
+        assert_eq!(stats.steps, 5 * 3);
+        assert_eq!(stats.flops, plan.train_flops_per_sample() * 96 * 5);
+        assert!(!stats.diverged && stats.final_train_loss.is_finite());
     }
 
     #[test]

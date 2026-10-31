@@ -29,10 +29,12 @@ use std::time::{Duration, Instant};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::cnn::model::CnnModel;
 use crate::config::{HARD_MAX_HIDDEN_LAYERS, HARD_MAX_PARAMS, HARD_MAX_WIDTH};
+use crate::model::Model;
 use crate::nn::Mlp;
 use crate::score;
-use crate::task::{Split, TaskKind, generate};
+use crate::task::{Split, TaskKind, TaskSpec, generate};
 use crate::util::{BrutError, Result, parse_env_file, write_atomic};
 
 /// Env key in the secret file that holds the hidden seed (u64, decimal).
@@ -67,6 +69,13 @@ pub const MAX_MODEL_BYTES: u64 = 64 * 1024 * 1024;
 /// Largest model the evaluator scores (parameters).
 pub const MAX_EVAL_PARAMS: usize = HARD_MAX_PARAMS;
 
+/// Most forward FLOPs the evaluator spends on one CNN: its forward FLOPs per sample
+/// (`cnn::shape`) times the hidden split. A CNN reuses each weight at every position, so
+/// its parameter count does not bound its cost. At the 1.6 GFLOP/s that ticket 01 measured
+/// for a small CNN this is about a minute, within `EVAL_TIMEOUT_SECONDS`. A CNN within the
+/// default limits needs less than 3 % of it.
+pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
+
 /// How long the orchestrator waits for one `brut-eval` answer before it stops the process.
 pub const EVAL_TIMEOUT_SECONDS: f64 = 120.0;
 
@@ -79,7 +88,8 @@ const EVAL_POLL: Duration = Duration::from_millis(10);
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvalRequest {
     pub candidate_id: String,
-    /// Path to the model JSON (serialized `nn::Mlp`).
+    /// Path to the model file (`model::Model`): the JSON of an `nn::Mlp`, or of a
+    /// `cnn::model::CnnModel`.
     pub model_path: PathBuf,
     pub task: TaskKind,
 }
@@ -294,11 +304,16 @@ impl HiddenEvaluator {
         let model = load_model(&path)?;
         let spec = req.task.spec();
 
-        if model.n_in() != spec.n_in || model.n_out() != spec.n_out {
-            return Err(BrutError::Invalid(format!(
-                "model sizes {:?} do not match task {:?}",
-                model.sizes, req.task
-            )));
+        match &model {
+            Model::Mlp(mlp) => {
+                if mlp.n_in() != spec.n_in || mlp.n_out() != spec.n_out {
+                    return Err(BrutError::Invalid(format!(
+                        "model sizes {:?} do not match task {:?}",
+                        mlp.sizes, req.task
+                    )));
+                }
+            }
+            Model::Cnn(cnn) => check_cnn(cnn, &spec)?,
         }
 
         let used = self.charge()?;
@@ -371,7 +386,11 @@ impl HiddenEvaluator {
 /// Devices, FIFOs and directories are refused before they are opened (opening a FIFO could
 /// block, and /dev/zero reports length 0). The read itself stops after `MAX_MODEL_BYTES`,
 /// so a file that grows after the size check cannot exhaust memory either.
-fn load_model(path: &Path) -> Result<Mlp> {
+///
+/// A CNN file (`"kind":"cnn"`) is parsed with unknown fields refused and at most
+/// `HARD_MAX_PARAMS` values (`cnn::model`). Its dense head gets the caps of an MLP here; its
+/// shapes are checked against the task by `check_cnn`.
+fn load_model(path: &Path) -> Result<Model> {
     let not_regular = || {
         BrutError::Invalid(format!(
             "model path {} is not a regular file",
@@ -400,11 +419,15 @@ fn load_model(path: &Path) -> Result<Mlp> {
 
     let bytes = read_limited_bytes(file, MAX_MODEL_BYTES)?;
 
-    // A generic message: the parser's own error would quote strings from the file.
-    let model: Mlp = serde_json::from_slice(&bytes).map_err(|_| {
-        BrutError::Invalid("model file is not a valid model (JSON of nn::Mlp)".into())
-    })?;
+    // Generic messages: the parser's own error would quote strings from the file.
+    match Model::from_json(&bytes)? {
+        Model::Mlp(mlp) => check_mlp(&mlp).map(|()| Model::Mlp(mlp)),
+        Model::Cnn(cnn) => check_cnn_head(&cnn).map(|()| Model::Cnn(cnn)),
+    }
+}
 
+/// The checks of an MLP file: shape, depth, width, parameter cap and finite weights.
+fn check_mlp(model: &Mlp) -> Result<()> {
     model.check_shape()?;
 
     // Depth and width bound the activation memory and the run time of scoring;
@@ -433,7 +456,54 @@ fn load_model(path: &Path) -> Result<Mlp> {
         return Err(BrutError::Invalid("model has non-finite weights".into()));
     }
 
-    Ok(model)
+    Ok(())
+}
+
+/// The caps of an MLP for the dense head of a CNN file: depth, width and parameters.
+fn check_cnn_head(model: &CnnModel) -> Result<()> {
+    if model.hidden.len() > HARD_MAX_HIDDEN_LAYERS {
+        return Err(BrutError::Invalid(format!(
+            "model has {} hidden layers, max {HARD_MAX_HIDDEN_LAYERS}",
+            model.hidden.len()
+        )));
+    }
+
+    if model.hidden.iter().any(|&w| w > HARD_MAX_WIDTH) {
+        return Err(BrutError::Invalid(format!(
+            "model has a layer wider than {HARD_MAX_WIDTH}"
+        )));
+    }
+
+    if model.param_count() > MAX_EVAL_PARAMS {
+        return Err(BrutError::Invalid(format!(
+            "model has more than {MAX_EVAL_PARAMS} parameters"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Check a CNN file against the task before it is scored: the shape check of its genome,
+/// the parameter cap and `MAX_EVAL_FLOPS` for its architecture, then every value against
+/// its tensor (`CnnModel::check_values`). This builds no tensor and touches no hidden data.
+fn check_cnn(model: &CnnModel, spec: &TaskSpec) -> Result<()> {
+    let plan = model.plan(spec)?;
+
+    if plan.params > MAX_EVAL_PARAMS {
+        return Err(BrutError::Invalid(format!(
+            "model has more than {MAX_EVAL_PARAMS} parameters"
+        )));
+    }
+
+    let flops = plan.forward_flops.saturating_mul(spec.n_hidden as u64);
+
+    if flops > MAX_EVAL_FLOPS {
+        return Err(BrutError::Invalid(format!(
+            "scoring the model would cost {flops} FLOPs, max {MAX_EVAL_FLOPS}"
+        )));
+    }
+
+    model.check_values(&plan)
 }
 
 #[cfg(unix)]

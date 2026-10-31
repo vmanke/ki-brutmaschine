@@ -36,6 +36,7 @@ use brutmaschine::config::{Config, Limits};
 use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup, RunSummary};
 use brutmaschine::genome::{Activation, Arch, Genome, Optimizer};
 use brutmaschine::hidden_eval::{AnyEvalRequest, EvalRequest, HIDDEN_SEED_KEY};
+use brutmaschine::model::Model;
 use brutmaschine::nn::Mlp;
 use brutmaschine::task::{self, Dataset, Split, Targets, TaskKind, TaskSpec};
 use brutmaschine::train::{self, TrainStats};
@@ -492,7 +493,7 @@ fn golden_genome() -> Genome {
 }
 
 /// `golden_genome` trained on the Train split of `TwoSpirals` (data seed 1).
-fn trained() -> (Mlp, TrainStats) {
+fn trained() -> (Model, TrainStats) {
     let spec = TaskKind::TwoSpirals.spec();
     let data = task::generate(&spec, Split::Train, 1);
 
@@ -526,7 +527,7 @@ fn a_trained_model_file_keeps_its_json() {
 
     let parsed: Mlp = serde_json::from_str(&read_text(&fixture("model.json"))).expect("parse");
 
-    assert_eq!(parsed, model);
+    assert_eq!(Model::Mlp(parsed), model);
 }
 
 #[test]
