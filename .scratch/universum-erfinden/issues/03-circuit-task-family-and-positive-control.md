@@ -1,6 +1,6 @@
 # 03 Circuit task family and positive control
 
-Status: ready-for-agent
+Status: resolved
 Type: task
 
 Q37 (a), Q38, Q40. Circuits become a task family the arena can breed on: targets from a
@@ -14,3 +14,14 @@ criterion: the breeding rediscovers the known optimal costs on most library targ
 while the seeds do not.
 
 ## Comments
+
+2026-10-31, result. The counted experiment of step 1 ran by its frozen pre-registration
+(`docs/PREREG_STEP1_CIRCUITS.md`, frozen at commit 15cb151, the squash merge of PR #19).
+The rule stopped after 27 seed pairs, by stop rule 2 of its section 8. The primary claim,
+the success criterion of this ticket, is proven at pair 15; at the stop E1 = 3^24/2^27 =
+2104.2640, and arm A passed in 24 of the 27 seeds. The secondary claim (selection) is
+proven at pair 27, with E2 = 3^20/2^25 = 103.9143 at the stop. The independent recount by
+`reference_rule.py` agrees, and no void condition holds. This is a result about the breeder
+as a positive control with the simulated designer, not about real models. Report:
+`docs/STEP1_CIRCUITS.md`, section 7 (German: `docs/SCHRITT1_SCHALTUNGEN.md`, Abschnitt 7);
+data: `docs/step1-counted/`. The success criterion is met, so the status is now done.

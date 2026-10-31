@@ -15,6 +15,11 @@ Kennzahlen, mit denen wir ihn als Universum untersuchen (Q32, Q33). Die Entschei
 in [ADR 0006](adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md), das
 vorab festgelegte Experiment in [PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md), die
 Pilotläufe in [pilot-step1/](pilot-step1/README.md) und die Begriffe in `CONTEXT.md`.
+Das gezählte Experiment ist gelaufen und hat beide vorab festgelegten Nachweise erbracht,
+den Hauptnachweis bei Paar 15 und den zur Auswahl bei Paar 27 (Abschnitt 7). Beide
+betreffen den Züchter als Positivkontrolle mit dem simulierten Entwerfer; über echte
+Sprachmodelle sagen sie nichts. Die Daten des Experiments liegen in
+[step1-counted/](step1-counted/README.md).
 
 ## 2. Was Schritt 1 gebaut hat
 
@@ -407,6 +412,15 @@ in Klammern die Bestehenszeiten.
 
 ## 7. Das gezählte Experiment
 
+**Ergebnis.** Das gezählte Experiment lief vom 2026-10-30 um 22:32 UTC bis zum 2026-10-31
+um 12:44 UTC, nach der eingefrorenen Vorab-Registrierung. Die Regel hielt nach 27
+Seed-Paaren an. Der Hauptnachweis (Ticket 03) ist bei Paar 15 erbracht. Er besagt, dass mehr
+als die Hälfte aller Seeds bis Generation 1000 besteht. Der zweite Nachweis ist bei Paar 27
+erbracht. Er besagt, dass Arm A unter den Paaren ohne Gleichstand öfter zuerst besteht als
+Arm R. Beide Nachweise betreffen den Züchter als Positivkontrolle mit dem simulierten
+Entwerfer; über echte Sprachmodelle sagen sie nichts. Die Daten und Skripte liegen in
+[step1-counted/](step1-counted/README.md).
+
 Aus den Pilotläufen folgen die Einstellungen der gezählten Läufe: `--generations 1000` und
 `--max-calls 13000000`. Bei einer Quote von 0.30, wie bis Generation 200, scheitert die
 Regel unten mit Wahrscheinlichkeit 1.000, nach 9.1 Paaren im Mittel; die Obergrenze konnte
@@ -439,6 +453,210 @@ Gleich wann es endet, meldet es einen falschen Nachweis höchstens mit Wahrschei
 nur, wenn die Liste der Seeds und ihre Reihenfolge fest sind, kein Seed der Liste
 ausgelassen oder ersetzt wird und sich nach Seed 1 nichts ändert.
 
+**Durchführung.** Wir haben das Programm beim eingefrorenen Commit
+`15cb15100a39db9d815674b0778ab6be30932e56` gebaut, mit rustc 1.97.0 (2d8144b78 2026-07-07)
+auf x86_64 Linux (Ubuntu 24.04.5 LTS). Dieser Commit entstand am 2026-10-30 um 21:50 UTC
+beim Zusammenführen von Pull-Request #19. Dort bestanden `cargo test --lib` (610 Tests;
+keiner der 7 ausgelassenen ist ein Kalibrierungstest), `cargo test --test circuits` (18) und
+`cargo test --example circuit_positive_control` (31). Vor Seed 1 ergab die Abnahmeprüfung
+auf den Pilotpaaren 301 bis 309 genau die Bestehenszeiten und Belegwerte, welche die
+Vorab-Registrierung in Abschnitt 6, Schritt 2 nennt, in der Auswertung wie in
+`reference_rule.py`; die Auswertung traf dort, wie verlangt, keine Aussage. Dann ließ ein
+Treiber-Skript ([step1-driver.sh](step1-counted/step1-driver.sh)) die Paare in der
+Reihenfolge der Liste laufen, einen Prozess nach dem anderen. Nach jedem Paar prüfte es
+beide Läufe mit `--verify`, hielt die Prüfsummen ihrer fünf Dateien fest und rief die
+eingefrorene Auswertung auf, die den nächsten Seed nannte. Gleich nach Paar 1 lief Seed 1
+in beiden Armen noch einmal mit 1 und mit 4 Threads. Für die gezählten Läufe setzte der
+Treiber `RAYON_NUM_THREADS` nicht; rayon nimmt dann einen Thread je CPU, und der Container
+meldete nach dem Experiment 4 CPUs.
+
+**Urteile.**
+
+- **Hauptnachweis (Ticket 03): erbracht bei Paar 15.** Nach 15 Paaren mit 14 Erfolgen von
+  Arm A erreichte E1 = 3^14/2^15 = 145.9646 erstmals 100. Beim Stopp nach 27 Paaren ist
+  E1 = 3^24/2^27 = 2104.2640; Arm A bestand auf 24 der 27 Seeds.
+- **Zweiter Nachweis (Auswahl): erbracht bei Paar 27.** Beim Stopp ist
+  E2 = 3^20/2^25 = 103.9143. Unter den 25 Paaren ohne Gleichstand bestand Arm A 20-mal
+  zuerst und Arm R 5-mal (Paare 5, 9, 11, 20 und 25). In den Paaren 10 und 19 bestand
+  keiner der beiden Läufe; sie zählen als Gleichstand. Der zweite Nachweis zählt, weil der
+  Hauptnachweis erbracht ist; so verlangt es die feste Reihenfolge aus Abschnitt 8 der
+  Vorab-Registrierung.
+
+Damit treffen wir die vorab festgelegte Aussage (Vorab-Registrierung, Abschnitt 11): Die
+Zucht setzt Prompts und Traits zusammen, die für die meisten Bibliotheksziele, welche die
+Startprogramme verfehlen, exakte Schaltungen zu den Referenzzahlen freischalten, und das
+in mehr als der Hälfte aller Seeds bis Generation 1000. Die Darwin-Gödel-Auswahl kommt
+dorthin früher als eine gleichverteilte Elternwahl mit gleich vielen Kindern: Unter den
+Paaren ohne Gleichstand besteht Arm A öfter zuerst als Arm R. Beides sind Aussagen über den
+Züchter als Positivkontrolle, nicht über echte Modelle und nicht über Erfindungen.
+
+**Stopp.** Die Regel hielt nach Paar 27 an, nach der zweiten ihrer drei Stopp-Regeln: Der
+Hauptnachweis war erbracht, und E2 hatte eine Schwelle erreicht. Nach Paar 26 stand E2 bei
+69.2762. In Paar 27 bestand Arm A in Generation 126 und Arm R nie, sodass E2 um den Faktor
+3/2 auf 103.9143 stieg. Nach dem Stopp lief kein Paar mehr. Wir berichten beide Belegwerte
+beim Stopp, nicht ihre größten Werte unterwegs.
+
+**Je Paar.** Tabelle 5 gibt, was Abschnitt 8 der Vorab-Registrierung je Paar verlangt.
+Paar i hat den Seed i. D ist der Anteil der 9 Ziele, welche die Startprogramme verfehlen,
+den gezüchtete Kaskaden bis Generation 1000 lösen. „nie“ heißt: keine Bestehenszeit bis
+Generation 1000. X ist 1, wenn Arm A besteht, sonst 0. Y nennt den Arm, der zuerst bestand.
+E1 und E2 gelten nach dem Paar, auf vier Nachkommastellen gerundet; ihre Brüche stehen in
+[analysis.txt](step1-counted/analysis.txt).
+
+Tabelle 5: die 27 gezählten Paare.
+
+| Paar | R_seed | D_A | D_R | T_A | T_R | X | Y | E1 | E2 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | SWAP, CS | 7/9 | 2/9 | 574 | nie | 1 | A zuerst | 1.5000 | 1.5000 |
+| 2 | SWAP, CS | 7/9 | 6/9 | 199 | 376 | 1 | A zuerst | 2.2500 | 2.2500 |
+| 3 | SWAP, CS | 7/9 | 7/9 | 278 | 665 | 1 | A zuerst | 3.3750 | 3.3750 |
+| 4 | SWAP, CS | 7/9 | 2/9 | 65 | nie | 1 | A zuerst | 5.0625 | 5.0625 |
+| 5 | SWAP, CS | 7/9 | 6/9 | 227 | 61 | 1 | R zuerst | 7.5938 | 2.5312 |
+| 6 | SWAP, CS | 7/9 | 2/9 | 296 | nie | 1 | A zuerst | 11.3906 | 3.7969 |
+| 7 | SWAP, CS | 8/9 | 3/9 | 557 | nie | 1 | A zuerst | 17.0859 | 5.6953 |
+| 8 | SWAP, CS | 7/9 | 2/9 | 211 | nie | 1 | A zuerst | 25.6289 | 8.5430 |
+| 9 | SWAP, CS | 7/9 | 7/9 | 184 | 126 | 1 | R zuerst | 38.4434 | 4.2715 |
+| 10 | SWAP, CS | 2/9 | 2/9 | nie | nie | 0 | gleich | 19.2217 | 4.2715 |
+| 11 | SWAP, CS | 7/9 | 7/9 | 56 | 18 | 1 | R zuerst | 28.8325 | 2.1357 |
+| 12 | SWAP, CS | 7/9 | 7/9 | 107 | 916 | 1 | A zuerst | 43.2488 | 3.2036 |
+| 13 | SWAP, CS | 7/9 | 2/9 | 47 | nie | 1 | A zuerst | 64.8732 | 4.8054 |
+| 14 | SWAP, CS | 7/9 | 7/9 | 20 | 220 | 1 | A zuerst | 97.3098 | 7.2081 |
+| 15 | SWAP, CS | 7/9 | 2/9 | 28 | nie | 1 | A zuerst | 145.9646 | 10.8122 |
+| 16 | SWAP, CS | 7/9 | 3/9 | 610 | nie | 1 | A zuerst | 218.9469 | 16.2183 |
+| 17 | SWAP, CS | 7/9 | 7/9 | 204 | 618 | 1 | A zuerst | 328.4204 | 24.3274 |
+| 18 | SWAP, CS | 7/9 | 2/9 | 62 | nie | 1 | A zuerst | 492.6306 | 36.4912 |
+| 19 | SWAP, CS | 3/9 | 3/9 | nie | nie | 0 | gleich | 246.3153 | 36.4912 |
+| 20 | SWAP, CS | 3/9 | 7/9 | nie | 116 | 0 | R zuerst | 123.1577 | 18.2456 |
+| 21 | SWAP, CS | 7/9 | 2/9 | 225 | nie | 1 | A zuerst | 184.7365 | 27.3684 |
+| 22 | SWAP, CS | 7/9 | 2/9 | 304 | nie | 1 | A zuerst | 277.1047 | 41.0526 |
+| 23 | SWAP, CS | 7/9 | 7/9 | 158 | 182 | 1 | A zuerst | 415.6571 | 61.5788 |
+| 24 | SWAP, CS | 7/9 | 7/9 | 23 | 37 | 1 | A zuerst | 623.4856 | 92.3682 |
+| 25 | SWAP, CS | 7/9 | 6/9 | 629 | 439 | 1 | R zuerst | 935.2285 | 46.1841 |
+| 26 | SWAP, CS | 7/9 | 2/9 | 923 | nie | 1 | A zuerst | 1402.8427 | 69.2762 |
+| 27 | SWAP, CS | 7/9 | 2/9 | 126 | nie | 1 | A zuerst | 2104.2640 | 103.9143 |
+
+**Fehlerschranken.** Nach Abschnitt 8 der Vorab-Registrierung gilt, gleich wann das
+Experiment endet: Jeder der beiden Nachweise wird höchstens mit Wahrscheinlichkeit 1/100
+fälschlich erbracht, und irgendein Nachweis ebenfalls höchstens mit 1/100. Das folgt aus
+Villes Ungleichung für Test-Supermartingale und aus der festen Reihenfolge der beiden
+Nachweise; für den Hauptnachweis liegt der ungünstigste Fall bei 0.0079. Die Schranken
+verlangen, dass die Liste der Seeds und ihre Reihenfolge fest sind, kein Seed der Liste
+ausgelassen oder ersetzt wird, die Belegwerte der Reihenfolge der Liste folgen und sich nach
+Seed 1 nichts ändert. Wir haben diese Bedingungen eingehalten. Die Seeds 1 bis 27 liefen in
+dieser Reihenfolge. Alle 54 `config.json` haben genau die Einstellungen aus Abschnitt 6 der
+Vorab-Registrierung, mit dem Seed ihres Paars und in Arm R der gleichverteilten Elternwahl.
+Der Treiber lief bei beiden Starts auf dem eingefrorenen Commit. A-12 lief nach einer
+Unterbrechung auf demselben Seed von vorn (Abweichung 1, unten). Nicht prüfen lässt sich
+die Annahme, dass die Seeds wie unabhängige Ziehungen wirken. Wir nehmen sie an, da die
+Zufallsströme eines Laufs aus einem Hash seines Seeds folgen.
+
+**Nachzählung.** Vor diesem Bericht hat `reference_rule.py`, eine unabhängige Umsetzung der
+Regel, das Ergebnis aus den Lauf-Verzeichnissen nachgezählt
+([recount.txt](step1-counted/recount.txt)). Es ergab dieselben 27 Zeilen (T_A, T_R, X, Y,
+E1 und E2), denselben Stopp nach Paar 27 und dieselben Urteile wie die eingefrorene
+Auswertung; einen Unterschied gibt es nicht. Ein drittes Skript,
+[make_counted.py](step1-counted/make_counted.py), rechnet diese Zahlen aus
+`rediscovery.json` noch einmal nach, vergleicht sie mit beiden Ausgaben und mit den
+festgehaltenen Prüfsummen und schreibt [counted.json](step1-counted/counted.json). Es bricht
+bei jedem Unterschied ab; auf den 54 Läufen lief es durch. Alle 270 Prüfsummen (27 Paare,
+2 Arme, 5 Dateien) stimmen mit den Dateien überein.
+
+**Ungültigkeitsgründe.** Keiner der sechs Gründe aus Abschnitt 9 der Vorab-Registrierung
+trifft zu:
+
+1. Kein gezählter Lauf meldete einen Integritätsalarm. Alle 54 endeten mit Exit-Code 0 und
+   schrieben `rediscovery.json`.
+2. Die Thread-Prüfung fand kein abweichendes Byte. `config.json`, `events.jsonl`,
+   `snapshot.json`, `report.json` und `rediscovery.json` von Seed 1 sind in beiden Armen
+   bei 1 und bei 4 Threads gleich denen der gezählten Läufe. Wir haben die 20 Dateien nach
+   dem Experiment noch einmal verglichen.
+3. Alle Kalibrierungstests aus Abschnitt 5 der Vorab-Registrierung bestanden beim
+   eingefrorenen Commit (Durchführung, oben).
+4. Jedes Paar erfüllt die Schranke 3 · |R_seed| ≤ |L|: In allen 54 Läufen lösen die
+   Startprogramme genau SWAP und CS, und 3 · 2 = 6 ≤ 11.
+5. Alle 54 gezählten Läufe bestanden `--verify`; die letzte Zeile endete jeweils auf
+   „report recomputed and equal; rediscovery recomputed and equal“. Dasselbe gilt für die
+   vier Läufe der Thread-Prüfung.
+6. Alle 54 Läufe haben 1000 Generationen und die Aufrufgrenze 13 000 000, und alle endeten
+   mit „all generations done“; keiner endete an der Grenze.
+
+**Beschreibende Ergebnisse.** Die folgenden Zahlen tragen kein Urteil (Vorab-Registrierung,
+Abschnitt 8).
+
+- **Median von D_A** (beschreibend). Über die 27 Paare ist er 7/9 = 0.778. D_A war 23-mal
+  7/9, einmal 8/9 (Seed 7), zweimal 3/9 (Seeds 19 und 20) und einmal 2/9 (Seed 10).
+- **Variante nur nach T** (beschreibend). Die Startprogramme lösen dann in jedem Lauf auch
+  CCZ, mit 7 T und 10 CNOT, sodass 8 Ziele offen sind. D_A ist dann 15-mal 7/8, 9-mal 6/8,
+  einmal 4/8 (Seed 10) und zweimal 3/8 (Seeds 19 und 20); D_R ist 6-mal 7/8, 5-mal 6/8,
+  einmal 5/8 (Seed 2), einmal 4/8 (Seed 13) und 14-mal 3/8. D_A > 1/2 gilt damit in 24 der
+  27 Seeds, D_R > 1/2 in 12. Die Werte je Seed stehen in `analysis.txt` und `counted.json`.
+- **Erste Lösung je Ziel** (beschreibend). Tabelle 6 zählt, auf wie vielen Seeds ein
+  gezüchtetes Mitglied jedes Arms das Ziel löste, und nennt den Median der Generation, in
+  der es zuerst fiel; die Werte je Seed stehen in `analysis.txt`. CH löste nur ein Lauf, A-7
+  in Generation 594. Fredkin löste kein Lauf zur Referenz; exakte Fredkin-Schaltungen mit
+  7 T und 8 bis 12 CNOT fanden 15 Läufe von Arm A und 7 von Arm R.
+- **Aufrufe bis zur ersten Lösung** (beschreibend). Wir nehmen dafür `calls_used` der
+  Generation, in der ein Ziel zuerst fiel. Tabelle 6 gibt den Median, `counted.json` den
+  Wert je Lauf und Ziel.
+- **Aufrufgrenze und Erfindungen** (beschreibend). Kein Lauf endete an der Aufrufgrenze,
+  und kein Lauf fand einen Erfindungskandidaten.
+- **Beste Abdeckung einer Kaskade** (beschreibend). Das Mitglied des Archivs mit den meisten
+  gelösten Such-Aufgaben löst in Arm A 12 bis 27 der 33 (Median 27), in Arm R 9 bis 27
+  (Median 12). Das beste Mitglied nach Fitness löst in Arm A 9 bis 27 (Median 27), in Arm R
+  3 bis 27 (Median 9); in 32 der 54 Läufe löst es ebenso viele.
+- **Auswahl-Panel** (beschreibend). Der beste Finalist löst in Arm A 6 bis 18 der 22
+  Auswahl-Aufgaben (Median 18), in Arm R 4 bis 18 (Median 6). Das beste Startprogramm löst
+  in jedem Lauf 2.
+- **Verläufe** (beschreibend). Die `state`-Zeilen jeder zehnten Generation stehen je Lauf in
+  `counted.json`.
+
+Tabelle 6: die Ziele in den 27 Seeds je Arm (beschreibend). Die Mediane gelten für die
+Läufe, die das Ziel lösten; die Aufrufe zählen bis zum Ende der Generation der ersten
+Lösung. Ein Stern markiert SWAP und CS, welche schon die Startprogramme lösen; die Spalten
+zählen hier gezüchtete Kaskaden.
+
+| Ziel | Seeds mit Lösung, A | Seeds mit Lösung, R | erste Generation, Median A | erste Generation, Median R | Aufrufe bis dahin, Median A (Tausend) | Aufrufe bis dahin, Median R (Tausend) |
+|---|---|---|---|---|---|---|
+| CZ | 27 | 27 | 12 | 5 | 6.8 | 2.9 |
+| SWAP* | 27 | 27 | 1 | 1 | 0.5 | 0.5 |
+| CS* | 27 | 27 | 1 | 1 | 0.5 | 0.5 |
+| CH | 1 | 0 | 594 | – | 814.7 | – |
+| QFT2 | 24 | 12 | 201.5 | 201 | 186.4 | 151.2 |
+| CCZ | 27 | 27 | 24 | 37 | 16.4 | 22.2 |
+| Toffoli | 24 | 10 | 207.5 | 298 | 195.5 | 241.0 |
+| Peres | 24 | 12 | 201.5 | 201 | 186.4 | 151.2 |
+| Fredkin | 0 | 0 | – | – | – | – |
+| RTOF | 24 | 11 | 201.5 | 182 | 186.4 | 131.3 |
+| CCiX | 26 | 15 | 107 | 220 | 102.4 | 171.2 |
+
+**Aufrufe und Laufzeit.** Je Lauf stehen beide in `counted.json`; hier die Zusammenfassung.
+Ein Lauf von Arm A brauchte 963 146 bis 1 409 998 Aufrufe (Mittel 1 080 499), einer von
+Arm R 780 867 bis 958 373 (Mittel 853 058). Bis Generation 1000 waren es höchstens
+1 409 602 (A-18), weit unter der Schranke von 12 723 412 aus Abschnitt 6 der
+Vorab-Registrierung. Als Laufzeit messen wir die Zeit zwischen den Zeilen „start“ und
+„done“ eines Laufs im Protokoll des Treibers, auf die Sekunde genau. Ein Lauf dauerte in
+Arm A 4.87 bis 11.18 min (Mittel 7.36 min), in Arm R 4.33 bis 5.92 min (Mittel 5.01 min),
+ein Paar 10.30 bis 15.95 min (Mittel 12.37 min). Die 54 Läufe dauerten zusammen
+5.57 Stunden, die vier Läufe der Thread-Prüfung 33.6 min: A-1 mit 1 Thread 14.42 min, mit
+4 Threads 8.00 min, R-1 6.23 und 4.95 min. Vorab hatten wir im Mittel 26 bis 46 Paare
+erwartet, also 5.8 bis 10.1 Stunden einschließlich 0.42 Stunden für die Thread-Prüfung;
+für diese hatten wir die Dauer von zwei Paaren bei 2 Threads angenommen. Gemessen haben wir
+5.57 Stunden für 27 Paare und 0.56 Stunden für die Thread-Prüfung, zusammen 6.13 Stunden.
+Die Pilotläufe liefen mit 2 Threads, die gezählten mit der Voreinstellung; ihre Laufzeiten
+sind darum nicht unmittelbar vergleichbar.
+
+**Abweichung 1.** Ein Neustart des Containers zwischen dem 2026-10-31 um 01:18:49 UTC und
+etwa 09:11 UTC unterbrach den Lauf A-12. Er hatte um 01:18:49 UTC begonnen und noch keine
+`report.json`. Die Paare 1 bis 11 waren fertig und geprüft, und ihre 110 Prüfsummen
+stimmten nach dem Neustart noch. Der Treiber startete um 09:20:01 UTC erneut
+(`driver.log`); `deviations.txt` nennt 09:20:04 UTC, die Zeit der zweiten Prüfung von R-1 in
+`driver.log`. Nach Abschnitt 6, Schritt 3 der Vorab-Registrierung löschte der Treiber um
+09:20:09 UTC das unfertige Verzeichnis und ließ A-12 auf demselben Seed von vorn laufen,
+bis 09:27:40 UTC. Kein fertiges Paar lief erneut oder änderte sich. Beim Neustart prüfte
+der Treiber Paar 1 noch einmal mit `--verify` und schrieb dessen zehn Prüfsummen ein
+zweites Mal in [hashes.txt](step1-counted/hashes.txt); beide Abschriften sind gleich
+([deviations.txt](step1-counted/deviations.txt), [driver.log](step1-counted/driver.log)).
+
 **Warum 100 und 120 Paare.** Am 2026-10-30 hat die Eigentümerin bzw. der Eigentümer zuerst
 die Schwelle 20 mit höchstens 60 Paaren freigegeben. Noch am selben Tag verlangte sie bzw.
 er die wissenschaftlich tragende Fassung und nannte keine Zahlen. Claude, der
@@ -450,9 +668,9 @@ Gutachter empfahlen je einen anderen Entwurf: 40 mit höchstens 100 Paaren, 1024
 und 100 mit 120. Ein Gegenprüfer rechnete die Zahlen nach und hielt 1024/11 mit 120 Paaren
 (Schranke 11/1024 = 0.0107) für richtig, sofern die Liste der gezählten Seeds fest ist.
 Claude wählte die Schwelle 100 mit 120 Paaren und die Liste der Seeds oben. Die
-Eigentümerin bzw. der Eigentümer bestätigt diese Wahl mit dem Zusammenführen des
-Pull-Requests, das die Vorab-Registrierung einfriert; bis dahin ist nichts eingefroren,
-und kein gezählter Seed läuft.
+Eigentümerin bzw. der Eigentümer bestätigte diese Wahl mit dem Zusammenführen von
+Pull-Request #19, das die Vorab-Registrierung beim Commit 15cb151 einfror; erst danach
+begann Seed 1.
 
 Drei der 16 Entwürfe im Vergleich, nach
 `.scratch/universum-erfinden/sequential-rule/designs.txt`; die letzten drei Spalten geben
@@ -496,28 +714,12 @@ Erfolge in 11 Läufen mit gleichverteilter Vorannahme) ist die Chance auf einen 
 Nachweis etwa gleich: 0.827 gegenüber 0.829. Was die Änderung bringt, ist ein um etwa den
 Faktor 5 seltenerer falscher Erfolg, um den Preis von mehr Rechenzeit.
 
-Nach jedem Paar rechnet die Auswertung und nennt den nächsten Seed oder das Urteil. Gleich
-nach Paar 1 lassen wir Seed 1 in beiden Armen noch einmal mit 1 und mit 4 Threads laufen;
-alle Dateien außer `timings.jsonl` müssen byte-gleich sein. Vor dem Bericht zählt
-`python3 -I .scratch/universum-erfinden/sequential-rule/reference_rule.py --runs <dir>`
-das Ergebnis unabhängig nach.
-
-Stimmen die Pilotquoten, gelingt der Hauptnachweis mit Wahrscheinlichkeit 0.86 bis 0.99.
-Wir rechnen dann im Mittel mit 26 bis 46 Seed-Paaren, also 5.8 bis 10.1 Stunden Rechenzeit
-bei 12.68 min je Paar, 0.42 Stunden für die Prüfung mit 1 und 4 Threads eingerechnet. Wir
-nehmen an, dass diese Prüfung so lange dauert wie zwei Paare bei 2 Threads; gemessen haben
-wir sie bei 1 und 4 Threads nicht. Im ungünstigsten Fall sind es 120 Paare: 28.6 Stunden
-beim Tempo des langsamsten Pilotpaars, 29.4 Stunden, wenn jedes Paar die langsamsten
-Läufe beider Arme hätte, also etwa 29 Stunden. Die Prüfung mit 1 und 4 Threads kommt
-hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mittel 4.0 bis
-6.6 Stunden gebraucht und höchstens etwa 15 Stunden.
-
 ## 8. Grenzen
 
 - **Positivkontrolle.** Der Entwerfer ist kein Sprachmodell. Seine Zahlen zeigen, ob die
   Zucht Gene findet, von denen wir wissen, dass es sie gibt; über echte Modelle sagen sie
-  nichts.
-- **Gezählte Läufe stehen aus.** Die Eigentümerin bzw. der Eigentümer hat am 2026-10-30
+  nichts. Das gilt auch für die beiden Nachweise des gezählten Experiments.
+- **Freigabe und Einfrieren.** Die Eigentümerin bzw. der Eigentümer hat am 2026-10-30
   sechs Punkte bestätigt: exakte Gleichheit als Kriterium (sie verschärft Q38), die
   Bewertung erst nach T und dann nach CNOT, die `state`-Zeile auch in Gitter-Läufen, keine
   Beförderung von Schaltungs-Kaskaden in Schritt 1, die Regel über die Seeds aus Abschnitt 7
@@ -525,10 +727,23 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
   verlangte sie bzw. er die wissenschaftlich tragende Fassung. Nach einer Prüfung von 16
   Entwürfen wählte Claude, der KI-Assistent, die Nachweisschwelle 100, höchstens 120 Paare
   und die Liste der Seeds aus Abschnitt 7. Die Vorab-Registrierung setzt diese Punkte um.
-  Sie friert bei dem einen Commit ein, zu dem ihr Pull-Request beim Zusammenführen in den
-  Hauptzweig zusammengefasst wird; mit diesem Zusammenführen bestätigt die Eigentümerin
-  bzw. der Eigentümer Claudes Wahl. Gezählte Läufe gibt es noch keine; alle Zahlen dieses
-  Berichts stammen aus Pilotläufen.
+  Sie fror beim Commit 15cb151 ein, zu dem ihr Pull-Request #19 beim Zusammenführen in den
+  Hauptzweig zusammengefasst wurde. Mit diesem Zusammenführen bestätigte die Eigentümerin
+  bzw. der Eigentümer Claudes Wahl. Erst danach liefen die gezählten Läufe (Abschnitt 7).
+  Zahlen aus gezählten Läufen stehen nur in den Abschnitten 1, 7 und 8; alle übrigen
+  Zahlen aus Läufen stammen aus Pilotläufen.
+- **Was das gezählte Experiment zeigt.** Der Hauptnachweis verwirft die Nullhypothese, dass
+  höchstens die Hälfte aller Seeds bis Generation 1000 besteht. Der zweite Nachweis
+  verwirft die Nullhypothese, dass Arm A unter den Paaren ohne Gleichstand höchstens so oft
+  zuerst besteht wie Arm R. Die Regel erbringt jeden der beiden Nachweise höchstens mit
+  Wahrscheinlichkeit 1/100 fälschlich, unter den Annahmen aus Abschnitt 8 der
+  Vorab-Registrierung. Diese Annahmen gelten, wenn die Seeds wie unabhängige Ziehungen
+  wirken; das nehmen wir an.
+- **Was es nicht zeigt.** Das Experiment schätzt die Erfolgsquote nicht. 24 Erfolge in 27
+  Seeds sind eine beschreibende Zahl. Da der Stopp von den Daten abhing, gilt ein
+  Konfidenzintervall für eine feste Zahl von Seeds hier nicht, und wir geben keines an.
+  Ebenso sagt der zweite Nachweis nicht, um wie viele Generationen Arm A früher besteht.
+  E2 erreichte die Schwelle 100 erst bei Paar 27, mit dem die Regel anhielt.
 - **Was der Pilot zeigt.** Die Kalibrierung hält in jedem fertigen Pilotlauf. Bis Generation
   1000 bestand Arm A in 9 von 11 Läufen, Arm R in 2 von 10, und in 8 der 10 Paare, deren
   Arme beide so weit liefen, bestand Arm A zuerst. Die neun Läufe des ersten Pilots bestehen
@@ -543,13 +758,14 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
   Quote 0.710 endet die Regel mit Wahrscheinlichkeit 0.114 als gescheitert und mit 0.025
   ohne Urteil; ein gescheiterter Hauptnachweis beweist keine Quote von höchstens 1/2.
   Liegt die wahre Quote nur bei 0.6, gelingt der Hauptnachweis mit Wahrscheinlichkeit
-  0.18. Mit den jetzigen Genen kann das gezählte Experiment also durchaus scheitern. Die
-  Gene bleiben, wie sie sind; jede Änderung verlangte neue Pilotläufe und eine neue
-  Vorab-Registrierung.
-- **CH und Fredkin.** Kein Pilotlauf löste sie. Die Wege, welche die Tests zu ihnen
-  festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf `sim:large`,
-  Fredkin mit Compose außer Hadamard, Phase und Linear, und 7 CNOT erreicht es erst mit
-  Simplify.
+  0.18. Mit den jetzigen Genen hätte das gezählte Experiment also durchaus scheitern können;
+  es hat beide Nachweise erbracht (Abschnitt 7). Die Gene blieben, wie sie waren; jede
+  Änderung verlangte neue Pilotläufe und eine neue Vorab-Registrierung.
+- **CH und Fredkin.** Kein Pilotlauf löste sie. Von den 54 gezählten Läufen löste nur A-7
+  CH, in Generation 594, und keiner Fredkin zur Referenz. Die Wege, welche die Tests zu
+  ihnen festlegen, sind lang: CH fällt mit Search und Meet ab 3 124 Denk-Tokens auf
+  `sim:large`, Fredkin mit Compose außer Hadamard, Phase und Linear, und 7 CNOT erreicht es
+  erst mit Simplify.
 - **Abgeleitete Schranken.** Bei vier Zahlen ist die Schranke abgeleitet: CS mit 2 CNOT, CH
   mit 2 T, RTOF und CCiX mit je 4 T. Die Zahl steht in einer Quelle; dass es nicht besser
   geht, folgert die Recherche aus veröffentlichten Ergebnissen. Unterbietet eine exakte
@@ -558,15 +774,16 @@ hinzu. Der frühere Entwurf, Schwelle 20 mit höchstens 60 Paaren, hätte im Mit
   könnte beide gleich täuschen. Dagegen stehen die Gegenprobe mit `quantum.rs`, die aus ihren
   Definitionen gebauten Ziele und die Beleg-Schaltungen, die meisten aus der Literatur, die
   übrigen von der Recherche zu Schritt 1 gebaut und geprüft.
-- **Plattform.** Die Prüfsummen des ersten Pilots gelten für rustc 1.97.0 auf x86_64 Linux.
+- **Plattform.** Die Prüfsummen des ersten Pilots und der gezählten Läufe
+  ([hashes.txt](step1-counted/hashes.txt)) gelten für rustc 1.97.0 auf x86_64 Linux.
   Anderswo kann eine Gleitkomma-Funktion ihr letztes Bit anders runden; dann weichen die
   Läufe ab.
-- **Kein Mutator im Pilot.** Die Pilotläufe haben keine LLM-Runden (`llm_every` 0). Was
-  Claude als Mutator auf Schaltungen ändert, haben wir nicht gemessen.
-- **Erfindungen.** Kein Pilotlauf fand einen Erfindungskandidaten. Ein Kandidat ist keine
-  Erfindung, bis ein Mensch die Literatur geprüft hat. Da `--verify` eine veränderte
-  `rediscovery.json` ablehnt, bleibt `literature_checked` im Lauf `false`; das Ergebnis einer
-  solchen Prüfung gehört in einen Bericht.
+- **Kein Mutator.** Die Pilotläufe und die gezählten Läufe haben keine LLM-Runden
+  (`llm_every` 0). Was Claude als Mutator auf Schaltungen ändert, haben wir nicht gemessen.
+- **Erfindungen.** Kein Pilotlauf und kein gezählter Lauf fand einen Erfindungskandidaten.
+  Ein Kandidat ist keine Erfindung, bis ein Mensch die Literatur geprüft hat. Da `--verify`
+  eine veränderte `rediscovery.json` ablehnt, bleibt `literature_checked` im Lauf `false`;
+  das Ergebnis einer solchen Prüfung gehört in einen Bericht.
 
 ## 9. Quellen
 

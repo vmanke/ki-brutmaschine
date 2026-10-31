@@ -1,0 +1,64 @@
+Step 1 circuit positive control: the frozen analysis of docs/PREREG_STEP1_CIRCUITS.md
+9 seed pair(s); every run: --generations 1000, --max-calls 13000000.
+
+No claim: pair 1 has seed 301, not 1; the counted seeds run 1 to 100 and then 111 to 130 in this order.
+Checked elsewhere: integrity alarms (a run with one has no rediscovery.json and is refused here), brut-breed --verify on every run, equal logs at 1 and 4 threads (seed 1, both arms), and the calibration test at the frozen commit.
+
+Pre-registered rule: a target counts when an exact answer reaches its T and CNOT reference.
+ seed  |L|  R_seed                              D_A               D_R               calibrated
+  301   11  2: cs, swap                         3/9 = 0.333       3/9 = 0.333       yes
+  302   11  2: cs, swap                         7/9 = 0.778       6/9 = 0.667       yes
+  303   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+  304   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+  305   11  2: cs, swap                         7/9 = 0.778       3/9 = 0.333       yes
+  306   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+  307   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+  308   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+  309   11  2: cs, swap                         7/9 = 0.778       2/9 = 0.222       yes
+Median D_A over the 9 counted pair(s), descriptive: 7/9 = 0.7778.
+
+Sequential rule, in seed order: T is the first generation with D > 1/2, never when there is none by generation 1000; X = 1 when arm A passes; first is the arm with the smaller T.
+E1 = 3^passes / 2^pairs and E2 = 3^(A first) / 2^(untied pairs). A claim is proven when its E first reaches 100 and fails when it first falls to 1/20; the secondary counts only if the primary is proven.
+ seed    T_A    T_R  X  first  E1                      E2
+  301  never  never  0  tie    1/2 = 0.5000            1/1 = 1.0000
+  302      7    380  1  A      3/4 = 0.7500            3/2 = 1.5000
+  303     75  never  1  A      9/8 = 1.1250            9/4 = 2.2500
+  304     97  never  1  A      27/16 = 1.6875          27/8 = 3.3750
+  305    349  never  1  A      81/32 = 2.5312          81/16 = 5.0625
+  306    143  never  1  A      243/64 = 3.7969         243/32 = 7.5938
+  307     33  never  1  A      729/128 = 5.6953        729/64 = 11.3906
+  308    180  never  1  A      2187/256 = 8.5430       2187/128 = 17.0859
+  309    810  never  1  A      6561/512 = 12.8145      6561/256 = 25.6289
+Primary (ticket 03): E1 = 6561/512 = 12.8145 after 9 pair(s); open, it has reached neither 100 nor 1/20.
+Secondary (selection): E2 = 6561/256 = 25.6289 after 9 pair(s); open, it has reached neither 100 nor 1/20.
+The rule goes on after pair 9.
+No claim: pair 1 has seed 301, not 1; the counted seeds run 1 to 100 and then 111 to 130 in this order.
+
+T-only variant, descriptive with no verdict: a target counts when an exact answer reaches its T reference, and its CNOT reference where that T count is 0.
+ seed  |L|  R_seed                              D_A               D_R               calibrated
+  301   11  3: ccz, cs, swap                    3/8 = 0.375       3/8 = 0.375       yes
+  302   11  3: ccz, cs, swap                    7/8 = 0.875       6/8 = 0.750       yes
+  303   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+  304   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+  305   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+  306   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+  307   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+  308   11  3: ccz, cs, swap                    7/8 = 0.875       3/8 = 0.375       yes
+  309   11  3: ccz, cs, swap                    6/8 = 0.750       3/8 = 0.375       yes
+T-only variant: D_A > 1/2 in 8 of 9 counted seed(s).
+
+Descriptive: the first generation in which a bred Cascade solved each target, arm A|arm R (- never; * a target the seed Cascades solve).
+target          s301      s302      s303      s304      s305      s306      s307      s308      s309
+cz              18|7       4|1     23|37      27|5      15|2      24|2       3|1      31|7      25|6
+swap           1*|1*     1*|1*     1*|1*     2*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|2*
+cs             1*|1*     1*|1*     1*|1*     1*|1*     1*|1*     1*|2*     1*|1*     1*|1*     1*|1*
+ch               -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-
+qft2             -|-     7|380      75|-      97|-     349|-     143|-      12|-     180|-     810|-
+ccz            14|52      7|67     52|27     14|54      7|88     66|50     33|46   127|173      8|55
+toffoli          -|-      11|-      75|-     127|-     349|-     143|-      46|-     315|-     810|-
+peres            -|-     7|380      75|-     127|-     349|-     143|-      12|-     190|-     810|-
+fredkin          -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-       -|-
+rtof             -|-     7|380      75|-      97|-     349|-     143|-      12|-     180|-     810|-
+ccix         236|133     7|164      75|-      59|-   146|879     124|-      46|-     180|-     810|-
+Runs that ended at the call cap: none.
+Invention candidates (below a BestKnown count): none.
