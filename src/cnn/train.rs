@@ -443,11 +443,66 @@ mod tests {
         )
     }
 
-    /// VGG-like with batch norm and max pooling, and a 1-D CNN with every norm and pool.
-    fn thread_test_genomes() -> [(TaskKind, Genome); 2] {
+    /// A 2-D CNN of every block of ticket 03, with both options: a basic block with
+    /// squeeze-and-excitation and the input as shortcut, a strided bottleneck with a
+    /// projection, a separable block with squeeze-and-excitation and a projection, and a
+    /// strided inverted residual. Batch norm, ReLU and ReLU6.
+    fn mixed_blocks() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let relu = CnnActivation::Relu;
+        let unit = |block: Block, width: usize| Stage {
+            norm: Norm::Batch,
+            ..genomes::stage(block, width, 3, relu)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 8,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: relu,
+            },
+            stages: vec![
+                Stage {
+                    se: true,
+                    residual: true,
+                    ..unit(Block::Basic, 8)
+                },
+                Stage {
+                    stride: 2,
+                    residual: true,
+                    ..unit(Block::Bottleneck, 16)
+                },
+                Stage {
+                    se: true,
+                    residual: true,
+                    ..unit(Block::Separable, 8)
+                },
+                Stage {
+                    stride: 2,
+                    activation: CnnActivation::Relu6,
+                    ..unit(Block::InvertedResidual, 16)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        Genome {
+            epochs: 5,
+            ..genomes::genome(cnn, vec![8], Activation::Relu)
+        }
+    }
+
+    /// VGG-like with batch norm and max pooling, a 1-D CNN with every norm and pool, and a
+    /// 2-D CNN of the blocks of ticket 03.
+    fn thread_test_genomes() -> [(TaskKind, Genome); 3] {
         [
             (TaskKind::Shapes, genomes::vgg()),
             (TaskKind::Motif1d, normed_1d()),
+            (TaskKind::Shapes, mixed_blocks()),
         ]
     }
 
@@ -531,8 +586,128 @@ mod tests {
         };
         let one = run("1");
 
-        assert_eq!(one.len(), 2, "{one:?}");
+        assert_eq!(one.len(), 3, "{one:?}");
         assert_eq!(one, run("3"));
+    }
+
+    /// The genome of `cnn::genome::testing::block_genomes` with this name, and its task.
+    fn block_genome(name: &str) -> (TaskKind, Genome) {
+        genomes::block_genomes()
+            .into_iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, task, genome)| (task, genome))
+            .unwrap_or_else(|| panic!("no block genome {name}"))
+    }
+
+    /// On a toy batch of 32 samples of its task, the genome `name` of `block_genomes` gets a
+    /// finite gradient for every value, and every tensor a gradient that is not zero; then
+    /// 50 steps of its optimizer (Adam, learning rate 0.01) on that batch bring the loss
+    /// below 0.7 of its first value.
+    fn learns_a_toy_batch(name: &str) {
+        let (task, genome) = block_genome(name);
+        let spec = task.spec();
+        let data = head(&generate(&spec, Split::Train, 1), 32);
+        let crate::genome::Arch::Cnn(cnn) = &genome.arch else {
+            panic!("expected a CNN genome");
+        };
+        let mut learner = CnnLearner::new(&genome, cnn, &spec, &data).expect("learner");
+        let rows: Vec<usize> = (0..32).collect();
+        let first = learner.loss_and_grad(&rows).expect("loss");
+        let grads = learner.grad_weights.iter().chain(&learner.grad_biases);
+
+        for (i, grad) in grads.enumerate() {
+            assert!(grad.iter().all(|g| g.is_finite()), "{name}: tensor {i}");
+            assert!(
+                grad.iter().any(|&g| g != 0.0),
+                "{name}: tensor {i} got no gradient"
+            );
+        }
+
+        let mut last = first;
+
+        for _ in 0..50 {
+            learner.update(genome.learning_rate, 0.0).expect("update");
+            last = learner.loss_and_grad(&rows).expect("loss");
+
+            assert!(last.is_finite(), "{name}");
+        }
+
+        eprintln!("{name}: loss {first:.3} -> {last:.3} in 50 steps");
+
+        assert!(last < 0.7 * first, "{name}: {first} -> {last}");
+    }
+
+    #[test]
+    fn a_plain_stage_with_both_options_learns_a_toy_batch() {
+        learns_a_toy_batch("plain with squeeze-and-excitation and an identity shortcut");
+    }
+
+    #[test]
+    fn dilated_plain_stages_learn_a_toy_batch() {
+        learns_a_toy_batch("plain, dilated");
+    }
+
+    #[test]
+    fn a_basic_block_with_a_strided_projection_learns_a_toy_batch() {
+        learns_a_toy_batch("basic, strided, with a projection");
+    }
+
+    #[test]
+    fn a_basic_block_without_norm_learns_a_toy_batch() {
+        learns_a_toy_batch("basic without norm, with a projection that has a bias");
+    }
+
+    #[test]
+    fn a_bottleneck_learns_a_toy_batch() {
+        learns_a_toy_batch("bottleneck with group norm, groups and a projection");
+    }
+
+    #[test]
+    fn a_separable_block_learns_a_toy_batch() {
+        learns_a_toy_batch(
+            "separable with layer norm, squeeze-and-excitation, a projection and pooling",
+        );
+    }
+
+    #[test]
+    fn inverted_residuals_learn_a_toy_batch() {
+        learns_a_toy_batch("inverted residuals, one with an identity shortcut, one strided");
+    }
+
+    #[test]
+    fn blocks_along_a_sequence_learn_a_toy_batch() {
+        learns_a_toy_batch("1-D basic and separable blocks with squeeze-and-excitation");
+    }
+
+    #[test]
+    fn every_block_genome_has_a_toy_batch_test() {
+        // The names that the tests above pass to `learns_a_toy_batch`.
+        let tested = [
+            "plain with squeeze-and-excitation and an identity shortcut",
+            "plain, dilated",
+            "basic, strided, with a projection",
+            "basic without norm, with a projection that has a bias",
+            "bottleneck with group norm, groups and a projection",
+            "separable with layer norm, squeeze-and-excitation, a projection and pooling",
+            "inverted residuals, one with an identity shortcut, one strided",
+            "1-D basic and separable blocks with squeeze-and-excitation",
+        ];
+        let names: Vec<&str> = genomes::block_genomes()
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+
+        assert_eq!(names, tested);
+
+        // Together they hold every block kind and both options.
+        for block in crate::cnn::genome::BLOCKS {
+            let used = genomes::block_genomes().into_iter().any(|(_, _, g)| {
+                matches!(&g.arch, crate::genome::Arch::Cnn(cnn)
+                    if cnn.stages.iter().any(|s| s.block == block))
+            });
+
+            assert!(used, "{block:?}");
+        }
     }
 
     #[test]
@@ -613,19 +788,63 @@ mod tests {
         genomes::genome(cnn, vec![5], Activation::Tanh)
     }
 
+    /// The blocks of ticket 03 with smooth activations and average pooling, so that finite
+    /// differences apply: a strided basic block with group norm, squeeze-and-excitation and
+    /// a projection, a bottleneck with batch norm and a projection, a separable block with
+    /// layer norm, squeeze-and-excitation and the input as shortcut, and an inverted
+    /// residual with group norm and a projection. The ReLU inside squeeze-and-excitation is
+    /// its only kink. No layer norm sees fewer than 16 channels: over the 2 inner channels
+    /// of a bottleneck of width 8 it gives about +1 or -1 and jumps between them.
+    fn smooth_blocks() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let unit = |block: Block, width: usize, norm: Norm, activation: CnnActivation| Stage {
+            norm,
+            residual: true,
+            ..genomes::stage(block, width, 3, activation)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::AvgPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![
+                Stage {
+                    stride: 2,
+                    se: true,
+                    ..unit(Block::Basic, 8, Norm::Group, CnnActivation::Silu)
+                },
+                unit(Block::Bottleneck, 16, Norm::Batch, CnnActivation::Gelu),
+                Stage {
+                    se: true,
+                    ..unit(Block::Separable, 16, Norm::Layer, CnnActivation::Tanh)
+                },
+                unit(Block::InvertedResidual, 8, Norm::Group, CnnActivation::Silu),
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        genomes::genome(cnn, vec![5], Activation::Tanh)
+    }
+
     #[test]
     fn loss_and_grad_matches_finite_differences() {
         // f32 throughout, so the step is large and the bound loose; the gradient check of
-        // `ops` runs every operation in f64 with a bound of 1e-6.
-        let step = 1e-2;
-
-        for (task, dims) in [
-            (TaskKind::Shapes, Dims::TwoD),
-            (TaskKind::Motif1d, Dims::OneD),
+        // `ops` runs every operation in f64 with a bound of 1e-6. The deeper genome of the
+        // blocks bends within 1e-2 (at 1e-2, 1 of its 162 values missed the bound, while 1e-3
+        // matched), so it takes the smaller step.
+        for (task, genome, step) in [
+            (TaskKind::Shapes, smooth(Dims::TwoD), 1e-2),
+            (TaskKind::Motif1d, smooth(Dims::OneD), 1e-2),
+            (TaskKind::Shapes, smooth_blocks(), 1e-3),
         ] {
             let spec = task.spec();
             let data = head(&generate(&spec, Split::Train, 1), 16);
-            let genome = smooth(dims);
             let crate::genome::Arch::Cnn(cnn) = &genome.arch else {
                 panic!("expected a CNN genome");
             };
@@ -842,6 +1061,240 @@ mod tests {
             assert!(estimate <= budget);
             assert!(!stats.stopped_by_budget && stats.epochs_done == genome.epochs);
             assert!(seconds < budget, "{seconds} s");
+        }
+    }
+
+    /// Valid CNNs of the blocks of ticket 03 that come as close to the time budget as
+    /// `validate` allows, one per layout that may run slowly per FLOP: narrow basic blocks
+    /// at full size, bottlenecks with group norm, separable blocks at full size, inverted
+    /// residuals, many small squeeze-and-excitation parts, projections on every stage, wide
+    /// gates on few positions, and 1-D blocks. Each takes the most stages that are valid at
+    /// 5 epochs, then the most epochs that are valid.
+    fn slow_valid_block_cnns() -> Vec<(&'static str, TaskKind, Genome)> {
+        use crate::cnn::genome::Block;
+
+        let relu = CnnActivation::Relu;
+        let unit = move |block: Block, width: usize, kernel: usize, norm: Norm| Stage {
+            norm,
+            residual: true,
+            ..genomes::stage(block, width, kernel, relu)
+        };
+        let stem = move |width: usize, stride: usize, norm: Norm| Stem {
+            width,
+            kernel: 3,
+            stride,
+            down: Downsample::MaxPool,
+            norm,
+            activation: relu,
+        };
+        let gated = |stage: Stage| Stage { se: true, ..stage };
+        let widths = |stage: Stage, other: usize| {
+            // Stages alternate between the stage's width and `other`, so every stage
+            // changes the channels and needs a projection.
+            move |n: usize| {
+                (0..n)
+                    .map(|i| Stage {
+                        width: if i % 2 == 0 { stage.width } else { other },
+                        ..stage.clone()
+                    })
+                    .collect::<Vec<_>>()
+            }
+        };
+        let same = |stage: Stage| move |n: usize| vec![stage.clone(); n];
+
+        // The name, task, stem, stages for a count and head of each layout.
+        type Stages = Box<dyn Fn(usize) -> Vec<Stage>>;
+        let layouts: Vec<(&'static str, TaskKind, Stem, Stages)> = vec![
+            (
+                "narrow basic blocks at 16x16",
+                TaskKind::Shapes,
+                stem(4, 1, Norm::Batch),
+                Box::new(same(unit(Block::Basic, 4, 3, Norm::Batch))),
+            ),
+            (
+                "basic blocks with squeeze-and-excitation at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(same(gated(unit(Block::Basic, 8, 3, Norm::Batch)))),
+            ),
+            (
+                "bottlenecks with group norm at 8x8",
+                TaskKind::Shapes,
+                stem(16, 2, Norm::Group),
+                Box::new(same(unit(Block::Bottleneck, 16, 3, Norm::Group))),
+            ),
+            (
+                "separable blocks at 16x16",
+                TaskKind::Shapes,
+                stem(8, 1, Norm::Batch),
+                Box::new(same(unit(Block::Separable, 8, 3, Norm::Batch))),
+            ),
+            (
+                "wide separable blocks with layer norm at 4x4",
+                TaskKind::Shapes,
+                stem(16, 4, Norm::Layer),
+                Box::new(same(unit(Block::Separable, 64, 3, Norm::Layer))),
+            ),
+            (
+                "inverted residuals at 8x8",
+                TaskKind::Shapes,
+                stem(4, 2, Norm::Batch),
+                Box::new(same(unit(Block::InvertedResidual, 4, 3, Norm::Batch))),
+            ),
+            (
+                "inverted residuals at 4x4",
+                TaskKind::Shapes,
+                stem(16, 4, Norm::Batch),
+                Box::new(same(unit(Block::InvertedResidual, 16, 3, Norm::Batch))),
+            ),
+            (
+                "tiny plain stages with both options at 1x1",
+                TaskKind::Shapes,
+                stem(4, 4, Norm::None),
+                Box::new(move |n: usize| {
+                    let mut stages = vec![
+                        Stage {
+                            stride: 4,
+                            down: Downsample::MaxPool,
+                            ..gated(unit(Block::Plain, 4, 1, Norm::None))
+                        };
+                        1
+                    ];
+
+                    stages.extend(vec![gated(unit(Block::Plain, 4, 1, Norm::None)); n - 1]);
+
+                    stages
+                }),
+            ),
+            (
+                "projections on every stage at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(widths(unit(Block::Plain, 12, 1, Norm::Batch), 8)),
+            ),
+            (
+                "wide gates on 2x2",
+                TaskKind::Shapes,
+                stem(16, 4, Norm::Batch),
+                Box::new(move |n: usize| {
+                    let mut stages = vec![Stage {
+                        stride: 2,
+                        down: Downsample::MaxPool,
+                        ..gated(unit(Block::Plain, 64, 1, Norm::Batch))
+                    }];
+
+                    stages.extend(vec![gated(unit(Block::Plain, 64, 1, Norm::Batch)); n - 1]);
+
+                    stages
+                }),
+            ),
+            (
+                "1-D basic blocks with squeeze-and-excitation",
+                TaskKind::Motif1d,
+                Stem {
+                    kernel: 5,
+                    ..stem(8, 1, Norm::Batch)
+                },
+                Box::new(same(gated(unit(Block::Basic, 8, 3, Norm::Batch)))),
+            ),
+            (
+                "1-D inverted residuals",
+                TaskKind::Motif1d,
+                stem(4, 1, Norm::Batch),
+                Box::new(same(unit(Block::InvertedResidual, 4, 3, Norm::Batch))),
+            ),
+        ];
+        let limits = Limits::default();
+
+        layouts
+            .into_iter()
+            .filter_map(|(name, task, first, stages)| {
+                let spec = task.spec();
+                let dims = match task {
+                    TaskKind::Motif1d => Dims::OneD,
+                    _ => Dims::TwoD,
+                };
+                let layout = |n: usize| Genome {
+                    batch_size: 16,
+                    epochs: 5,
+                    ..genomes::genome(
+                        CnnGenome {
+                            dims,
+                            stem: first.clone(),
+                            stages: stages(n),
+                            head: Head::GlobalAvgPool,
+                        },
+                        Vec::new(),
+                        Activation::Relu,
+                    )
+                };
+                let n = (1..=crate::cnn::genome::MAX_STAGES)
+                    .filter(|&n| layout(n).validate(&limits, &spec).is_ok())
+                    .max()?;
+                let mut genome = layout(n);
+
+                while genome.epochs < limits.max_epochs {
+                    genome.epochs += 1;
+
+                    if genome.validate(&limits, &spec).is_err() {
+                        genome.epochs -= 1;
+                        break;
+                    }
+                }
+
+                Some((name, task, genome))
+            })
+            .collect()
+    }
+
+    /// The time model keeps the blocks of ticket 03 from the clock: each of
+    /// `slow_valid_block_cnns` trains on the whole Train split within its time budget, and
+    /// its scoring of the Hidden split stays within the scoring estimate. It prints each
+    /// measured time as a share of its estimate. This takes about four minutes and measures
+    /// time, so it runs only on request, alone, at one thread:
+    /// `RAYON_NUM_THREADS=1 cargo test --lib slow_valid_block -- --ignored --test-threads 1`.
+    #[test]
+    #[ignore]
+    fn slow_valid_block_cnns_train_within_the_time_budget() {
+        let limits = Limits::default();
+        let budget =
+            limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
+        let cnns = slow_valid_block_cnns();
+
+        for (name, task, genome) in &cnns {
+            eprintln!("LAYOUT {name} on {}: {}", task.name(), genome.summary());
+        }
+
+        assert_eq!(cnns.len(), 12);
+
+        for (name, task, genome) in cnns {
+            let spec = task.spec();
+            let data = generate(&spec, Split::Train, 1);
+            let hidden = generate(&spec, Split::Hidden, 1);
+            let plan = genome.cnn_plan(&spec).expect("plan");
+            let estimate =
+                plan.train_nanos_per_sample() * (spec.n_train * genome.epochs) as f64 / 1e9;
+            let started = Instant::now();
+            let (model, stats) = train(&genome, &spec, &data, &limits).expect("train");
+            let seconds = started.elapsed().as_secs_f64();
+            let scoring = plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9;
+            let started = Instant::now();
+            let accuracy = score::evaluate(&model, &spec, &hidden).primary;
+            let scored = started.elapsed().as_secs_f64();
+
+            eprintln!(
+                "TIMED {name}: {} layers, {} epochs, train {seconds:.1} s of {estimate:.1} s \
+                 ({:.2}), score {scored:.2} s of {scoring:.2} s ({:.2}), accuracy {accuracy:.2}",
+                plan.steps.len(),
+                genome.epochs,
+                seconds / estimate,
+                scored / scoring
+            );
+
+            assert!(estimate <= budget);
+            assert!(!stats.stopped_by_budget && stats.epochs_done == genome.epochs);
+            assert!(seconds < budget, "{name}: {seconds} s");
+            assert!(scored < scoring, "{name}: {scored} s");
         }
     }
 

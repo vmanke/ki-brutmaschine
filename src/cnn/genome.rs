@@ -24,9 +24,11 @@
 //! | U-Net | `Block::Decoder`, `Head::PerCell` |
 //!
 //! Ticket 02 builds the plain stage, every downsampling, every normalization, the six
-//! activations and the heads `GlobalAvgPool` and `Flatten`. Tickets 03 and 04 build the
-//! other parts. Until then the shape check (`CnnGenome::plan` in `shape`) rejects them as
-//! not yet built.
+//! activations and the heads `GlobalAvgPool` and `Flatten`. Ticket 03 builds the blocks
+//! `Basic`, `Bottleneck`, `Separable` and `InvertedResidual`, and the options `Stage::se`
+//! and `Stage::residual` on every block. Ticket 04 builds the other blocks and the head
+//! `PerCell`. `shape` lists the layers of each block, and `families` holds a scaled-down
+//! base model per family.
 
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +51,32 @@ pub const MAX_DILATION: usize = 16;
 
 /// Groups of a group norm. The width it normalizes must be a multiple of it.
 pub const GROUP_NORM_GROUPS: usize = 4;
+
+/// The inner layers of a bottleneck have its width divided by this many channels, as in
+/// ResNet (He et al. 2016). The width of a bottleneck must be a multiple of it.
+pub const BOTTLENECK_RATIO: usize = 4;
+
+/// The inner layers of an inverted residual have this many times its input channels: the
+/// expansion factor t = 6 of MobileNetV2 (Sandler et al. 2018).
+pub const EXPANSION: usize = 6;
+
+/// Squeeze-and-excitation reduces a width of c channels to c / this units, at least 1.
+/// SENet uses 16 (Hu, Shen and Sun 2018); our stages have 4 to 64 channels, where 16
+/// would leave 1 to 4 units.
+pub const SE_REDUCTION: usize = 4;
+
+/// The branches of an Inception block, as in GoogLeNet (Szegedy et al. 2015). Each has a
+/// quarter of the block's width, so the width must be a multiple of it.
+pub const INCEPTION_BRANCHES: usize = 4;
+
+/// The squeeze layer of a Fire module has its width divided by this many channels, and
+/// each of its two expansions half its width (Iandola et al. 2016, preprint). SqueezeNet
+/// squeezes by 8; at our widths of 8 to 64 that would leave 1 to 8 channels.
+pub const FIRE_SQUEEZE_RATIO: usize = 4;
+
+/// The inverted MLP of a ConvNeXt block has this many times its input channels, as in
+/// ConvNeXt (Liu et al. 2022).
+pub const CONVNEXT_EXPANSION: usize = 4;
 
 /// Every block kind, in declaration order.
 pub const BLOCKS: [Block; 13] = [
@@ -142,66 +170,89 @@ pub struct Stage {
     pub down: Downsample,
     /// Gap between the cells a kernel reads; 1 reads neighbours.
     pub dilation: usize,
-    /// Groups of the convolution. They must divide the input channels and the width.
+    /// Groups of the convolutions that `shape` names for the block: the k x k ones of a
+    /// plain, basic, bottleneck, dense, Inception, Fire, TCN or decoder block, the 1x1 ones
+    /// of a separable, inverted residual, transition, ShuffleNet or ConvNeXt block. They
+    /// must divide the channels before and after each of them.
     pub groups: usize,
-    /// Squeeze-and-excitation on the block's output (SENet). Ticket 03 builds it.
+    /// Squeeze-and-excitation (SENet) on the output of the block's last norm, before the
+    /// skip connection joins.
     pub se: bool,
-    /// A skip connection around the block (ResNet and others). Ticket 03 builds it.
+    /// A skip connection around the block, as in ResNet: the block's input is added to the
+    /// output of its last norm. A 1x1 convolution with the stride and the norm projects
+    /// the input when the block changes its channels or its size. A decoder's skip
+    /// connection starts after its join.
     pub residual: bool,
-    /// Normalization after the convolution.
+    /// Normalization after each convolution of the block; in a ConvNeXt block after its
+    /// depthwise convolution only.
     pub norm: Norm,
-    /// Activation after the normalization.
+    /// Activation after the normalizations that `shape` names for the block.
     pub activation: CnnActivation,
 }
 
 /// The block kind of a stage. Each kind names the family it comes from.
+///
+/// `shape` lists the layers of each built kind. Only the k x k convolutions of a block read
+/// neighbours: the dilation applies to each of them, the stride to the first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Block {
     /// One convolution, then the normalization and the activation: LeNet-5, AlexNet, VGG,
     /// and with a dilation above 1 the dilated CNN. Built.
     Plain,
-    /// ResNet basic block: two convolutions and a skip connection. Ticket 03.
+    /// ResNet basic block (He et al. 2016): two k x k convolutions to the width, each with
+    /// the normalization. With `Stage::residual` it has the skip connection of ResNet;
+    /// without, it is the "plain" network of the same paper. Built.
     Basic,
-    /// ResNet bottleneck: a 1x1 reduction, a k x k convolution, a 1x1 expansion and a skip
-    /// connection. Ticket 03.
+    /// ResNet bottleneck: a 1x1 reduction to width / `BOTTLENECK_RATIO` channels, a k x k
+    /// convolution and a 1x1 expansion to the width, each with the normalization. ResNet
+    /// adds the skip connection (`Stage::residual`). Built.
     Bottleneck,
     /// Depthwise separable convolution: a depthwise k x k, then a pointwise 1x1 convolution
-    /// (Xception, MobileNet). Ticket 03.
+    /// to the width, each with the normalization and the activation (MobileNet). Xception
+    /// stacks it with skip connections (`Stage::residual`). Built.
     Separable,
-    /// MobileNetV2 inverted residual with a linear bottleneck: a 1x1 expansion, a depthwise
-    /// convolution and a 1x1 projection without activation. Ticket 03.
+    /// MobileNetV2 inverted residual with a linear bottleneck: a 1x1 expansion to
+    /// `EXPANSION` times the input channels, a depthwise k x k convolution, and a 1x1
+    /// projection to the width without activation. MobileNetV2 adds the skip connection
+    /// where the input and the output have the same shape. Built.
     InvertedResidual,
-    /// GoogLeNet Inception block: parallel 1x1, 3x3, 5x5 and pooling branches, concatenated.
-    /// Ticket 04.
+    /// GoogLeNet Inception block (Szegedy et al. 2015): four parallel branches, a 1x1, a
+    /// k x k and a (k + 2) x (k + 2) convolution, the larger two after a 1x1 reduction, and a
+    /// k x k max pooling followed by a 1x1 convolution; joined along the channels. With
+    /// k = 3 these are the 1x1, 3x3, 5x5 and pooling branches. Built.
     Inception,
-    /// DenseNet dense block: every layer's output is concatenated to its input. Ticket 04.
+    /// One layer of a DenseNet dense block (Huang et al. 2017): a k x k convolution to
+    /// `width` new channels, the growth rate, joined to its input along the channels. So a
+    /// stage of this kind has its input channels plus `width`, and a row of them is a dense
+    /// block. It keeps its size. Built.
     Dense,
-    /// DenseNet transition: a 1x1 convolution and average pooling between dense blocks.
-    /// Ticket 04.
+    /// DenseNet transition between dense blocks: a 1x1 convolution to `width` channels and
+    /// the downsampling of the stage, average pooling in DenseNet. Built.
     Transition,
-    /// SqueezeNet Fire module: a 1x1 squeeze, then 1x1 and 3x3 expansions, concatenated.
-    /// Ticket 04.
+    /// SqueezeNet Fire module (Iandola et al. 2016, preprint): a 1x1 squeeze, then a 1x1 and
+    /// a k x k expansion side by side, joined along the channels. Built.
     Fire,
-    /// ShuffleNet unit: group convolutions, a channel shuffle and a depthwise convolution.
-    /// Ticket 04.
+    /// ShuffleNet unit (Zhang et al. 2018): a 1x1 group convolution, the channel shuffle, a
+    /// depthwise k x k convolution and a second 1x1 group convolution. ShuffleNet adds the
+    /// skip connection (`Stage::residual`). Built.
     Shuffle,
-    /// ConvNeXt block: a depthwise 7x7, layer norm, an inverted MLP with GELU and a skip
-    /// connection. Ticket 04.
+    /// ConvNeXt block (Liu et al. 2022): a depthwise k x k convolution (7x7 in ConvNeXt), the
+    /// normalization (layer norm in ConvNeXt), and an inverted MLP of two 1x1 convolutions
+    /// with the activation between them (GELU in ConvNeXt). It ends without activation.
+    /// ConvNeXt adds the skip connection (`Stage::residual`). Built.
     ConvNext,
-    /// TCN block: causal dilated 1-D convolutions with a skip connection. Ticket 04.
+    /// TCN block (Bai, Kolter and Koltun 2018, preprint): two causal dilated convolutions
+    /// along a sequence, so an output reads no later input. The TCN adds the skip connection
+    /// (`Stage::residual`). 1-D genomes only. Built.
     Tcn,
-    /// U-Net decoder stage: upsampling, concatenation with the encoder output of the same
-    /// size, and a convolution. Ticket 04.
+    /// U-Net decoder stage (Ronneberger, Fischer and Brox 2015): upsampling by `stride`, the
+    /// join with the map of an earlier stage at that size along the channels, and a k x k
+    /// convolution. `down` picks the upsampling: `Downsample::Conv` a transposed convolution
+    /// (U-Net's up-convolution), a pooling kind nearest upsampling. Built.
     Decoder,
 }
 
 impl Block {
-    /// True when this block kind is built, so the shape check accepts it. Tickets 03 and
-    /// 04 build the others.
-    pub fn is_built(self) -> bool {
-        matches!(self, Block::Plain)
-    }
-
     /// Short name for summaries and error messages.
     pub fn name(self) -> &'static str {
         match self {
@@ -222,7 +273,8 @@ impl Block {
     }
 }
 
-/// How a stride above 1 shrinks the output of the stem or of a stage.
+/// How a stride above 1 shrinks the output of the stem or of a stage. A decoder upsamples
+/// instead (see `Block::Decoder`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Downsample {
     /// The convolution itself moves by the stride.
@@ -283,7 +335,9 @@ pub enum Head {
     GlobalAvgPool,
     /// Every value of every channel at every position, as in LeNet-5 and VGG.
     Flatten,
-    /// A 1x1 convolution per cell for grid-to-grid tasks (U-Net). Ticket 04.
+    /// For a task with a grid of outputs (U-Net): the dense layers of `Genome::hidden` and
+    /// the output layer as 1x1 convolutions, the same at every cell. The last map must have
+    /// the size of the output grid.
     PerCell,
 }
 
@@ -427,6 +481,7 @@ pub(crate) mod testing {
 
     use super::*;
     use crate::genome::{Arch, Genome, Optimizer};
+    use crate::task::TaskKind;
 
     /// A genome with these parts and fixed training genes (Adam, 10 epochs).
     pub(crate) fn genome(cnn: CnnGenome, hidden: Vec<usize>, activation: Activation) -> Genome {
@@ -446,8 +501,19 @@ pub(crate) mod testing {
 
     /// A plain stage with stride 1, dilation 1, one group, and no normalization.
     pub(crate) fn plain(width: usize, kernel: usize, activation: CnnActivation) -> Stage {
+        stage(Block::Plain, width, kernel, activation)
+    }
+
+    /// A stage of this block kind with stride 1, dilation 1, one group, no options and no
+    /// normalization.
+    pub(crate) fn stage(
+        block: Block,
+        width: usize,
+        kernel: usize,
+        activation: CnnActivation,
+    ) -> Stage {
         Stage {
-            block: Block::Plain,
+            block,
             width,
             kernel,
             stride: 1,
@@ -592,32 +658,468 @@ pub(crate) mod testing {
         genome(cnn, Vec::new(), Activation::Relu)
     }
 
-    /// A CNN genome of plain stages with every gene in its range.
+    /// Small genomes for every block kind and both options, each with the task it fits and
+    /// a name: first those of ticket 03, then those of ticket 04 (`family_b_genomes`). The
+    /// 2-D ones on images start with a stem of 8 channels and batch norm that pools a 1 x 16
+    /// x 16 image to 8x8, and end with global average pooling and a dense layer to the
+    /// classes. Together they cover the identity and both projection shortcuts (by a strided
+    /// convolution, and by a change of channels before pooling), every norm inside a block,
+    /// a block without norm, dilation, groups, and 1-D blocks.
+    pub(crate) fn block_genomes() -> Vec<(&'static str, TaskKind, Genome)> {
+        let relu = CnnActivation::Relu;
+        let with = |block: Block, width: usize, norm: Norm, activation: CnnActivation| Stage {
+            norm,
+            ..stage(block, width, 3, activation)
+        };
+        let pooled = |stride: usize, stages: Vec<Stage>| {
+            let cnn = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width: 8,
+                    kernel: 3,
+                    stride,
+                    down: Downsample::MaxPool,
+                    norm: Norm::Batch,
+                    activation: CnnActivation::Relu,
+                },
+                stages,
+                head: Head::GlobalAvgPool,
+            };
+            let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+            g.epochs = 5;
+
+            g
+        };
+        let image = |stages: Vec<Stage>| pooled(2, stages);
+
+        let mut genomes = vec![
+            (
+                "plain with squeeze-and-excitation and an identity shortcut",
+                TaskKind::Shapes,
+                image(vec![Stage {
+                    se: true,
+                    residual: true,
+                    ..with(Block::Plain, 8, Norm::Batch, relu)
+                }]),
+            ),
+            (
+                "plain, dilated",
+                TaskKind::Shapes,
+                image(vec![
+                    Stage {
+                        dilation: 2,
+                        ..with(Block::Plain, 8, Norm::Batch, relu)
+                    },
+                    Stage {
+                        dilation: 3,
+                        ..with(Block::Plain, 8, Norm::Batch, relu)
+                    },
+                ]),
+            ),
+            (
+                "basic, strided, with a projection",
+                TaskKind::Shapes,
+                image(vec![Stage {
+                    stride: 2,
+                    residual: true,
+                    ..with(Block::Basic, 16, Norm::Batch, relu)
+                }]),
+            ),
+            (
+                "basic without norm, with a projection that has a bias",
+                TaskKind::Shapes,
+                image(vec![Stage {
+                    residual: true,
+                    ..with(Block::Basic, 12, Norm::None, CnnActivation::Silu)
+                }]),
+            ),
+            (
+                "bottleneck with group norm, groups and a projection",
+                TaskKind::Shapes,
+                image(vec![Stage {
+                    groups: 2,
+                    residual: true,
+                    ..with(Block::Bottleneck, 16, Norm::Group, relu)
+                }]),
+            ),
+            (
+                "separable with layer norm, squeeze-and-excitation, a projection and pooling",
+                TaskKind::Shapes,
+                image(vec![Stage {
+                    stride: 2,
+                    down: Downsample::MaxPool,
+                    se: true,
+                    residual: true,
+                    ..with(Block::Separable, 16, Norm::Layer, relu)
+                }]),
+            ),
+            // At 8x8 these two were estimated at 36.3 s for 5 epochs, above the time
+            // budget of 20 s, so they run at 4x4.
+            (
+                "inverted residuals, one with an identity shortcut, one strided",
+                TaskKind::Shapes,
+                pooled(
+                    4,
+                    vec![
+                        Stage {
+                            residual: true,
+                            ..with(
+                                Block::InvertedResidual,
+                                8,
+                                Norm::Batch,
+                                CnnActivation::Relu6,
+                            )
+                        },
+                        Stage {
+                            stride: 2,
+                            ..with(
+                                Block::InvertedResidual,
+                                16,
+                                Norm::Batch,
+                                CnnActivation::Relu6,
+                            )
+                        },
+                    ],
+                ),
+            ),
+            (
+                "1-D basic and separable blocks with squeeze-and-excitation",
+                TaskKind::Motif1d,
+                {
+                    let cnn = CnnGenome {
+                        dims: Dims::OneD,
+                        stem: Stem {
+                            width: 8,
+                            kernel: 5,
+                            stride: 2,
+                            down: Downsample::MaxPool,
+                            norm: Norm::Batch,
+                            activation: CnnActivation::Relu,
+                        },
+                        stages: vec![
+                            Stage {
+                                se: true,
+                                residual: true,
+                                dilation: 2,
+                                ..with(Block::Basic, 8, Norm::Batch, relu)
+                            },
+                            Stage {
+                                stride: 2,
+                                se: true,
+                                residual: true,
+                                ..with(Block::Separable, 16, Norm::Batch, relu)
+                            },
+                        ],
+                        head: Head::GlobalAvgPool,
+                    };
+                    let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+                    g.epochs = 5;
+
+                    g
+                },
+            ),
+        ];
+
+        genomes.extend(family_b_genomes());
+
+        genomes
+    }
+
+    /// The block genomes of ticket 04, one or more per block kind of that ticket. The 2-D
+    /// ones on images start with the stem of `block_genomes`. Together they cover every join
+    /// (a dense layer, Inception's four branches, a Fire module's two, both upsamplings of a
+    /// decoder), the channel shuffle, a TCN with every dilation and stride kind, the 1-D path
+    /// of every new operation, and the per-cell head.
+    fn family_b_genomes() -> Vec<(&'static str, TaskKind, Genome)> {
+        let relu = CnnActivation::Relu;
+        let with = |block: Block, width: usize, kernel: usize, norm: Norm| Stage {
+            norm,
+            ..stage(block, width, kernel, relu)
+        };
+        let image = |stages: Vec<Stage>| {
+            let cnn = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width: 8,
+                    kernel: 3,
+                    stride: 2,
+                    down: Downsample::MaxPool,
+                    norm: Norm::Batch,
+                    activation: relu,
+                },
+                stages,
+                head: Head::GlobalAvgPool,
+            };
+            let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+            g.epochs = 5;
+
+            g
+        };
+        let sequence = |stem: Stem, stages: Vec<Stage>| {
+            let cnn = CnnGenome {
+                dims: Dims::OneD,
+                stem,
+                stages,
+                head: Head::GlobalAvgPool,
+            };
+            let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+            g.epochs = 5;
+
+            g
+        };
+        let one_d_stem = |stride: usize| Stem {
+            width: 8,
+            kernel: 5,
+            stride,
+            down: Downsample::MaxPool,
+            norm: Norm::Batch,
+            activation: relu,
+        };
+        let gelu = CnnActivation::Gelu;
+
+        vec![
+            (
+                "dense layers and a transition with group norm",
+                TaskKind::Shapes,
+                image(vec![
+                    with(Block::Dense, 4, 3, Norm::Batch),
+                    Stage {
+                        dilation: 2,
+                        ..with(Block::Dense, 4, 3, Norm::Batch)
+                    },
+                    Stage {
+                        stride: 2,
+                        down: Downsample::AvgPool,
+                        ..with(Block::Transition, 8, 1, Norm::Group)
+                    },
+                ]),
+            ),
+            (
+                "inception blocks, one strided with groups and a projection",
+                TaskKind::Shapes,
+                image(vec![
+                    with(Block::Inception, 16, 3, Norm::Batch),
+                    Stage {
+                        stride: 2,
+                        groups: 2,
+                        residual: true,
+                        ..with(Block::Inception, 16, 3, Norm::Batch)
+                    },
+                ]),
+            ),
+            (
+                "fire modules, one with squeeze-and-excitation and an identity shortcut",
+                TaskKind::Shapes,
+                image(vec![
+                    with(Block::Fire, 16, 3, Norm::Batch),
+                    Stage {
+                        se: true,
+                        residual: true,
+                        ..with(Block::Fire, 16, 3, Norm::Batch)
+                    },
+                ]),
+            ),
+            (
+                "shufflenet units with 2 and 4 groups and projections",
+                TaskKind::Shapes,
+                image(vec![
+                    Stage {
+                        groups: 2,
+                        residual: true,
+                        ..with(Block::Shuffle, 16, 3, Norm::Batch)
+                    },
+                    Stage {
+                        stride: 2,
+                        groups: 4,
+                        residual: true,
+                        ..with(Block::Shuffle, 16, 3, Norm::Batch)
+                    },
+                ]),
+            ),
+            (
+                "convnext blocks with layer norm and gelu, one strided",
+                TaskKind::Shapes,
+                image(vec![
+                    Stage {
+                        residual: true,
+                        activation: gelu,
+                        ..with(Block::ConvNext, 8, 7, Norm::Layer)
+                    },
+                    Stage {
+                        stride: 2,
+                        residual: true,
+                        activation: gelu,
+                        ..with(Block::ConvNext, 16, 3, Norm::Layer)
+                    },
+                ]),
+            ),
+            (
+                "tcn blocks with dilations 1, 2 and 4, the last strided",
+                TaskKind::Motif1d,
+                sequence(
+                    one_d_stem(1),
+                    vec![
+                        Stage {
+                            residual: true,
+                            ..with(Block::Tcn, 8, 3, Norm::Batch)
+                        },
+                        Stage {
+                            dilation: 2,
+                            residual: true,
+                            ..with(Block::Tcn, 16, 3, Norm::Batch)
+                        },
+                        Stage {
+                            stride: 2,
+                            dilation: 4,
+                            residual: true,
+                            ..with(Block::Tcn, 16, 3, Norm::Batch)
+                        },
+                    ],
+                ),
+            ),
+            (
+                "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+                TaskKind::MirrorGrid,
+                {
+                    // A 3x3 kernel does not fit a map of 2x2, so the convolutions run at 4x4
+                    // and above, and the pooling of stage 2 leads to the bottom of 2x2.
+                    let cnn = CnnGenome {
+                        dims: Dims::TwoD,
+                        stem: Stem {
+                            width: 8,
+                            kernel: 3,
+                            stride: 1,
+                            down: Downsample::Conv,
+                            norm: Norm::Batch,
+                            activation: relu,
+                        },
+                        stages: vec![
+                            Stage {
+                                stride: 2,
+                                ..with(Block::Basic, 16, 3, Norm::Batch)
+                            },
+                            Stage {
+                                stride: 2,
+                                down: Downsample::MaxPool,
+                                ..with(Block::Plain, 16, 3, Norm::Batch)
+                            },
+                            Stage {
+                                stride: 2,
+                                ..with(Block::Decoder, 16, 3, Norm::Batch)
+                            },
+                            Stage {
+                                stride: 2,
+                                down: Downsample::MaxPool,
+                                residual: true,
+                                ..with(Block::Decoder, 8, 3, Norm::Batch)
+                            },
+                        ],
+                        head: Head::PerCell,
+                    };
+                    let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+                    g.epochs = 5;
+
+                    g
+                },
+            ),
+            (
+                "1-D inception, shufflenet, dense, decoder and convnext blocks",
+                TaskKind::Motif1d,
+                sequence(
+                    one_d_stem(2),
+                    vec![
+                        with(Block::Inception, 8, 3, Norm::Batch),
+                        Stage {
+                            stride: 2,
+                            groups: 2,
+                            ..with(Block::Shuffle, 8, 3, Norm::Batch)
+                        },
+                        with(Block::Dense, 4, 3, Norm::Batch),
+                        Stage {
+                            stride: 2,
+                            ..with(Block::Decoder, 8, 3, Norm::Batch)
+                        },
+                        Stage {
+                            stride: 2,
+                            down: Downsample::AvgPool,
+                            ..with(Block::Decoder, 8, 3, Norm::Batch)
+                        },
+                        Stage {
+                            residual: true,
+                            activation: gelu,
+                            ..with(Block::ConvNext, 8, 7, Norm::Layer)
+                        },
+                    ],
+                ),
+            ),
+        ]
+    }
+
+    /// A CNN genome with every gene in its range: half of the stages plain, the others of
+    /// any block kind, some with squeeze-and-excitation or a skip connection. A quarter of
+    /// them end as a U-Net: one decoder for each unit that downsamples, in reverse order and
+    /// with its stride, then the per-cell head.
     ///
-    /// Widths are multiples of 4, so 1, 2 or 4 groups and group norm always fit. Many are
-    /// valid on the tasks of their dims; some pool too often, read too far, or cost too
-    /// much.
+    /// Widths are multiples of 4, so 1, 2 or 4 groups and group norm often fit. Many are
+    /// valid on the tasks of their dims; some pool too often, read too far, split a
+    /// bottleneck that group norm cannot split, or cost too much.
     pub(crate) fn plausible(rng: &mut ChaCha8Rng, dims: Dims) -> Genome {
         let unit = |rng: &mut ChaCha8Rng| Stage {
-            block: Block::Plain,
+            block: if rng.random_bool(0.5) {
+                Block::Plain
+            } else {
+                one_of(rng, &BLOCKS)
+            },
             width: one_of(rng, &[4, 8, 12, 16]),
             kernel: one_of(rng, &[1, 3, 3, 5]),
             stride: one_of(rng, &[1, 1, 2]),
             down: one_of(rng, &DOWNSAMPLES),
             dilation: one_of(rng, &[1, 1, 2]),
             groups: one_of(rng, &[1, 1, 2, 4]),
-            se: false,
-            residual: false,
+            se: rng.random_bool(0.2),
+            residual: rng.random_bool(0.3),
             norm: one_of(rng, &NORMS),
             activation: one_of(rng, &CNN_ACTIVATIONS),
         };
         let stem = as_stem(&unit(rng));
         let n_stages = rng.random_range(1..=4);
+        let mut stages: Vec<Stage> = (0..n_stages).map(|_| unit(rng)).collect();
+        let unet = rng.random_bool(0.25);
+
+        if unet {
+            let drops: Vec<usize> = std::iter::once(stem.stride)
+                .chain(
+                    stages
+                        .iter()
+                        .filter(|s| s.block != Block::Decoder)
+                        .map(|s| s.stride),
+                )
+                .filter(|&stride| stride > 1)
+                .collect();
+
+            for &stride in drops.iter().rev() {
+                stages.push(Stage {
+                    block: Block::Decoder,
+                    stride,
+                    ..unit(rng)
+                });
+            }
+        }
+
         let cnn = CnnGenome {
             dims,
             stem,
-            stages: (0..n_stages).map(|_| unit(rng)).collect(),
-            head: one_of(rng, &[Head::GlobalAvgPool, Head::Flatten]),
+            stages,
+            head: if unet {
+                Head::PerCell
+            } else {
+                one_of(rng, &[Head::GlobalAvgPool, Head::Flatten])
+            },
         };
         let n_hidden = rng.random_range(0..=2);
         let hidden = (0..n_hidden)

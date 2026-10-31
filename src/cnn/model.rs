@@ -13,7 +13,7 @@ use std::fmt;
 use serde::de::{DeserializeSeed, Error as _, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::cnn::genome::{CnnGenome, MAX_CHANNELS, MAX_STAGES};
+use crate::cnn::genome::{CnnGenome, EXPANSION, MAX_CHANNELS, MAX_STAGES};
 use crate::cnn::net::{self, Net, ParamSpec, Values};
 use crate::cnn::ops::Tensor;
 use crate::cnn::shape::Plan;
@@ -23,11 +23,14 @@ use crate::task::TaskSpec;
 use crate::util::{BrutError, Result};
 
 /// The most running statistics a valid model has: a mean and a variance for each channel of
-/// a batch norm in the stem and in every stage, at the widest width.
+/// each batch norm, at the widest widths.
 ///
-/// The stem and each stage have at most one norm today. A block with more norms (tickets 03
-/// and 04) must raise this bound.
-pub const MAX_RUNNING_VALUES: usize = 2 * (MAX_STAGES + 1) * MAX_CHANNELS;
+/// The stem has one norm of at most `MAX_CHANNELS` channels. A stage has the most in an
+/// inverted residual with a projection shortcut: two norms of `EXPANSION` times its input
+/// channels, one of its width and one of its shortcut, so `2 * EXPANSION + 2` times
+/// `MAX_CHANNELS` channels. A block with more norms (ticket 04) must raise this bound.
+pub const MAX_RUNNING_VALUES: usize =
+    2 * (MAX_CHANNELS + MAX_STAGES * (2 * EXPANSION + 2) * MAX_CHANNELS);
 
 /// The tag of a CNN file: the value `"cnn"` of its `"kind"` key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +402,9 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::untrained;
     use super::*;
-    use crate::cnn::genome::{CnnActivation, Dims, Downsample, Head, Norm, Stage, Stem, testing};
+    use crate::cnn::genome::{
+        Block, CnnActivation, Dims, Downsample, Head, Norm, Stage, Stem, testing,
+    };
     use crate::task::TaskKind;
 
     /// The VGG-like test genome on the shapes task: batch norm, max pooling, flatten.
@@ -421,6 +426,34 @@ mod tests {
         );
         assert!(model.check(&spec).is_ok());
         assert_eq!(model.param_count(), testing::vgg().param_count(&spec));
+    }
+
+    #[test]
+    fn models_of_every_block_parse_back_check_and_give_outputs() {
+        for (name, task, genome) in testing::block_genomes() {
+            let spec = task.spec();
+            let model = untrained(&genome, &spec, 2);
+            let text = serde_json::to_string(&model).expect("json");
+
+            assert_eq!(
+                serde_json::from_str::<CnnModel>(&text).expect("parse"),
+                model,
+                "{name}"
+            );
+            assert!(model.check(&spec).is_ok(), "{name}");
+            assert_eq!(model.param_count(), genome.param_count(&spec), "{name}");
+
+            let rows = 3;
+            let x = vec![0.25; rows * spec.n_in];
+            let out = model
+                .evaluator(&spec)
+                .expect("evaluator")
+                .outputs(&x, rows)
+                .expect("outputs");
+
+            assert_eq!(out.len(), rows * spec.n_out, "{name}");
+            assert!(out.iter().all(|v| v.is_finite()), "{name}");
+        }
     }
 
     #[test]
@@ -557,13 +590,23 @@ mod tests {
 
     #[test]
     fn the_running_statistics_have_their_own_small_cap() {
-        // The widest layout: the stem and every stage with a batch norm at the widest width.
+        // The widest layout: the stem with a batch norm at the widest width, then inverted
+        // residuals of that width with batch norm, each with a projection shortcut. A
+        // projection needs a change of shape: each stage halves a sequence of 4096 cells,
+        // which leaves one cell after the last stage.
         let wide = Stage {
+            stride: 2,
+            residual: true,
             norm: Norm::Batch,
-            ..testing::plain(MAX_CHANNELS, 1, CnnActivation::Relu)
+            ..testing::stage(
+                Block::InvertedResidual,
+                MAX_CHANNELS,
+                1,
+                CnnActivation::Relu6,
+            )
         };
         let cnn = CnnGenome {
-            dims: Dims::TwoD,
+            dims: Dims::OneD,
             stem: Stem {
                 width: MAX_CHANNELS,
                 kernel: 1,
@@ -576,10 +619,31 @@ mod tests {
             head: Head::GlobalAvgPool,
         };
         let genome = testing::genome(cnn, Vec::new(), Activation::Relu);
-        let plan = genome.cnn_plan(&TaskKind::Shapes.spec()).expect("plan");
+        let length = 1 << MAX_STAGES;
+        let spec = TaskSpec {
+            n_in: 4 * length,
+            input: crate::task::InputShape::Sequence {
+                channels: 4,
+                length,
+            },
+            ..TaskKind::Motif1d.spec()
+        };
+        let plan = genome.cnn_plan(&spec).expect("plan");
         let running: usize = net::batch_norm_channels(&plan).iter().map(|c| 2 * c).sum();
+        let projections = plan
+            .steps
+            .windows(2)
+            .filter(|pair| pair[0].layer == crate::cnn::shape::Layer::Branch)
+            .filter(|pair| matches!(pair[1].layer, crate::cnn::shape::Layer::Conv { .. }))
+            .count();
 
+        assert_eq!(projections, MAX_STAGES);
+        assert_eq!(
+            plan.steps.last().map(|s| s.output.size.clone()),
+            Some(vec![])
+        );
         assert_eq!(running, MAX_RUNNING_VALUES);
+        assert_eq!(MAX_RUNNING_VALUES, 86_528);
 
         // The reader takes that many values, and stops at one more.
         assert!(

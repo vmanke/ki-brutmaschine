@@ -5,7 +5,7 @@
 //! layers of the plan in its order, so that the counts here are those of the trained
 //! network.
 //!
-//! The stem and every plain stage build, in this order:
+//! The stem and every plain stage without options build, in this order:
 //!
 //! 1. A convolution from the channels before to `width` channels. Zero padding of
 //!    `dilation * (kernel - 1) / 2` cells on each side keeps the size at stride 1. The
@@ -17,18 +17,49 @@
 //! 4. With a stride above 1 and `down` max or average pooling: a pooling window of `stride`
 //!    cells per axis, which moves by `stride`. Cells behind the last window are dropped.
 //!
-//! A 1-D genome runs its kernels and windows along the sequence only (1 x k), a 2-D genome
-//! over both axes of the image (k x k). The head pools or flattens. Then come the dense
-//! layers of `Genome::hidden`, each followed by `Genome::activation`, and a dense output
-//! layer of `n_out` units without activation.
+//! Blocks. A stage of another block kind replaces step 1 by the convolutions of its block.
+//! Below, `c` is the channels before the stage, `w` its width and `s` the stride of its
+//! k x k convolution: `stride` with `Downsample::Conv`, else 1. Every convolution is
+//! followed by the normalization as in step 2, and "act" is the stage's activation. The
+//! stride, the dilation and the padding of step 1 apply to the k x k convolution; a 1x1
+//! convolution has neither. Groups apply where the table names them.
+//!
+//! | Block | Convolutions |
+//! |---|---|
+//! | `Plain` | k x k, c to w, groups |
+//! | `Basic` | k x k, c to w, groups; act; k x k at stride 1, w to w, groups |
+//! | `Bottleneck` | 1x1, c to m; act; k x k, m to m, groups; act; 1x1, m to w |
+//! | `Separable` | depthwise k x k, c to c; act; 1x1, c to w, groups |
+//! | `InvertedResidual` | 1x1, c to e, groups; act; depthwise k x k, e to e; act; 1x1, e to w, groups |
+//!
+//! Here m = w / `BOTTLENECK_RATIO`, e = `EXPANSION` * c, and a depthwise convolution has
+//! one group per channel. Then come, in this order:
+//!
+//! 5. With `Stage::se`: squeeze-and-excitation of the w channels (`Layer::SqueezeExcite`).
+//! 6. With `Stage::residual`: the skip connection. A `Layer::Fork` before the first
+//!    convolution keeps the stage's input. After step 5, `Layer::Branch` starts the
+//!    shortcut from that input, and `Layer::Add` sums the block and the shortcut. The
+//!    shortcut is the input itself when the block keeps the channels and the size.
+//!    Otherwise it is a 1x1 convolution from c to w that moves by s, with the
+//!    normalization (ResNet's projection shortcut).
+//! 7. The activation, as in step 3. An inverted residual has none: its output stays
+//!    linear, as in MobileNetV2.
+//! 8. The pooling of step 4.
+//!
+//! A plain stage with options follows the same rule, so its activation comes after the
+//! join. A 1-D genome runs its kernels and windows along the sequence only (1 x k), a 2-D
+//! genome over both axes of the image (k x k). The head pools or flattens. Then come the
+//! dense layers of `Genome::hidden`, each followed by `Genome::activation`, and a dense
+//! output layer of `n_out` units without activation.
 //!
 //! Counting. Every trainable value costs 2 FLOPs, one multiply-add, each time the forward
 //! pass uses it. A convolution and a normalization use each of their values once per
-//! output position, a dense layer once per sample. Activations, pooling, the statistics of
-//! a normalization, sums and concatenations cost nothing, as the activations cost nothing
-//! in the MLP rule. Training costs 3 times the forward pass, since the backward pass costs
-//! twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per parameter
-//! and sample.
+//! output position, a dense layer and a squeeze-and-excitation once per sample.
+//! Activations, pooling, the statistics of a normalization, the scaling by the gate of a
+//! squeeze-and-excitation, sums and concatenations cost nothing, as the activations cost
+//! nothing in the MLP rule. Training costs 3 times the forward pass, since the backward
+//! pass costs twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per
+//! parameter and sample.
 //!
 //! Time. A FLOP of a CNN takes longer than a FLOP of an MLP, and how much longer depends on
 //! the layout: candle copies the kernel cells of every output position before it
@@ -47,13 +78,23 @@
 //! `max_train_flops` divided by `TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the default limits,
 //! and `brut-eval` holds the estimated time of scoring to `MAX_EVAL_SECONDS`. Another or a
 //! busier machine can be slower than the model; then the clock can still stop a candidate.
+//!
+//! The blocks and options of ticket 03 use the same prices. A fork and a branch only hand
+//! on a tensor, so they count nothing. A sum counts its values and one call. A
+//! squeeze-and-excitation counts its scaled output, its small vectors (3 values per
+//! channel, 2 per hidden unit) and `SQUEEZE_EXCITE_CALLS` calls; its dense layers count as
+//! FLOPs. The slowest valid CNN of each of 12 layouts of these blocks trained in 0.29 to
+//! 0.64 of its estimate and scored in 0.19 to 0.34, at one thread, on a machine where the
+//! seven slow layouts of ticket 02 trained in 0.36 to 0.66 of theirs (ticket 03,
+//! `slow_valid_block_cnns_train_within_the_time_budget`).
 
 use crate::cnn::genome::{
-    CnnActivation, CnnGenome, ConvGenes, Dims, Downsample, GROUP_NORM_GROUPS, Head, MAX_CHANNELS,
-    MAX_DILATION, MAX_KERNEL, MAX_STAGES, MAX_STRIDE, Norm,
+    BOTTLENECK_RATIO, Block, CONVNEXT_EXPANSION, CnnActivation, CnnGenome, ConvGenes, Dims,
+    Downsample, EXPANSION, FIRE_SQUEEZE_RATIO, GROUP_NORM_GROUPS, Head, INCEPTION_BRANCHES,
+    MAX_CHANNELS, MAX_DILATION, MAX_KERNEL, MAX_STAGES, MAX_STRIDE, Norm, SE_REDUCTION,
 };
 use crate::genome::Activation;
-use crate::task::{InputShape, TaskSpec};
+use crate::task::{InputShape, OutputShape, TaskSpec};
 use crate::util::{BrutError, Result};
 
 /// The values of one sample between two layers: `channels` values at each position.
@@ -105,6 +146,41 @@ pub enum Layer {
         groups: usize,
         bias: bool,
     },
+    /// A causal convolution along a sequence (TCN), from `inputs` to `outputs` channels:
+    /// `dilation * (kernel - 1)` zero cells sit on the left only, so output t reads inputs
+    /// up to `t * stride`. Its output is as long as that of a `Conv` with the same stride.
+    CausalConv {
+        inputs: usize,
+        outputs: usize,
+        kernel: usize,
+        stride: usize,
+        dilation: usize,
+        groups: usize,
+        bias: bool,
+    },
+    /// A transposed convolution from `inputs` to `outputs` channels whose kernel side and
+    /// stride are both `factor`: each cell becomes a block of `factor` cells per axis, each
+    /// cell of the block with its own kernel values (U-Net's up-convolution).
+    ConvTranspose {
+        inputs: usize,
+        outputs: usize,
+        factor: usize,
+        bias: bool,
+    },
+    /// Nearest upsampling: each cell becomes a block of `factor` cells per axis.
+    Upsample {
+        factor: usize,
+    },
+    /// The channel shuffle of ShuffleNet with `groups` groups: channel `g * (c / groups) +
+    /// i` moves to `i * groups + g`. The output has the shape of the input.
+    Shuffle {
+        groups: usize,
+    },
+    /// Max pooling with a window of `window` cells per axis that moves by 1. `(window - 1)
+    /// / 2` cells on each side, which never win, keep the size (Inception).
+    MaxPoolSame {
+        window: usize,
+    },
     /// A normalization of `channels` channels, with a scale and a shift per channel.
     /// It is never `Norm::None`.
     Norm {
@@ -126,6 +202,27 @@ pub enum Layer {
         inputs: usize,
         outputs: usize,
     },
+    /// Squeeze-and-excitation (Hu, Shen and Sun 2018) of `channels` channels: the mean of
+    /// each channel over all positions, a dense layer to `hidden` units with ReLU, a dense
+    /// layer back to `channels` units with a sigmoid, and each channel scaled by its unit.
+    /// Both dense layers have a bias. The output has the shape of the input.
+    SqueezeExcite {
+        channels: usize,
+        hidden: usize,
+    },
+    /// The start of a skip connection: the values here feed every branch until the next
+    /// `Add`. The output is the input.
+    Fork,
+    /// The end of a branch: its output waits for `Add`, and the next branch starts from the
+    /// values of the last `Fork`. The output is the shape at that `Fork`.
+    Branch,
+    /// The end of the last branch: the sum of the outputs of the branches since the last
+    /// `Fork`. They all have the same shape, which is the output.
+    Add,
+    /// The end of the last branch: the outputs of the branches since the last `Fork`, in
+    /// their order, and then the values of the last branch, joined along the channels. They
+    /// all have the same size.
+    Concat,
 }
 
 /// One layer of a plan, with the shape after it and its costs.
@@ -176,10 +273,19 @@ impl Plan {
             let values = (step.output.channels as u64).saturating_mul(out);
             let axes = before.size.len() as u32;
 
-            counts.values = counts.values.saturating_add(values);
+            // A fork and a branch only hand on a tensor that exists already.
+            if !matches!(step.layer, Layer::Fork | Layer::Branch) {
+                counts.values = counts.values.saturating_add(values);
+            }
 
             match step.layer {
                 Layer::Conv {
+                    inputs,
+                    kernel,
+                    groups,
+                    ..
+                }
+                | Layer::CausalConv {
                     inputs,
                     kernel,
                     groups,
@@ -201,7 +307,22 @@ impl Plan {
                             .saturating_add(inputs.saturating_mul(groups as u64));
                     }
                 }
-                Layer::Pool { window, .. } => {
+                // As the convolution that its backward pass runs: from `outputs` channels
+                // at the output positions back to the input positions.
+                Layer::ConvTranspose {
+                    outputs, factor, ..
+                } => {
+                    let cells = (factor as u64).saturating_pow(axes);
+                    let inputs = before.positions() as u64;
+                    let taps = cells.saturating_mul(outputs as u64).saturating_mul(inputs);
+
+                    counts.taps = counts.taps.saturating_add(taps);
+                    counts.tiles = counts
+                        .tiles
+                        .saturating_add(inputs.div_ceil(TILE_POSITIONS));
+                    counts.calls = counts.calls.saturating_add(1);
+                }
+                Layer::Pool { window, .. } | Layer::MaxPoolSame { window } => {
                     let cells = (window as u64).saturating_pow(axes);
 
                     counts.pool_taps = counts
@@ -209,11 +330,24 @@ impl Plan {
                         .saturating_add(cells.saturating_mul(values));
                     counts.calls = counts.calls.saturating_add(1);
                 }
+                Layer::SqueezeExcite { channels, hidden } => {
+                    // Besides the scaled output: the means, the two dense layers, the ReLU
+                    // and the gate, each a call of its own.
+                    let small = 3 * channels as u64 + 2 * hidden as u64;
+
+                    counts.values = counts.values.saturating_add(small);
+                    counts.calls = counts.calls.saturating_add(SQUEEZE_EXCITE_CALLS);
+                }
+                Layer::Fork | Layer::Branch => {}
                 Layer::Norm { .. }
                 | Layer::Activation(_)
                 | Layer::GlobalAvgPool
                 | Layer::Flatten
-                | Layer::Dense { .. } => counts.calls = counts.calls.saturating_add(1),
+                | Layer::Dense { .. }
+                | Layer::Add
+                | Layer::Concat
+                | Layer::Upsample { .. }
+                | Layer::Shuffle { .. } => counts.calls = counts.calls.saturating_add(1),
             }
 
             before = &step.output;
@@ -281,6 +415,10 @@ pub struct Counts {
 /// Output positions per matrix product of candle's convolution (its `TILE_SIZE`).
 const TILE_POSITIONS: u64 = 512;
 
+/// Calls into candle of one squeeze-and-excitation: the means, two dense layers, the ReLU,
+/// the sigmoid and the scaling.
+const SQUEEZE_EXCITE_CALLS: u64 = 6;
+
 /// Training nanoseconds per training FLOP of the plan.
 pub const TRAIN_NANOS_PER_FLOP: f64 = 0.05;
 
@@ -333,13 +471,21 @@ impl CnnGenome {
     /// - the task gives an image to a 2-D genome or a sequence to a 1-D genome, the size of
     ///   its input shape is `n_in`, and it has at least one output;
     /// - there are 1 to `MAX_STAGES` stages;
-    /// - every block kind, option and head is built;
     /// - widths lie in 1..=`MAX_CHANNELS`, kernels are odd and at most `MAX_KERNEL`, strides
     ///   lie in 1..=`MAX_STRIDE`, and dilations in 1..=`MAX_DILATION`;
-    /// - the groups divide the input channels and the width;
-    /// - a group norm's width is a multiple of `GROUP_NORM_GROUPS`;
+    /// - the width of a bottleneck, an Inception block, a Fire module and a ShuffleNet unit
+    ///   is a multiple of 4 (`BOTTLENECK_RATIO`, `INCEPTION_BRANCHES`, `FIRE_SQUEEZE_RATIO`);
+    /// - an Inception block's second kernel, its kernel plus 2, is at most `MAX_KERNEL`;
+    /// - a dense layer moves by 1 and keeps at most `MAX_CHANNELS` channels after its join;
+    /// - a TCN block runs along a sequence;
+    /// - a decoder has a stride of at least 2, an earlier stage whose map it joins, and
+    ///   upsamples to the size of that map;
+    /// - the groups divide the channels before and after each convolution they apply to;
+    /// - the width of each group norm is a multiple of `GROUP_NORM_GROUPS`;
     /// - the span of a kernel fits into its input along each axis;
     /// - a pooling window fits into its input along each axis, so no size becomes zero;
+    /// - the per-cell head has a task with a grid of outputs, and the last map has the size
+    ///   of that grid;
     /// - every dense layer has a width of at least 1;
     /// - the counts fit into `usize` and `u64`.
     ///
@@ -361,43 +507,34 @@ impl CnnGenome {
             ));
         }
 
+        let skips = skip_points(self);
         let mut builder = Builder {
             shape: input.clone(),
             steps: Vec::new(),
             params: 0,
             flops: 0,
+            forks: Vec::new(),
         };
 
-        builder.conv_unit("stem", &self.stem.conv_genes())?;
+        builder.unit("stem", Block::Plain, &self.stem.conv_genes(), false, false, skips[0])?;
 
         for (i, stage) in self.stages.iter().enumerate() {
-            let at = format!("stage {}", i + 1);
-
-            if !stage.block.is_built() {
-                return Err(invalid(
-                    &at,
-                    format!("block {} is not yet built", stage.block.name()),
-                ));
-            }
-
-            if stage.se {
-                return Err(invalid(
-                    &at,
-                    "squeeze-and-excitation is not yet built".into(),
-                ));
-            }
-
-            if stage.residual {
-                return Err(invalid(
-                    &at,
-                    "a residual connection is not yet built".into(),
-                ));
-            }
-
-            builder.conv_unit(&at, &stage.conv_genes())?;
+            builder.unit(
+                &format!("stage {}", i + 1),
+                stage.block,
+                &stage.conv_genes(),
+                stage.se,
+                stage.residual,
+                skips[i + 1],
+            )?;
         }
 
-        builder.head(self.head, hidden, activation, spec.n_out)?;
+        builder.head(self.head, hidden, activation, spec)?;
+
+        // Only a skip point that a decoder joins opens a fork, so none is left open.
+        if !builder.forks.is_empty() {
+            return Err(invalid("head", "a skip connection is not joined".into()));
+        }
 
         Ok(Plan {
             input,
@@ -406,6 +543,31 @@ impl CnnGenome {
             forward_flops: builder.flops,
         })
     }
+}
+
+/// For the stem and each stage: true when a decoder joins the map at its downsampling (see
+/// the module doc, "U-Net").
+///
+/// Every unit with a stride above 1, decoders aside, makes a skip point. Each decoder joins
+/// the latest skip point that no decoder has joined yet, as a closing bracket matches the
+/// latest open one. This reads the genes only; the shape check then tests the sizes.
+fn skip_points(cnn: &CnnGenome) -> Vec<bool> {
+    let units = std::iter::once((Block::Plain, cnn.stem.stride))
+        .chain(cnn.stages.iter().map(|stage| (stage.block, stage.stride)));
+    let mut joined = vec![false; cnn.stages.len() + 1];
+    let mut open = Vec::new();
+
+    for (unit, (block, stride)) in units.enumerate() {
+        if block == Block::Decoder {
+            if let Some(point) = open.pop() {
+                joined[point] = true;
+            }
+        } else if stride > 1 {
+            open.push(unit);
+        }
+    }
+
+    joined
 }
 
 /// An error of the shape check at a place of the genome ("stem", "stage 2", "head").
@@ -469,6 +631,9 @@ struct Builder {
     steps: Vec<Step>,
     params: usize,
     flops: u64,
+    /// The open forks, the innermost last: the shape at each fork, and the output shapes of
+    /// its finished branches.
+    forks: Vec<(Shape, Vec<Shape>)>,
 }
 
 impl Builder {
@@ -500,82 +665,141 @@ impl Builder {
         Ok(())
     }
 
-    /// The convolution, normalization, activation and pooling of the stem or a plain stage.
-    fn conv_unit(&mut self, at: &str, genes: &ConvGenes) -> Result<()> {
-        let ConvGenes {
-            width,
+    /// The layers of the stem or of a stage of kind `block` with these genes and options.
+    /// With `skip`, a decoder joins the map at the unit's downsampling (see the module doc).
+    fn unit(
+        &mut self,
+        at: &str,
+        block: Block,
+        genes: &ConvGenes,
+        se: bool,
+        residual: bool,
+        skip: bool,
+    ) -> Result<()> {
+        check_genes(at, genes)?;
+
+        // A decoder's block reads the channels of its join.
+        let channels = if block == Block::Decoder {
+            self.joined_channels(at, genes)?
+        } else {
+            self.shape.channels
+        };
+        let axes = self.shape.size.len();
+        let parts = block_parts(at, block, channels, axes, genes)?;
+
+        check_parts(at, channels, &parts, genes.norm)?;
+
+        if block == Block::Decoder {
+            self.upsample(at, genes)?;
+            self.branch(at)?;
+            self.concat(at, "the decoder's upsampled map")?;
+        }
+
+        let stride = conv_stride(block, genes);
+        let pooled = stride == 1 && genes.stride > 1 && block != Block::Decoder;
+
+        // A strided convolution shrinks the map at once, so its skip point is the input.
+        if skip && !pooled {
+            self.fork(at)?;
+        }
+
+        if block == Block::Dense {
+            self.fork(at)?;
+        }
+
+        if residual {
+            self.fork(at)?;
+        }
+
+        self.parts(at, &parts, genes)?;
+
+        if se {
+            self.squeeze_excite(at)?;
+        }
+
+        if residual {
+            self.shortcut(at, stride, genes.norm)?;
+        }
+
+        // The linear bottleneck of MobileNetV2, and ConvNeXt: no activation at the end.
+        if !matches!(block, Block::InvertedResidual | Block::ConvNext) {
+            self.activation(at, genes.activation)?;
+        }
+
+        if block == Block::Dense {
+            self.branch(at)?;
+            self.concat(at, "the dense layer")?;
+        }
+
+        if skip && pooled {
+            self.fork(at)?;
+        }
+
+        // A decoder's stride is its upsampling.
+        if block == Block::Decoder {
+            return Ok(());
+        }
+
+        self.pool(at, genes)
+    }
+
+    /// The layers of the parts of a block, in order (see `block_parts`).
+    fn parts(&mut self, at: &str, parts: &[Part], genes: &ConvGenes) -> Result<()> {
+        let convs = parts
+            .iter()
+            .filter(|part| matches!(part, Part::Conv(_)))
+            .count();
+        let mut i = 0;
+
+        for part in parts {
+            match *part {
+                Part::Conv(conv) => {
+                    let which = conv_name(convs, i);
+
+                    i += 1;
+                    self.conv(at, &which, &conv, genes.norm == Norm::None || !conv.norm)?;
+
+                    if conv.norm {
+                        self.norm(at, genes.norm, conv.outputs)?;
+                    }
+
+                    if conv.activation {
+                        self.activation(at, genes.activation)?;
+                    }
+                }
+                Part::Shuffle(groups) => {
+                    let output = self.shape.clone();
+
+                    self.push(at, Layer::Shuffle { groups }, output, 0, 0)?;
+                }
+                Part::MaxPoolSame(window) => {
+                    let output = self.shape.clone();
+
+                    self.push(at, Layer::MaxPoolSame { window }, output, 0, 0)?;
+                }
+                Part::Fork => self.fork(at)?,
+                Part::Branch => self.branch(at)?,
+                Part::Concat => self.concat(at, "a branch")?,
+            }
+        }
+
+        Ok(())
+    }
+
+    /// A convolution of the current values to `conv.outputs` channels, with zero padding
+    /// that keeps the size at stride 1, and a bias if `bias`. A causal convolution has all
+    /// its padding on the left.
+    fn conv(&mut self, at: &str, which: &str, conv: &Conv, bias: bool) -> Result<()> {
+        let Conv {
+            outputs,
             kernel,
             stride,
-            down,
             dilation,
             groups,
-            norm,
-            activation,
-        } = *genes;
+            causal,
+            ..
+        } = *conv;
         let inputs = self.shape.channels;
-
-        if width == 0 || width > MAX_CHANNELS {
-            return Err(invalid(
-                at,
-                format!("width {width} outside 1..={MAX_CHANNELS}"),
-            ));
-        }
-
-        if kernel == 0 || kernel > MAX_KERNEL {
-            return Err(invalid(
-                at,
-                format!("kernel {kernel} outside 1..={MAX_KERNEL}"),
-            ));
-        }
-
-        if kernel.is_multiple_of(2) {
-            return Err(invalid(
-                at,
-                format!("kernel {kernel} is even; only an odd kernel keeps the size at stride 1"),
-            ));
-        }
-
-        if stride == 0 || stride > MAX_STRIDE {
-            return Err(invalid(
-                at,
-                format!("stride {stride} outside 1..={MAX_STRIDE}"),
-            ));
-        }
-
-        if dilation == 0 || dilation > MAX_DILATION {
-            return Err(invalid(
-                at,
-                format!("dilation {dilation} outside 1..={MAX_DILATION}"),
-            ));
-        }
-
-        if groups == 0 {
-            return Err(invalid(
-                at,
-                "0 groups; a convolution needs at least one".into(),
-            ));
-        }
-
-        if !inputs.is_multiple_of(groups) {
-            return Err(invalid(
-                at,
-                format!("{groups} groups do not divide the {inputs} input channels"),
-            ));
-        }
-
-        if !width.is_multiple_of(groups) {
-            return Err(invalid(
-                at,
-                format!("{groups} groups do not divide the width {width}"),
-            ));
-        }
-
-        if norm == Norm::Group && !width.is_multiple_of(GROUP_NORM_GROUPS) {
-            return Err(invalid(
-                at,
-                format!("group norm needs a width divisible by {GROUP_NORM_GROUPS}, not {width}"),
-            ));
-        }
 
         // Kernel, dilation and stride are bounded above, so nothing here overflows.
         let span = dilation * (kernel - 1) + 1;
@@ -584,113 +808,322 @@ impl Builder {
             return Err(invalid(
                 at,
                 format!(
-                    "kernel {kernel} with dilation {dilation} spans {span} cells, \
+                    "{which}kernel {kernel} with dilation {dilation} spans {span} cells, \
                      larger than the input of {len}"
                 ),
             ));
         }
 
-        let conv_stride = if down == Downsample::Conv { stride } else { 1 };
         let size: Vec<usize> = self
             .shape
             .size
             .iter()
-            .map(|&len| (len - 1) / conv_stride + 1)
+            .map(|&len| (len - 1) / stride + 1)
             .collect();
         let taps = kernel.pow(size.len() as u32);
-        let bias = norm == Norm::None;
         let params = taps
             .checked_mul(inputs / groups)
-            .and_then(|p| p.checked_mul(width))
-            .and_then(|p| p.checked_add(if bias { width } else { 0 }))
+            .and_then(|p| p.checked_mul(outputs))
+            .and_then(|p| p.checked_add(if bias { outputs } else { 0 }))
             .ok_or_else(|| invalid(at, "the parameter count overflows".into()))?;
         let output = Shape {
-            channels: width,
+            channels: outputs,
             size,
         };
         let flops = flops_at(at, params, output.positions())?;
-
-        self.push(
-            at,
+        let layer = if causal {
+            Layer::CausalConv {
+                inputs,
+                outputs,
+                kernel,
+                stride,
+                dilation,
+                groups,
+                bias,
+            }
+        } else {
             Layer::Conv {
                 inputs,
-                outputs: width,
+                outputs,
                 kernel,
-                stride: conv_stride,
+                stride,
                 padding: (span - 1) / 2,
                 dilation,
                 groups,
                 bias,
-            },
-            output.clone(),
-            params,
-            flops,
-        )?;
+            }
+        };
 
-        if norm != Norm::None {
-            let params = 2 * width;
-            let flops = flops_at(at, params, output.positions())?;
+        self.push(at, layer, output, params, flops)
+    }
 
-            self.push(
-                at,
-                Layer::Norm {
-                    norm,
-                    channels: width,
-                },
-                output.clone(),
-                params,
-                flops,
-            )?;
+    /// The normalization of `channels` channels, unless it is `Norm::None`.
+    fn norm(&mut self, at: &str, norm: Norm, channels: usize) -> Result<()> {
+        if norm == Norm::None {
+            return Ok(());
         }
 
-        self.push(at, Layer::Activation(activation), output, 0, 0)?;
+        let params = 2 * channels;
+        let output = self.shape.clone();
+        let flops = flops_at(at, params, output.positions())?;
 
-        let pool = match down {
+        self.push(at, Layer::Norm { norm, channels }, output, params, flops)
+    }
+
+    /// The activation of the current values.
+    fn activation(&mut self, at: &str, activation: CnnActivation) -> Result<()> {
+        let output = self.shape.clone();
+
+        self.push(at, Layer::Activation(activation), output, 0, 0)
+    }
+
+    /// Squeeze-and-excitation of the current channels, with `SE_REDUCTION`.
+    fn squeeze_excite(&mut self, at: &str) -> Result<()> {
+        let channels = self.shape.channels;
+        let hidden = (channels / SE_REDUCTION).max(1);
+
+        // The channels are at most MAX_CHANNELS here, so nothing overflows.
+        let params = 2 * channels * hidden + hidden + channels;
+        let flops = flops_at(at, params, 1)?;
+        let output = self.shape.clone();
+
+        self.push(
+            at,
+            Layer::SqueezeExcite { channels, hidden },
+            output,
+            params,
+            flops,
+        )
+    }
+
+    /// Open a fork: the current values feed every branch until the join.
+    fn fork(&mut self, at: &str) -> Result<()> {
+        let shape = self.shape.clone();
+
+        self.forks.push((shape.clone(), Vec::new()));
+        self.push(at, Layer::Fork, shape, 0, 0)
+    }
+
+    /// End a branch of the innermost fork. The next branch starts from the values there.
+    fn branch(&mut self, at: &str) -> Result<()> {
+        let output = self.shape.clone();
+        let Some((input, outputs)) = self.forks.last_mut() else {
+            return Err(invalid(at, "a branch has no fork".into()));
+        };
+
+        outputs.push(output);
+
+        let input = input.clone();
+
+        self.push(at, Layer::Branch, input, 0, 0)
+    }
+
+    /// Join the branches of the innermost fork along the channels. `what` names the branch
+    /// that ended first, for the error when the sizes differ.
+    fn concat(&mut self, at: &str, what: &str) -> Result<()> {
+        let Some((_, outputs)) = self.forks.pop() else {
+            return Err(invalid(at, "a join has no fork".into()));
+        };
+        let mut channels = self.shape.channels;
+
+        for output in &outputs {
+            if output.size != self.shape.size {
+                return Err(invalid(
+                    at,
+                    format!(
+                        "{what} has {:?} cells, the map it joins {:?}",
+                        output.size, self.shape.size
+                    ),
+                ));
+            }
+
+            // At most a few times MAX_CHANNELS, so nothing overflows.
+            channels += output.channels;
+        }
+
+        let output = Shape {
+            channels,
+            size: self.shape.size.clone(),
+        };
+
+        self.push(at, Layer::Concat, output, 0, 0)
+    }
+
+    /// The shortcut of a skip connection from the values at the innermost fork, and the sum
+    /// with the block's output. A 1x1 convolution that moves by `stride`, with the
+    /// normalization, projects the input when the block changed its shape.
+    fn shortcut(&mut self, at: &str, stride: usize, norm: Norm) -> Result<()> {
+        let block = self.shape.clone();
+
+        self.branch(at)?;
+
+        if block != self.shape {
+            let projection = Conv {
+                outputs: block.channels,
+                kernel: 1,
+                stride,
+                dilation: 1,
+                groups: 1,
+                norm: true,
+                activation: false,
+                causal: false,
+            };
+
+            self.conv(at, "shortcut: ", &projection, norm == Norm::None)?;
+            self.norm(at, norm, block.channels)?;
+        }
+
+        // Both paths move by the same stride, so their sizes agree; this only guards it.
+        if self.shape != block {
+            return Err(invalid(
+                at,
+                format!("the shortcut gives {:?}, the block {:?}", self.shape, block),
+            ));
+        }
+
+        self.forks.pop();
+        self.push(at, Layer::Add, block, 0, 0)
+    }
+
+    /// The channels of a decoder after its join: those of its upsampling (its width after a
+    /// transposed convolution, else the current channels), then those of the map it joins.
+    fn joined_channels(&self, at: &str, genes: &ConvGenes) -> Result<usize> {
+        if genes.stride < 2 {
+            return Err(invalid(
+                at,
+                format!(
+                    "a decoder upsamples by its stride, so the stride must be at least 2, not {}",
+                    genes.stride
+                ),
+            ));
+        }
+
+        let Some((skip, _)) = self.forks.last() else {
+            return Err(invalid(
+                at,
+                "a decoder joins the map of an earlier stage that downsampled, and none is \
+                 left"
+                    .into(),
+            ));
+        };
+        let upsampled = if genes.down == Downsample::Conv {
+            genes.width
+        } else {
+            self.shape.channels
+        };
+
+        Ok(upsampled + skip.channels)
+    }
+
+    /// The upsampling of a decoder by its stride: a transposed convolution to its width with
+    /// the normalization, when `down` is `Downsample::Conv`; else nearest upsampling.
+    fn upsample(&mut self, at: &str, genes: &ConvGenes) -> Result<()> {
+        let factor = genes.stride;
+        let size = self
+            .shape
+            .size
+            .iter()
+            .map(|&len| len.checked_mul(factor))
+            .collect::<Option<Vec<usize>>>()
+            .ok_or_else(|| invalid(at, "the size overflows".into()))?;
+
+        if genes.down != Downsample::Conv {
+            let output = Shape {
+                channels: self.shape.channels,
+                size,
+            };
+
+            return self.push(at, Layer::Upsample { factor }, output, 0, 0);
+        }
+
+        let inputs = self.shape.channels;
+        let outputs = genes.width;
+        let bias = genes.norm == Norm::None;
+        let cells = factor.pow(size.len() as u32);
+        let weights = cells
+            .checked_mul(inputs)
+            .and_then(|w| w.checked_mul(outputs))
+            .ok_or_else(|| invalid(at, "the parameter count overflows".into()))?;
+        let output = Shape {
+            channels: outputs,
+            size,
+        };
+        let biases = if bias { outputs } else { 0 };
+
+        // Each kernel value is used once per input position, each bias once per output
+        // position.
+        let flops = flops_at(at, weights, self.shape.positions())?
+            .checked_add(flops_at(at, biases, output.positions())?)
+            .ok_or_else(|| invalid(at, "the FLOP count overflows".into()))?;
+
+        self.push(
+            at,
+            Layer::ConvTranspose {
+                inputs,
+                outputs,
+                factor,
+                bias,
+            },
+            output,
+            weights + biases,
+            flops,
+        )?;
+        self.norm(at, genes.norm, outputs)
+    }
+
+    /// With a stride above 1 and a pooling `down`: a pooling window of `stride` cells per
+    /// axis, which moves by `stride`.
+    fn pool(&mut self, at: &str, genes: &ConvGenes) -> Result<()> {
+        let stride = genes.stride;
+        let pool = match genes.down {
             Downsample::Conv => None,
             Downsample::MaxPool => Some(Pool::Max),
             Downsample::AvgPool => Some(Pool::Avg),
         };
 
-        if let Some(pool) = pool
-            && stride > 1
-        {
-            if let Some(&len) = self.shape.size.iter().find(|&&len| len < stride) {
-                return Err(invalid(
-                    at,
-                    format!(
-                        "stride {stride} makes the size zero: a pooling window of {stride} \
-                         does not fit into {len} cells"
-                    ),
-                ));
-            }
+        let Some(pool) = pool else {
+            return Ok(());
+        };
 
-            let output = Shape {
-                channels: width,
-                size: self.shape.size.iter().map(|&len| len / stride).collect(),
-            };
-
-            self.push(
-                at,
-                Layer::Pool {
-                    pool,
-                    window: stride,
-                },
-                output,
-                0,
-                0,
-            )?;
+        if stride == 1 {
+            return Ok(());
         }
 
-        Ok(())
+        if let Some(&len) = self.shape.size.iter().find(|&&len| len < stride) {
+            return Err(invalid(
+                at,
+                format!(
+                    "stride {stride} makes the size zero: a pooling window of {stride} \
+                     does not fit into {len} cells"
+                ),
+            ));
+        }
+
+        let output = Shape {
+            channels: self.shape.channels,
+            size: self.shape.size.iter().map(|&len| len / stride).collect(),
+        };
+
+        self.push(
+            at,
+            Layer::Pool {
+                pool,
+                window: stride,
+            },
+            output,
+            0,
+            0,
+        )
     }
 
-    /// The head: pooling or flattening, the dense layers of `hidden`, and the output layer.
+    /// The head: pooling or flattening, the dense layers of `hidden`, and the output layer;
+    /// or the per-cell head of a grid-to-grid task.
     fn head(
         &mut self,
         head: Head,
         hidden: &[usize],
         activation: Activation,
-        n_out: usize,
+        spec: &TaskSpec,
     ) -> Result<()> {
         let at = "head";
         let features = match head {
@@ -701,23 +1134,8 @@ impl Builder {
 
                 features
             }
-            Head::Flatten => {
-                let features = self
-                    .shape
-                    .channels
-                    .checked_mul(self.shape.positions())
-                    .ok_or_else(|| invalid(at, "the feature count overflows".into()))?;
-
-                self.push(at, Layer::Flatten, Shape::vector(features), 0, 0)?;
-
-                features
-            }
-            Head::PerCell => {
-                return Err(invalid(
-                    at,
-                    "the per-cell head (U-Net) is not yet built".into(),
-                ));
-            }
+            Head::Flatten => self.flatten(at)?,
+            Head::PerCell => return self.per_cell(hidden, activation, spec),
         };
         let mut inputs = features;
 
@@ -737,7 +1155,88 @@ impl Builder {
             inputs = outputs;
         }
 
-        self.dense(at, inputs, n_out)
+        self.dense(at, inputs, spec.n_out)
+    }
+
+    /// Every value of every channel at every position as one vector; returns its length.
+    fn flatten(&mut self, at: &str) -> Result<usize> {
+        let features = self
+            .shape
+            .channels
+            .checked_mul(self.shape.positions())
+            .ok_or_else(|| invalid(at, "the feature count overflows".into()))?;
+
+        self.push(at, Layer::Flatten, Shape::vector(features), 0, 0)?;
+
+        Ok(features)
+    }
+
+    /// The per-cell head of U-Net for a task with a grid of outputs: the dense layers of
+    /// `hidden`, each followed by `activation`, and the output layer, all as 1x1
+    /// convolutions with a bias, so every cell gets the same small network. Then all
+    /// outputs of the sample as one vector, channel by channel.
+    fn per_cell(&mut self, hidden: &[usize], activation: Activation, spec: &TaskSpec) -> Result<()> {
+        let at = "head";
+        let task = spec.kind.name();
+        let OutputShape::Grid {
+            channels,
+            height,
+            width,
+        } = spec.output
+        else {
+            return Err(invalid(
+                at,
+                format!(
+                    "the per-cell head needs a task with a grid of outputs, and task {task} \
+                     gives a vector of {}",
+                    spec.n_out
+                ),
+            ));
+        };
+
+        if !spec.output_fits() {
+            return Err(invalid(
+                "task",
+                format!(
+                    "the output shape {:?} of task {task} does not hold its {} outputs",
+                    spec.output, spec.n_out
+                ),
+            ));
+        }
+
+        if self.shape.size != [height, width] {
+            return Err(invalid(
+                at,
+                format!(
+                    "the per-cell head needs the last map at the {height}x{width} cells of \
+                     the output grid, not at {:?}",
+                    self.shape.size
+                ),
+            ));
+        }
+
+        let cell = |outputs| Conv {
+            outputs,
+            kernel: 1,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+            norm: false,
+            activation: false,
+            causal: false,
+        };
+
+        for (i, &outputs) in hidden.iter().enumerate() {
+            if outputs == 0 {
+                return Err(invalid(at, format!("dense layer {} has width 0", i + 1)));
+            }
+
+            self.conv(at, "", &cell(outputs), true)?;
+            self.activation(at, activation.into())?;
+        }
+
+        self.conv(at, "", &cell(channels), true)?;
+        self.flatten(at).map(|_| ())
     }
 
     /// A dense layer with a bias.
@@ -756,6 +1255,385 @@ impl Builder {
             flops,
         )
     }
+}
+
+/// One convolution of a block, as the table of the module doc lists it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Conv {
+    outputs: usize,
+    kernel: usize,
+    stride: usize,
+    dilation: usize,
+    groups: usize,
+    /// True when the normalization follows it. A convolution without one has a bias.
+    norm: bool,
+    /// True when the stage's activation follows it right away, after its normalization.
+    /// The last convolution of a block has its activation after the options instead.
+    activation: bool,
+    /// True for a causal convolution along a sequence (TCN).
+    causal: bool,
+}
+
+/// One part of a block, in the order of the forward pass (see `block_parts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Part {
+    Conv(Conv),
+    /// The channel shuffle of ShuffleNet with this many groups.
+    Shuffle(usize),
+    /// Max pooling with a window of this many cells that keeps the size.
+    MaxPoolSame(usize),
+    /// The start of parallel branches: the values here feed each of them.
+    Fork,
+    /// The end of one branch.
+    Branch,
+    /// The end of the last branch, and the join of all of them along the channels.
+    Concat,
+}
+
+/// The stride of the k x k convolutions of a unit: `stride` when the convolution
+/// downsamples, else 1. A decoder's stride upsamples, so its convolution moves by 1.
+fn conv_stride(block: Block, genes: &ConvGenes) -> usize {
+    if genes.down == Downsample::Conv && block != Block::Decoder {
+        genes.stride
+    } else {
+        1
+    }
+}
+
+/// Every gene of a unit in its range: width, kernel, stride, dilation and groups.
+fn check_genes(at: &str, genes: &ConvGenes) -> Result<()> {
+    let ConvGenes {
+        width,
+        kernel,
+        stride,
+        dilation,
+        groups,
+        ..
+    } = *genes;
+
+    if width == 0 || width > MAX_CHANNELS {
+        return Err(invalid(
+            at,
+            format!("width {width} outside 1..={MAX_CHANNELS}"),
+        ));
+    }
+
+    if kernel == 0 || kernel > MAX_KERNEL {
+        return Err(invalid(
+            at,
+            format!("kernel {kernel} outside 1..={MAX_KERNEL}"),
+        ));
+    }
+
+    if kernel.is_multiple_of(2) {
+        return Err(invalid(
+            at,
+            format!("kernel {kernel} is even; only an odd kernel keeps the size at stride 1"),
+        ));
+    }
+
+    if stride == 0 || stride > MAX_STRIDE {
+        return Err(invalid(
+            at,
+            format!("stride {stride} outside 1..={MAX_STRIDE}"),
+        ));
+    }
+
+    if dilation == 0 || dilation > MAX_DILATION {
+        return Err(invalid(
+            at,
+            format!("dilation {dilation} outside 1..={MAX_DILATION}"),
+        ));
+    }
+
+    if groups == 0 {
+        return Err(invalid(
+            at,
+            "0 groups; a convolution needs at least one".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// The parts of a block of kind `block` on `inputs` channels with `axes` spatial axes, in
+/// order (see the table of the module doc), after the rules of that kind.
+fn block_parts(
+    at: &str,
+    block: Block,
+    inputs: usize,
+    axes: usize,
+    genes: &ConvGenes,
+) -> Result<Vec<Part>> {
+    let ConvGenes {
+        width,
+        kernel,
+        dilation,
+        groups,
+        ..
+    } = *genes;
+    let stride = conv_stride(block, genes);
+    let conv = |outputs, kernel, stride, dilation, groups, activation| {
+        Part::Conv(Conv {
+            outputs,
+            kernel,
+            stride,
+            dilation,
+            groups,
+            norm: true,
+            activation,
+            causal: false,
+        })
+    };
+    let divides = |ratio: usize, what: &str| {
+        if width.is_multiple_of(ratio) {
+            Ok(width / ratio)
+        } else {
+            Err(invalid(
+                at,
+                format!("{what} needs a width divisible by {ratio}, not {width}"),
+            ))
+        }
+    };
+
+    let parts = match block {
+        Block::Plain => vec![conv(width, kernel, stride, dilation, groups, false)],
+        Block::Basic => vec![
+            conv(width, kernel, stride, dilation, groups, true),
+            conv(width, kernel, 1, dilation, groups, false),
+        ],
+        Block::Bottleneck => {
+            let inner = divides(BOTTLENECK_RATIO, "a bottleneck")?;
+
+            vec![
+                conv(inner, 1, 1, 1, 1, true),
+                conv(inner, kernel, stride, dilation, groups, true),
+                conv(width, 1, 1, 1, 1, false),
+            ]
+        }
+        Block::Separable => vec![
+            conv(inputs, kernel, stride, dilation, inputs, true),
+            conv(width, 1, 1, 1, groups, false),
+        ],
+        Block::InvertedResidual => {
+            // The inputs come from the stem or a stage, so they are at most MAX_CHANNELS.
+            let expanded = EXPANSION * inputs;
+
+            vec![
+                conv(expanded, 1, 1, 1, groups, true),
+                conv(expanded, kernel, stride, dilation, expanded, true),
+                conv(width, 1, 1, 1, groups, false),
+            ]
+        }
+        Block::Dense => {
+            if stride > 1 {
+                return Err(invalid(
+                    at,
+                    "a dense layer joins its input, so it keeps the size and downsamples by \
+                     pooling only"
+                        .into(),
+                ));
+            }
+
+            if inputs + width > MAX_CHANNELS {
+                return Err(invalid(
+                    at,
+                    format!(
+                        "a dense layer adds its width {width} to its {inputs} input channels: \
+                         {} > max {MAX_CHANNELS}",
+                        inputs + width
+                    ),
+                ));
+            }
+
+            vec![conv(width, kernel, 1, dilation, groups, false)]
+        }
+        Block::Transition => vec![conv(width, 1, stride, 1, groups, false)],
+        Block::Inception => {
+            let branch = divides(INCEPTION_BRANCHES, "an inception block")?;
+
+            if kernel + 2 > MAX_KERNEL {
+                return Err(invalid(
+                    at,
+                    format!(
+                        "an inception block has a second kernel of {}, its kernel plus 2, \
+                         > max {MAX_KERNEL}",
+                        kernel + 2
+                    ),
+                ));
+            }
+
+            vec![
+                Part::Fork,
+                conv(branch, 1, stride, 1, 1, false),
+                Part::Branch,
+                conv(branch, 1, 1, 1, 1, true),
+                conv(branch, kernel, stride, dilation, groups, false),
+                Part::Branch,
+                conv(branch, 1, 1, 1, 1, true),
+                conv(branch, kernel + 2, stride, dilation, groups, false),
+                Part::Branch,
+                Part::MaxPoolSame(kernel),
+                conv(branch, 1, stride, 1, 1, false),
+                Part::Concat,
+            ]
+        }
+        Block::Fire => {
+            let squeeze = divides(FIRE_SQUEEZE_RATIO, "a fire module")?;
+            let half = width / 2;
+
+            vec![
+                conv(squeeze, 1, 1, 1, 1, true),
+                Part::Fork,
+                conv(half, 1, stride, 1, 1, false),
+                Part::Branch,
+                conv(half, kernel, stride, dilation, groups, false),
+                Part::Concat,
+            ]
+        }
+        Block::Shuffle => {
+            let inner = divides(BOTTLENECK_RATIO, "a shufflenet unit")?;
+            let mut parts = vec![conv(inner, 1, 1, 1, groups, true)];
+
+            if groups > 1 {
+                parts.push(Part::Shuffle(groups));
+            }
+
+            // ShuffleNet has no activation after its depthwise convolution.
+            parts.push(conv(inner, kernel, stride, dilation, inner, false));
+            parts.push(conv(width, 1, 1, 1, groups, false));
+
+            parts
+        }
+        Block::ConvNext => {
+            // The inputs come from the stem or a stage, so they are at most MAX_CHANNELS.
+            let expanded = CONVNEXT_EXPANSION * inputs;
+            let pointwise = |outputs, activation| {
+                Part::Conv(Conv {
+                    outputs,
+                    kernel: 1,
+                    stride: 1,
+                    dilation: 1,
+                    groups,
+                    norm: false,
+                    activation,
+                    causal: false,
+                })
+            };
+
+            vec![
+                conv(inputs, kernel, stride, dilation, inputs, false),
+                pointwise(expanded, true),
+                pointwise(width, false),
+            ]
+        }
+        Block::Tcn => {
+            if axes != 1 {
+                return Err(invalid(
+                    at,
+                    "a TCN block convolves causally along a sequence, so it needs a 1-D \
+                     genome"
+                        .into(),
+                ));
+            }
+
+            let causal = |stride, activation| {
+                Part::Conv(Conv {
+                    outputs: width,
+                    kernel,
+                    stride,
+                    dilation,
+                    groups,
+                    norm: true,
+                    activation,
+                    causal: true,
+                })
+            };
+
+            vec![causal(stride, true), causal(1, false)]
+        }
+        Block::Decoder => vec![conv(width, kernel, 1, dilation, groups, false)],
+    };
+
+    Ok(parts)
+}
+
+/// "convolution 2: " for the second of several convolutions; nothing for a single one.
+fn conv_name(convs: usize, i: usize) -> String {
+    if convs > 1 {
+        format!("convolution {}: ", i + 1)
+    } else {
+        String::new()
+    }
+}
+
+/// The groups of each convolution divide its channels before and after, and each group
+/// norm can split its width. The channels follow the branches of the parts.
+fn check_parts(at: &str, inputs: usize, parts: &[Part], norm: Norm) -> Result<()> {
+    let mut before = inputs;
+    let mut forks: Vec<(usize, usize)> = Vec::new();
+    let mut convs = Vec::new();
+
+    for part in parts {
+        match *part {
+            Part::Conv(conv) => {
+                convs.push((before, conv));
+                before = conv.outputs;
+            }
+            Part::Shuffle(_) | Part::MaxPoolSame(_) => {}
+            Part::Fork => forks.push((before, 0)),
+            Part::Branch => {
+                if let Some((input, ended)) = forks.last_mut() {
+                    *ended += before;
+                    before = *input;
+                }
+            }
+            Part::Concat => {
+                if let Some((_, ended)) = forks.pop() {
+                    before += ended;
+                }
+            }
+        }
+    }
+
+    for (i, (before, conv)) in convs.iter().enumerate() {
+        let which = conv_name(convs.len(), i);
+        let groups = conv.groups;
+
+        if !before.is_multiple_of(groups) {
+            return Err(invalid(
+                at,
+                format!("{which}{groups} groups do not divide the {before} input channels"),
+            ));
+        }
+
+        if !conv.outputs.is_multiple_of(groups) {
+            return Err(invalid(
+                at,
+                format!(
+                    "{which}{groups} groups do not divide the width {}",
+                    conv.outputs
+                ),
+            ));
+        }
+    }
+
+    if norm == Norm::Group {
+        for (i, (_, conv)) in convs.iter().enumerate() {
+            if conv.norm && !conv.outputs.is_multiple_of(GROUP_NORM_GROUPS) {
+                return Err(invalid(
+                    at,
+                    format!(
+                        "{}group norm needs a width divisible by {GROUP_NORM_GROUPS}, not {}",
+                        conv_name(convs.len(), i),
+                        conv.outputs
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Forward FLOPs of `params` values used at `positions` positions: 2 per use.
@@ -995,6 +1873,1197 @@ mod tests {
         assert_eq!(plan.steps[7].layer, Layer::Activation(CnnActivation::Relu6));
         assert_eq!(plan.steps[8].layer, Layer::GlobalAvgPool);
         assert_eq!(plan.steps[10].layer, Layer::Activation(CnnActivation::Gelu));
+    }
+
+    /// The genome of `testing::block_genomes` with this name.
+    fn block_genome(name: &str) -> Genome {
+        testing::block_genomes()
+            .into_iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, _, g)| g)
+            .unwrap_or_else(|| panic!("no block genome {name}"))
+    }
+
+    /// The steps of a plan from `first` on: each layer with its channels, size and
+    /// parameters.
+    fn steps_from(plan: &Plan, first: usize) -> Vec<(Layer, usize, Vec<usize>, usize)> {
+        plan.steps[first..]
+            .iter()
+            .map(|s| {
+                (
+                    s.layer.clone(),
+                    s.output.channels,
+                    s.output.size.clone(),
+                    s.params,
+                )
+            })
+            .collect()
+    }
+
+    /// A convolution layer without dilation.
+    fn conv(inputs: usize, outputs: usize, kernel: usize, stride: usize, groups: usize) -> Layer {
+        Layer::Conv {
+            inputs,
+            outputs,
+            kernel,
+            stride,
+            padding: (kernel - 1) / 2,
+            dilation: 1,
+            groups,
+            bias: false,
+        }
+    }
+
+    /// A batch norm of `channels` channels.
+    fn batch_norm(channels: usize) -> Layer {
+        Layer::Norm {
+            norm: Norm::Batch,
+            channels,
+        }
+    }
+
+    /// The common stem of `testing::block_genomes`: a 3x3 convolution from 1 to 8 channels
+    /// with batch norm (72 + 16 values), ReLU and max pooling to 8x8. Four steps.
+    const BLOCK_STEM: usize = 4;
+
+    #[test]
+    fn the_block_stem_counts_by_hand() {
+        let plan = valid_plan(&block_genome("plain, dilated"), TaskKind::Shapes);
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        assert_eq!(
+            plan.steps[..BLOCK_STEM]
+                .iter()
+                .map(|s| (
+                    s.layer.clone(),
+                    s.output.channels,
+                    s.output.size.clone(),
+                    s.params
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (conv(1, 8, 3, 1, 1), 8, vec![16, 16], 72),
+                (batch_norm(8), 8, vec![16, 16], 16),
+                (relu, 8, vec![16, 16], 0),
+                (
+                    Layer::Pool {
+                        pool: Pool::Max,
+                        window: 2,
+                    },
+                    8,
+                    vec![8, 8],
+                    0,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plain_stage_with_both_options_counts_by_hand() {
+        let plan = valid_plan(
+            &block_genome("plain with squeeze-and-excitation and an identity shortcut"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+        // Squeeze-and-excitation of 8 channels: 8 / 4 = 2 units, so 8 * 2 + 2 and 2 * 8 + 8.
+        let se = 8 * 2 + 2 + 2 * 8 + 8;
+
+        assert_eq!(se, 42);
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 8, 3, 1, 1), 8, vec![8, 8], 3 * 3 * 8 * 8),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (
+                    Layer::SqueezeExcite {
+                        channels: 8,
+                        hidden: 2,
+                    },
+                    8,
+                    vec![8, 8],
+                    se,
+                ),
+                // The block keeps the shape, so the shortcut is the input itself.
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (Layer::Add, 8, vec![8, 8], 0),
+                (relu, 8, vec![8, 8], 0),
+                (Layer::GlobalAvgPool, 8, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 8,
+                        outputs: 4,
+                    },
+                    4,
+                    vec![],
+                    36,
+                ),
+            ]
+        );
+        assert_eq!(plan.params, 88 + 576 + 16 + se + 36);
+
+        // The gate's dense layers use their values once per sample, the rest per position.
+        let forward = 2 * 88 * 256 + 2 * (576 + 16) * 64 + 2 * se + 2 * 36;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn dilated_plain_stages_count_by_hand() {
+        let plan = valid_plan(&block_genome("plain, dilated"), TaskKind::Shapes);
+        let relu = Layer::Activation(CnnActivation::Relu);
+        let dilated = |dilation: usize| Layer::Conv {
+            inputs: 8,
+            outputs: 8,
+            kernel: 3,
+            stride: 1,
+            padding: dilation,
+            dilation,
+            groups: 1,
+            bias: false,
+        };
+
+        // Dilation 2 spans 5 cells and dilation 3 spans 7, both within 8: the padding of
+        // (span - 1) / 2 keeps 8x8. Dilation does not change the parameters.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..6].to_vec(),
+            vec![
+                (dilated(2), 8, vec![8, 8], 576),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (relu.clone(), 8, vec![8, 8], 0),
+                (dilated(3), 8, vec![8, 8], 576),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (relu, 8, vec![8, 8], 0),
+            ]
+        );
+        assert_eq!(plan.params, 88 + 2 * (576 + 16) + 36);
+    }
+
+    #[test]
+    fn a_basic_block_with_a_strided_projection_counts_by_hand() {
+        let plan = valid_plan(
+            &block_genome("basic, strided, with a projection"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // The first 3x3 convolution moves by 2: (8 - 1) / 2 + 1 = 4. The shortcut is a 1x1
+        // convolution from 8 to 16 channels that moves by 2 as well, with its batch norm.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 16, 3, 2, 1), 16, vec![4, 4], 3 * 3 * 8 * 16),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (relu.clone(), 16, vec![4, 4], 0),
+                (conv(16, 16, 3, 1, 1), 16, vec![4, 4], 3 * 3 * 16 * 16),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 2, 1), 16, vec![4, 4], 8 * 16),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (Layer::Add, 16, vec![4, 4], 0),
+                (relu, 16, vec![4, 4], 0),
+                (Layer::GlobalAvgPool, 16, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 16,
+                        outputs: 4,
+                    },
+                    4,
+                    vec![],
+                    68,
+                ),
+            ]
+        );
+
+        let block = 1152 + 32 + 2304 + 32 + 128 + 32;
+
+        assert_eq!(block, 3680);
+        assert_eq!(plan.params, 88 + block + 68);
+
+        let forward = 2 * 88 * 256 + 2 * block * 16 + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn a_basic_block_without_norm_has_biases_also_in_its_projection() {
+        let plan = valid_plan(
+            &block_genome("basic without norm, with a projection that has a bias"),
+            TaskKind::Shapes,
+        );
+        let biased = |inputs: usize, outputs: usize, kernel: usize| Layer::Conv {
+            inputs,
+            outputs,
+            kernel,
+            stride: 1,
+            padding: (kernel - 1) / 2,
+            dilation: 1,
+            groups: 1,
+            bias: true,
+        };
+        let silu = Layer::Activation(CnnActivation::Silu);
+
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..8].to_vec(),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (biased(8, 12, 3), 12, vec![8, 8], 9 * 8 * 12 + 12),
+                (silu.clone(), 12, vec![8, 8], 0),
+                (biased(12, 12, 3), 12, vec![8, 8], 9 * 12 * 12 + 12),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (biased(8, 12, 1), 12, vec![8, 8], 8 * 12 + 12),
+                (Layer::Add, 12, vec![8, 8], 0),
+                (silu, 12, vec![8, 8], 0),
+            ]
+        );
+        assert_eq!(plan.params, 88 + 876 + 1308 + 108 + 52);
+    }
+
+    #[test]
+    fn a_bottleneck_counts_by_hand() {
+        let plan = valid_plan(
+            &block_genome("bottleneck with group norm, groups and a projection"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+        let group_norm = |channels| Layer::Norm {
+            norm: Norm::Group,
+            channels,
+        };
+
+        // Width 16, so 16 / 4 = 4 inner channels. The 3x3 convolution has 2 groups of 2
+        // channels. The projection maps the 8 input channels to 16 at stride 1.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..13].to_vec(),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 4, 1, 1, 1), 4, vec![8, 8], 8 * 4),
+                (group_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (conv(4, 4, 3, 1, 2), 4, vec![8, 8], 3 * 3 * 2 * 4),
+                (group_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (conv(4, 16, 1, 1, 1), 16, vec![8, 8], 4 * 16),
+                (group_norm(16), 16, vec![8, 8], 32),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 1, 1), 16, vec![8, 8], 8 * 16),
+                (group_norm(16), 16, vec![8, 8], 32),
+                (Layer::Add, 16, vec![8, 8], 0),
+            ]
+        );
+        assert_eq!(
+            plan.params,
+            88 + (32 + 8 + 72 + 8 + 64 + 32 + 128 + 32) + 68
+        );
+    }
+
+    #[test]
+    fn a_separable_block_counts_by_hand() {
+        let plan = valid_plan(
+            &block_genome(
+                "separable with layer norm, squeeze-and-excitation, a projection and pooling",
+            ),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+        let layer_norm = |channels| Layer::Norm {
+            norm: Norm::Layer,
+            channels,
+        };
+        let se = 16 * 4 + 4 + 4 * 16 + 16;
+
+        // The depthwise 3x3 convolution has one group per channel: 9 values each. The
+        // stage pools, so its convolutions and its projection keep 8x8, and the max pooling
+        // after the activation halves the size.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..13].to_vec(),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 8, 3, 1, 8), 8, vec![8, 8], 3 * 3 * 8),
+                (layer_norm(8), 8, vec![8, 8], 16),
+                (relu.clone(), 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 1, 1), 16, vec![8, 8], 8 * 16),
+                (layer_norm(16), 16, vec![8, 8], 32),
+                (
+                    Layer::SqueezeExcite {
+                        channels: 16,
+                        hidden: 4,
+                    },
+                    16,
+                    vec![8, 8],
+                    se,
+                ),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 1, 1), 16, vec![8, 8], 8 * 16),
+                (layer_norm(16), 16, vec![8, 8], 32),
+                (Layer::Add, 16, vec![8, 8], 0),
+                (relu, 16, vec![8, 8], 0),
+                (
+                    Layer::Pool {
+                        pool: Pool::Max,
+                        window: 2,
+                    },
+                    16,
+                    vec![4, 4],
+                    0,
+                ),
+            ]
+        );
+        assert_eq!(se, 148);
+        assert_eq!(plan.params, 88 + (72 + 16 + 128 + 32 + se + 128 + 32) + 68);
+    }
+
+    #[test]
+    fn inverted_residuals_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("inverted residuals, one with an identity shortcut, one strided"),
+            TaskKind::Shapes,
+        );
+        let relu6 = Layer::Activation(CnnActivation::Relu6);
+
+        // The stem pools by 4, to 4x4. 8 input channels expand to 6 * 8 = 48. The first
+        // block keeps the shape, so its shortcut is the input. Neither block ends with an
+        // activation: the projection stays linear. The second block's depthwise
+        // convolution moves by 2: (4 - 1) / 2 + 1 = 2.
+        assert_eq!(plan.steps[BLOCK_STEM - 1].output.size, vec![4, 4]);
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..19].to_vec(),
+            vec![
+                (Layer::Fork, 8, vec![4, 4], 0),
+                (conv(8, 48, 1, 1, 1), 48, vec![4, 4], 8 * 48),
+                (batch_norm(48), 48, vec![4, 4], 96),
+                (relu6.clone(), 48, vec![4, 4], 0),
+                (conv(48, 48, 3, 1, 48), 48, vec![4, 4], 3 * 3 * 48),
+                (batch_norm(48), 48, vec![4, 4], 96),
+                (relu6.clone(), 48, vec![4, 4], 0),
+                (conv(48, 8, 1, 1, 1), 8, vec![4, 4], 48 * 8),
+                (batch_norm(8), 8, vec![4, 4], 16),
+                (Layer::Branch, 8, vec![4, 4], 0),
+                (Layer::Add, 8, vec![4, 4], 0),
+                (conv(8, 48, 1, 1, 1), 48, vec![4, 4], 8 * 48),
+                (batch_norm(48), 48, vec![4, 4], 96),
+                (relu6.clone(), 48, vec![4, 4], 0),
+                (conv(48, 48, 3, 2, 48), 48, vec![2, 2], 3 * 3 * 48),
+                (batch_norm(48), 48, vec![2, 2], 96),
+                (relu6, 48, vec![2, 2], 0),
+                (conv(48, 16, 1, 1, 1), 16, vec![2, 2], 48 * 16),
+                (batch_norm(16), 16, vec![2, 2], 32),
+            ]
+        );
+        assert_eq!(plan.steps[BLOCK_STEM + 19].layer, Layer::GlobalAvgPool);
+
+        let first = 384 + 96 + 432 + 96 + 384 + 16;
+        let second = 384 + 96 + 432 + 96 + 768 + 32;
+
+        assert_eq!(plan.params, 88 + first + second + 68);
+
+        // The second block's expansion runs at 4x4, the rest of it at 2x2.
+        let forward = 2 * 88 * 256
+            + 2 * first * 16
+            + 2 * (384 + 96) * 16
+            + 2 * (432 + 96 + 768 + 32) * 4
+            + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn a_1d_genome_runs_its_blocks_along_the_sequence() {
+        let (_, task, g) = testing::block_genomes()
+            .into_iter()
+            .find(|(_, task, _)| *task == TaskKind::Motif1d)
+            .expect("a 1-D block genome");
+        let plan = valid_plan(&g, task);
+
+        // Stem: kernel 5 along 64 cells, 4 -> 8 channels with batch norm, pooled to 32.
+        // Basic: two kernels of 3 at dilation 2 on 8 channels, with squeeze-and-excitation
+        // and the input as shortcut. Separable: a depthwise kernel of 3 that moves by 2,
+        // then 8 -> 16, squeeze-and-excitation, and a projection that moves by 2.
+        let stem = 5 * 4 * 8 + 16;
+        let basic = 2 * (3 * 8 * 8 + 16) + (8 * 2 + 2 + 2 * 8 + 8);
+        let separable = 3 * 8 + 16 + 8 * 16 + 32 + (16 * 4 + 4 + 4 * 16 + 16) + 8 * 16 + 32;
+        let out = 16 * 2 + 2;
+
+        assert_eq!(plan.params, stem + basic + separable + out);
+        assert_eq!(
+            plan.steps.last().map(|s| s.output.clone()),
+            Some(Shape::vector(2))
+        );
+
+        let sizes: Vec<Vec<usize>> = plan.steps.iter().map(|s| s.output.size.clone()).collect();
+
+        assert!(sizes.contains(&vec![32]) && sizes.contains(&vec![16]));
+        assert!(sizes.iter().all(|size| size.len() <= 1));
+    }
+
+    /// A normalization of this kind of `channels` channels.
+    fn norm_of(norm: Norm, channels: usize) -> Layer {
+        Layer::Norm { norm, channels }
+    }
+
+    /// A 1x1 convolution with a bias, as the inverted MLP of ConvNeXt and the per-cell head
+    /// have them.
+    fn pointwise(inputs: usize, outputs: usize) -> Layer {
+        Layer::Conv {
+            inputs,
+            outputs,
+            kernel: 1,
+            stride: 1,
+            padding: 0,
+            dilation: 1,
+            groups: 1,
+            bias: true,
+        }
+    }
+
+    #[test]
+    fn dense_layers_and_a_transition_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("dense layers and a transition with group norm"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // Each dense layer adds 4 new channels to its input: 8, then 12, then 16. The new
+        // ones come first in the join. The transition maps 16 to 8 by a 1x1 convolution with
+        // group norm, then pools by 2.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 4, 3, 1, 1), 4, vec![8, 8], 3 * 3 * 8 * 4),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (Layer::Concat, 12, vec![8, 8], 0),
+                (Layer::Fork, 12, vec![8, 8], 0),
+                (
+                    Layer::Conv {
+                        inputs: 12,
+                        outputs: 4,
+                        kernel: 3,
+                        stride: 1,
+                        padding: 2,
+                        dilation: 2,
+                        groups: 1,
+                        bias: false,
+                    },
+                    4,
+                    vec![8, 8],
+                    3 * 3 * 12 * 4
+                ),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (Layer::Branch, 12, vec![8, 8], 0),
+                (Layer::Concat, 16, vec![8, 8], 0),
+                (conv(16, 8, 1, 1, 1), 8, vec![8, 8], 16 * 8),
+                (norm_of(Norm::Group, 8), 8, vec![8, 8], 16),
+                (relu, 8, vec![8, 8], 0),
+                (
+                    Layer::Pool {
+                        pool: Pool::Avg,
+                        window: 2,
+                    },
+                    8,
+                    vec![4, 4],
+                    0,
+                ),
+                (Layer::GlobalAvgPool, 8, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 8,
+                        outputs: 4,
+                    },
+                    4,
+                    vec![],
+                    36,
+                ),
+            ]
+        );
+
+        let (dense1, dense2, transition) = (288 + 8, 432 + 8, 128 + 16);
+
+        assert_eq!(plan.params, 88 + dense1 + dense2 + transition + 36);
+        assert_eq!(plan.params, 1004);
+
+        // All three run at 8x8; the join and the pooling cost nothing.
+        let forward = 2 * 88 * 256 + 2 * (dense1 + dense2 + transition) * 64 + 2 * 36;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn inception_blocks_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("inception blocks, one strided with groups and a projection"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+        let same = Layer::MaxPoolSame { window: 3 };
+
+        // Width 16, so four branches of 4 channels: a 1x1; a 1x1 reduction and a 3x3; a 1x1
+        // reduction and a 5x5; a 3x3 max pooling that keeps the size and a 1x1. Each branch
+        // ends with its norm; the ReLU follows the join.
+        let first = vec![
+            (Layer::Fork, 8, vec![8, 8], 0),
+            (conv(8, 4, 1, 1, 1), 4, vec![8, 8], 32),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (Layer::Branch, 8, vec![8, 8], 0),
+            (conv(8, 4, 1, 1, 1), 4, vec![8, 8], 32),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (relu.clone(), 4, vec![8, 8], 0),
+            (conv(4, 4, 3, 1, 1), 4, vec![8, 8], 3 * 3 * 4 * 4),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (Layer::Branch, 8, vec![8, 8], 0),
+            (conv(8, 4, 1, 1, 1), 4, vec![8, 8], 32),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (relu.clone(), 4, vec![8, 8], 0),
+            (conv(4, 4, 5, 1, 1), 4, vec![8, 8], 5 * 5 * 4 * 4),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (Layer::Branch, 8, vec![8, 8], 0),
+            (same.clone(), 8, vec![8, 8], 0),
+            (conv(8, 4, 1, 1, 1), 4, vec![8, 8], 32),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (Layer::Concat, 16, vec![8, 8], 0),
+            (relu.clone(), 16, vec![8, 8], 0),
+        ];
+
+        // The second moves by 2: the last convolution of every branch does, and the 3x3 and
+        // 5x5 have 2 groups of 2 channels. Its projection maps 16 to 16 channels at 4x4.
+        let second = vec![
+            (Layer::Fork, 16, vec![8, 8], 0),
+            (Layer::Fork, 16, vec![8, 8], 0),
+            (conv(16, 4, 1, 2, 1), 4, vec![4, 4], 64),
+            (batch_norm(4), 4, vec![4, 4], 8),
+            (Layer::Branch, 16, vec![8, 8], 0),
+            (conv(16, 4, 1, 1, 1), 4, vec![8, 8], 64),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (relu.clone(), 4, vec![8, 8], 0),
+            (conv(4, 4, 3, 2, 2), 4, vec![4, 4], 3 * 3 * 2 * 4),
+            (batch_norm(4), 4, vec![4, 4], 8),
+            (Layer::Branch, 16, vec![8, 8], 0),
+            (conv(16, 4, 1, 1, 1), 4, vec![8, 8], 64),
+            (batch_norm(4), 4, vec![8, 8], 8),
+            (relu.clone(), 4, vec![8, 8], 0),
+            (conv(4, 4, 5, 2, 2), 4, vec![4, 4], 5 * 5 * 2 * 4),
+            (batch_norm(4), 4, vec![4, 4], 8),
+            (Layer::Branch, 16, vec![8, 8], 0),
+            (same, 16, vec![8, 8], 0),
+            (conv(16, 4, 1, 2, 1), 4, vec![4, 4], 64),
+            (batch_norm(4), 4, vec![4, 4], 8),
+            (Layer::Concat, 16, vec![4, 4], 0),
+            (Layer::Branch, 16, vec![8, 8], 0),
+            (conv(16, 16, 1, 2, 1), 16, vec![4, 4], 256),
+            (batch_norm(16), 16, vec![4, 4], 32),
+            (Layer::Add, 16, vec![4, 4], 0),
+            (relu, 16, vec![4, 4], 0),
+        ];
+        let mut expected = first;
+
+        expected.extend(second);
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..expected.len()].to_vec(),
+            expected
+        );
+
+        let first = 40 + (40 + 152) + (40 + 408) + 40;
+        let second = 72 + (72 + 80) + (72 + 208) + 72 + 288;
+
+        assert_eq!((first, second), (720, 864));
+        assert_eq!(plan.params, 88 + first + second + 68);
+
+        // The reductions of the second block run at 8x8, the rest of it at 4x4.
+        let forward =
+            2 * 88 * 256 + 2 * first * 64 + 2 * 144 * 64 + 2 * (second - 144) * 16 + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn fire_modules_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("fire modules, one with squeeze-and-excitation and an identity shortcut"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // Width 16: a squeeze to 16 / 4 = 4 channels, then a 1x1 and a 3x3 expansion to 8
+        // each, joined to 16.
+        let fire = |inputs: usize| {
+            vec![
+                (conv(inputs, 4, 1, 1, 1), 4, vec![8, 8], inputs * 4),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (Layer::Fork, 4, vec![8, 8], 0),
+                (conv(4, 8, 1, 1, 1), 8, vec![8, 8], 32),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (Layer::Branch, 4, vec![8, 8], 0),
+                (conv(4, 8, 3, 1, 1), 8, vec![8, 8], 3 * 3 * 4 * 8),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (Layer::Concat, 16, vec![8, 8], 0),
+            ]
+        };
+        let se = 16 * 4 + 4 + 4 * 16 + 16;
+        let mut expected = fire(8);
+
+        expected.push((relu.clone(), 16, vec![8, 8], 0));
+        expected.push((Layer::Fork, 16, vec![8, 8], 0));
+        expected.extend(fire(16));
+        expected.extend([
+            (
+                Layer::SqueezeExcite {
+                    channels: 16,
+                    hidden: 4,
+                },
+                16,
+                vec![8, 8],
+                se,
+            ),
+            (Layer::Branch, 16, vec![8, 8], 0),
+            (Layer::Add, 16, vec![8, 8], 0),
+            (relu.clone(), 16, vec![8, 8], 0),
+        ]);
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM)[..expected.len()].to_vec(),
+            expected
+        );
+
+        let (first, second) = (32 + 8 + 48 + 304, 64 + 8 + 48 + 304 + se);
+
+        assert_eq!((first, second), (392, 572));
+        assert_eq!(plan.params, 88 + first + second + 68);
+
+        let forward = 2 * 88 * 256 + 2 * (first + second - se) * 64 + 2 * se + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn shufflenet_units_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("shufflenet units with 2 and 4 groups and projections"),
+            TaskKind::Shapes,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // Width 16, so 16 / 4 = 4 inner channels. A 1x1 group convolution, the shuffle, a
+        // depthwise 3x3 without activation, and a 1x1 group convolution to 16. The second
+        // unit moves by 2 in its depthwise convolution and in its projection.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 4, 1, 1, 2), 4, vec![8, 8], 4 * 4),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (Layer::Shuffle { groups: 2 }, 4, vec![8, 8], 0),
+                (conv(4, 4, 3, 1, 4), 4, vec![8, 8], 3 * 3 * 4),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (conv(4, 16, 1, 1, 2), 16, vec![8, 8], 2 * 16),
+                (batch_norm(16), 16, vec![8, 8], 32),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 1, 1), 16, vec![8, 8], 128),
+                (batch_norm(16), 16, vec![8, 8], 32),
+                (Layer::Add, 16, vec![8, 8], 0),
+                (relu.clone(), 16, vec![8, 8], 0),
+                (Layer::Fork, 16, vec![8, 8], 0),
+                (conv(16, 4, 1, 1, 4), 4, vec![8, 8], 4 * 4),
+                (batch_norm(4), 4, vec![8, 8], 8),
+                (relu.clone(), 4, vec![8, 8], 0),
+                (Layer::Shuffle { groups: 4 }, 4, vec![8, 8], 0),
+                (conv(4, 4, 3, 2, 4), 4, vec![4, 4], 3 * 3 * 4),
+                (batch_norm(4), 4, vec![4, 4], 8),
+                (conv(4, 16, 1, 1, 4), 16, vec![4, 4], 16),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (Layer::Branch, 16, vec![8, 8], 0),
+                (conv(16, 16, 1, 2, 1), 16, vec![4, 4], 256),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (Layer::Add, 16, vec![4, 4], 0),
+                (relu, 16, vec![4, 4], 0),
+                (Layer::GlobalAvgPool, 16, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 16,
+                        outputs: 4,
+                    },
+                    4,
+                    vec![],
+                    68,
+                ),
+            ]
+        );
+
+        let first = 16 + 8 + 36 + 8 + 32 + 32 + 128 + 32;
+        let second = 16 + 8 + 36 + 8 + 16 + 32 + 256 + 32;
+
+        assert_eq!((first, second), (292, 404));
+        assert_eq!(plan.params, 88 + first + second + 68);
+
+        // The first 1x1 of the second unit runs at 8x8, the rest at 4x4.
+        let forward =
+            2 * 88 * 256 + 2 * first * 64 + 2 * 24 * 64 + 2 * (second - 24) * 16 + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn convnext_blocks_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("convnext blocks with layer norm and gelu, one strided"),
+            TaskKind::Shapes,
+        );
+        let gelu = Layer::Activation(CnnActivation::Gelu);
+        let layer_norm = |channels| norm_of(Norm::Layer, channels);
+
+        // A depthwise 7x7 with layer norm and no bias; an inverted MLP of 1x1 convolutions
+        // with biases, to 4 x 8 = 32 channels and back, GELU between them; no activation at
+        // the end. The second moves by 2 in its depthwise 3x3, and projects 8 to 16 channels.
+        assert_eq!(
+            steps_from(&plan, BLOCK_STEM),
+            vec![
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 8, 7, 1, 8), 8, vec![8, 8], 7 * 7 * 8),
+                (layer_norm(8), 8, vec![8, 8], 16),
+                (pointwise(8, 32), 32, vec![8, 8], 8 * 32 + 32),
+                (gelu.clone(), 32, vec![8, 8], 0),
+                (pointwise(32, 8), 8, vec![8, 8], 32 * 8 + 8),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (Layer::Add, 8, vec![8, 8], 0),
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 8, 3, 2, 8), 8, vec![4, 4], 3 * 3 * 8),
+                (layer_norm(8), 8, vec![4, 4], 16),
+                (pointwise(8, 32), 32, vec![4, 4], 288),
+                (gelu, 32, vec![4, 4], 0),
+                (pointwise(32, 16), 16, vec![4, 4], 32 * 16 + 16),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (conv(8, 16, 1, 2, 1), 16, vec![4, 4], 128),
+                (layer_norm(16), 16, vec![4, 4], 32),
+                (Layer::Add, 16, vec![4, 4], 0),
+                (Layer::GlobalAvgPool, 16, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 16,
+                        outputs: 4,
+                    },
+                    4,
+                    vec![],
+                    68,
+                ),
+            ]
+        );
+
+        let (first, second) = (392 + 16 + 288 + 264, 72 + 16 + 288 + 528 + 128 + 32);
+
+        assert_eq!((first, second), (960, 1064));
+        assert_eq!(plan.params, 88 + first + second + 68);
+
+        let forward = 2 * 88 * 256 + 2 * first * 64 + 2 * second * 16 + 2 * 68;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    /// A causal convolution without a bias.
+    fn causal(
+        inputs: usize,
+        outputs: usize,
+        stride: usize,
+        dilation: usize,
+    ) -> Layer {
+        Layer::CausalConv {
+            inputs,
+            outputs,
+            kernel: 3,
+            stride,
+            dilation,
+            groups: 1,
+            bias: false,
+        }
+    }
+
+    #[test]
+    fn tcn_blocks_count_by_hand() {
+        let plan = valid_plan(
+            &block_genome("tcn blocks with dilations 1, 2 and 4, the last strided"),
+            TaskKind::Motif1d,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // The stem keeps the 64 cells. Each block has two causal convolutions of 3 taps with
+        // its dilation; the first of the last block moves by 2, and so does its projection.
+        assert_eq!(
+            steps_from(&plan, 3),
+            vec![
+                (Layer::Fork, 8, vec![64], 0),
+                (causal(8, 8, 1, 1), 8, vec![64], 3 * 8 * 8),
+                (batch_norm(8), 8, vec![64], 16),
+                (relu.clone(), 8, vec![64], 0),
+                (causal(8, 8, 1, 1), 8, vec![64], 3 * 8 * 8),
+                (batch_norm(8), 8, vec![64], 16),
+                (Layer::Branch, 8, vec![64], 0),
+                (Layer::Add, 8, vec![64], 0),
+                (relu.clone(), 8, vec![64], 0),
+                (Layer::Fork, 8, vec![64], 0),
+                (causal(8, 16, 1, 2), 16, vec![64], 3 * 8 * 16),
+                (batch_norm(16), 16, vec![64], 32),
+                (relu.clone(), 16, vec![64], 0),
+                (causal(16, 16, 1, 2), 16, vec![64], 3 * 16 * 16),
+                (batch_norm(16), 16, vec![64], 32),
+                (Layer::Branch, 8, vec![64], 0),
+                (conv(8, 16, 1, 1, 1), 16, vec![64], 128),
+                (batch_norm(16), 16, vec![64], 32),
+                (Layer::Add, 16, vec![64], 0),
+                (relu.clone(), 16, vec![64], 0),
+                (Layer::Fork, 16, vec![64], 0),
+                (causal(16, 16, 2, 4), 16, vec![32], 768),
+                (batch_norm(16), 16, vec![32], 32),
+                (relu.clone(), 16, vec![32], 0),
+                (causal(16, 16, 1, 4), 16, vec![32], 768),
+                (batch_norm(16), 16, vec![32], 32),
+                (Layer::Branch, 16, vec![64], 0),
+                (conv(16, 16, 1, 2, 1), 16, vec![32], 256),
+                (batch_norm(16), 16, vec![32], 32),
+                (Layer::Add, 16, vec![32], 0),
+                (relu, 16, vec![32], 0),
+                (Layer::GlobalAvgPool, 16, vec![], 0),
+                (
+                    Layer::Dense {
+                        inputs: 16,
+                        outputs: 2,
+                    },
+                    2,
+                    vec![],
+                    34,
+                ),
+            ]
+        );
+
+        let stem = 5 * 4 * 8 + 16;
+        let blocks = [416, 384 + 32 + 768 + 32 + 128 + 32, 768 + 32 + 768 + 32 + 256 + 32];
+
+        assert_eq!(blocks, [416, 1376, 1888]);
+        assert_eq!(plan.params, stem + blocks.iter().sum::<usize>() + 34);
+
+        // The last block's first convolution and its projection already run at 32 cells.
+        let forward = 2 * stem * 64 + 2 * (416 + 1376) * 64 + 2 * 1888 * 32 + 2 * 34;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+    }
+
+    #[test]
+    fn a_u_net_counts_by_hand() {
+        let plan = valid_plan(
+            &block_genome(
+                "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+            ),
+            TaskKind::MirrorGrid,
+        );
+        let relu = Layer::Activation(CnnActivation::Relu);
+
+        // Stage 1 moves by 2 in its first convolution, so its skip point is its input: 8
+        // channels at 8x8. Stage 2 pools, so its skip point is its map before the pooling:
+        // 16 channels at 4x4. The first decoder upsamples 2x2 to 4x4 by a transposed
+        // convolution to 16 channels and joins the map of stage 2; the second upsamples to
+        // 8x8 by repeating cells and joins the map of stage 1. The per-cell head maps the 8
+        // channels of every cell to 1 value, and the grid becomes a vector of 64.
+        assert_eq!(
+            steps_from(&plan, 0),
+            vec![
+                (conv(1, 8, 3, 1, 1), 8, vec![8, 8], 72),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (relu.clone(), 8, vec![8, 8], 0),
+                (Layer::Fork, 8, vec![8, 8], 0),
+                (conv(8, 16, 3, 2, 1), 16, vec![4, 4], 1152),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (relu.clone(), 16, vec![4, 4], 0),
+                (conv(16, 16, 3, 1, 1), 16, vec![4, 4], 2304),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (relu.clone(), 16, vec![4, 4], 0),
+                (conv(16, 16, 3, 1, 1), 16, vec![4, 4], 2304),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (relu.clone(), 16, vec![4, 4], 0),
+                (Layer::Fork, 16, vec![4, 4], 0),
+                (
+                    Layer::Pool {
+                        pool: Pool::Max,
+                        window: 2,
+                    },
+                    16,
+                    vec![2, 2],
+                    0,
+                ),
+                (
+                    Layer::ConvTranspose {
+                        inputs: 16,
+                        outputs: 16,
+                        factor: 2,
+                        bias: false,
+                    },
+                    16,
+                    vec![4, 4],
+                    16 * 16 * 4,
+                ),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (Layer::Branch, 16, vec![4, 4], 0),
+                (Layer::Concat, 32, vec![4, 4], 0),
+                (conv(32, 16, 3, 1, 1), 16, vec![4, 4], 4608),
+                (batch_norm(16), 16, vec![4, 4], 32),
+                (relu.clone(), 16, vec![4, 4], 0),
+                (Layer::Upsample { factor: 2 }, 16, vec![8, 8], 0),
+                (Layer::Branch, 8, vec![8, 8], 0),
+                (Layer::Concat, 24, vec![8, 8], 0),
+                (Layer::Fork, 24, vec![8, 8], 0),
+                (conv(24, 8, 3, 1, 1), 8, vec![8, 8], 1728),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (Layer::Branch, 24, vec![8, 8], 0),
+                (conv(24, 8, 1, 1, 1), 8, vec![8, 8], 192),
+                (batch_norm(8), 8, vec![8, 8], 16),
+                (Layer::Add, 8, vec![8, 8], 0),
+                (relu, 8, vec![8, 8], 0),
+                (pointwise(8, 1), 1, vec![8, 8], 9),
+                (Layer::Flatten, 64, vec![], 0),
+            ]
+        );
+
+        let stages = [88, 3520, 2336, 5696, 1952];
+
+        assert_eq!(plan.params, stages.iter().sum::<usize>() + 9);
+        assert_eq!(plan.params, 13_601);
+
+        // The transposed convolution uses each kernel value once per input cell: 2x2.
+        let forward = 2 * 88 * 64
+            + 2 * (3520 + 2336) * 16
+            + 2 * 1024 * 4
+            + 2 * (32 + 4640) * 16
+            + 2 * 1952 * 64
+            + 2 * 9 * 64;
+
+        assert_eq!(plan.forward_flops, forward as u64);
+
+        // The time model counts the transposed convolution as the convolution that its
+        // backward pass runs: 2x2 cells of 16 channels at each of 2x2 input positions, one
+        // matrix product. The upsampling and the joins count their values and a call each.
+        let c = plan.counts();
+        let taps = 9 * 64
+            + 9 * 8 * 16
+            + 2 * 9 * 16 * 16
+            + 4 * 16 * 4
+            + 9 * 32 * 16
+            + 9 * 24 * 64
+            + 24 * 64
+            + 8 * 64;
+
+        assert_eq!(c.taps, taps as u64);
+        assert_eq!(c.tiles, 9);
+        assert_eq!(c.pool_taps, 4 * 16 * 4);
+        assert_eq!(plan.steps.len(), 35);
+
+        // 35 layers, of which 3 forks and 3 branches cost no call.
+        assert_eq!(c.calls, 35 - 6);
+    }
+
+    #[test]
+    fn a_1d_genome_runs_the_blocks_of_ticket_04_along_the_sequence() {
+        let plan = valid_plan(
+            &block_genome("1-D inception, shufflenet, dense, decoder and convnext blocks"),
+            TaskKind::Motif1d,
+        );
+
+        // Stem 176. Inception of width 8 at 32 cells: four branches of 2 channels, 120. A
+        // ShuffleNet unit with 2 groups that moves by 2: 46. A dense layer of 4 on 8
+        // channels: 104. A decoder with a transposed convolution from 12 to 8 channels,
+        // joined to the 8 channels of the shuffle unit's input: 608. A decoder by nearest
+        // upsampling, joined to the 8 channels of the stem before its pooling: 400. A
+        // ConvNeXt block of 8 channels with a depthwise kernel of 7: 624. Head 18.
+        let stages = [176, 120, 46, 104, 608, 400, 624];
+
+        assert_eq!(plan.params, stages.iter().sum::<usize>() + 18);
+        assert_eq!(plan.params, 2096);
+        assert!(plan.steps.iter().all(|s| s.output.size.len() <= 1));
+
+        let lengths = |f: &dyn Fn(&Layer) -> bool| -> Vec<Vec<usize>> {
+            plan.steps
+                .iter()
+                .filter(|s| f(&s.layer))
+                .map(|s| s.output.size.clone())
+                .collect()
+        };
+
+        assert_eq!(
+            lengths(&|l| matches!(l, Layer::MaxPoolSame { .. })),
+            vec![vec![32]]
+        );
+        assert_eq!(
+            lengths(&|l| matches!(l, Layer::Shuffle { .. })),
+            vec![vec![32]]
+        );
+        assert_eq!(
+            lengths(&|l| matches!(l, Layer::ConvTranspose { .. })),
+            vec![vec![32]]
+        );
+        assert_eq!(
+            lengths(&|l| matches!(l, Layer::Upsample { .. })),
+            vec![vec![64]]
+        );
+        assert_eq!(
+            lengths(&|l| *l == Layer::Concat),
+            vec![vec![32], vec![16], vec![32], vec![64]]
+        );
+    }
+
+    #[test]
+    fn rejects_a_bottleneck_width_the_ratio_does_not_divide() {
+        let mut g = testing::vgg();
+
+        cnn_mut(&mut g).stages[1].block = Block::Bottleneck;
+        cnn_mut(&mut g).stages[1].width = 10;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "stage 2: a bottleneck needs a width divisible by 4, not 10",
+        );
+
+        cnn_mut(&mut g).stages[1].width = 12;
+        assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_ok());
+    }
+
+    #[test]
+    fn rejects_groups_that_do_not_divide_a_convolution_of_a_block() {
+        // The second VGG stage maps 8 to 16 channels.
+        let cases = [
+            // The 3x3 convolution of a bottleneck of width 16 has 4 channels.
+            (
+                Block::Bottleneck,
+                3,
+                "convolution 2: 3 groups do not divide the 4 input channels",
+            ),
+            (
+                Block::Basic,
+                3,
+                "convolution 1: 3 groups do not divide the 8 input channels",
+            ),
+            // Groups apply to the pointwise convolutions of these two blocks.
+            (
+                Block::Separable,
+                3,
+                "convolution 2: 3 groups do not divide the 8 input channels",
+            ),
+            (
+                Block::InvertedResidual,
+                5,
+                "convolution 1: 5 groups do not divide the 8 input channels",
+            ),
+        ];
+
+        for (block, groups, phrase) in cases {
+            let mut g = testing::vgg();
+
+            cnn_mut(&mut g).stages[1].block = block;
+            cnn_mut(&mut g).stages[1].groups = groups;
+            assert_rejected(&g, TaskKind::Shapes, phrase);
+        }
+
+        // Groups that divide both sides fit; the depthwise convolutions keep their own.
+        for block in [Block::Separable, Block::InvertedResidual, Block::Basic] {
+            let mut g = testing::vgg();
+
+            cnn_mut(&mut g).stages[1].block = block;
+            cnn_mut(&mut g).stages[1].groups = 4;
+            assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_ok(), "{block:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_group_norm_on_an_inner_width_it_cannot_split() {
+        // A bottleneck of width 8 has 2 inner channels.
+        let mut g = testing::vgg();
+
+        cnn_mut(&mut g).stages[1].block = Block::Bottleneck;
+        cnn_mut(&mut g).stages[1].width = 8;
+        cnn_mut(&mut g).stages[1].norm = Norm::Group;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "convolution 1: group norm needs a width divisible by 4, not 2",
+        );
+
+        // The depthwise convolution of a separable block keeps its 6 input channels.
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].block = Block::Separable;
+        cnn_mut(&mut g).stages[0].norm = Norm::Group;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "convolution 1: group norm needs a width divisible by 4, not 6",
+        );
+
+        // An inverted residual expands the 6 channels to 36, which 4 divides.
+        cnn_mut(&mut g).stages[0].block = Block::InvertedResidual;
+        assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_kernel_that_does_not_fit_inside_a_block() {
+        // The first convolution of a basic block moves by 4 on 8x8 and leaves 2x2, where
+        // the second 5x5 convolution does not fit.
+        let mut g = testing::vgg();
+
+        cnn_mut(&mut g).stages[1] = Stage {
+            stride: 4,
+            down: Downsample::Conv,
+            ..plain(16, 5, CnnActivation::Relu)
+        };
+        assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_err());
+
+        cnn_mut(&mut g).stages[1].kernel = 3;
+        cnn_mut(&mut g).stages.truncate(2);
+        assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_ok());
+
+        cnn_mut(&mut g).stages[1].block = Block::Basic;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "stage 2: convolution 2: kernel 3 with dilation 1 spans 3 cells, larger than the \
+             input of 2",
+        );
+    }
+
+    #[test]
+    fn the_time_model_counts_forks_sums_and_squeeze_and_excitation() {
+        let plan = valid_plan(
+            &block_genome("plain with squeeze-and-excitation and an identity shortcut"),
+            TaskKind::Shapes,
+        );
+
+        // Stem: 3x3 cells of 1 channel at 16x16; values 8 x 256 three times (convolution,
+        // norm, ReLU), then 8 x 64 after pooling. Stage: 3x3 cells of 8 channels at 8x8;
+        // the fork and the branch add no values, the convolution, the norm, the gate, the
+        // sum and the ReLU 8 x 64 each, and the gate also its small vectors: 3 x 8 + 2 x 2.
+        // Head: 8 means and 4 outputs.
+        assert_eq!(
+            plan.counts(),
+            Counts {
+                taps: 9 * 256 + 9 * 8 * 64,
+                values: 3 * 8 * 256 + 8 * 64 + 5 * 8 * 64 + (3 * 8 + 2 * 2) + 8 + 4,
+                pool_taps: 4 * 8 * 64,
+                group_inputs: 0,
+                tiles: 2,
+                calls: 4 + 2 + SQUEEZE_EXCITE_CALLS + 2 + 2,
+            }
+        );
+
+        // The projection of a shortcut reads the values of the fork, not those of the
+        // block before it: 8 channels at 8x8, which a 1x1 kernel reads once at 4x4.
+        let plan = valid_plan(
+            &block_genome("basic, strided, with a projection"),
+            TaskKind::Shapes,
+        );
+
+        assert_eq!(
+            plan.counts().taps,
+            9 * 256 + 9 * 8 * 16 + 9 * 16 * 16 + 8 * 16
+        );
     }
 
     #[test]
@@ -1284,62 +3353,245 @@ mod tests {
         );
     }
 
+    /// A genome, its task and the index of a stage that can take `block`: stage 2 of the
+    /// VGG-like genome (8 to 16 channels at 8x8) for most kinds, the stage of the 1-D genome
+    /// for a TCN block, the last decoder of the U-Net block genome for a decoder.
+    fn host(block: Block) -> (Genome, TaskKind, usize) {
+        match block {
+            Block::Tcn => (testing::sequence(), TaskKind::Motif1d, 0),
+            Block::Decoder => (
+                block_genome(
+                    "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+                ),
+                TaskKind::MirrorGrid,
+                3,
+            ),
+            _ => (testing::vgg(), TaskKind::Shapes, 1),
+        }
+    }
+
     #[test]
-    fn rejects_every_block_kind_not_yet_built() {
+    fn every_block_kind_and_head_is_built() {
         assert_eq!(BLOCKS.len(), 13);
 
         for block in BLOCKS {
-            let mut g = testing::lenet();
+            let (mut g, task, i) = host(block);
 
-            cnn_mut(&mut g).stages[0].block = block;
+            cnn_mut(&mut g).stages[i].block = block;
+            g.cnn_plan(&task.spec())
+                .unwrap_or_else(|e| panic!("{}: {e}", block.name()));
+        }
 
-            if block == Block::Plain {
-                assert!(block.is_built());
-                assert!(
-                    g.validate(&Limits::default(), &TaskKind::Shapes.spec())
-                        .is_ok()
-                );
-            } else {
-                assert!(!block.is_built());
-                assert_rejected(
-                    &g,
-                    TaskKind::Shapes,
-                    &format!("stage 1: block {} is not yet built", block.name()),
-                );
+        for head in [Head::GlobalAvgPool, Head::Flatten, Head::PerCell] {
+            let (mut g, task, _) = host(Block::Decoder);
+
+            cnn_mut(&mut g).head = head;
+            assert!(g.cnn_plan(&task.spec()).is_ok(), "{head:?}");
+        }
+    }
+
+    #[test]
+    fn every_block_takes_both_options() {
+        for block in BLOCKS {
+            let count = |se: bool, residual: bool| {
+                let (mut g, task, i) = host(block);
+                let stage = &mut cnn_mut(&mut g).stages[i];
+
+                stage.block = block;
+                stage.se = se;
+                stage.residual = residual;
+
+                let plan = g
+                    .cnn_plan(&task.spec())
+                    .unwrap_or_else(|e| panic!("{block:?}: {e}"));
+                let number = |f: &dyn Fn(&Layer) -> bool| {
+                    plan.steps.iter().filter(|s| f(&s.layer)).count()
+                };
+
+                (
+                    number(&|l| matches!(l, Layer::SqueezeExcite { .. })),
+                    number(&|l| *l == Layer::Add),
+                    number(&|l| *l == Layer::Fork),
+                )
+            };
+            // The host of a decoder has the forks of its skip connections already.
+            let (gates, sums, forks) = count(false, false);
+
+            for (se, residual) in [(true, false), (false, true), (true, true)] {
+                let (g, a, f) = count(se, residual);
+
+                assert_eq!(g, gates + usize::from(se), "{block:?}");
+                assert_eq!(a, sums + usize::from(residual), "{block:?}");
+                assert_eq!(f, forks + usize::from(residual), "{block:?}");
             }
         }
     }
 
     #[test]
-    fn rejects_squeeze_and_excitation_until_built() {
-        let mut g = testing::lenet();
+    fn rejects_the_rules_of_the_blocks_of_ticket_04() {
+        // Stage 2 of the VGG-like genome maps 8 to 16 channels at 8x8, then max-pools by 2.
+        let set = |block: Block, change: &dyn Fn(&mut Stage)| {
+            let mut g = testing::vgg();
+            let stage = &mut cnn_mut(&mut g).stages[1];
 
-        cnn_mut(&mut g).stages[0].se = true;
+            stage.block = block;
+            change(stage);
+
+            g
+        };
+        let cases: Vec<(Genome, TaskKind, &str)> = vec![
+            (
+                set(Block::Inception, &|s| s.width = 10),
+                TaskKind::Shapes,
+                "stage 2: an inception block needs a width divisible by 4, not 10",
+            ),
+            (
+                set(Block::Inception, &|s| s.kernel = 11),
+                TaskKind::Shapes,
+                "stage 2: an inception block has a second kernel of 13, its kernel plus 2, \
+                 > max 11",
+            ),
+            (
+                set(Block::Fire, &|s| s.width = 6),
+                TaskKind::Shapes,
+                "stage 2: a fire module needs a width divisible by 4, not 6",
+            ),
+            (
+                set(Block::Shuffle, &|s| s.width = 10),
+                TaskKind::Shapes,
+                "stage 2: a shufflenet unit needs a width divisible by 4, not 10",
+            ),
+            // A ShuffleNet unit of width 16 has 4 inner channels.
+            (
+                set(Block::Shuffle, &|s| s.groups = 8),
+                TaskKind::Shapes,
+                "stage 2: convolution 1: 8 groups do not divide the width 4",
+            ),
+            (
+                set(Block::Dense, &|s| s.down = Downsample::Conv),
+                TaskKind::Shapes,
+                "stage 2: a dense layer joins its input, so it keeps the size and downsamples \
+                 by pooling only",
+            ),
+            (
+                set(Block::Dense, &|s| s.width = 250),
+                TaskKind::Shapes,
+                "stage 2: a dense layer adds its width 250 to its 8 input channels: 258 > max 256",
+            ),
+            // ConvNeXt normalizes after its depthwise convolution only, on 8 channels here.
+            (
+                set(Block::ConvNext, &|s| {
+                    s.norm = Norm::Group;
+                    s.width = 6;
+                }),
+                TaskKind::Shapes,
+                "",
+            ),
+            (
+                set(Block::Tcn, &|_| {}),
+                TaskKind::Shapes,
+                "stage 2: a TCN block convolves causally along a sequence, so it needs a 1-D \
+                 genome",
+            ),
+            (
+                set(Block::Decoder, &|s| s.stride = 1),
+                TaskKind::Shapes,
+                "stage 2: a decoder upsamples by its stride, so the stride must be at least 2, \
+                 not 1",
+            ),
+        ];
+
+        for (g, task, phrase) in cases {
+            if phrase.is_empty() {
+                assert!(g.cnn_plan(&task.spec()).is_ok(), "{}", g.summary());
+            } else {
+                assert_rejected(&g, task, phrase);
+            }
+        }
+
+        // The stem pools 16x16 to 8x8, and stage 1 keeps 8x8: only the stem has a skip
+        // point. A first decoder joins it; a second finds none.
+        let mut g = testing::vgg();
+
+        cnn_mut(&mut g).stages.truncate(1);
+        cnn_mut(&mut g).stages.push(Stage {
+            stride: 2,
+            ..plain(8, 3, CnnActivation::Relu)
+        });
+        cnn_mut(&mut g).stages[1].block = Block::Decoder;
+        assert!(g.cnn_plan(&TaskKind::Shapes.spec()).is_ok());
+
+        let decoder = cnn_mut(&mut g).stages[1].clone();
+
+        cnn_mut(&mut g).stages.push(decoder);
         assert_rejected(
             &g,
             TaskKind::Shapes,
-            "squeeze-and-excitation is not yet built",
+            "stage 3: a decoder joins the map of an earlier stage that downsampled, and none \
+             is left",
+        );
+
+        // A decoder that upsamples by 4 does not land on the 16x16 map of the stem's skip
+        // point: 8 x 4 = 32.
+        cnn_mut(&mut g).stages.truncate(2);
+        cnn_mut(&mut g).stages[1].stride = 4;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "stage 2: the decoder's upsampled map has [32, 32] cells, the map it joins [16, 16]",
         );
     }
 
     #[test]
-    fn rejects_a_residual_connection_until_built() {
-        let mut g = testing::lenet();
+    fn the_per_cell_head_needs_a_grid_task_and_a_map_of_its_size() {
+        let g = block_genome(
+            "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+        );
 
-        cnn_mut(&mut g).stages[0].residual = true;
-        assert_rejected(&g, TaskKind::Shapes, "residual connection is not yet built");
-    }
-
-    #[test]
-    fn rejects_the_per_cell_head_until_built() {
-        let mut g = testing::lenet();
-
-        cnn_mut(&mut g).head = Head::PerCell;
+        assert!(g.cnn_plan(&TaskKind::MirrorGrid.spec()).is_ok());
         assert_rejected(
             &g,
             TaskKind::Shapes,
-            "per-cell head (U-Net) is not yet built",
+            "head: the per-cell head needs a task with a grid of outputs, and task shapes \
+             gives a vector of 4",
         );
+
+        // Without its decoders the map stays at the 2x2 of the bottom.
+        let mut short = g.clone();
+
+        cnn_mut(&mut short).stages.truncate(2);
+        assert_rejected(
+            &short,
+            TaskKind::MirrorGrid,
+            "head: the per-cell head needs the last map at the 8x8 cells of the output grid, \
+             not at [2, 2]",
+        );
+
+        // A dense head writes the 64 values of a grid as well.
+        let mut dense = g;
+
+        cnn_mut(&mut dense).head = Head::GlobalAvgPool;
+
+        let plan = valid_plan(&dense, TaskKind::MirrorGrid);
+
+        assert_eq!(
+            plan.steps.last().map(|s| s.output.clone()),
+            Some(Shape::vector(64))
+        );
+
+        // A grid that does not hold the outputs of its task.
+        let mut spec = TaskKind::MirrorGrid.spec();
+
+        spec.n_out = 63;
+
+        let message = block_genome(
+            "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+        )
+        .cnn_plan(&spec)
+        .expect_err("refused")
+        .to_string();
+
+        assert!(message.contains("does not hold its 63 outputs"), "{message}");
     }
 
     #[test]
@@ -1644,6 +3896,15 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(11);
         let mut valid = 0;
         let mut invalid = 0;
+        // Valid genomes with a block of another kind than plain, or with an option.
+        let mut valid_blocks = 0;
+        let uses_blocks = |g: &Genome| match &g.arch {
+            Arch::Cnn(cnn) => cnn
+                .stages
+                .iter()
+                .any(|s| s.block != Block::Plain || s.se || s.residual),
+            Arch::Mlp => false,
+        };
 
         for i in 0..18_000 {
             let kind = TaskKind::ALL[i % TaskKind::ALL.len()];
@@ -1661,6 +3922,7 @@ mod tests {
             match g.validate(&limits, &spec) {
                 Ok(()) => {
                     valid += 1;
+                    valid_blocks += usize::from(uses_blocks(&g));
 
                     let plan = g.cnn_plan(&spec).expect("a valid genome has a plan");
                     let samples = spec.n_train as f64 * g.epochs as f64;
@@ -1702,10 +3964,12 @@ mod tests {
             }
         }
 
-        // Both outcomes occur often, so the test covers the valid and the invalid paths.
+        // Both outcomes occur often, so the test covers the valid and the invalid paths,
+        // also for the blocks and options of ticket 03.
+        eprintln!("{valid} valid ({valid_blocks} with blocks or options), {invalid} invalid");
         assert!(
-            valid > 400 && invalid > 8000,
-            "{valid} valid, {invalid} invalid"
+            valid > 300 && valid_blocks > 100 && invalid > 8000,
+            "{valid} valid, {valid_blocks} with blocks or options, {invalid} invalid"
         );
     }
 }

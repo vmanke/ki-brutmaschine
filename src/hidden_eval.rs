@@ -1074,6 +1074,7 @@ mod tests {
 
     #[test]
     fn cnn_files_are_scored_and_bad_ones_cost_no_query() {
+        use crate::cnn::families::Family;
         use crate::cnn::genome::{
             Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
         };
@@ -1101,6 +1102,34 @@ mod tests {
 
         assert!((0.0..=1.0).contains(&resp.hidden_primary));
         assert_eq!(resp.queries_used, 1);
+
+        // Base models of the blocks of ticket 03 score as well, each for one query: skip
+        // connections, a bottleneck, separable blocks, inverted residuals and
+        // squeeze-and-excitation.
+        let families = [
+            Family::ResNet,
+            Family::Xception,
+            Family::MobileNetV2,
+            Family::SeNet,
+        ];
+
+        for (i, family) in families.into_iter().enumerate() {
+            let genome = family.base_model();
+            let model = crate::cnn::model::testing::untrained(&genome, &spec, 2);
+            let path = models.join(format!("{}.json", family.name()));
+
+            std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
+                .expect("write");
+
+            let resp = ev.evaluate(&req(&path)).expect("a base model file");
+
+            assert!(
+                (0.0..=1.0).contains(&resp.hidden_primary),
+                "{}",
+                family.name()
+            );
+            assert_eq!(resp.queries_used, 2 + i, "{}", family.name());
+        }
 
         // Architectures without trained values: they must be refused before the values.
         let wide = |width: usize, kernel: usize, stages: usize| {
@@ -1239,7 +1268,7 @@ mod tests {
         }
 
         // None of the refused files cost a query.
-        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 2);
+        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 6);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
