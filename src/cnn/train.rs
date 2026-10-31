@@ -631,6 +631,8 @@ mod tests {
 
             let analytic = (learner.grad_weights.clone(), learner.grad_biases.clone());
             let mut checked = 0;
+            let mut worst = 0.0f64;
+            let mut largest = 0.0f64;
 
             for (decay, lists) in [(true, &analytic.0), (false, &analytic.1)] {
                 for (t, grads) in lists.iter().enumerate() {
@@ -661,9 +663,13 @@ mod tests {
                         };
                         let numeric = (loss_at(step) - loss_at(-step)) / (2.0 * step as f64);
                         let analytic = grads[j] as f64;
+                        let bound = 1e-3 + 0.03 * analytic.abs();
+
+                        worst = worst.max((numeric - analytic).abs() / bound);
+                        largest = largest.max(analytic.abs());
 
                         assert!(
-                            (numeric - analytic).abs() <= 2e-3 + 0.05 * analytic.abs(),
+                            (numeric - analytic).abs() <= bound,
                             "{task:?}: tensor {t} ({decay}) value {j}: analytic {analytic}, \
                              numeric {numeric}"
                         );
@@ -673,7 +679,16 @@ mod tests {
                 }
             }
 
+            eprintln!(
+                "{}: {checked} values, largest gradient {largest:.3e}, worst error {worst:.2} \
+                 of the bound",
+                task.name()
+            );
+
             assert!(checked >= 30, "{task:?}: {checked} values checked");
+
+            // The gradients are large against the bound, so a wrong one would show.
+            assert!(largest > 0.02, "{task:?}: {largest}");
         }
     }
 

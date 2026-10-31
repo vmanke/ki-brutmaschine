@@ -376,19 +376,26 @@ fn a_cnn_base_genome_trains_is_saved_and_scored_in_a_run() {
     assert!(stored.contains("\"base_genomes\""));
 }
 
-/// The same CNN run trains to the same candidates and model files with 1 or 2 worker threads.
-#[test]
-fn a_cnn_run_does_not_depend_on_the_thread_count() {
-    let files = |dir: &Path| -> Vec<(String, Vec<u8>)> {
-        let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+/// The id and the bytes of every model file of the run in `dir`.
+fn model_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
 
-        archive
-            .candidates()
-            .into_iter()
-            .filter_map(|c| c.model_file.map(|f| (c.id, f)))
-            .map(|(id, f)| (id, std::fs::read(dir.join(f)).expect("read")))
-            .collect()
-    };
+    archive
+        .candidates()
+        .into_iter()
+        .filter_map(|c| c.model_file.map(|f| (c.id, f)))
+        .map(|(id, f)| (id, std::fs::read(dir.join(f)).expect("read")))
+        .collect()
+}
+
+/// The same CNN run trains to the same candidates and model files with 1 or 2 worker
+/// threads (`Config::threads`, the pool that trains candidates side by side).
+///
+/// This does not change the threads of candle's matrix products; see
+/// `a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads`.
+#[test]
+fn a_cnn_run_does_not_depend_on_the_worker_threads() {
+    let files = model_files;
     let a = fresh_dir("cnn-threads-a");
     let b = fresh_dir("cnn-threads-b");
 
@@ -404,6 +411,98 @@ fn a_cnn_run_does_not_depend_on_the_thread_count() {
             .iter()
             .any(|(_, bytes)| bytes.starts_with(b"{\"kind\":\"cnn\","))
     );
+}
+
+/// A CNN with every norm and pool of ticket 02, for a 16 x 16 image: a stem with batch norm
+/// and max pooling, a dilated group convolution with group norm and SiLU, and a convolution
+/// with layer norm, GELU and average pooling.
+fn normed_cnn() -> Genome {
+    let stage = |width: usize, stride: usize, down: Downsample, norm: Norm| Stage {
+        block: Block::Plain,
+        width,
+        kernel: 3,
+        stride,
+        down,
+        dilation: 1,
+        groups: 1,
+        se: false,
+        residual: false,
+        norm,
+        activation: CnnActivation::Gelu,
+    };
+
+    Genome {
+        arch: Arch::Cnn(CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 8,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Relu,
+            },
+            stages: vec![
+                Stage {
+                    dilation: 2,
+                    groups: 2,
+                    activation: CnnActivation::Silu,
+                    ..stage(8, 1, Downsample::Conv, Norm::Group)
+                },
+                stage(12, 2, Downsample::AvgPool, Norm::Layer),
+            ],
+            head: Head::GlobalAvgPool,
+        }),
+        hidden: vec![6],
+        epochs: 5,
+        ..small_cnn()
+    }
+}
+
+/// A CNN run gives the same candidates and model files when candle splits its matrix
+/// products into 1 or 3 parts.
+///
+/// candle reads that number from `RAYON_NUM_THREADS` when a product starts, not from the
+/// rayon pool around it, and 1 means no split at all. A test cannot change the
+/// environment of its own process, so each run is a child process `brut run --no-hidden`
+/// with its own value. One worker thread trains the candidates in both.
+#[test]
+fn a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads() {
+    let run = |name: &str, threads: &str| {
+        let dir = fresh_dir(name);
+        let config = Config {
+            base_genomes: vec![small_cnn(), normed_cnn()],
+            ..cnn_config(1)
+        };
+
+        config.save(&dir.join(CONFIG_FILE)).expect("save config");
+
+        let out = Command::new(BRUT_BIN)
+            .arg("run")
+            .arg(&dir)
+            .arg("--no-hidden")
+            .env("RAYON_NUM_THREADS", threads)
+            .output()
+            .expect("start brut");
+
+        assert!(
+            out.status.success(),
+            "brut run failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        dir
+    };
+    let one = run("cnn-matrix-1", "1");
+    let three = run("cnn-matrix-3", "3");
+    let cnn_files = model_files(&one)
+        .iter()
+        .filter(|(_, bytes)| bytes.starts_with(b"{\"kind\":\"cnn\","))
+        .count();
+
+    assert_eq!(fitness_list(&one), fitness_list(&three));
+    assert_eq!(model_files(&one), model_files(&three));
+    assert!(cnn_files >= 3, "{cnn_files} CNN files");
 }
 
 /// A run directory that `brut run --no-hidden` wrote at commit bec9aa1, before CNNs: the

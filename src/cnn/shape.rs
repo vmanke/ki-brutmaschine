@@ -302,7 +302,7 @@ pub const TRAIN_NANOS_PER_TILE: f64 = 5000.0;
 pub const EVAL_NANOS_PER_FLOP: f64 = 0.035;
 
 /// Scoring nanoseconds per kernel cell read (`Counts::taps`).
-pub const EVAL_NANOS_PER_TAP: f64 = 5.0;
+pub const EVAL_NANOS_PER_TAP: f64 = 7.5;
 
 /// Scoring nanoseconds per value after a layer (`Counts::values`).
 pub const EVAL_NANOS_PER_VALUE: f64 = 10.0;

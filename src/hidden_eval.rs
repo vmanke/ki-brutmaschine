@@ -1242,78 +1242,114 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A CNN file just below `MAX_EVAL_SECONDS` scores within `EVAL_TIMEOUT_SECONDS`. The
-    /// file is the slowest kind of the review of ticket 02: depthwise convolutions of 256
-    /// channels with layer norm and GELU, with as many stages and as large a kernel as the
-    /// time model admits. This takes up to a minute and measures time, so it runs only on
-    /// request, alone: `cargo test --lib just_below -- --ignored --test-threads 1`.
+    /// CNN files just below `MAX_EVAL_SECONDS` score within `EVAL_TIMEOUT_SECONDS`. The
+    /// files are of the two kinds that ran slowest per FLOP in the measurements of ticket 02:
+    /// depthwise convolutions of 256 channels with layer norm and GELU, and one large kernel
+    /// over 256 channels into few. For each kind the test takes the layout whose estimate
+    /// comes closest to the cap. This takes up to two minutes and measures time, so it runs
+    /// only on request, alone: `cargo test --lib just_below -- --ignored --test-threads 1`.
     #[test]
     #[ignore]
-    fn a_file_just_below_the_time_cap_scores_within_the_timeout() {
+    fn files_just_below_the_time_cap_score_within_the_timeout() {
         use crate::cnn::genome::{CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stem};
         use crate::cnn::genome::{MAX_STAGES, Stage, testing};
+        use crate::genome::Genome;
 
         let spec = TaskKind::Shapes.spec();
-        let stack = |kernel: usize, stages: usize| {
-            let stage = Stage {
-                groups: 256,
-                norm: Norm::Layer,
-                ..testing::plain(256, kernel, CnnActivation::Gelu)
-            };
+        let stem = |kernel: usize, norm: Norm, activation: CnnActivation| Stem {
+            width: 256,
+            kernel,
+            stride: 1,
+            down: Downsample::Conv,
+            norm,
+            activation,
+        };
+        let cnn = |stem: Stem, stages: Vec<Stage>| {
             let cnn = CnnGenome {
                 dims: Dims::TwoD,
-                stem: Stem {
-                    width: 256,
-                    kernel,
-                    stride: 1,
-                    down: Downsample::Conv,
-                    norm: Norm::Layer,
-                    activation: CnnActivation::Gelu,
-                },
-                stages: vec![stage; stages],
+                stem,
+                stages,
                 head: Head::GlobalAvgPool,
             };
 
             testing::genome(cnn, Vec::new(), Activation::Relu)
         };
-        let estimate = |genome: &crate::genome::Genome| {
+        let depthwise = |kernel: usize, stages: usize| {
+            let stage = Stage {
+                groups: 256,
+                norm: Norm::Layer,
+                ..testing::plain(256, kernel, CnnActivation::Gelu)
+            };
+
+            cnn(
+                stem(kernel, Norm::Layer, CnnActivation::Gelu),
+                vec![stage; stages],
+            )
+        };
+        let narrow = |kernel: usize, width: usize| {
+            cnn(
+                stem(3, Norm::None, CnnActivation::Relu),
+                vec![testing::plain(width, kernel, CnnActivation::Relu)],
+            )
+        };
+        let estimate = |genome: &Genome| {
             let plan = genome.cnn_plan(&spec).expect("plan");
 
             plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9
         };
-        let genome = [1, 3, 5]
-            .into_iter()
-            .flat_map(|kernel| (1..=MAX_STAGES).map(move |stages| stack(kernel, stages)))
-            .filter(|genome| estimate(genome) <= MAX_EVAL_SECONDS)
-            .max_by(|a, b| estimate(a).total_cmp(&estimate(b)))
-            .expect("a layout below the cap");
-        let model = crate::cnn::model::testing::untrained(&genome, &spec, 1);
+        let closest = |layouts: Vec<Genome>| {
+            layouts
+                .into_iter()
+                .filter(|genome| estimate(genome) <= MAX_EVAL_SECONDS)
+                .max_by(|a, b| estimate(a).total_cmp(&estimate(b)))
+                .expect("a layout below the cap")
+        };
+        let files = [
+            closest(
+                [1, 3, 5]
+                    .into_iter()
+                    .flat_map(|kernel| (1..=MAX_STAGES).map(move |n| depthwise(kernel, n)))
+                    .collect(),
+            ),
+            closest(
+                [3, 5, 7, 9, 11]
+                    .into_iter()
+                    .flat_map(|kernel| [1, 2, 4, 8].map(|width| narrow(kernel, width)))
+                    .collect(),
+            ),
+        ];
         let (dir, secret, models) = layout("time-cap");
-        let path = models.join("slow.json");
 
         create_secret(&secret).expect("secret");
-        std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
-            .expect("write");
 
         let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
-        let started = std::time::Instant::now();
-        let resp = ev
-            .evaluate(&EvalRequest {
-                candidate_id: "slow".into(),
-                model_path: path,
-                task: TaskKind::Shapes,
-            })
-            .expect("a file below the cap is scored");
-        let seconds = started.elapsed().as_secs_f64();
 
-        eprintln!(
-            "estimate {:.1} s, scored in {seconds:.1} s: {}",
-            estimate(&genome),
-            genome.summary()
-        );
+        for (i, genome) in files.iter().enumerate() {
+            let model = crate::cnn::model::testing::untrained(genome, &spec, 1);
+            let path = models.join(format!("slow{i}.json"));
 
-        assert_eq!(resp.queries_used, 1);
-        assert!(seconds < EVAL_TIMEOUT_SECONDS, "{seconds} s");
+            std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
+                .expect("write");
+
+            let started = std::time::Instant::now();
+            let resp = ev
+                .evaluate(&EvalRequest {
+                    candidate_id: "slow".into(),
+                    model_path: path,
+                    task: TaskKind::Shapes,
+                })
+                .expect("a file below the cap is scored");
+            let seconds = started.elapsed().as_secs_f64();
+
+            eprintln!(
+                "estimate {:.1} s, scored in {seconds:.1} s: {}",
+                estimate(genome),
+                genome.summary()
+            );
+
+            assert_eq!(resp.queries_used, i + 1);
+            assert!(seconds < EVAL_TIMEOUT_SECONDS, "{seconds} s");
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
