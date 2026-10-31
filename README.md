@@ -68,7 +68,9 @@ Stand: 2026-10-31.
   Q74 a ([Fragen](.scratch/seele-und-kappa/owner-questions.md)). Die Eigentümerin bzw. der
   Eigentümer kann jede dieser Entscheidungen aufheben.
 - **Echte Sprachmodelle (PR #33).** Das eigene Paket `backend-ollama` mit dem Programm
-  `brut-breed-ollama`, siehe „Echte Modelle über Ollama“.
+  `brut-breed-ollama`, siehe „Echte Modelle über Ollama“. Die ersten drei Läufe auf der H200
+  fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
+  zusammen (PR #34).
 - **Eigene VM (PR #26, #30 und #31).** `tools/vm-setup.sh` richtet eine Ubuntu-24.04-VM mit
   einem Befehl ein, siehe „Eigene GPU-VM einrichten (freiwillig)“.
 

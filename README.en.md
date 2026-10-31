@@ -38,7 +38,9 @@ Status on 2026-10-31.
   ([questions](.scratch/seele-und-kappa/owner-questions.md), in German). The owner can
   overrule each of these decisions.
 - **Real language models (PR #33).** The separate package `backend-ollama` with the program
-  `brut-breed-ollama`; see "Real models through Ollama".
+  `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
+  are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
+  (PR #34, in German).
 - **Own VM (PR #26, #30 and #31).** `tools/vm-setup.sh` sets up an Ubuntu 24.04 VM with one
   command; see "Setting up your own GPU VM (optional)".
 
