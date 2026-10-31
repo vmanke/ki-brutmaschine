@@ -44,6 +44,13 @@ pub const DEFAULT_BASE: &str = "http://127.0.0.1:11434";
 /// Hard cap on the bytes of one answer (I6).
 pub const MAX_RESPONSE_BYTES: u64 = 1 << 20;
 
+/// The seed as the servers take it: the low 63 bits. The core draws request seeds as full
+/// u64 values; vLLM refuses any seed above i64::MAX with HTTP 400, and Ollama reads it as a
+/// signed integer. Masking keeps the seed deterministic and in range for both.
+pub fn wire_seed(seed: u64) -> u64 {
+    seed & (i64::MAX as u64)
+}
+
 pub(crate) fn err(msg: String) -> BrutError {
     BrutError::Io(std::io::Error::other(msg))
 }
@@ -138,7 +145,7 @@ impl OllamaBackend {
             "stream": false,
             "options": {
                 "temperature": req.temperature,
-                "seed": req.seed,
+                "seed": wire_seed(req.seed),
                 "num_predict": req.max_tokens,
             },
         })
@@ -198,11 +205,23 @@ pub struct CallRecord {
 /// A backend whose answers are filed in a JSONL file and replayed from it. A request it
 /// has seen is never sent again, so a resumed or repeated run gets the same answers even
 /// though the model is not bit-for-bit deterministic (contract I7, ADR 0002). Failed calls
-/// are not filed.
+/// are not filed as answers: each one goes to `worker-errors.jsonl` beside the record and
+/// to stderr, because the core counts a failed Worker call as an unsolved puzzle without a
+/// word, which hid a fault that failed half of all calls in the first vLLM runs.
 pub struct Recorded<B: ModelBackend> {
     inner: B,
     path: PathBuf,
     book: Mutex<BTreeMap<String, GenResponse>>,
+    errors: std::sync::atomic::AtomicU64,
+}
+
+/// One failed call, as filed in `worker-errors.jsonl`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ErrorRecord {
+    pub key: String,
+    pub tag: String,
+    pub seed: u64,
+    pub error: String,
 }
 
 /// The key of a call: the model tag and the request's own key.
@@ -235,6 +254,7 @@ impl<B: ModelBackend> Recorded<B> {
             inner,
             path: path.to_path_buf(),
             book: Mutex::new(book),
+            errors: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -245,6 +265,46 @@ impl<B: ModelBackend> Recorded<B> {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Number of failed calls in this process.
+    pub fn errors(&self) -> u64 {
+        self.errors.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The file that lists the failed calls, beside the record.
+    pub fn error_path(&self) -> PathBuf {
+        self.path.with_file_name("worker-errors.jsonl")
+    }
+
+    /// File a failed call and say so on stderr: the first five, then every thousandth.
+    fn file_error(&self, key: &str, req: &GenRequest, e: &BrutError) {
+        let n = self.errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let rec = ErrorRecord {
+            key: key.to_string(),
+            tag: self.inner.name().to_string(),
+            seed: req.seed,
+            error: e.to_string(),
+        };
+
+        if n <= 5 || n.is_multiple_of(1000) {
+            eprintln!("brut-breed-ollama: call {n} failed ({}): {}", rec.tag, rec.error);
+        }
+
+        if let Ok(mut line) = serde_json::to_string(&rec) {
+            line.push('\n');
+
+            let path = self.error_path();
+            let written = path
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|_| OpenOptions::new().create(true).append(true).open(&path))
+                .and_then(|mut f| f.write_all(line.as_bytes()));
+
+            if let Err(io) = written {
+                eprintln!("brut-breed-ollama: cannot write {}: {io}", path.display());
+            }
+        }
     }
 }
 
@@ -260,7 +320,13 @@ impl<B: ModelBackend> ModelBackend for Recorded<B> {
             return Ok(hit);
         }
 
-        let response = self.inner.generate(req)?;
+        let response = match self.inner.generate(req) {
+            Ok(r) => r,
+            Err(e) => {
+                self.file_error(&key, req, &e);
+                return Err(e);
+            }
+        };
         let rec = CallRecord {
             key: key.clone(),
             tag: self.inner.name().to_string(),
@@ -310,6 +376,59 @@ mod tests {
             seed: 7,
             think_tokens: 0,
         }
+    }
+
+    #[test]
+    fn seeds_above_i64_max_are_masked_to_63_bits() {
+        assert_eq!(wire_seed(7), 7);
+        assert_eq!(wire_seed(i64::MAX as u64), i64::MAX as u64);
+        assert_eq!(wire_seed(u64::MAX), i64::MAX as u64);
+        assert_eq!(wire_seed(1 << 63), 0);
+
+        let b = OllamaBackend::new("ollama:qwen2.5:7b", DEFAULT_BASE, Duration::from_secs(1)).expect("new");
+        let mut r = req(8);
+        r.seed = u64::MAX;
+        assert_eq!(b.body(&r)["options"]["seed"], i64::MAX);
+    }
+
+    /// Fails every call.
+    struct Broken;
+
+    impl ModelBackend for Broken {
+        fn name(&self) -> &str {
+            "vllm:qwen2.5-32b"
+        }
+
+        fn generate(&self, _req: &GenRequest) -> Result<GenResponse> {
+            Err(err("vllm: HTTP 400 Bad Request: seed out of range".to_string()))
+        }
+    }
+
+    #[test]
+    fn failed_calls_are_filed_and_counted_not_recorded() {
+        let dir = std::env::temp_dir().join(format!("backend-ollama-errors-{}", std::process::id()));
+        let path = dir.join("worker-calls.jsonl");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let b = Recorded::open(Broken, &path).expect("open");
+
+        assert!(b.generate(&req(8)).is_err());
+        assert!(b.generate(&req(9)).is_err());
+        assert_eq!(b.errors(), 2);
+        assert_eq!(b.len(), 0);
+        assert!(!path.exists(), "a failure must never be filed as an answer");
+
+        let lines: Vec<ErrorRecord> = std::fs::read_to_string(b.error_path())
+            .expect("errors file")
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("json"))
+            .collect();
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].error.contains("HTTP 400"));
+        assert_eq!(lines[0].tag, "vllm:qwen2.5-32b");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
