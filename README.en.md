@@ -158,6 +158,32 @@ elsewhere, give that option on resume too. Exit codes: 0 = done or stopped clean
 1 = error, 2 = wrong usage (also: another process holds the run directory),
 3 = waiting for LLM answers.
 
+A local model can answer the requests instead of a person. `brut-mutator` (also in
+`backend-ollama`) sends every pending request unchanged to the model of the tag and
+writes its answer text as `<run>/llm/answers/<key>.txt`. Every call and its full answer
+go to `<run>/llm/mutator-calls.jsonl`, a failed call to `mutator-errors.jsonl`. A
+repeated round replays the record instead of asking the model again (ADR 0002). The
+program never overwrites an existing answer, and it reads and writes only inside the run
+directory; it refuses an `--llm-answers` outside it. Whether an answer is a valid
+Cascade is still checked by the core on resume. The script `run-with-mutator.sh` repeats
+breeding, answering and resuming until the Run is done:
+
+```sh
+backend-ollama/run-with-mutator.sh --tag vllm:qwen2.5-32b --max-rounds 20 -- \
+  --out runs/m1 --config config.json --seed 1 --generations 8 --llm-every 2
+```
+
+The script resumes with `--resume` and those of the options a resume accepts
+(`--generations`, `--max-calls`, `--max-seconds`, `--llm-answers`). It stops when
+`brut-breed-ollama` exits with any code but 3 (and passes that code on), when
+`<run>/STOP` exists (exit code 0), when a Mutator round fails (1), and after
+`--max-rounds` rounds (default 20) if the Run still waits then (3). `brut-mutator` on its
+own exits with 0 (everything answered, or stopped cleanly), 1 (a call failed; the other
+answers stay), 2 (wrong usage, a path outside the run, the lock is held) or 4 (nothing to
+answer). `--parallel P` (default 4) sends P requests at once, `--max-requests N`
+(default 64) caps one round. A cut-off answer (it reached `max_tokens`) is written
+unchanged and reported; the core rejects it unless it holds a complete Cascade.
+
 `--resume` may change only `--generations`, `--max-calls`, `--max-seconds` and
 `--llm-answers`; everything else defines the experiment. Before each generation, the
 checkpoint reserves its worst-case number of calls. If the process ends hard (kill,

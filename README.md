@@ -550,6 +550,34 @@ beim Fortsetzen an. Exit-Codes: 0 = fertig oder sauber angehalten, 1 = Fehler,
 2 = falsche Bedienung (auch: ein anderer Prozess hält das Lauf-Verzeichnis),
 3 = wartet auf LLM-Antworten.
 
+Statt einer Person kann ein lokales Modell die Anfragen beantworten. `brut-mutator`
+(ebenfalls in `backend-ollama`) schickt jede offene Anfrage unverändert an das Modell
+des Tags und schreibt dessen Antworttext als `<lauf>/llm/answers/<schlüssel>.txt`. Jeder
+Aufruf landet samt voller Antwort in `<lauf>/llm/mutator-calls.jsonl`, ein gescheiterter
+in `mutator-errors.jsonl`. Eine wiederholte Runde spielt die Aufzeichnung ab, statt das
+Modell neu zu fragen (ADR 0002). Eine vorhandene Antwort überschreibt das Programm nie,
+und es liest und schreibt nur innerhalb des Lauf-Verzeichnisses; ein `--llm-answers`
+außerhalb lehnt es ab. Ob eine Antwort eine gültige Kaskade ist, prüft wie bisher der
+Kern beim Fortsetzen. Das Skript `run-with-mutator.sh` wiederholt Zucht, Antworten und
+Fortsetzen, bis der Lauf fertig ist:
+
+```sh
+backend-ollama/run-with-mutator.sh --tag vllm:qwen2.5-32b --max-rounds 20 -- \
+  --out runs/m1 --config config.json --seed 1 --generations 8 --llm-every 2
+```
+
+Das Skript setzt mit `--resume` und denjenigen Optionen fort, welche ein Fortsetzen
+annimmt (`--generations`, `--max-calls`, `--max-seconds`, `--llm-answers`). Es hält an,
+sobald `brut-breed-ollama` mit einem anderen Code als 3 endet (es gibt diesen Code
+weiter), sobald `<lauf>/STOP` existiert (Exit-Code 0), wenn eine Mutator-Runde scheitert
+(1) und nach `--max-rounds` Runden (Vorgabe 20), falls der Lauf dann noch wartet (3).
+`brut-mutator` allein endet mit 0 (alles beantwortet oder sauber angehalten), 1 (ein
+Aufruf scheiterte; die übrigen Antworten bleiben), 2 (falsche Bedienung, Pfad außerhalb
+des Laufs, Sperre belegt) oder 4 (nichts zu beantworten). `--parallel P` (Vorgabe 4)
+schickt P Anfragen zugleich, `--max-requests N` (Vorgabe 64) begrenzt eine Runde. Eine
+abgeschnittene Antwort (Länge `max_tokens` erreicht) schreibt es unverändert und meldet
+sie; der Kern verwirft sie, wenn sie keine vollständige Kaskade enthält.
+
 `--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
 `--llm-answers` ändern; alles andere legt das Experiment fest. Vor jeder Generation
 legt der Checkpoint ihren schlimmsten Verbrauch an Aufrufen zurück. Endet der Prozess
