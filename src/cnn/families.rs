@@ -2,10 +2,12 @@
 //!
 //! A base model is a fixed genome of its family. It enters the first generation of a run
 //! next to random genomes (ticket 05), so the search starts from the known designs. Each
-//! base model is built for the generated image tasks (one channel of 16 x 16 pixels, see
-//! `task`): it passes the shape check of every such task under the default `Limits`, and it
-//! learns the shapes task above chance. It is scaled down to fit those limits, so it keeps
-//! the building block of its family, not the size of the published network.
+//! base model is built for the tasks of one kind (`Family::task`): the generated image
+//! tasks (one channel of 16 x 16 pixels, see `task`), the 1-D motif task (TCN) or the
+//! grid-to-grid mirror task (U-Net). It passes the shape check of every task of its kind
+//! under the default `Limits`, and it learns its task above chance. It is scaled down to fit
+//! those limits, so it keeps the building block of its family, not the size of the
+//! published network.
 //!
 //! | Family | Base model |
 //! |---|---|
@@ -18,9 +20,16 @@
 //! | MobileNetV2 | inverted residuals with ReLU6, the shortcut only where the shape stays |
 //! | SENet | the ResNet design with basic blocks, each with squeeze-and-excitation |
 //! | Dilated CNN | 3x3 convolutions with dilations 1, 2 and 3 at one resolution |
+//! | GoogLeNet | two Inception modules, the second with max pooling |
+//! | DenseNet | two dense blocks of two layers, a transition with average pooling between them |
+//! | ShuffleNet | units with 4 groups and the channel shuffle, each with its skip connection |
+//! | SqueezeNet | Fire modules, the second with its simple bypass, the third with max pooling |
+//! | ConvNeXt | a block with a depthwise 7x7 convolution, layer norm and GELU, then a strided block |
+//! | U-Net | an encoder, two residual blocks, a decoder with a transposed convolution, a per-cell head (mirror grid) |
+//! | TCN | residual causal blocks with dilations 1, 2 and 4 along the sequence (motif task) |
 //!
-//! The other seven families come with ticket 04; until then `Family::base_model` returns
-//! `None` for them.
+//! TCN is built for the 1-D motif task and U-Net for the grid-to-grid mirror task
+//! (`Family::task`); the other fourteen are built for the image tasks.
 
 use crate::cnn::genome::{
     Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
@@ -465,7 +474,7 @@ fn dilated() -> Genome {
 /// GoogLeNet (Szegedy et al. 2015): after a stem that pools to 8x8, two Inception blocks
 /// with their 1x1, 3x3, 5x5 and pooling branches, the second followed by max pooling, as
 /// GoogLeNet pools between its groups of Inception blocks; batch norm, ReLU, global average
-/// pooling.
+/// pooling. Five epochs: six would take 20.1 s by the time model, above its 20 s.
 fn googlenet() -> Genome {
     let relu = CnnActivation::Relu;
 
@@ -482,7 +491,7 @@ fn googlenet() -> Genome {
         Head::GlobalAvgPool,
         Vec::new(),
         Activation::Relu,
-        6,
+        5,
         4,
     )
 }
@@ -567,7 +576,9 @@ fn squeezenet() -> Genome {
 
 /// ConvNeXt (Liu et al. 2022): a stem that pools to 8x8 with layer norm, a block with its
 /// depthwise 7x7 convolution, layer norm, the inverted MLP with GELU and the skip
-/// connection, then a block that moves by 2 with a projection; global average pooling.
+/// connection, then a block that moves by 2 with a projection; global average pooling. It
+/// trains at a learning rate of 0.02: at 0.003 it reached 0.38 on shapes in its 5 epochs, at
+/// 0.02 between 0.49 and 0.54 over nine seeds.
 fn convnext() -> Genome {
     let gelu = CnnActivation::Gelu;
     let block = |width, kernel, stride| Stage {
@@ -575,8 +586,7 @@ fn convnext() -> Genome {
         residual: true,
         ..stage(Block::ConvNext, width, kernel, Norm::Layer, gelu)
     };
-
-    image_genome(
+    let genome = image_genome(
         stem(8, 3, 2, Downsample::MaxPool, Norm::Layer, gelu),
         vec![block(8, 7, 1), block(16, 3, 2)],
         Head::GlobalAvgPool,
@@ -584,12 +594,17 @@ fn convnext() -> Genome {
         Activation::Gelu,
         5,
         13,
-    )
+    );
+
+    Genome {
+        learning_rate: 0.02,
+        ..genome
+    }
 }
 
 /// TCN (Bai, Kolter and Koltun 2018, preprint), for the 1-D motif task: a stem along the
-/// sequence, then four residual blocks of causal convolutions with dilations 1, 2, 4 and 8,
-/// so the last output reads 63 cells back; batch norm, ReLU, global average pooling.
+/// sequence, then three residual blocks of causal convolutions with dilations 1, 2 and 4,
+/// each with its skip connection; batch norm, ReLU, global average pooling.
 fn tcn() -> Genome {
     let relu = CnnActivation::Relu;
     let block = |dilation| Stage {
@@ -654,29 +669,16 @@ mod tests {
     use super::*;
     use crate::config::Limits;
     use crate::score;
-    use crate::task::{InputShape, Split, TaskKind, generate};
+    use crate::task::{Split, TaskKind, generate};
     use crate::train::train;
 
     #[test]
-    fn the_16_families_have_names_and_ticket_03_built_9_of_them() {
+    fn the_16_families_have_names_and_each_a_base_model() {
         let names: BTreeSet<&str> = FAMILIES.iter().map(|f| f.name()).collect();
         let built: Vec<Family> = base_models().into_iter().map(|(f, _)| f).collect();
 
         assert_eq!(names.len(), 16);
-        assert_eq!(
-            built,
-            vec![
-                Family::LeNet5,
-                Family::AlexNet,
-                Family::Vgg,
-                Family::ResNet,
-                Family::Xception,
-                Family::MobileNet,
-                Family::MobileNetV2,
-                Family::SeNet,
-                Family::Dilated,
-            ]
-        );
+        assert_eq!(built, FAMILIES.to_vec());
 
         // No two base models are the same genome.
         let ids: BTreeSet<String> = base_models().iter().map(|(_, g)| g.id()).collect();
@@ -684,26 +686,43 @@ mod tests {
         assert_eq!(ids.len(), built.len());
     }
 
-    #[test]
-    fn every_base_model_passes_the_shape_check_on_every_image_task() {
-        let limits = Limits::default();
-        let images: Vec<TaskKind> = TaskKind::ALL
-            .into_iter()
-            .filter(|kind| matches!(kind.spec().input, InputShape::Image { .. }))
-            .collect();
+    /// True when two tasks have the same kind of input.
+    fn same_input(a: TaskKind, b: TaskKind) -> bool {
+        std::mem::discriminant(&a.spec().input) == std::mem::discriminant(&b.spec().input)
+    }
 
-        assert_eq!(images.len(), 4);
+    /// True when two tasks have the same kind of input and the same kind of output.
+    fn same_kind(a: TaskKind, b: TaskKind) -> bool {
+        same_input(a, b)
+            && std::mem::discriminant(&a.spec().output) == std::mem::discriminant(&b.spec().output)
+    }
+
+    #[test]
+    fn every_base_model_passes_the_shape_check_on_every_task_of_its_kind() {
+        let limits = Limits::default();
+        let classify_images = TaskKind::ALL
+            .into_iter()
+            .filter(|&kind| same_kind(kind, TaskKind::Shapes))
+            .count();
+
+        assert_eq!(classify_images, 4);
 
         for (family, genome) in base_models() {
-            for &kind in &images {
-                genome
-                    .validate(&limits, &kind.spec())
-                    .unwrap_or_else(|e| panic!("{} on {}: {e}", family.name(), kind.name()));
-            }
+            let home = family.task();
 
-            // A 2-D model fits neither a sequence nor a flat vector.
-            assert!(genome.validate(&limits, &TaskKind::Motif1d.spec()).is_err());
-            assert!(genome.validate(&limits, &TaskKind::Parity.spec()).is_err());
+            for kind in TaskKind::ALL {
+                let check = genome.validate(&limits, &kind.spec());
+
+                if same_kind(kind, home) {
+                    check.unwrap_or_else(|e| panic!("{} on {}: {e}", family.name(), kind.name()));
+                } else if same_input(kind, home) {
+                    // Another kind of output on the same input may fit or not: a pooled
+                    // head can serve the 64 cells of the mirror grid as a flat regression.
+                } else {
+                    // A model fits no task with another kind of input.
+                    assert!(check.is_err(), "{} on {}", family.name(), kind.name());
+                }
+            }
         }
     }
 
@@ -764,26 +783,60 @@ mod tests {
                 Family::Dilated => {
                     only(Block::Plain) && any(&|s| s.dilation > 1) && all(&|s| s.stride == 1)
                 }
-                _ => false,
+                // Inception modules only.
+                Family::GoogLeNet => only(Block::Inception) && cnn.head == Head::GlobalAvgPool,
+                // Dense blocks with a transition between them.
+                Family::DenseNet => {
+                    any(&|s| s.block == Block::Dense)
+                        && any(&|s| s.block == Block::Transition)
+                        && all(&|s| matches!(s.block, Block::Dense | Block::Transition))
+                }
+                // Group convolutions with the channel shuffle, each unit with its skip.
+                Family::ShuffleNet => only(Block::Shuffle) && all(&|s| s.groups > 1 && s.residual),
+                // Fire modules, one with the simple bypass.
+                Family::SqueezeNet => only(Block::Fire) && any(&|s| s.residual),
+                // A depthwise 7x7 convolution, layer norm and GELU.
+                Family::ConvNeXt => {
+                    only(Block::ConvNext)
+                        && any(&|s| s.kernel == 7)
+                        && all(&|s| s.norm == Norm::Layer && s.activation == CnnActivation::Gelu)
+                }
+                // An encoder that moves down, a decoder back up, and one output per cell.
+                Family::UNet => {
+                    any(&|s| s.block != Block::Decoder && s.stride > 1)
+                        && stages.last().is_some_and(|s| s.block == Block::Decoder)
+                        && cnn.head == Head::PerCell
+                }
+                // Residual causal blocks with growing dilations.
+                Family::Tcn => {
+                    only(Block::Tcn) && all(&|s| s.residual) && any(&|s| s.dilation > 1)
+                }
             };
 
             assert!(fits, "{}: {}", family.name(), genome.summary());
         }
     }
 
-    /// Train the base model of `family` on the Train split of the shapes task (data seed 1),
-    /// and return its accuracy on the Valid split.
-    fn shapes_accuracy(family: Family) -> f64 {
+    /// Train the base model of `family` on the Train split of its task (data seed 1), and
+    /// return its primary score on the Valid split. The training has no wall-clock budget:
+    /// `cargo test` trains many models at once on a shared machine, so the clock says little
+    /// here. The time limit is checked by the time model in the shape check, and on the
+    /// clock, alone, by `base_models_train_within_their_estimates`.
+    fn home_score(family: Family) -> f64 {
         let genome = family.base_model();
-        let spec = TaskKind::Shapes.spec();
+        let spec = family.task().spec();
         let data = generate(&spec, Split::Train, 1);
         let valid = generate(&spec, Split::Valid, 1);
+        let limits = Limits {
+            max_candidate_seconds: f64::INFINITY,
+            ..Limits::default()
+        };
         let started = Instant::now();
-        let (model, stats) = train(&genome, &spec, &data, &Limits::default()).expect("train");
+        let (model, stats) = train(&genome, &spec, &data, &limits).expect("train");
         let accuracy = score::evaluate(&model, &spec, &valid).primary;
 
         eprintln!(
-            "{}: {} parameters, {} epochs in {:.1} s, train loss {:.3}, valid accuracy \
+            "{}: {} parameters, {} epochs in {:.1} s, train loss {:.3}, valid score \
              {accuracy:.3}",
             family.name(),
             model.param_count(),
@@ -843,47 +896,86 @@ mod tests {
 
     #[test]
     fn lenet5_learns_shapes() {
-        assert!(shapes_accuracy(Family::LeNet5) > 0.40, "0.563 here");
+        assert!(home_score(Family::LeNet5) > 0.40, "0.563 here");
     }
 
     #[test]
     fn alexnet_learns_shapes() {
-        assert!(shapes_accuracy(Family::AlexNet) > 0.55, "0.740 here");
+        assert!(home_score(Family::AlexNet) > 0.55, "0.740 here");
     }
 
     #[test]
     fn vgg_learns_shapes() {
-        assert!(shapes_accuracy(Family::Vgg) > 0.75, "0.916 here");
+        assert!(home_score(Family::Vgg) > 0.75, "0.916 here");
     }
 
     #[test]
     fn resnet_learns_shapes() {
-        assert!(shapes_accuracy(Family::ResNet) > 0.60, "0.782 here");
+        assert!(home_score(Family::ResNet) > 0.60, "0.782 here");
     }
 
     #[test]
     fn xception_learns_shapes() {
-        assert!(shapes_accuracy(Family::Xception) > 0.60, "0.773 here");
+        assert!(home_score(Family::Xception) > 0.60, "0.773 here");
     }
 
     #[test]
     fn mobilenet_learns_shapes() {
-        assert!(shapes_accuracy(Family::MobileNet) > 0.65, "0.854 here");
+        assert!(home_score(Family::MobileNet) > 0.65, "0.854 here");
     }
 
     #[test]
     fn mobilenet_v2_learns_shapes() {
-        assert!(shapes_accuracy(Family::MobileNetV2) > 0.60, "0.760 here");
+        assert!(home_score(Family::MobileNetV2) > 0.60, "0.760 here");
     }
 
     #[test]
     fn senet_learns_shapes() {
-        assert!(shapes_accuracy(Family::SeNet) > 0.60, "0.788 here");
+        assert!(home_score(Family::SeNet) > 0.60, "0.788 here");
     }
 
     #[test]
     fn dilated_cnn_learns_shapes() {
-        assert!(shapes_accuracy(Family::Dilated) > 0.70, "0.872 here");
+        assert!(home_score(Family::Dilated) > 0.70, "0.872 here");
+    }
+
+    #[test]
+    fn googlenet_learns_shapes() {
+        assert!(home_score(Family::GoogLeNet) > 0.55, "0.744 here");
+    }
+
+    #[test]
+    fn densenet_learns_shapes() {
+        assert!(home_score(Family::DenseNet) > 0.78, "0.961 here");
+    }
+
+    #[test]
+    fn shufflenet_learns_shapes() {
+        assert!(home_score(Family::ShuffleNet) > 0.40, "0.564 here");
+    }
+
+    #[test]
+    fn squeezenet_learns_shapes() {
+        assert!(home_score(Family::SqueezeNet) > 0.65, "0.817 here");
+    }
+
+    // The one exception to the rule above: ConvNeXt learns slowly in its 5 epochs, so its
+    // bound lies 0.15 below its accuracy but only 0.12 above chance.
+    #[test]
+    fn convnext_learns_shapes() {
+        assert!(home_score(Family::ConvNeXt) > 0.37, "0.521 here");
+    }
+
+    // Chance on the motif task is 0.5 (2 classes, equally often).
+    #[test]
+    fn tcn_learns_the_motif_task() {
+        assert!(home_score(Family::Tcn) > 0.78, "0.951 here");
+    }
+
+    // The mirror task scores R^2: a model that ignores its input reaches 0 at best.
+    #[test]
+    fn u_net_learns_the_mirror_grid() {
+        assert!(home_score(Family::UNet) > 0.25, "0.435 here");
     }
     #[test]
     #[ignore]
