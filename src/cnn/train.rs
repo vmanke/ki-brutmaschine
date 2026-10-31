@@ -680,6 +680,46 @@ mod tests {
     }
 
     #[test]
+    fn dense_layers_and_a_transition_learn_a_toy_batch() {
+        learns_a_toy_batch("dense layers and a transition with group norm");
+    }
+
+    #[test]
+    fn inception_blocks_learn_a_toy_batch() {
+        learns_a_toy_batch("inception blocks, one strided with groups and a projection");
+    }
+
+    #[test]
+    fn fire_modules_learn_a_toy_batch() {
+        learns_a_toy_batch("fire modules, one with squeeze-and-excitation and an identity shortcut");
+    }
+
+    #[test]
+    fn shufflenet_units_learn_a_toy_batch() {
+        learns_a_toy_batch("shufflenet units with 2 and 4 groups and projections");
+    }
+
+    #[test]
+    fn convnext_blocks_learn_a_toy_batch() {
+        learns_a_toy_batch("convnext blocks with layer norm and gelu, one strided");
+    }
+
+    #[test]
+    fn tcn_blocks_learn_a_toy_batch() {
+        learns_a_toy_batch("tcn blocks with dilations 1, 2 and 4, the last strided");
+    }
+
+    #[test]
+    fn a_u_net_learns_a_toy_batch() {
+        learns_a_toy_batch("a u-net with a transposed convolution, nearest upsampling and a per-cell head");
+    }
+
+    #[test]
+    fn the_1d_blocks_of_ticket_04_learn_a_toy_batch() {
+        learns_a_toy_batch("1-D inception, shufflenet, dense, decoder and convnext blocks");
+    }
+
+    #[test]
     fn every_block_genome_has_a_toy_batch_test() {
         // The names that the tests above pass to `learns_a_toy_batch`.
         let tested = [
@@ -691,6 +731,14 @@ mod tests {
             "separable with layer norm, squeeze-and-excitation, a projection and pooling",
             "inverted residuals, one with an identity shortcut, one strided",
             "1-D basic and separable blocks with squeeze-and-excitation",
+            "dense layers and a transition with group norm",
+            "inception blocks, one strided with groups and a projection",
+            "fire modules, one with squeeze-and-excitation and an identity shortcut",
+            "shufflenet units with 2 and 4 groups and projections",
+            "convnext blocks with layer norm and gelu, one strided",
+            "tcn blocks with dilations 1, 2 and 4, the last strided",
+            "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+            "1-D inception, shufflenet, dense, decoder and convnext blocks",
         ];
         let names: Vec<&str> = genomes::block_genomes()
             .into_iter()
