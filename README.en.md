@@ -218,10 +218,25 @@ another archive member, `--temperature T` sets the temperature of every Worker (
 Cascade, with its own id), `--puzzles K` scores only the first K puzzles as a smoke test
 and writes no file, `--jobs J` (default 16) sets the samples run at a time. Real models go
 through `Recorded` into `<run>/vote-control/worker-calls.jsonl`, apart from the Run's own
-record. A repeat replays them, and a larger N reuses the samples of a smaller one. A failed
-call counts as an abstention, is filed in `worker-errors.jsonl` beside the record and sets
-exit code 1; running again retries it. Exit code 2 means wrong usage, also for an
-unfinished Run.
+record. A repeat replays them, and a larger N reuses the samples of a smaller one. Exit
+code 2 means wrong usage, also for an unfinished Run.
+
+- **Failed calls.** A failed call counts as an abstention, is filed in
+  `worker-errors.jsonl` beside the record and sets exit code 1; running again retries it.
+  So does an answer that cannot be filed, for example on a full disk. Such a result is
+  incomplete (`complete` is false): it does not go to `vote-control.json` but to stdout
+  and to `<run>/vote-control/incomplete.json`, so an earlier complete result stays.
+- **Only healthy Runs as a baseline.** The Run's own select answers are the baseline,
+  while the samples run with 63-bit seeds and never fail for that reason. Runs from before
+  d79c93f (63-bit seed, #40) therefore cannot be used as a baseline: vLLM refused every
+  call with a seed above i64::MAX there, about half of them, without a record. In
+  `v-dgm-11` we measure 3475 recorded calls of 6966, and none of the 3475 seeds lies above
+  i64::MAX. `vote-control` refuses such a Run with exit code 2, `--dry-run` included, and
+  likewise a Run with entries in its own `llm/worker-errors.jsonl`. A Run counts as old
+  when it allows a `vllm:` model and its `llm/worker-calls.jsonl` holds at least 32 vLLM
+  calls, none with a seed above i64::MAX; a new Run looks like that with probability
+  2^-32. `--allow-degraded-run` computes anyway, and the plan and the result say so in
+  `run_failed_calls` and `predates_seed_fix`.
 
 ## Setting up your own GPU VM (optional)
 

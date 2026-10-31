@@ -17,9 +17,16 @@
 //! and a stage's blind vote are the arena's own. Real models are wrapped in `Recorded`, so
 //! every call is filed under `<run>/vote-control/` and a repeated control replays it. The
 //! seed of sample k does not depend on N, so a larger N reuses the calls of a smaller one.
+//! A control with a failed call is incomplete (`VoteReport::complete`) and never becomes
+//! the result of record.
+//!
+//! The comparison is fair only when the run's own calls worked, since its select answers
+//! are the baseline: `run_health` flags a run that filed failed calls, and a vLLM run from
+//! before the 63-bit seed fix (`SEED_FIX`), which lost about half its calls unfiled.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
@@ -51,19 +58,153 @@ pub const SNAPSHOT: &str = "snapshot.json";
 /// The run's event log; its first line names the select panel.
 pub const EVENTS: &str = "events.jsonl";
 
-/// The result, beside the run's report.
+/// The result, beside the run's report. Only a complete result goes there.
 pub const OUTPUT: &str = "vote-control.json";
+
+/// The result of a control with failed calls, which never replaces `OUTPUT`.
+pub const INCOMPLETE: &str = "vote-control/incomplete.json";
 
 /// The record of the control's model calls, apart from the run's own
 /// `llm/worker-calls.jsonl`, so the run's call counts stay as they were. Failed calls go to
 /// `worker-errors.jsonl` beside it.
 pub const RECORD: &str = "vote-control/worker-calls.jsonl";
 
-/// A finished run as recorded: its settings and its last snapshot.
+/// The run's own record of its model calls, as brut-breed-ollama files it.
+pub const RUN_RECORD: &str = "llm/worker-calls.jsonl";
+
+/// The run's own failed calls, filed beside its record (brut-breed-ollama from #40 on).
+pub const RUN_ERRORS: &str = "llm/worker-errors.jsonl";
+
+/// The commit that masked request seeds to 63 bits (#40). Before it, vLLM refused every
+/// call with a seed above i64::MAX, about half of all calls, and nothing filed the failure.
+pub const SEED_FIX: &str = "d79c93f";
+
+/// vLLM records a run must hold before `run_health` reads the lack of any seed above
+/// i64::MAX as the mark of a run before the fix. The core draws seeds uniformly from u64,
+/// so a run after the fix shows none in this many with probability 2^-32.
+pub const SEED_PROBE_RECORDS: usize = 32;
+
+/// A finished run as recorded: its settings, its last snapshot, and whether its own calls
+/// were healthy.
 #[derive(Clone, Debug)]
 pub struct RunDir {
     pub cfg: BreedConfig,
     pub snapshot: Snapshot<Grid>,
+    pub health: RunHealth,
+}
+
+/// Whether the run's own select answers, the baseline of the control, came from calls
+/// that worked. The control's samples run with 63-bit seeds and never fail for that
+/// reason, so a run whose own calls failed compares a healthy arm with a damaged one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunHealth {
+    /// Failed Worker calls the run filed in `llm/worker-errors.jsonl`.
+    pub run_failed_calls: u64,
+    /// The run allows a vLLM model and its record holds at least `SEED_PROBE_RECORDS`
+    /// vLLM calls, none with a seed above i64::MAX: it predates the seed fix.
+    pub predates_seed_fix: bool,
+}
+
+impl RunHealth {
+    /// Why the run's own answers are no fair baseline, or None when they are.
+    pub fn problem(&self) -> Option<String> {
+        let mut why = Vec::new();
+
+        if self.run_failed_calls > 0 {
+            why.push(format!("{} of its own Worker calls failed ({RUN_ERRORS})", self.run_failed_calls));
+        }
+
+        if self.predates_seed_fix {
+            why.push(format!(
+                "it predates the 63-bit seed fix ({SEED_FIX}): no vLLM seed in {RUN_RECORD} lies above i64::MAX, so about half its calls failed without a record"
+            ));
+        }
+
+        (!why.is_empty()).then(|| why.join("; "))
+    }
+}
+
+/// The health of the run in `dir` under its settings `cfg`: (a) the failed calls it filed,
+/// one per non-empty line of `llm/worker-errors.jsonl`; (b) whether it predates the seed
+/// fix, see `RunHealth::predates_seed_fix`. A missing file counts as none.
+pub fn run_health(dir: &Path, cfg: &BreedConfig) -> Result<RunHealth> {
+    let errors = dir.join(RUN_ERRORS);
+    let run_failed_calls = match File::open(&errors) {
+        Ok(f) => {
+            let mut n = 0;
+
+            for line in BufReader::new(f).lines() {
+                if !line.map_err(|e| invalid(format!("{}: {e}", errors.display())))?.trim().is_empty() {
+                    n += 1;
+                }
+            }
+
+            n
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(invalid(format!("{}: {e}", errors.display()))),
+    };
+    let allows_vllm = cfg.limits.models.iter().any(|m| m.tag.starts_with(vllm::TAG_PREFIX));
+
+    Ok(RunHealth {
+        run_failed_calls,
+        predates_seed_fix: allows_vllm && no_high_vllm_seed(&dir.join(RUN_RECORD))?,
+    })
+}
+
+/// True when `record` holds at least `SEED_PROBE_RECORDS` vLLM calls and none of them has
+/// a request seed above i64::MAX. It stops at the first such seed. A last line without its
+/// newline is a write in progress and is not read.
+fn no_high_vllm_seed(record: &Path) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Probe {
+        tag: String,
+        request: ProbeRequest,
+    }
+
+    #[derive(Deserialize)]
+    struct ProbeRequest {
+        seed: u64,
+    }
+
+    let file = match File::open(record) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(invalid(format!("{}: {e}", record.display()))),
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let (mut number, mut vllm) = (0usize, 0usize);
+
+    loop {
+        line.clear();
+        number += 1;
+
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|e| invalid(format!("{}: {e}", record.display())))?;
+
+        if read == 0 || !line.ends_with('\n') {
+            break;
+        }
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let rec: Probe = serde_json::from_str(&line)
+            .map_err(|e| integrity(format!("{} line {number}: {e}", record.display())))?;
+
+        if rec.tag.starts_with(vllm::TAG_PREFIX) {
+            if rec.request.seed > i64::MAX as u64 {
+                return Ok(false);
+            }
+
+            vllm += 1;
+        }
+    }
+
+    Ok(vllm >= SEED_PROBE_RECORDS)
 }
 
 fn invalid(m: String) -> BrutError {
@@ -81,8 +222,8 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
 }
 
 /// The run in `dir`: `config.json` and `snapshot.json` (a brut-breed checkpoint, or a bare
-/// snapshot). Refused for a run on another domain, and when the snapshot was taken under
-/// other settings than `config.json` holds.
+/// snapshot), and its `run_health`. Refused for a run on another domain, and when the
+/// snapshot was taken under other settings than `config.json` holds.
 pub fn load_run(dir: &Path) -> Result<RunDir> {
     let cfg: BreedConfig = read_json(&dir.join(CONFIG))?;
 
@@ -107,7 +248,9 @@ pub fn load_run(dir: &Path) -> Result<RunDir> {
         )));
     }
 
-    Ok(RunDir { cfg, snapshot })
+    let health = run_health(dir, &cfg)?;
+
+    Ok(RunDir { cfg, snapshot, health })
 }
 
 /// The select panel of `cfg`, exactly as the arena makes it.
@@ -160,7 +303,7 @@ pub fn check_run_start(dir: &Path, panel: &[Puzzle]) -> Result<bool> {
         return Ok(false);
     }
 
-    let file = std::fs::File::open(&path).map_err(BrutError::Io)?;
+    let file = File::open(&path).map_err(BrutError::Io)?;
     let Some(first) = BufReader::new(file).lines().next() else {
         return Ok(false);
     };
@@ -396,6 +539,11 @@ pub struct Plan {
     pub partial: bool,
     /// Upper bound on the calls: puzzles x samples x the Cascade's call bound.
     pub max_calls: u64,
+    /// The run's own failed calls (`RunHealth`): the champion's and the sampled member's
+    /// select answers may count failures as wrong answers.
+    pub run_failed_calls: u64,
+    /// The run predates the 63-bit seed fix (`RunHealth`), so about half its calls failed.
+    pub predates_seed_fix: bool,
 }
 
 /// The plan for `run` under `opts`, and the Cascade to sample.
@@ -491,6 +639,8 @@ pub fn plan(run: &RunDir, opts: &Options) -> Result<(Plan, Cascade)> {
         max_calls: (puzzles as u64)
             .saturating_mul(samples as u64)
             .saturating_mul(cascade_call_bound(&voted)),
+        run_failed_calls: run.health.run_failed_calls,
+        predates_seed_fix: run.health.predates_seed_fix,
     };
 
     Ok((plan, voted))
@@ -615,8 +765,27 @@ pub struct VoteReport {
     /// Calls that failed in this process; each one counts as an abstention. They are filed
     /// in `worker-errors.jsonl` beside the record and retried by the next control.
     pub failed_calls: u64,
+    /// Every select puzzle scored (not `partial`) and no call failed. Only a complete
+    /// result goes to `vote-control.json`; `vote` leaves it false until `settle`.
+    pub complete: bool,
     pub totals: Totals,
     pub puzzles: Vec<PuzzleVote>,
+}
+
+impl VoteReport {
+    /// Take the counts of the recorded backends `filed`, which held `before` answers when
+    /// the control began: the calls the models answered now, the failed ones, and with
+    /// them whether the result is complete.
+    pub fn settle(&mut self, filed: &[Arc<dyn Filed>], before: usize) {
+        if !filed.is_empty() {
+            let after: usize = filed.iter().map(|f| f.filed()).sum();
+
+            self.new_calls = Some(after.saturating_sub(before) as u64);
+        }
+
+        self.failed_calls = filed.iter().map(|f| f.failed()).sum();
+        self.complete = !self.plan.partial && self.failed_calls == 0;
+    }
 }
 
 /// Run `c` (id `cascade_id`) `n` times on every puzzle of `panel`, on up to `jobs` threads.
@@ -735,6 +904,7 @@ pub fn vote(
         completion_tokens_per_puzzle: completion as f64 / per,
         new_calls: None,
         failed_calls: 0,
+        complete: false,
         totals: Totals::of(&puzzles),
         puzzles,
     })
@@ -1337,6 +1507,164 @@ mod tests {
         let (more, asked, filed) = control(3);
         assert_eq!((asked, filed), (5, 15));
         assert_eq!(more.calls_used, 15);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Fails every call, as a dead server or one serving another model does.
+    struct Dead;
+
+    impl ModelBackend for Dead {
+        fn name(&self) -> &str {
+            "sim:small"
+        }
+
+        fn generate(&self, _req: &GenRequest) -> Result<GenResponse> {
+            Err(BrutError::Io(std::io::Error::other("vllm: HTTP 404 Not Found")))
+        }
+    }
+
+    #[test]
+    fn a_failed_call_leaves_the_result_incomplete() {
+        let (dir, _) = fixture_run("dead");
+        let run = load_run(&dir).expect("load");
+        let panel = select_panel(&run.cfg).expect("panel");
+        let (p, voted) = plan(&run, &Options { samples: Some(2), ..Options::default() }).expect("plan");
+
+        let dead: Arc<dyn Filed> = Arc::new(Recorded::open(Dead, &dir.join(RECORD)).expect("open"));
+        let mut report = vote(&pool_of(dead.clone()), &run, p.clone(), &voted, &panel, 2, &|_, _| {}).expect("vote");
+
+        report.settle(&[dead], 0);
+        assert_eq!((report.failed_calls, report.new_calls), (10, Some(0)));
+        assert!(!report.complete, "a failed call never makes a result of record");
+        assert!(report.puzzles.iter().all(|v| v.abstained == 2 && !v.correct));
+        assert!(serde_json::to_string(&report).expect("json").contains("\"complete\":false"));
+
+        // The same control with a working model is complete, once settled.
+        let ok: Arc<dyn Filed> =
+            Arc::new(Recorded::open(Oracle::new(&panel), &dir.join("ok/worker-calls.jsonl")).expect("open"));
+        let mut report = vote(&pool_of(ok.clone()), &run, p, &voted, &panel, 2, &|_, _| {}).expect("vote");
+
+        assert!(!report.complete, "not before settle");
+        report.settle(std::slice::from_ref(&ok), 0);
+        assert!(report.complete && report.failed_calls == 0);
+        assert_eq!(report.new_calls, Some(10));
+
+        // A smoke test on part of the panel is never complete either.
+        let (p, voted) = plan(&run, &Options { samples: Some(2), puzzles: Some(2), ..Options::default() }).expect("plan");
+        let mut report = vote(&pool_of(ok.clone()), &run, p, &voted, &panel, 2, &|_, _| {}).expect("vote");
+
+        report.settle(&[ok], 10);
+        assert!(!report.complete && report.failed_calls == 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `n` lines of a run's record for `tag`, with request seeds `seed(i)`.
+    fn records(tag: &str, n: usize, seed: impl Fn(usize) -> u64) -> String {
+        (0..n)
+            .map(|i| {
+                let request = GenRequest {
+                    system: "sys".to_string(),
+                    prompt: format!("puzzle {i}"),
+                    max_tokens: 64,
+                    temperature: 0.0,
+                    seed: seed(i),
+                    think_tokens: 0,
+                };
+                let rec = crate::CallRecord {
+                    key: crate::call_key(tag, &request),
+                    tag: tag.to_string(),
+                    request,
+                    response: GenResponse {
+                        text: "ANSWER\n1".to_string(),
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        stop_reason: StopReason::Stop,
+                        backend: tag.to_string(),
+                    },
+                };
+
+                format!("{}\n", serde_json::to_string(&rec).expect("json"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_run_before_the_seed_fix_or_with_failed_calls_is_flagged() {
+        use brutmaschine::cascade::genome::ModelSpec;
+
+        let dir = temp_dir("health");
+        let record = dir.join(RUN_RECORD);
+        let mut cfg = tiny_config();
+        let health = |cfg: &BreedConfig| run_health(&dir, cfg).expect("health");
+
+        // No llm/ directory at all: a simulated run.
+        assert_eq!(health(&cfg), RunHealth::default());
+        assert_eq!(RunHealth::default().problem(), None);
+
+        // 40 vLLM records, every seed at most i64::MAX: the record of a run before the fix,
+        // which lost every call with a higher seed. A run on simulated models only is not
+        // read for it.
+        std::fs::create_dir_all(record.parent().expect("parent")).expect("llm dir");
+        std::fs::write(&record, records("vllm:qwen2.5-32b", 40, |i| (i as u64) << 50)).expect("write");
+        assert!(!health(&cfg).predates_seed_fix);
+
+        cfg.limits.models.push(ModelSpec { tag: "vllm:qwen2.5-32b".to_string(), cost_per_call: 0.01 });
+        let old = health(&cfg);
+        assert_eq!(old, RunHealth { run_failed_calls: 0, predates_seed_fix: true });
+        assert!(old.problem().is_some_and(|m| m.contains(SEED_FIX)));
+
+        // One seed above i64::MAX shows a run after the fix, wherever it stands.
+        let mut text = records("vllm:qwen2.5-32b", 1, |_| u64::MAX);
+        text.push_str(&records("vllm:qwen2.5-32b", 40, |i| i as u64));
+        std::fs::write(&record, text).expect("write");
+        assert!(!health(&cfg).predates_seed_fix);
+
+        // Fewer than 32 vLLM records say nothing; records of other models do not count, and
+        // a last line still being written is not read.
+        let mut text = records("ollama:qwen2.5:7b", 40, |i| i as u64);
+        text.push_str(&records("vllm:qwen2.5-32b", SEED_PROBE_RECORDS - 1, |i| i as u64));
+        text.push_str("{\"key\":\"vllm:qwen2.5-32b#");
+        std::fs::write(&record, &text).expect("write");
+        assert!(!health(&cfg).predates_seed_fix);
+
+        text.truncate(text.rfind('\n').expect("newline") + 1);
+        text.push_str(&records("vllm:qwen2.5-32b", 1, |_| 3));
+        std::fs::write(&record, &text).expect("write");
+        assert!(health(&cfg).predates_seed_fix, "the 32nd low seed tips it");
+
+        // A broken line in the middle is an error, not a guess.
+        std::fs::write(&record, format!("{{broken\n{text}")).expect("write");
+        assert!(matches!(run_health(&dir, &cfg), Err(BrutError::Integrity(_))));
+        std::fs::remove_file(&record).expect("rm");
+
+        // Every non-empty line of llm/worker-errors.jsonl is a failed call of the run.
+        std::fs::write(dir.join(RUN_ERRORS), "{\"key\":\"a\"}\n\n{\"key\":\"b\"}\n{\"key\":\"c\"}\n").expect("write");
+        let failed = health(&cfg);
+        assert_eq!(failed, RunHealth { run_failed_calls: 3, predates_seed_fix: false });
+        assert!(failed.problem().is_some_and(|m| m.contains("3 of its own Worker calls failed")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_plan_carries_the_run_health() {
+        let (dir, _) = fixture_run("plan-health");
+        let opts = Options { samples: Some(2), ..Options::default() };
+
+        let (p, _) = plan(&load_run(&dir).expect("load"), &opts).expect("plan");
+        assert_eq!((p.run_failed_calls, p.predates_seed_fix), (0, false));
+
+        std::fs::create_dir_all(dir.join("llm")).expect("llm dir");
+        std::fs::write(dir.join(RUN_ERRORS), "{\"key\":\"a\"}\n").expect("write");
+        let mut run = load_run(&dir).expect("load");
+        let (p, _) = plan(&run, &opts).expect("plan");
+        assert_eq!((p.run_failed_calls, p.predates_seed_fix), (1, false));
+
+        run.health.predates_seed_fix = true;
+        let json = serde_json::to_string(&plan(&run, &opts).expect("plan").0).expect("json");
+        assert!(json.contains("\"run_failed_calls\":1") && json.contains("\"predates_seed_fix\":true"), "{json}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

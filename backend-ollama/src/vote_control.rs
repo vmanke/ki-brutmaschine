@@ -4,7 +4,7 @@
 //!
 //! Usage:
 //!   vote-control --run <dir> [--samples N] [--cascade ID] [--temperature T]
-//!                [--puzzles K] [--jobs J] [--dry-run]
+//!                [--puzzles K] [--jobs J] [--dry-run] [--allow-degraded-run]
 //!
 //! Without --samples, N is the champion's average Worker calls per search puzzle divided by
 //! the sampled Cascade's own, rounded. --cascade samples another archive member than the
@@ -14,14 +14,23 @@
 //! --jobs J runs J samples at a time (default 16). --dry-run prints the plan and makes no
 //! call; it also works on an unfinished run.
 //!
-//! The result goes to stdout and to `<dir>/vote-control.json`. Real models are recorded in
-//! `<dir>/vote-control/worker-calls.jsonl` (failed calls in `worker-errors.jsonl` beside
-//! it), apart from the run's own record; a repeated control replays them. `VLLM_URL`,
-//! `OLLAMA_URL` and `OLLAMA_TIMEOUT_SECS` work as for brut-breed-ollama.
+//! A run whose own calls failed is refused, the plan too, since its select answers are the
+//! baseline: one that filed failed calls in `llm/worker-errors.jsonl`, and a vLLM run from
+//! before the 63-bit seed fix (d79c93f), which lost about half its calls without a record.
+//! --allow-degraded-run runs it anyway; the plan and the result say so in
+//! `run_failed_calls` and `predates_seed_fix`.
 //!
-//! Exit codes: 0 done, 1 error or failed calls (the result is still written; run again to
-//! retry the failed calls), 2 wrong usage (also: an option the run cannot take, the run is
-//! unfinished, or a brut-breed process is writing it).
+//! A complete result goes to stdout and to `<dir>/vote-control.json`. With a failed call
+//! it is incomplete (`complete` false): it goes to stdout and to
+//! `<dir>/vote-control/incomplete.json`, never over `vote-control.json`. Real models are
+//! recorded in `<dir>/vote-control/worker-calls.jsonl` (failed calls in
+//! `worker-errors.jsonl` beside it), apart from the run's own record; a repeated control
+//! replays them. `VLLM_URL`, `OLLAMA_URL` and `OLLAMA_TIMEOUT_SECS` work as for
+//! brut-breed-ollama.
+//!
+//! Exit codes: 0 done, 1 error or failed calls (run again to retry the failed calls), 2
+//! wrong usage (also: an option the run cannot take, the run is unfinished, its own calls
+//! failed, or a brut-breed process is writing it).
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
@@ -30,8 +39,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use backend_ollama::vote::{
-    Endpoints, OUTPUT, Options, RECORD, build_pool, check_panel, check_run_start, load_run, plan,
-    select_panel, vote,
+    Endpoints, INCOMPLETE, OUTPUT, Options, RECORD, build_pool, check_panel, check_run_start,
+    load_run, plan, select_panel, vote,
 };
 use brutmaschine::util::{BrutError, Result, write_atomic};
 
@@ -59,7 +68,7 @@ fn usage(m: &str) -> BrutError {
 }
 
 fn parse_args() -> Result<BTreeMap<String, String>> {
-    const FLAGS: [&str; 1] = ["dry-run"];
+    const FLAGS: [&str; 2] = ["dry-run", "allow-degraded-run"];
     const KEYS: [&str; 6] = ["run", "samples", "cascade", "temperature", "puzzles", "jobs"];
 
     let mut map = BTreeMap::new();
@@ -145,6 +154,19 @@ fn run() -> Result<i32> {
         e => e,
     })?;
 
+    // The run's own select answers are the baseline; failed calls there make the
+    // comparison unfair, so they need an explicit yes.
+    if let Some(why) = run.health.problem() {
+        if !args.contains_key("allow-degraded-run") {
+            return Err(usage(&format!(
+                "{} is no fair baseline: {why}. Its select answers, the champion's too, count failed calls as wrong; give --allow-degraded-run to compare anyway",
+                dir.display()
+            )));
+        }
+
+        eprintln!("vote-control: warning (--allow-degraded-run): {why}");
+    }
+
     if dry {
         println!("{}", serde_json::to_string_pretty(&plan)?);
         return Ok(0);
@@ -174,26 +196,37 @@ fn run() -> Result<i32> {
     };
     let mut report = vote(&pool, &run, plan, &voted, &panel, jobs, &progress)?;
 
-    if !filed.is_empty() {
-        let after: usize = filed.iter().map(|f| f.filed()).sum();
-
-        report.new_calls = Some(after.saturating_sub(before) as u64);
-    }
-
-    report.failed_calls = filed.iter().map(|f| f.failed()).sum();
+    report.settle(&filed, before);
 
     let json = serde_json::to_string_pretty(&report)?;
 
     println!("{json}");
 
-    if !report.plan.partial {
+    // Only a complete result is the result of record: a failed call must never replace
+    // it, nor stand there as one. An incomplete full control is kept apart.
+    let incomplete = dir.join(INCOMPLETE);
+
+    if report.complete {
         write_atomic(&dir.join(OUTPUT), format!("{json}\n").as_bytes())?;
+    } else if !report.plan.partial {
+        if let Some(parent) = incomplete.parent() {
+            std::fs::create_dir_all(parent).map_err(BrutError::Io)?;
+        }
+
+        write_atomic(&incomplete, format!("{json}\n").as_bytes())?;
     }
 
     let t = &report.totals;
+    let (label, place) = if report.complete {
+        ("", dir.join(OUTPUT).display().to_string())
+    } else if report.plan.partial {
+        ("partial, ", "stdout only".to_string())
+    } else {
+        ("INCOMPLETE, ", incomplete.display().to_string())
+    };
 
     eprintln!(
-        "vote-control: vote {}/{} right, champion {}, sign test p {}",
+        "vote-control: {label}vote {}/{} right, champion {}, sign test p {} (written to {place})",
         t.vote_correct,
         t.puzzles,
         t.champion_correct.map_or("n/a".to_string(), |c| format!("{c}/{}", t.puzzles)),
@@ -202,7 +235,7 @@ fn run() -> Result<i32> {
 
     if report.failed_calls > 0 {
         eprintln!(
-            "vote-control: {} call(s) failed and counted as abstentions; run again to retry them",
+            "vote-control: {} call(s) failed and counted as abstentions, so the result is not written to {OUTPUT}; run again to retry them",
             report.failed_calls
         );
 
