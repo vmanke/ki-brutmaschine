@@ -31,7 +31,8 @@ pub const MAX_LOSS: f64 = 1.0e9;
 const EVAL_CHUNK: usize = 512;
 
 /// Most activation floats per chunk (rows times the sum of the layer widths), so wide
-/// or deep models use smaller chunks. About 8 MiB for pre-activations and activations.
+/// or deep models use smaller chunks. About 8 MiB for the pre-activations and activations
+/// of an MLP; a CNN holds fewer at a time (`cnn::model::Evaluator::values_per_row`).
 const EVAL_MAX_FLOATS: usize = 1 << 20;
 
 /// Rows per chunk for an MLP with these layer sizes (see `rows_per_chunk`).
