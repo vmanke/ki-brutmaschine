@@ -45,7 +45,7 @@ search, and runs studied as universes.
 | Q52 | The Soul is the inherited phases, one per hypothesis family; they are its identity. Their strengths come from the Task (Family strength, Q63); learned strengths are a later variant, equal strengths the control. Chosen after a check of 20 sources from speckle optics, signal phase, quantum cognition and phasor networks. |
 | Q53 | New terms go to the glossary in small pull requests of their own, never inside a code pull request. |
 | Q54 | Each Worker has a Character; each Stage also has a joint pattern of its Workers' contributions, the Array pattern (Q61). |
-| Q55 | The Character is recomputed from the Soul each time and never inherited. Inheritance has three channels: genes, Upbringing (Q59) and Soul inheritance ("Seeletik"). |
+| Q55 | The Character is recomputed from the Soul each time and never inherited. Inheritance has three channels: genes, Upbringing (Q59) and Souletics (Q66). |
 | Q56 | Observations change the Soul, and with it the Character, during a run; the change is logged per generation. |
 | Q57 | For the model, the Soul shows itself through its Character (rung 1 of the ladder below); for nature, Q48 stays open (rung 4). |
 | Q58 | Soul population: every child brings its own unit of Soul and nobody loses any, as in Hoppe's urn (1984); the archive keeps every member. |
@@ -54,6 +54,7 @@ search, and runs studied as universes.
 | Q61 | The joint pattern of a Stage is its Array pattern (German "Gruppencharakteristik der Stufe"), the antenna term for separate elements with their own phases. |
 | Q62 | Observations are both the judgments in a Stage's vote and peer judgments. |
 | Q63 | Family strengths come from the Task as its Domain states them, the same for every Worker on that Task; equal strengths are the control, learned strengths a later variant. |
+| Q66 | The glossary calls the third channel Souletics and defines it as soul inheritance; German reports keep the owner's word "Seeletik". |
 
 ## What the experiments may claim
 
@@ -73,7 +74,7 @@ record the ladder of claims the evidence can carry:
 ## Open
 
 - Q48: an operational definition of "soul" that yields a measurable prediction. For the model, Q57 answers it through the Character; for nature it stays open.
-- Soul inheritance ("Seeletik"): how a child gets its Soul (Q64 onwards).
+- Souletics: how a child gets its Soul (Q64), and whether a parent passes on its Soul from birth or its Soul as changed by Observations (Q65).
 
 ## Tickets
 

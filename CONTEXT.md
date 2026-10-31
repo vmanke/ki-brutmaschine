@@ -238,6 +238,10 @@ _Avoid_: feeling, measurement strength, gain
 What a child receives from its parents' lives besides genes and Soul. In imprinting, its parents observe its first answers and so shift its Soul toward theirs. In teaching, a prompt section is written fresh at birth from its parents' best solved examples and lessons; it is never inherited as a gene.
 _Avoid_: training, education (alone)
 
+**Souletics**:
+Soul inheritance: the way a child gets its Soul, one of three channels of inheritance besides genes and Upbringing. German reports call it Seeletik.
+_Avoid_: soul genetics
+
 ### Records and control
 
 **Run**:
