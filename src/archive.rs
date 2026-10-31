@@ -1011,7 +1011,7 @@ fn read_and_verify(path: &Path) -> Result<Vec<Record>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genome::{Activation, Optimizer};
+    use crate::genome::{Activation, Arch, Optimizer};
     use rand::SeedableRng;
 
     fn tmp_file(name: &str) -> PathBuf {
@@ -1025,6 +1025,7 @@ mod tests {
 
     fn genome(seed: u64) -> Genome {
         Genome {
+            arch: Arch::Mlp,
             hidden: vec![8],
             activation: Activation::Tanh,
             optimizer: Optimizer::Adam,

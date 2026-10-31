@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::genome::{Activation, Genome, MIN_EPOCHS, Optimizer};
+use crate::genome::{Activation, Arch, Genome, MIN_EPOCHS, Optimizer};
 use crate::hidden_eval::MIN_HIDDEN_SCORE_STEP;
 use crate::task::TaskKind;
 use crate::util::{BrutError, Result, write_atomic};
@@ -291,6 +291,7 @@ impl Config {
 
         let spec = self.task.spec();
         let smallest = Genome {
+            arch: Arch::Mlp,
             hidden: Vec::new(),
             activation: Activation::Relu,
             optimizer: Optimizer::Sgd,

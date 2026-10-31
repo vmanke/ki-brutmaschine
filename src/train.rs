@@ -67,7 +67,7 @@ pub fn train_with_stop(
     check_data(spec, data)?;
 
     let started = Instant::now();
-    let sizes = genome.layer_sizes(spec);
+    let sizes = genome.layer_sizes(spec)?;
     let mut init_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "init"));
     let mut shuffle_rng = ChaCha8Rng::seed_from_u64(derive_seed(genome.seed, "shuffle"));
     let mut model = Mlp::new(&sizes, genome.activation, genome.init_scale, &mut init_rng);
@@ -272,11 +272,12 @@ fn check_data(spec: &TaskSpec, data: &Dataset) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genome::{Activation, Optimizer};
+    use crate::genome::{Activation, Arch, Optimizer};
     use crate::task::{Split, TaskKind, generate};
 
     fn genome() -> Genome {
         Genome {
+            arch: Arch::Mlp,
             hidden: vec![16],
             activation: Activation::Tanh,
             optimizer: Optimizer::Adam,
@@ -359,6 +360,24 @@ mod tests {
         g.batch_size = 3;
 
         assert!(train(&g, &spec, &data, &Limits::default()).is_err());
+    }
+
+    #[test]
+    fn a_cnn_genome_is_never_trained_as_an_mlp() {
+        // Its `hidden` holds only the dense layers of its head. Until CNN training is
+        // built, `train` refuses the genome instead of building an MLP from them.
+        let spec = TaskKind::Shapes.spec();
+        let data = generate(&spec, Split::Train, 1);
+        let g = crate::cnn::genome::testing::lenet();
+
+        assert!(g.validate(&Limits::default(), &spec).is_ok());
+
+        let message = train(&g, &spec, &data, &Limits::default()).expect_err("refused");
+
+        assert!(
+            message.to_string().contains("this genome is a CNN"),
+            "{message}"
+        );
     }
 
     #[test]

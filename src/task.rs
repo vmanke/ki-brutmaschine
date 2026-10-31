@@ -1229,7 +1229,9 @@ mod tests {
                 let genome = Genome::random(&mut rng, &limits, &spec);
 
                 assert!(genome.validate(&limits, &spec).is_ok(), "{kind:?}");
-                assert_eq!(genome.layer_sizes(&spec)[0], spec.n_in, "{kind:?}");
+                let sizes = genome.layer_sizes(&spec).expect("an MLP genome");
+
+                assert_eq!(sizes[0], spec.n_in, "{kind:?}");
             }
         }
     }

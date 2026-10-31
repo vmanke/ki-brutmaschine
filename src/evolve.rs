@@ -817,12 +817,13 @@ fn summarize(archive: &Archive, guard: &Guard, stop_reason: String) -> RunSummar
 mod tests {
     use super::*;
     use crate::config::Limits;
-    use crate::genome::{Activation, Optimizer};
+    use crate::genome::{Activation, Arch, Optimizer};
     use crate::task::TaskKind;
 
     fn plan(seed: u64, width: usize) -> Plan {
         Plan {
             genome: Genome {
+                arch: Arch::Mlp,
                 hidden: vec![width],
                 activation: Activation::Relu,
                 optimizer: Optimizer::Adam,

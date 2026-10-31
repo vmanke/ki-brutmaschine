@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 
 use brutmaschine::config::{Config, Limits};
 use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup, RunSummary};
-use brutmaschine::genome::{Activation, Genome, Optimizer};
+use brutmaschine::genome::{Activation, Arch, Genome, Optimizer};
 use brutmaschine::hidden_eval::{AnyEvalRequest, EvalRequest, HIDDEN_SEED_KEY};
 use brutmaschine::nn::Mlp;
 use brutmaschine::task::{self, Dataset, Split, Targets, TaskKind, TaskSpec};
@@ -478,6 +478,7 @@ fn generated_datasets_keep_their_bytes() {
 /// so its JSON text pins the float and the integer format.
 fn golden_genome() -> Genome {
     Genome {
+        arch: Arch::Mlp,
         hidden: vec![6, 5],
         activation: Activation::Tanh,
         optimizer: Optimizer::Adam,

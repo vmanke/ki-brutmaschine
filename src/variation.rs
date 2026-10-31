@@ -12,8 +12,8 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::config::Limits;
 use crate::genome::{
-    ACTIVATIONS, Arch, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN,
-    LR_MAX, LR_MIN, MIN_EPOCHS, OPTIMIZERS,
+    ACTIVATIONS, Arch, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN, LR_MAX,
+    LR_MIN, MIN_EPOCHS, OPTIMIZERS,
 };
 use crate::task::TaskSpec;
 use crate::util::{log_uniform_f32, normal_f32};
@@ -419,6 +419,7 @@ fn nearest_batch(size: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cnn::genome::{Dims, testing};
     use crate::genome::{Activation, Optimizer};
     use crate::task::TaskKind;
     use rand::SeedableRng;
@@ -531,6 +532,237 @@ mod tests {
         let fixed = repair(g, &limits, &spec);
 
         assert!(fixed.validate(&limits, &spec).is_ok(), "{fixed:?}");
+    }
+
+    /// The architecture of a genome: its arch, hidden layers and activation.
+    fn architecture(g: &Genome) -> (Arch, Vec<usize>, Activation) {
+        (g.arch.clone(), g.hidden.clone(), g.activation)
+    }
+
+    /// Valid CNN genomes for the shapes task.
+    fn valid_cnns(count: usize, seed: u64) -> Vec<Genome> {
+        let spec = TaskKind::Shapes.spec();
+        let limits = Limits::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut found = vec![testing::lenet(), testing::vgg(), testing::grouped_dilated()];
+
+        while found.len() < count {
+            let g = testing::plausible(&mut rng, Dims::TwoD);
+
+            if g.validate(&limits, &spec).is_ok() {
+                found.push(g);
+            }
+        }
+
+        found
+    }
+
+    #[test]
+    fn mutating_a_cnn_changes_only_its_training_genes() {
+        let spec = TaskKind::Shapes.spec();
+        let limits = Limits::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(21);
+        let mut changed = [false; 6];
+
+        for parent in valid_cnns(40, 22) {
+            for _ in 0..25 {
+                let child = mutate(&parent, 0.3, &mut rng, &limits, &spec);
+
+                assert!(
+                    child.validate(&limits, &spec).is_ok(),
+                    "{}",
+                    child.summary()
+                );
+                assert_eq!(architecture(&child), architecture(&parent));
+                assert_ne!(child.seed, parent.seed);
+
+                let genes = [
+                    child.optimizer != parent.optimizer,
+                    child.learning_rate != parent.learning_rate,
+                    child.l2 != parent.l2,
+                    child.batch_size != parent.batch_size,
+                    child.epochs != parent.epochs,
+                    child.init_scale != parent.init_scale,
+                ];
+
+                for (seen, now) in changed.iter_mut().zip(genes) {
+                    *seen |= now;
+                }
+            }
+        }
+
+        assert_eq!(changed, [true; 6]);
+    }
+
+    #[test]
+    fn crossover_with_a_cnn_takes_the_architecture_whole() {
+        let spec = TaskKind::Shapes.spec();
+        let limits = Limits::default();
+        let m = RandomMutator::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(23);
+        let mlp = sample();
+        let cnns = valid_cnns(6, 24);
+        let mut kinds = [0usize; 2];
+
+        assert!(mlp.validate(&limits, &spec).is_ok());
+
+        for (i, cnn) in cnns.iter().enumerate() {
+            let other = &cnns[(i + 1) % cnns.len()];
+
+            for parents in [[&mlp, cnn], [cnn, &mlp], [cnn, other]] {
+                for _ in 0..40 {
+                    let child = m.propose(&parents, &mut rng, &limits, &spec);
+                    let from = parents
+                        .iter()
+                        .find(|p| architecture(p) == architecture(&child))
+                        .expect("the architecture of one parent");
+
+                    assert!(
+                        child.validate(&limits, &spec).is_ok(),
+                        "{}",
+                        child.summary()
+                    );
+                    kinds[usize::from(child.arch.is_mlp())] += 1;
+
+                    // Training genes come from either parent; epochs may be cut to fit.
+                    let either =
+                        |f: &dyn Fn(&Genome) -> f32| parents.iter().any(|p| f(p) == f(&child));
+
+                    assert!(either(&|g| g.learning_rate));
+                    assert!(either(&|g| g.l2));
+                    assert!(either(&|g| g.init_scale));
+                    assert!(parents.iter().any(|p| p.optimizer == child.optimizer));
+                    assert!(parents.iter().any(|p| p.batch_size == child.batch_size));
+                    assert!(child.epochs <= parents.iter().map(|p| p.epochs).max().unwrap_or(0));
+                    assert!(child.epochs >= MIN_EPOCHS && from.validate(&limits, &spec).is_ok());
+                }
+            }
+        }
+
+        // Both kinds of parents pass on their architecture.
+        assert!(kinds[0] > 100 && kinds[1] > 50, "{kinds:?}");
+    }
+
+    #[test]
+    fn crossover_of_two_mlps_draws_as_before() {
+        // The crossover of two MLPs before CNNs, gene by gene, as a reference.
+        fn before(a: &Genome, b: &Genome, rng: &mut ChaCha8Rng) -> Genome {
+            let mut pick = || rng.random_bool(0.5);
+            let hidden = if pick() {
+                a.hidden.clone()
+            } else {
+                b.hidden.clone()
+            };
+            let activation = if pick() { a.activation } else { b.activation };
+            let optimizer = if pick() { a.optimizer } else { b.optimizer };
+            let learning_rate = if pick() {
+                a.learning_rate
+            } else {
+                b.learning_rate
+            };
+            let l2 = if pick() { a.l2 } else { b.l2 };
+            let batch_size = if pick() { a.batch_size } else { b.batch_size };
+            let epochs = if pick() { a.epochs } else { b.epochs };
+            let init_scale = if pick() { a.init_scale } else { b.init_scale };
+
+            Genome {
+                arch: Arch::Mlp,
+                hidden,
+                activation,
+                optimizer,
+                learning_rate,
+                l2,
+                batch_size,
+                epochs,
+                init_scale,
+                seed: rng.random(),
+            }
+        }
+
+        let a = sample();
+        let b = Genome {
+            hidden: vec![4],
+            activation: Activation::Sine,
+            optimizer: Optimizer::Sgd,
+            learning_rate: 0.001,
+            l2: 0.0,
+            batch_size: 16,
+            epochs: 20,
+            init_scale: 0.5,
+            ..sample()
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(25);
+        let mut reference = ChaCha8Rng::seed_from_u64(25);
+
+        for _ in 0..1000 {
+            assert_eq!(crossover(&a, &b, &mut rng), before(&a, &b, &mut reference));
+        }
+    }
+
+    #[test]
+    fn children_of_parents_that_break_the_limits_are_redrawn() {
+        let spec = TaskKind::Shapes.spec();
+        let limits = Limits::default();
+        let m = RandomMutator::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(26);
+        let mut bad = testing::lenet();
+
+        // A 9x9 kernel does not fit the 8x8 input of the LeNet stage.
+        if let Arch::Cnn(cnn) = &mut bad.arch {
+            cnn.stages[0].kernel = 9;
+        }
+
+        assert!(bad.validate(&limits, &spec).is_err());
+
+        let good = testing::lenet();
+
+        for parents in [
+            vec![&bad],
+            vec![&bad, &bad],
+            vec![&bad, &good],
+            vec![&good, &bad],
+        ] {
+            for _ in 0..20 {
+                let child = m.propose(&parents, &mut rng, &limits, &spec);
+
+                assert!(
+                    child.validate(&limits, &spec).is_ok(),
+                    "{}",
+                    child.summary()
+                );
+                assert_ne!(architecture(&child), architecture(&bad));
+            }
+        }
+    }
+
+    #[test]
+    fn repair_keeps_a_cnn_architecture_and_cuts_its_epochs() {
+        let spec = TaskKind::Shapes.spec();
+        let limits = Limits::default();
+        let mut g = testing::lenet();
+
+        g.epochs = 400;
+        g.learning_rate = f32::NAN;
+        g.batch_size = 1000;
+
+        let fixed = repair(g.clone(), &limits, &spec);
+
+        // 2e10 FLOPs / (3 * 405 832 FLOPs * 1000 samples) = 16.4 epochs.
+        assert_eq!(fixed.epochs, 16);
+        assert_eq!(fixed.learning_rate, 0.01);
+        assert_eq!(fixed.batch_size, 256);
+        assert_eq!(architecture(&fixed), architecture(&g));
+        assert!(fixed.validate(&limits, &spec).is_ok());
+
+        // An architecture that breaks a shape rule stays as it is; `propose` redraws it.
+        if let Arch::Cnn(cnn) = &mut g.arch {
+            cnn.stages.clear();
+        }
+
+        let unfit = repair(g.clone(), &limits, &spec);
+
+        assert_eq!(architecture(&unfit), architecture(&g));
+        assert!(unfit.validate(&limits, &spec).is_err());
     }
 
     #[test]

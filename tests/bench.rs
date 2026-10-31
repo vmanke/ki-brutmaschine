@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use brutmaschine::config::{Config, Limits};
 use brutmaschine::evolve::{self, CONFIG_FILE};
-use brutmaschine::genome::{Activation, Genome, Optimizer};
+use brutmaschine::genome::{Activation, Arch, Genome, Optimizer};
 use brutmaschine::learner::interp::{self, Memory};
 use brutmaschine::learner::protocol::run_learner;
 use brutmaschine::learner::seeds::reference_nn;
@@ -85,6 +85,7 @@ fn bench_forward_backward() {
 
 fn spirals_genome(activation: Activation, optimizer: Optimizer) -> Genome {
     Genome {
+        arch: Arch::Mlp,
         hidden: vec![64, 64],
         activation,
         optimizer,

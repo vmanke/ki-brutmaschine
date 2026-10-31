@@ -9,7 +9,7 @@
 //!
 //! | Family | Part |
 //! |---|---|
-//! | LeNet-5, AlexNet, VGG | `Block::Plain`, with pooling or a strided convolution |
+//! | LeNet-5, AlexNet, VGG | `Block::Plain` with downsampling, `Head::Flatten` |
 //! | Dilated CNN | `Block::Plain` with a dilation above 1 |
 //! | ResNet | `Block::Basic`, `Block::Bottleneck`, `Stage::residual` |
 //! | Xception, MobileNet | `Block::Separable` |
@@ -84,9 +84,6 @@ pub const NORMS: [Norm; 4] = [Norm::None, Norm::Batch, Norm::Layer, Norm::Group]
 pub const DOWNSAMPLES: [Downsample; 3] =
     [Downsample::Conv, Downsample::MaxPool, Downsample::AvgPool];
 
-/// Every head.
-pub const HEADS: [Head; 3] = [Head::GlobalAvgPool, Head::Flatten, Head::PerCell];
-
 /// A CNN: an input stem, a list of stages and a head.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,7 +121,9 @@ pub struct Stem {
     pub stride: usize,
     /// How a stride above 1 downsamples. It has no effect at stride 1.
     pub down: Downsample,
+    /// Normalization after the convolution.
     pub norm: Norm,
+    /// Activation after the normalization.
     pub activation: CnnActivation,
 }
 
@@ -149,7 +148,9 @@ pub struct Stage {
     pub se: bool,
     /// A skip connection around the block (ResNet and others). Ticket 03 builds it.
     pub residual: bool,
+    /// Normalization after the convolution.
     pub norm: Norm,
+    /// Activation after the normalization.
     pub activation: CnnActivation,
 }
 
@@ -195,7 +196,8 @@ pub enum Block {
 }
 
 impl Block {
-    /// True when training can build this block kind.
+    /// True when this block kind is built, so the shape check accepts it. Tickets 03 and
+    /// 04 build the others.
     pub fn is_built(self) -> bool {
         matches!(self, Block::Plain)
     }
@@ -334,7 +336,8 @@ impl Stage {
 }
 
 impl CnnGenome {
-    /// One-line summary, e.g. `cnn2d stem(w6 k5 s2avg tanh) plain(w16 k5 s2avg tanh) head=flatten`.
+    /// One-line summary, e.g.
+    /// `cnn2d stem(w6 k5 s2avg tanh) plain(w16 k5 s2avg tanh) head=flatten`.
     ///
     /// A stride, dilation or group count of 1, no normalization, and the switched-off
     /// options are left out.
@@ -581,6 +584,63 @@ pub(crate) mod testing {
         genome(cnn, Vec::new(), Activation::Relu)
     }
 
+    /// A CNN genome of plain stages with every gene in its range.
+    ///
+    /// Widths are multiples of 4, so 1, 2 or 4 groups and group norm always fit. Many are
+    /// valid on the tasks of their dims; some pool too often, read too far, or cost too
+    /// much.
+    pub(crate) fn plausible(rng: &mut ChaCha8Rng, dims: Dims) -> Genome {
+        let unit = |rng: &mut ChaCha8Rng| Stage {
+            block: Block::Plain,
+            width: one_of(rng, &[4, 8, 12, 16]),
+            kernel: one_of(rng, &[1, 3, 3, 5]),
+            stride: one_of(rng, &[1, 1, 2]),
+            down: one_of(rng, &DOWNSAMPLES),
+            dilation: one_of(rng, &[1, 1, 2]),
+            groups: one_of(rng, &[1, 1, 2, 4]),
+            se: false,
+            residual: false,
+            norm: one_of(rng, &NORMS),
+            activation: one_of(rng, &CNN_ACTIVATIONS),
+        };
+        let stem = as_stem(&unit(rng));
+        let n_stages = rng.random_range(1..=4);
+        let cnn = CnnGenome {
+            dims,
+            stem,
+            stages: (0..n_stages).map(|_| unit(rng)).collect(),
+            head: one_of(rng, &[Head::GlobalAvgPool, Head::Flatten]),
+        };
+        let n_hidden = rng.random_range(0..=2);
+        let hidden = (0..n_hidden)
+            .map(|_| one_of(rng, &[4, 8, 16, 32]))
+            .collect();
+        let activation = one_of(rng, &crate::genome::ACTIVATIONS);
+        let mut g = genome(cnn, hidden, activation);
+
+        g.optimizer = one_of(rng, &crate::genome::OPTIMIZERS);
+        g.learning_rate = one_of(rng, &[0.001, 0.01, 0.1]);
+        g.l2 = one_of(rng, &[0.0, 1e-4]);
+        g.batch_size = one_of(rng, &crate::genome::BATCH_SIZES);
+        g.epochs = one_of(rng, &[5, 8, 12]);
+        g.init_scale = one_of(rng, &[0.5, 1.0, 1.5]);
+        g.seed = rng.random();
+
+        g
+    }
+
+    /// The stem genes of a stage: all but block, dilation, groups and the options.
+    fn as_stem(stage: &Stage) -> Stem {
+        Stem {
+            width: stage.width,
+            kernel: stage.kernel,
+            stride: stage.stride,
+            down: stage.down,
+            norm: stage.norm,
+            activation: stage.activation,
+        }
+    }
+
     /// One of the values, at random.
     fn one_of<T: Copy>(rng: &mut ChaCha8Rng, values: &[T]) -> T {
         values[rng.random_range(0..values.len())]
@@ -612,13 +672,17 @@ pub(crate) mod testing {
             stride: count(rng, 3),
             down: one_of(rng, &DOWNSAMPLES),
             dilation: count(rng, 3),
-            groups: if rng.random_bool(0.6) { 1 } else { count(rng, 8) },
+            groups: if rng.random_bool(0.6) {
+                1
+            } else {
+                count(rng, 8)
+            },
             se: rng.random_bool(0.05),
             residual: rng.random_bool(0.05),
             norm: one_of(rng, &NORMS),
             activation: one_of(rng, &CNN_ACTIVATIONS),
         };
-        let stem = unit(rng);
+        let stem = as_stem(&unit(rng));
         let n_stages = rng.random_range(0..=MAX_STAGES + 2);
         let stages = (0..n_stages).map(|_| unit(rng)).collect();
         let cnn = CnnGenome {
@@ -627,14 +691,7 @@ pub(crate) mod testing {
             } else {
                 Dims::TwoD
             },
-            stem: Stem {
-                width: stem.width,
-                kernel: stem.kernel,
-                stride: stem.stride,
-                down: stem.down,
-                norm: stem.norm,
-                activation: stem.activation,
-            },
+            stem,
             stages,
             head: if rng.random_bool(0.9) {
                 one_of(rng, &[Head::GlobalAvgPool, Head::Flatten])

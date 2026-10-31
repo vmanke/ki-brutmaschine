@@ -348,6 +348,7 @@ impl Genome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cnn::genome::testing;
     use crate::task::TaskKind;
     use rand::SeedableRng;
 
@@ -502,6 +503,111 @@ mod tests {
 
             assert!(g.validate(&limits, &spec).is_ok(), "{g:?}");
         }
+    }
+
+    #[test]
+    fn an_mlp_genome_leaves_its_arch_out_of_the_json() {
+        let g = sample();
+        let text = serde_json::to_string(&g).expect("json");
+
+        assert_eq!(
+            text,
+            concat!(
+                r#"{"hidden":[8,4],"activation":"Tanh","optimizer":"Adam","learning_rate":0.01,"#,
+                r#""l2":0.0,"batch_size":32,"epochs":10,"init_scale":1.0,"seed":9}"#
+            )
+        );
+
+        let parsed: Genome = serde_json::from_str(&text).expect("parse");
+
+        assert_eq!(parsed, g);
+        assert!(parsed.arch.is_mlp());
+    }
+
+    #[test]
+    fn a_cnn_genome_keeps_its_json_and_its_id() {
+        let g = testing::lenet();
+        let text = serde_json::to_string(&g).expect("json");
+
+        assert_eq!(
+            text,
+            concat!(
+                r#"{"arch":{"Cnn":{"dims":"TwoD","#,
+                r#""stem":{"width":6,"kernel":5,"stride":2,"down":"AvgPool","#,
+                r#""norm":"None","activation":"Tanh"},"#,
+                r#""stages":[{"block":"Plain","width":16,"kernel":5,"stride":2,"down":"AvgPool","#,
+                r#""dilation":1,"groups":1,"se":false,"residual":false,"#,
+                r#""norm":"None","activation":"Tanh"}],"#,
+                r#""head":"Flatten"}},"#,
+                r#""hidden":[32],"activation":"Tanh","optimizer":"Adam","learning_rate":0.01,"#,
+                r#""l2":0.0,"batch_size":32,"epochs":10,"init_scale":1.0,"seed":7}"#
+            )
+        );
+
+        let parsed: Genome = serde_json::from_str(&text).expect("parse");
+
+        assert_eq!(parsed, g);
+        assert_eq!(serde_json::to_string(&parsed).expect("json"), text);
+        assert_eq!(g.id(), "cbff19d9f32271bf");
+        assert_eq!(g.id(), sha256_hex(text.as_bytes())[..16]);
+    }
+
+    #[test]
+    fn a_cnn_genome_with_an_unknown_field_does_not_parse() {
+        let text = serde_json::to_string(&testing::lenet()).expect("json");
+        let typo = text.replacen("\"kernel\":5", "\"kernel\":5,\"kernal\":5", 1);
+
+        assert_ne!(typo, text);
+        assert!(serde_json::from_str::<Genome>(&typo).is_err());
+    }
+
+    #[test]
+    fn mlp_only_functions_refuse_a_cnn() {
+        let spec = TaskKind::Shapes.spec();
+        let cnn = testing::lenet();
+        let mlp = sample();
+
+        let message = cnn.layer_sizes(&spec).expect_err("a CNN has no MLP sizes");
+
+        assert!(
+            message.to_string().contains("this genome is a CNN"),
+            "{message}"
+        );
+        assert!(mlp.cnn_plan(&spec).is_err());
+        assert_eq!(mlp.layer_sizes(&spec).expect("an MLP"), vec![256, 8, 4, 4]);
+
+        // The shared counts follow the kind: the CNN's come from its plan, not from
+        // reading its head as an MLP.
+        let plan = cnn.cnn_plan(&spec).expect("a plan");
+        let mut head_as_mlp = cnn.clone();
+
+        head_as_mlp.arch = Arch::Mlp;
+
+        assert_eq!(cnn.param_count(&spec), plan.params);
+        assert_ne!(cnn.param_count(&spec), head_as_mlp.param_count(&spec));
+        assert_eq!(
+            cnn.train_flops(&spec),
+            plan.train_flops_per_sample() * spec.n_train as u64 * cnn.epochs as u64
+        );
+    }
+
+    #[test]
+    fn summaries_name_the_architecture() {
+        assert_eq!(
+            sample().summary(),
+            "hidden=[8, 4] act=Tanh opt=Adam lr=1.00e-2 l2=0.0e0 bs=32 ep=10 init=1.00"
+        );
+        assert_eq!(
+            testing::lenet().summary(),
+            "cnn2d stem(w6 k5 s2avg tanh) plain(w16 k5 s2avg tanh) head=flatten \
+             hidden=[32] act=Tanh opt=Adam lr=1.00e-2 l2=0.0e0 bs=32 ep=10 init=1.00"
+        );
+        assert_eq!(
+            testing::grouped_dilated().summary(),
+            "cnn2d stem(w8 k3 relu) plain(w16 k3 s2conv d2 g4 gn silu) \
+             plain(w16 k3 d3 g16 ln relu6) head=gap \
+             hidden=[8] act=Gelu opt=Adam lr=1.00e-2 l2=0.0e0 bs=32 ep=10 init=1.00"
+        );
     }
 
     #[test]

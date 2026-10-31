@@ -1,8 +1,9 @@
 //! Shape inference of a CNN genome: the layers it describes, with the shape after each
 //! layer, its parameters and its forward FLOPs.
 //!
-//! `Genome::validate` runs `CnnGenome::plan` as its shape check, and training builds the
-//! layers of the plan in its order. So the counts here are those of the trained network.
+//! `Genome::validate` runs `CnnGenome::plan` as its shape check. Training must build the
+//! layers of the plan in its order, so that the counts here are those of the trained
+//! network.
 //!
 //! The stem and every plain stage build, in this order:
 //!
@@ -21,17 +22,17 @@
 //! layers of `Genome::hidden`, each followed by `Genome::activation`, and a dense output
 //! layer of `n_out` units without activation.
 //!
-//! Counting (design point D7). Every trainable value costs 2 FLOPs, one multiply-add, each
-//! time the forward pass uses it. A convolution and a normalization use each of their values
-//! once per output position, a dense layer once per sample. Activations, pooling, the
-//! statistics of a normalization, sums and concatenations cost nothing, as the activations
-//! cost nothing in the MLP rule. Training costs 3 times the forward pass, since the backward
-//! pass costs twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per
-//! parameter and sample.
+//! Counting. Every trainable value costs 2 FLOPs, one multiply-add, each time the forward
+//! pass uses it. A convolution and a normalization use each of their values once per
+//! output position, a dense layer once per sample. Activations, pooling, the statistics of
+//! a normalization, sums and concatenations cost nothing, as the activations cost nothing
+//! in the MLP rule. Training costs 3 times the forward pass, since the backward pass costs
+//! twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per parameter
+//! and sample.
 
 use crate::cnn::genome::{
-    CnnActivation, CnnGenome, ConvGenes, Dims, Downsample, GROUP_NORM_GROUPS, Head,
-    MAX_CHANNELS, MAX_DILATION, MAX_KERNEL, MAX_STAGES, MAX_STRIDE, Norm,
+    CnnActivation, CnnGenome, ConvGenes, Dims, Downsample, GROUP_NORM_GROUPS, Head, MAX_CHANNELS,
+    MAX_DILATION, MAX_KERNEL, MAX_STAGES, MAX_STRIDE, Norm,
 };
 use crate::genome::Activation;
 use crate::task::{InputShape, TaskSpec};
@@ -88,16 +89,25 @@ pub enum Layer {
     },
     /// A normalization of `channels` channels, with a scale and a shift per channel.
     /// It is never `Norm::None`.
-    Norm { norm: Norm, channels: usize },
+    Norm {
+        norm: Norm,
+        channels: usize,
+    },
     Activation(CnnActivation),
     /// A pooling window of `window` cells per axis that moves by `window` cells.
-    Pool { pool: Pool, window: usize },
+    Pool {
+        pool: Pool,
+        window: usize,
+    },
     /// The mean of each channel over all positions.
     GlobalAvgPool,
     /// All values of the sample as one vector: channel by channel, each in row-major order.
     Flatten,
     /// A dense layer with a bias.
-    Dense { inputs: usize, outputs: usize },
+    Dense {
+        inputs: usize,
+        outputs: usize,
+    },
 }
 
 /// One layer of a plan, with the shape after it and its costs.
@@ -124,8 +134,7 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Training FLOPs for one sample: 3 times the forward FLOPs (D7). Saturates at
-    /// `u64::MAX`.
+    /// Training FLOPs for one sample: 3 times the forward FLOPs. Saturates at `u64::MAX`.
     pub fn train_flops_per_sample(&self) -> u64 {
         self.forward_flops.saturating_mul(3)
     }
@@ -155,7 +164,10 @@ impl CnnGenome {
         let input = input_shape(self.dims, spec)?;
 
         if self.stages.is_empty() {
-            return Err(invalid("stages", "no stages; a CNN needs at least one".into()));
+            return Err(invalid(
+                "stages",
+                "no stages; a CNN needs at least one".into(),
+            ));
         }
 
         if self.stages.len() > MAX_STAGES {
@@ -192,7 +204,10 @@ impl CnnGenome {
             }
 
             if stage.residual {
-                return Err(invalid(&at, "a residual connection is not yet built".into()));
+                return Err(invalid(
+                    &at,
+                    "a residual connection is not yet built".into(),
+                ));
             }
 
             builder.conv_unit(&at, &stage.conv_genes())?;
@@ -351,7 +366,10 @@ impl Builder {
         }
 
         if groups == 0 {
-            return Err(invalid(at, "0 groups; a convolution needs at least one".into()));
+            return Err(invalid(
+                at,
+                "0 groups; a convolution needs at least one".into(),
+            ));
         }
 
         if !inputs.is_multiple_of(groups) {
@@ -561,4 +579,768 @@ fn flops_at(at: &str, params: usize, positions: usize) -> Result<u64> {
     2u64.checked_mul(params as u64)
         .and_then(|f| f.checked_mul(positions as u64))
         .ok_or_else(|| invalid(at, "the FLOP count overflows".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    use super::*;
+    use crate::cnn::genome::testing::{self, plain};
+    use crate::cnn::genome::{BLOCKS, Block, Stage};
+    use crate::config::Limits;
+    use crate::genome::{Arch, Genome};
+    use crate::task::TaskKind;
+    use crate::variation::{self, RandomMutator, VariantGenerator};
+
+    fn cnn_mut(g: &mut Genome) -> &mut CnnGenome {
+        match &mut g.arch {
+            Arch::Cnn(cnn) => cnn,
+            Arch::Mlp => panic!("expected a CNN genome"),
+        }
+    }
+
+    /// The plan of a genome that must be valid on `kind` under the default limits.
+    fn valid_plan(g: &Genome, kind: TaskKind) -> Plan {
+        let spec = kind.spec();
+
+        g.validate(&Limits::default(), &spec)
+            .unwrap_or_else(|e| panic!("{}: {e}", g.summary()));
+
+        g.cnn_plan(&spec).expect("a plan")
+    }
+
+    /// Channels and size after each step.
+    fn shapes(plan: &Plan) -> Vec<(usize, Vec<usize>)> {
+        plan.steps
+            .iter()
+            .map(|step| (step.output.channels, step.output.size.clone()))
+            .collect()
+    }
+
+    /// `validate` with these limits must fail with a message that contains `phrase`.
+    fn assert_rejected_with(g: &Genome, kind: TaskKind, limits: &Limits, phrase: &str) {
+        match g.validate(limits, &kind.spec()) {
+            Ok(()) => panic!("accepted: {}", g.summary()),
+            Err(e) => {
+                let message = e.to_string();
+
+                assert!(message.contains(phrase), "{message:?} lacks {phrase:?}");
+            }
+        }
+    }
+
+    /// `validate` with the default limits must fail with a message that contains `phrase`.
+    fn assert_rejected(g: &Genome, kind: TaskKind, phrase: &str) {
+        assert_rejected_with(g, kind, &Limits::default(), phrase);
+    }
+
+    #[test]
+    fn lenet_counts_match_a_hand_count() {
+        let g = testing::lenet();
+        let spec = TaskKind::Shapes.spec();
+        let plan = valid_plan(&g, TaskKind::Shapes);
+
+        // Stem: 5x5 convolution 1 -> 6 with bias at 16x16, tanh, average pooling to 8x8.
+        // Stage: 5x5 convolution 6 -> 16 with bias at 8x8, tanh, average pooling to 4x4.
+        // Head: flatten 16 * 4 * 4 = 256 values, dense 256 -> 32, tanh, dense 32 -> 4.
+        let stem = 5 * 5 * 6 + 6;
+        let stage = 5 * 5 * 6 * 16 + 16;
+        let dense = 256 * 32 + 32;
+        let out = 32 * 4 + 4;
+
+        assert_eq!((stem, stage, dense, out), (156, 2416, 8224, 132));
+        assert_eq!(plan.params, 10_928);
+        assert_eq!(plan.params, stem + stage + dense + out);
+
+        // 2 FLOPs per value and output position.
+        let forward = 2 * stem * 16 * 16 + 2 * stage * 8 * 8 + 2 * dense + 2 * out;
+
+        assert_eq!(forward, 405_832);
+        assert_eq!(plan.forward_flops, forward as u64);
+
+        assert_eq!(
+            shapes(&plan),
+            vec![
+                (6, vec![16, 16]),
+                (6, vec![16, 16]),
+                (6, vec![8, 8]),
+                (16, vec![8, 8]),
+                (16, vec![8, 8]),
+                (16, vec![4, 4]),
+                (256, vec![]),
+                (32, vec![]),
+                (32, vec![]),
+                (4, vec![]),
+            ]
+        );
+        assert_eq!(
+            plan.steps[0].layer,
+            Layer::Conv {
+                inputs: 1,
+                outputs: 6,
+                kernel: 5,
+                stride: 1,
+                padding: 2,
+                dilation: 1,
+                groups: 1,
+                bias: true,
+            }
+        );
+        assert_eq!(
+            plan.steps[2].layer,
+            Layer::Pool {
+                pool: Pool::Avg,
+                window: 2,
+            }
+        );
+        assert_eq!(plan.steps[6].layer, Layer::Flatten);
+        assert_eq!(plan.steps[8].layer, Layer::Activation(CnnActivation::Tanh));
+
+        // Training: 3 times the forward FLOPs per sample, for 1000 samples and 10 epochs.
+        assert_eq!(g.param_count(&spec), 10_928);
+        assert_eq!(g.train_flops(&spec), 3 * 405_832 * 1000 * 10);
+    }
+
+    #[test]
+    fn vgg_counts_match_a_hand_count() {
+        let g = testing::vgg();
+        let spec = TaskKind::Shapes.spec();
+        let plan = valid_plan(&g, TaskKind::Shapes);
+
+        // Every convolution has batch norm, so no bias; each batch norm has 2 values per
+        // channel. Stem 1 -> 8 and stage 1 8 -> 8 at 16x16; stage 2 8 -> 16 at 16x16, then
+        // max pooling to 8x8; stage 3 16 -> 16 at 8x8, then max pooling to 4x4.
+        let stem = 3 * 3 * 8;
+        let stage1 = 3 * 3 * 8 * 8;
+        let stage2 = 3 * 3 * 8 * 16;
+        let stage3 = 3 * 3 * 16 * 16;
+        let norms = 2 * (8 + 8 + 16 + 16);
+        let out = 256 * 4 + 4;
+
+        assert_eq!(
+            (stem, stage1, stage2, stage3, norms, out),
+            (72, 576, 1152, 2304, 96, 1028)
+        );
+        assert_eq!(plan.params, 5228);
+        assert_eq!(plan.params, stem + stage1 + stage2 + stage3 + norms + out);
+
+        let forward = 2 * (stem + 2 * 8) * 256
+            + 2 * (stage1 + 2 * 8) * 256
+            + 2 * (stage2 + 2 * 16) * 256
+            + 2 * (stage3 + 2 * 16) * 64
+            + 2 * out;
+
+        assert_eq!(forward, 1_255_432);
+        assert_eq!(plan.forward_flops, forward as u64);
+        assert_eq!(
+            plan.steps[1].layer,
+            Layer::Norm {
+                norm: Norm::Batch,
+                channels: 8,
+            }
+        );
+        assert_eq!(
+            plan.steps.last().map(|s| s.output.clone()),
+            Some(Shape::vector(4))
+        );
+        assert_eq!(g.train_flops(&spec), 3 * 1_255_432 * 1000 * 5);
+    }
+
+    #[test]
+    fn groups_and_dilation_count_by_hand() {
+        let g = testing::grouped_dilated();
+        let plan = valid_plan(&g, TaskKind::Shapes);
+
+        // Stem: 3x3 convolution 1 -> 8 with bias at 16x16.
+        let stem = 3 * 3 * 8 + 8;
+        // Stage 1: 3x3, dilation 2 (span 5, padding 2), 4 groups of 2 -> 4 channels, stride 2:
+        // (16 - 1) / 2 + 1 = 8, so 8x8. Group norm, no bias.
+        let stage1 = 3 * 3 * 2 * 16;
+        // Stage 2: 3x3, dilation 3 (span 7, fits into 8), depthwise: 16 groups of 1 -> 1.
+        let stage2 = 3 * 3 * 16;
+        // Head: global average pooling to 16, dense 16 -> 8, GELU, dense 8 -> 4.
+        let dense = 16 * 8 + 8;
+        let out = 8 * 4 + 4;
+
+        assert_eq!((stem, stage1, stage2, dense, out), (80, 288, 144, 136, 36));
+        assert_eq!(plan.params, 748);
+        assert_eq!(plan.params, stem + stage1 + 32 + stage2 + 32 + dense + out);
+
+        let forward =
+            2 * stem * 256 + 2 * (stage1 + 32) * 64 + 2 * (stage2 + 32) * 64 + 2 * dense + 2 * out;
+
+        assert_eq!(forward, 104_792);
+        assert_eq!(plan.forward_flops, forward as u64);
+        assert_eq!(
+            plan.steps[2].layer,
+            Layer::Conv {
+                inputs: 8,
+                outputs: 16,
+                kernel: 3,
+                stride: 2,
+                padding: 2,
+                dilation: 2,
+                groups: 4,
+                bias: false,
+            }
+        );
+        assert_eq!(
+            plan.steps[3].layer,
+            Layer::Norm {
+                norm: Norm::Group,
+                channels: 16,
+            }
+        );
+        assert_eq!(plan.steps[4].layer, Layer::Activation(CnnActivation::Silu));
+        assert_eq!(
+            plan.steps[5].layer,
+            Layer::Conv {
+                inputs: 16,
+                outputs: 16,
+                kernel: 3,
+                stride: 1,
+                padding: 3,
+                dilation: 3,
+                groups: 16,
+                bias: false,
+            }
+        );
+        assert_eq!(plan.steps[7].layer, Layer::Activation(CnnActivation::Relu6));
+        assert_eq!(plan.steps[8].layer, Layer::GlobalAvgPool);
+        assert_eq!(plan.steps[10].layer, Layer::Activation(CnnActivation::Gelu));
+    }
+
+    #[test]
+    fn a_sequence_uses_1_by_k_kernels() {
+        let g = testing::sequence();
+        let plan = valid_plan(&g, TaskKind::Motif1d);
+
+        // Stem: kernel 5 along the 64 cells, 4 -> 8 channels with bias.
+        let stem = 5 * 4 * 8 + 8;
+        // Stage: kernel 3, dilation 4 (span 9), 8 -> 8, batch norm, max pooling to 32.
+        let stage = 3 * 8 * 8;
+        let norm = 2 * 8;
+        // Head: global average pooling to 8, dense 8 -> 2.
+        let out = 8 * 2 + 2;
+
+        assert_eq!(plan.params, 394);
+        assert_eq!(plan.params, stem + stage + norm + out);
+        assert_eq!(
+            plan.forward_flops,
+            (2 * stem * 64 + 2 * (stage + norm) * 64 + 2 * out) as u64
+        );
+        assert_eq!(
+            plan.input,
+            Shape {
+                channels: 4,
+                size: vec![64],
+            }
+        );
+        assert_eq!(
+            shapes(&plan)[..6].to_vec(),
+            vec![
+                (8, vec![64]),
+                (8, vec![64]),
+                (8, vec![64]),
+                (8, vec![64]),
+                (8, vec![64]),
+                (8, vec![32]),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_a_flat_task() {
+        assert_rejected(&testing::lenet(), TaskKind::TwoSpirals, "flat vector");
+        assert_rejected(&testing::sequence(), TaskKind::Parity, "flat vector");
+    }
+
+    #[test]
+    fn rejects_an_input_shape_that_does_not_hold_the_inputs() {
+        let g = testing::lenet();
+        let mut spec = TaskKind::Shapes.spec();
+
+        spec.n_in = 255;
+
+        let message = g.validate(&Limits::default(), &spec).expect_err("rejected");
+
+        assert!(message.to_string().contains("does not hold"), "{message}");
+    }
+
+    #[test]
+    fn rejects_a_task_without_outputs() {
+        let g = testing::lenet();
+        let mut spec = TaskKind::Shapes.spec();
+
+        spec.n_out = 0;
+
+        let cnn = match &g.arch {
+            Arch::Cnn(cnn) => cnn,
+            Arch::Mlp => panic!("expected a CNN genome"),
+        };
+        let message = cnn
+            .plan(&g.hidden, g.activation, &spec)
+            .expect_err("rejected");
+
+        assert!(message.to_string().contains("no outputs"), "{message}");
+        assert!(g.validate(&Limits::default(), &spec).is_err());
+    }
+
+    #[test]
+    fn rejects_a_2d_genome_on_a_sequence_task() {
+        assert_rejected(
+            &testing::lenet(),
+            TaskKind::Motif1d,
+            "a 2-D CNN needs an image",
+        );
+    }
+
+    #[test]
+    fn rejects_a_1d_genome_on_an_image_task() {
+        for kind in [TaskKind::Shapes, TaskKind::MirrorSymmetry] {
+            assert_rejected(&testing::sequence(), kind, "a 1-D CNN needs a sequence");
+        }
+    }
+
+    #[test]
+    fn rejects_a_genome_without_stages() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages.clear();
+        assert_rejected(&g, TaskKind::Shapes, "no stages");
+    }
+
+    #[test]
+    fn rejects_too_many_stages() {
+        let mut g = testing::grouped_dilated();
+
+        cnn_mut(&mut g).stages = vec![plain(8, 1, CnnActivation::Relu); MAX_STAGES];
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+
+        cnn_mut(&mut g)
+            .stages
+            .push(plain(8, 1, CnnActivation::Relu));
+        assert_rejected(&g, TaskKind::Shapes, "13 stages > max 12");
+    }
+
+    #[test]
+    fn rejects_a_width_of_zero() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stem.width = 0;
+        assert_rejected(&g, TaskKind::Shapes, "stem: width 0 outside");
+
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].width = 0;
+        assert_rejected(&g, TaskKind::Shapes, "stage 1: width 0 outside");
+    }
+
+    #[test]
+    fn rejects_a_width_above_the_bound() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].width = MAX_CHANNELS + 1;
+        assert_rejected(&g, TaskKind::Shapes, "width 257 outside");
+    }
+
+    #[test]
+    fn rejects_a_kernel_out_of_range() {
+        for kernel in [0, MAX_KERNEL + 2] {
+            let mut g = testing::lenet();
+
+            cnn_mut(&mut g).stem.kernel = kernel;
+            assert_rejected(&g, TaskKind::Shapes, &format!("kernel {kernel} outside"));
+        }
+    }
+
+    #[test]
+    fn rejects_an_even_kernel() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].kernel = 4;
+        assert_rejected(&g, TaskKind::Shapes, "kernel 4 is even");
+    }
+
+    #[test]
+    fn rejects_a_kernel_larger_than_the_input() {
+        // The stage sees 8x8 after the stem's pooling: a kernel of 9 does not fit.
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].kernel = 9;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "spans 9 cells, larger than the input of 8",
+        );
+
+        // Dilation widens the span: kernel 3 with dilation 4 spans 9 cells.
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].kernel = 3;
+        cnn_mut(&mut g).stages[0].dilation = 4;
+        assert_rejected(&g, TaskKind::Shapes, "spans 9 cells");
+
+        // A span equal to the input fits.
+        cnn_mut(&mut g).stages[0].dilation = 3;
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_a_stride_out_of_range() {
+        for stride in [0, MAX_STRIDE + 1] {
+            let mut g = testing::lenet();
+
+            cnn_mut(&mut g).stages[0].stride = stride;
+            assert_rejected(&g, TaskKind::Shapes, &format!("stride {stride} outside"));
+        }
+    }
+
+    #[test]
+    fn rejects_a_stride_that_makes_a_size_zero() {
+        // After the LeNet stage the map is 4x4. Pooling by 4 leaves 1x1, and pooling that
+        // by 2 would leave nothing.
+        let mut g = testing::lenet();
+        let pool = |stride| Stage {
+            stride,
+            down: Downsample::MaxPool,
+            ..plain(16, 1, CnnActivation::Relu)
+        };
+
+        cnn_mut(&mut g).stages.push(pool(4));
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+
+        cnn_mut(&mut g).stages.push(pool(2));
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "stage 3: stride 2 makes the size zero",
+        );
+
+        // A strided convolution keeps at least one cell: (1 - 1) / 2 + 1 = 1.
+        cnn_mut(&mut g).stages[2].down = Downsample::Conv;
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_a_dilation_out_of_range() {
+        for dilation in [0, MAX_DILATION + 1] {
+            let mut g = testing::lenet();
+
+            cnn_mut(&mut g).stages[0].dilation = dilation;
+            assert_rejected(
+                &g,
+                TaskKind::Shapes,
+                &format!("dilation {dilation} outside"),
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_groups_that_do_not_divide_the_channels() {
+        // The LeNet stage maps 6 to 16 channels.
+        let cases = [
+            (0, "0 groups"),
+            (4, "4 groups do not divide the 6 input channels"),
+            (3, "3 groups do not divide the width 16"),
+        ];
+
+        for (groups, phrase) in cases {
+            let mut g = testing::lenet();
+
+            cnn_mut(&mut g).stages[0].groups = groups;
+            assert_rejected(&g, TaskKind::Shapes, phrase);
+        }
+
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].groups = 2;
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_group_norm_on_a_width_it_cannot_split() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stem.norm = Norm::Group;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "group norm needs a width divisible by 4, not 6",
+        );
+
+        cnn_mut(&mut g).stem.norm = Norm::Layer;
+        assert!(
+            g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_every_block_kind_not_yet_built() {
+        assert_eq!(BLOCKS.len(), 13);
+
+        for block in BLOCKS {
+            let mut g = testing::lenet();
+
+            cnn_mut(&mut g).stages[0].block = block;
+
+            if block == Block::Plain {
+                assert!(block.is_built());
+                assert!(
+                    g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                        .is_ok()
+                );
+            } else {
+                assert!(!block.is_built());
+                assert_rejected(
+                    &g,
+                    TaskKind::Shapes,
+                    &format!("stage 1: block {} is not yet built", block.name()),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_squeeze_and_excitation_until_built() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].se = true;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "squeeze-and-excitation is not yet built",
+        );
+    }
+
+    #[test]
+    fn rejects_a_residual_connection_until_built() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).stages[0].residual = true;
+        assert_rejected(&g, TaskKind::Shapes, "residual connection is not yet built");
+    }
+
+    #[test]
+    fn rejects_the_per_cell_head_until_built() {
+        let mut g = testing::lenet();
+
+        cnn_mut(&mut g).head = Head::PerCell;
+        assert_rejected(
+            &g,
+            TaskKind::Shapes,
+            "per-cell head (U-Net) is not yet built",
+        );
+    }
+
+    #[test]
+    fn rejects_too_many_parameters() {
+        let g = testing::lenet();
+        let limits = Limits {
+            max_params: 10_927,
+            ..Limits::default()
+        };
+
+        assert_rejected_with(&g, TaskKind::Shapes, &limits, "10928 params > max 10927");
+
+        let limits = Limits {
+            max_params: 10_928,
+            ..Limits::default()
+        };
+
+        assert!(g.validate(&limits, &TaskKind::Shapes.spec()).is_ok());
+    }
+
+    #[test]
+    fn rejects_too_many_flops() {
+        let g = testing::lenet();
+        let flops = g.train_flops(&TaskKind::Shapes.spec());
+        let limits = Limits {
+            max_train_flops: flops - 1,
+            ..Limits::default()
+        };
+
+        assert_rejected_with(&g, TaskKind::Shapes, &limits, "train FLOPs > max");
+
+        let limits = Limits {
+            max_train_flops: flops,
+            ..Limits::default()
+        };
+
+        assert!(g.validate(&limits, &TaskKind::Shapes.spec()).is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_head_layers() {
+        // `validate` holds the dense layers of a CNN head to the MLP rules.
+        let mut g = testing::lenet();
+
+        g.hidden = vec![0];
+        assert_rejected(&g, TaskKind::Shapes, "layer width 0 outside");
+
+        g.hidden = vec![65];
+        assert_rejected(&g, TaskKind::Shapes, "layer width 65 outside 1..=64");
+
+        g.hidden = vec![4; 5];
+        assert_rejected(&g, TaskKind::Shapes, "5 hidden layers > max 4");
+
+        // The plan alone rejects a dense layer of width 0 too.
+        let cnn = match &g.arch {
+            Arch::Cnn(cnn) => cnn,
+            Arch::Mlp => panic!("expected a CNN genome"),
+        };
+        let message = cnn
+            .plan(&[8, 0], g.activation, &TaskKind::Shapes.spec())
+            .expect_err("rejected");
+
+        assert!(
+            message.to_string().contains("dense layer 2 has width 0"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_bad_training_genes_on_a_cnn() {
+        let mut bad: Vec<Genome> = Vec::new();
+        let mut g = testing::lenet();
+
+        g.learning_rate = f32::NAN;
+        bad.push(g);
+
+        let mut g = testing::lenet();
+        g.l2 = 1.0;
+        bad.push(g);
+
+        let mut g = testing::lenet();
+        g.init_scale = 0.0;
+        bad.push(g);
+
+        let mut g = testing::lenet();
+        g.batch_size = 20;
+        bad.push(g);
+
+        let mut g = testing::lenet();
+        g.epochs = 1;
+        bad.push(g);
+
+        for g in bad {
+            assert!(
+                g.validate(&Limits::default(), &TaskKind::Shapes.spec())
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn counts_that_overflow_are_rejected() {
+        // A hand-made task with 2^62 inputs: the FLOP count of the stem and the feature
+        // count of the flattening head overflow and give an error, not a wrapped number.
+        let mut g = testing::lenet();
+        let mut spec = TaskKind::Shapes.spec();
+        let side = 1usize << 31;
+
+        spec.n_in = side * side;
+        spec.input = InputShape::Image {
+            channels: 1,
+            height: side,
+            width: side,
+        };
+        cnn_mut(&mut g).stem.kernel = 1;
+        cnn_mut(&mut g).stem.stride = 1;
+        cnn_mut(&mut g).stages = vec![plain(16, 1, CnnActivation::Relu)];
+
+        let message = g.cnn_plan(&spec).expect_err("overflow");
+
+        assert!(message.to_string().contains("overflows"), "{message}");
+        assert_eq!(g.param_count(&spec), usize::MAX);
+        assert_eq!(g.train_flops(&spec), u64::MAX);
+        assert!(g.validate(&Limits::default(), &spec).is_err());
+    }
+
+    #[test]
+    fn no_genome_panics() {
+        // Arbitrary CNN genomes, their mutations and their crossovers, on every task. Each
+        // call returns Ok or Err; none panics. `propose` always returns a valid genome.
+        let limits = Limits::default();
+        let mutator = RandomMutator::default();
+        let mut rng = ChaCha8Rng::seed_from_u64(11);
+        let mut valid = 0;
+        let mut invalid = 0;
+
+        for i in 0..18_000 {
+            let kind = TaskKind::ALL[i % TaskKind::ALL.len()];
+            let spec = kind.spec();
+            let dims = match spec.input {
+                InputShape::Sequence { .. } => Dims::OneD,
+                _ => Dims::TwoD,
+            };
+            let g = if i % 3 == 0 {
+                testing::plausible(&mut rng, dims)
+            } else {
+                testing::arbitrary(&mut rng)
+            };
+
+            match g.validate(&limits, &spec) {
+                Ok(()) => {
+                    valid += 1;
+
+                    let plan = g.cnn_plan(&spec).expect("a valid genome has a plan");
+
+                    assert_eq!(g.param_count(&spec), plan.params);
+                    assert!(plan.params <= limits.max_params);
+                    assert!(g.train_flops(&spec) <= limits.max_train_flops);
+                }
+                Err(_) => invalid += 1,
+            }
+
+            let _ = (
+                g.param_count(&spec),
+                g.train_flops(&spec),
+                g.summary(),
+                g.id(),
+            );
+
+            let child = variation::mutate(&g, 0.3, &mut rng, &limits, &spec);
+            let _ = child.validate(&limits, &spec);
+            let _ = variation::repair(g.clone(), &limits, &spec).validate(&limits, &spec);
+
+            let other = testing::arbitrary(&mut rng);
+            let mixed = variation::crossover(&g, &other, &mut rng);
+            let _ = mixed.validate(&limits, &spec);
+
+            for parents in [vec![&g], vec![&g, &other], vec![&other, &g]] {
+                let child = mutator.propose(&parents, &mut rng, &limits, &spec);
+
+                assert!(
+                    child.validate(&limits, &spec).is_ok(),
+                    "{}",
+                    child.summary()
+                );
+            }
+        }
+
+        // Both outcomes occur often, so the test covers the valid and the invalid paths.
+        assert!(
+            valid > 800 && invalid > 8000,
+            "{valid} valid, {invalid} invalid"
+        );
+    }
 }
