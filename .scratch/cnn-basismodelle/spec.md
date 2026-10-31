@@ -131,7 +131,7 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
 4. `issues/04-families-b.md`: DenseNet, Inception, SqueezeNet, ShuffleNet, ConvNeXt,
    TCN, U-Net.
 5. `issues/05-mutations-and-integration.md`: mutation, crossover, base models in the
-   population, CLI, README (German and English), ADR 0007, CONTEXT.md.
+   population, CLI, README (German and English), ADR 0008, CONTEXT.md.
 6. `issues/06-arc-grids.md`: ARC grid tasks.
 7. `issues/07-promotion-of-winners.md`: winners become base models of later runs.
 

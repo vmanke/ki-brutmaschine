@@ -12,7 +12,8 @@ Spec: `../spec.md`
   matching resolutions. A child that fails the shape check is redrawn.
 - The first generation holds the base models of all families next to random genomes.
 - CLI: choose the model kinds of a run (MLP, CNN or both) and the new tasks.
-- README in German and English, ADR 0007 (CNNs in the MLP mode through candle), new terms
+- README in German and English, ADR 0008 (CNN families and their mutations in the MLP mode;
+  ADR 0007 already records the library), new terms
   in CONTEXT.md.
 
 ## Done when

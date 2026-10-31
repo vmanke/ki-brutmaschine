@@ -28,7 +28,7 @@ The project already promotes the two best finalist Cascades of a Run into
   models of the 16 families and the random genomes. A promoted model that fails the
   current shape check or Limits is skipped, with a log line.
 - Docs: the "Promotion" entry of CONTEXT.md covers models too; README (German and
-  English) and ADR 0007 describe the path.
+  English) and ADR 0008 describe the path.
 
 ## Done when
 
