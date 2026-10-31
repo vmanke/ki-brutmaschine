@@ -76,6 +76,7 @@ record the ladder of claims the evidence can carry:
 ## Open
 
 - Q48: an operational definition of "soul" that yields a measurable prediction. For the model, Q57 answers it through the Character; for nature it stays open.
+
 ## Tickets
 
 See `issues/`.
