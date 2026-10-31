@@ -1,0 +1,1698 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Brutmaschine Atlas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Spectral:wght@500;600;700&display=swap">
+<style>
+/* Layout: one reading column that steps outward from the incubator's hot core (Worker)
+   to the outer rings (Cascade, breeding, overseers, universes, the human), one figure per mechanism. */
+:root {
+  --bg: #f6f5f7;
+  --panel: #ffffff;
+  --sunk: #eeebf0;
+  --fg: #1b1519;
+  --muted: #5e5662;
+  --line: #d9d3dc;
+  --heat: #c2272d;
+  --violet: #6b4fa8;
+  --glow: rgba(194, 39, 45, 0.16);
+  --core: #fff4ef;
+  --planned: #8c8290;
+  --font-display: "Spectral", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141013; --panel: #1d171b; --sunk: #241d22; --fg: #eee8ec; --muted: #a89da6;
+    --line: #3a3037; --heat: #e8564b; --violet: #8f74d0; --glow: rgba(232, 86, 75, 0.22);
+    --core: #fff1ea; --planned: #8a7f88; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141013; --panel: #1d171b; --sunk: #241d22; --fg: #eee8ec; --muted: #a89da6;
+  --line: #3a3037; --heat: #e8564b; --violet: #8f74d0; --glow: rgba(232, 86, 75, 0.22);
+  --core: #fff1ea; --planned: #8a7f88; color-scheme: dark;
+}
+
+/* Language switch: German is the default, English on request. */
+:root:not([data-lang="en"]) .en { display: none; }
+:root[data-lang="en"] .de { display: none; }
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+.page { max-width: 980px; margin: 0 auto; display: grid; gap: 56px; }
+.prose { max-width: 66ch; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.5rem, 3.4vw, 2.05rem); font-weight: 600; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+a { color: inherit; text-decoration-color: var(--heat); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; border-radius: 4px; }
+.eyebrow { font: 500 0.78rem/1.2 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 0.92em; }
+.section { display: grid; gap: 18px; }
+.section > header { display: grid; gap: 8px; }
+/* An in-page link lands below the sticky top bar, with the eyebrow above the heading in view. */
+h2[id] { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 96px); }
+
+/* Top bar */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-block: 12px; background: var(--bg); border-bottom: 1px solid var(--line);
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.brand { font: 600 1.05rem/1 var(--font-display); }
+.lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.lang button {
+  font: 500 0.82rem/1 var(--font-mono); letter-spacing: 0.06em; color: var(--muted);
+  background: transparent; border: 0; padding: 8px 14px; cursor: pointer;
+}
+.lang button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+
+/* Hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 32px; align-items: center; padding-top: 24px; }
+.hero .lede { font-size: 1.12rem; color: var(--muted); }
+.hero-text { display: grid; gap: 18px; min-width: 0; }
+.rings-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rings-legend li { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.rings-legend b { font-weight: 600; }
+.pill { display: inline-block; font: 500 0.72rem/1 var(--font-mono); letter-spacing: 0.04em; padding: 4px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.built { color: var(--heat); }
+.pill.work { color: var(--violet); }
+.pill.planned { color: var(--planned); border-style: dashed; }
+@media (max-width: 760px) {
+  .hero { grid-template-columns: 1fr; }
+  .rings-legend li { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* Figures */
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { color: var(--muted); font-size: 0.93rem; max-width: 70ch; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.scroll svg { min-width: 720px; }
+svg { display: block; width: 100%; height: auto; max-width: 100%; color: var(--fg); }
+svg text { font-family: var(--font-body); fill: currentColor; }
+svg .small { font-size: 12px; fill: var(--muted); }
+svg .label { font-size: 14px; font-weight: 600; }
+svg .mono { font-family: var(--font-mono); font-size: 12px; fill: var(--muted); }
+svg .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+svg .box.hot { stroke: var(--heat); stroke-width: 2; }
+svg .box.fixed { fill: var(--sunk); stroke: var(--fg); stroke-width: 1.5; }
+svg .box.plan { stroke: var(--planned); stroke-dasharray: 5 4; }
+svg .edge { stroke: currentColor; stroke-width: 1.5; fill: none; }
+svg .edge.hot { stroke: var(--heat); stroke-width: 2; }
+svg .edge.violet { stroke: var(--violet); stroke-width: 2; }
+svg .edge.dash { stroke-dasharray: 5 4; }
+svg .edge-label { font-size: 12px; fill: var(--muted); }
+svg .cross { stroke: var(--heat); stroke-width: 2.5; }
+
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.note { border-left: 3px solid var(--line); padding-left: 14px; color: var(--muted); }
+.formula { font-family: var(--font-mono); font-size: 0.95rem; background: var(--sunk); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+
+/* Soul interaction */
+.soul { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: center; }
+.controls { display: grid; gap: 16px; min-width: 0; }
+.control { display: grid; gap: 6px; }
+.control label { display: flex; justify-content: space-between; gap: 12px; font-size: 0.95rem; }
+.control output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--heat); }
+.readout { display: flex; gap: 20px; flex-wrap: wrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.readout div { display: grid; gap: 2px; }
+/* Child combinators: the label's inner .de/.en spans must not match :last-child (English labels grew to value size). */
+.readout > div > span:first-child { font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.readout > div > span:last-child { font-size: 1.35rem; }
+@media (max-width: 760px) { .soul { grid-template-columns: 1fr; } }
+
+/* Chart */
+.chart-wrap { position: relative; min-width: 520px; }
+.chart-wrap svg { min-width: 0; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.92rem; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 0.85rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); white-space: nowrap;
+}
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.92rem; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table { min-width: 560px; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--muted); font-size: 0.82rem; letter-spacing: 0.02em; }
+
+/* Ladder and roadmap */
+.ladder { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: rung; }
+.ladder li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.ladder li::before { counter-increment: rung; content: counter(rung); font: 600 1.4rem/1 var(--font-display); color: var(--heat); }
+.ladder p { color: var(--muted); }
+.road { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.road li { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 12px; align-items: baseline; padding-block: 8px; border-bottom: 1px solid var(--line); }
+@media (max-width: 560px) { .road li { grid-template-columns: 1fr; gap: 4px; } }
+.sources { font-size: 0.9rem; color: var(--muted); display: grid; gap: 6px; padding-left: 1.2rem; margin: 0; }
+footer { color: var(--muted); font-size: 0.88rem; border-top: 1px solid var(--line); padding-top: 16px; }
+/* Rings and labels sit on the fixed photo-like laser image, so they keep fixed light colours in both themes. */
+svg .ring { fill: none; stroke-width: 2; }
+svg .ring.built { stroke: rgba(255, 255, 255, 0.92); }
+svg .ring.work { stroke: #cdbcff; stroke-width: 2.5; }
+svg .ring.planned { stroke: rgba(255, 255, 255, 0.6); stroke-dasharray: 6 5; stroke-width: 1.5; }
+svg .ring-label text { font-size: 14px; font-weight: 600; fill: #ffffff; paint-order: stroke; stroke: rgba(0, 0, 0, 0.6); stroke-width: 3px; }
+.speckle-canvas { display: block; width: 100%; max-width: 380px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%; background: #000; }
+.btn { justify-self: start; font: 500 0.85rem/1 var(--font-mono); letter-spacing: 0.04em; padding: 10px 16px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 999px; cursor: pointer; }
+.btn:hover { border-color: var(--heat); }
+/* The character figure is drawn 1:1, so its labels stay at 11 to 13 px; on phones it scrolls. */
+.scroll svg.at-scale { width: 760px; min-width: 760px; max-width: none; }
+
+/* Step 1: status, evidence chart and table, drawn from the JSON block of the section. */
+.status { max-width: 66ch; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.status b { font-weight: 600; white-space: nowrap; }
+.legend svg.key { width: 28px; height: 10px; flex: none; }
+.e-wrap { position: relative; }
+.e-wrap svg { min-width: 0; max-width: none; }
+/* Inset, because the .scroll parent clips anything drawn outside the chart. */
+.e-wrap:focus-visible { outline: 2px solid var(--heat); outline-offset: -2px; border-radius: 4px; }
+.tooltip .tt-head { font-weight: 600; margin-bottom: 2px; }
+.tooltip .tt-row { display: flex; align-items: center; gap: 8px; }
+.tooltip .tt-row b { font-variant-numeric: tabular-nums; }
+.tooltip svg.tt-key { width: 18px; height: 8px; flex: none; }
+.tooltip .tt-muted { color: var(--muted); }
+/* A grid item keeps min-width: auto; without this the 560 px table widens the whole section on phones. */
+details.table-view { min-width: 0; }
+details.table-view > summary { cursor: pointer; color: var(--muted); font-size: 0.93rem; width: fit-content; }
+details.table-view[open] > summary { margin-bottom: 8px; }
+summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; border-radius: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
+
+<div class="topbar">
+  <span class="brand">Brutmaschine</span>
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button type="button" id="lang-de" aria-pressed="true">DE</button>
+    <button type="button" id="lang-en" aria-pressed="false">EN</button>
+  </div>
+</div>
+
+<main class="page">
+
+  <!-- Hero: the rings from the hot core outward -->
+  <section class="hero" aria-labelledby="t-hero">
+    <div class="hero-text">
+      <p class="eyebrow"><span class="de">Forschungs-Prototyp · Stand 31.10.2026</span><span class="en">Research prototype · as of 31 Oct 2026</span></p>
+      <h1 id="t-hero"><span class="de">Ein Brutkasten für denkende Ketten</span><span class="en">An incubator for thinking chains</span></h1>
+      <p class="lede">
+        <span class="de">Die Brutmaschine züchtet Kaskaden aus Sprachmodell-Workern nach dem Vorbild der Darwin-Gödel-Maschine. Jede Kaskade löst Aufgaben und urteilt zugleich über andere. Von innen nach außen kommen Wächter, Universen und der Mensch dazu.</span>
+        <span class="en">The breeding machine breeds Cascades of language-model Workers, after the Darwin Gödel Machine. Every Cascade solves tasks and also judges the others. From the inside out come overseers, universes and the human.</span>
+      </p>
+      <ul class="rings-legend">
+        <li><b><span class="de">Worker</span><span class="en">Worker</span></b><span><span class="de">Modell, Prompt, Traits</span><span class="en">model, prompt, Traits</span> <span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span></span></li>
+        <li><b>Cascade</b><span><span class="de">Stufen mit Abstimmung</span><span class="en">stages with voting</span> <span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span></span></li>
+        <li><b><span class="de">Zucht</span><span class="en">Breeding</span></b><span><span class="de">Archiv, Peer-Urteile, Elternwahl</span><span class="en">archive, peer judging, parent choice</span> <span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span></span></li>
+        <li><b><span class="de">Wächter</span><span class="en">Overseers</span></b><span><span class="de">beobachten die Ausführung</span><span class="en">watch the execution</span> <span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span></span></li>
+        <li><b><span class="de">Universum</span><span class="en">Universe</span></b><span><span class="de">ein Lauf mit eigenen Gesetzen</span><span class="en">a run with its own laws</span> <span class="pill work"><span class="de">in Arbeit</span><span class="en">in progress</span></span></span></li>
+        <li><b><span class="de">Gott der Götter</span><span class="en">God of gods</span></b><span><span class="de">züchtet Gesetze, nie Code</span><span class="en">breeds laws, never code</span> <span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span></span></li>
+        <li><b><span class="de">Mensch</span><span class="en">Human</span></b><span><span class="de">fester Punkt ganz außen</span><span class="en">the fixed point outside</span></span></li>
+      </ul>
+    </div>
+    <figure>
+      <svg viewBox="0 0 520 520" role="img" aria-label="Nested rings drawn over the owner's AI-simulated laser spot: Worker at the white-hot core, then Cascade, breeding, overseers, universe, god of gods, and the human outside.">
+        <defs>
+          <clipPath id="spot"><circle cx="260" cy="260" r="238"/></clipPath>
+        </defs>
+        <circle cx="260" cy="260" r="238" style="fill:#000"/>
+        <image href="data:image/jpeg;base64,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UROS2LfYeMhakamPDF8cJOmTxWy/8+w9B7ZfOHxD7bLW2J9dDdZtt9j3oer55sMJvbbZS2/9GyhsIii/l9S8yyy+cZbMGycL8Qw2zLbMX/YNsrfLb+RLHyObbZ3YxaMywTzbZiKXh/7mxNhjjfFpbN/bYlxZLd4IzZbZbZi2/wDgDwQ5bbxvG9W2bctl7vNyYzf/ABR4JvBttjg22zbbbbbMZv8A5O9D9UA23pv/AJ+22rXO+dtt/wD07//aAAwDAQACAAMAAAAQ8888888888888888w088888888888888888888884uDAOGEWL8888888888888888888lfYBlQErR3/rjk88888888888884+o8X794feIunaqutX488888888888wsPL45pmDXdzyUO/p5M88888888840PVkmk3rzOT2ujr/hA4TF88888888otm5cJbisK0/lc/hRRqT68888888842Ul6neZkZspMIgMekGshbjiK88888l5t6WdR21GW1s7P4B1sHzXEpwUU888dGDC/H/mAy07wPZJEOa1xWEftb0888iESjfL/PXFgpFUwBQv+9it4P8AIdPPFwjOoilHPsR4FWEvfbiS+xU8jRQNPPNYvoKA54EYKzwRqulpnQ42mAwNlHfOE0Zv8MWcMEdD4M+tqavkM3Q3iR41vLI29WTQ8+ltLfc+t54G+Gx+CD4Lil/PAjtYfgbOSFgPiXJpluMHg3qMWFNF/PEnhj4OHrZ72gcq8wxbJukTTnmgAXvPLhNmsJ1vGbrBr4SxseuQF/ywJyStfPBzm2PlGlRGZgmriLAXFcY5uMNK0FPPHAZllcDgNpoMnSg2v8zkGKlwQc0NPPPE/e81vhQ3poPGhJqt5bRWPVDylfPPPLMtvm6kZ0ymEkqXUKFnVt3u5y/PPPPPH7xQFz0RZcBcNZ88uLf82f8AxXzzzzzzwmWwSjg2dEe/EAAdGS5tAaYzzzzzzzywZ2EPBh472R/rX0W7F469zzzzzzzzzzy4cZCuSnJ4NpMsxd5ybzzzzzzzzzzzzh82PseD3rBppS/7K0zzzzzzzzzzzzzzwxsbNQqJuHQ9I3zzzzzzzzzzzzzzzzyzzxx27sT01xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/xAAiEQEBAQEBAQACAgMBAQAAAAAB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" x="10" y="10" width="500" height="500" clip-path="url(#spot)" preserveAspectRatio="xMidYMid slice"/>
+        <g class="ring-lines">
+          <circle cx="260" cy="260" r="236" class="ring planned"/>
+          <circle cx="260" cy="260" r="204" class="ring planned"/>
+          <circle cx="260" cy="260" r="170" class="ring work"/>
+          <circle cx="260" cy="260" r="136" class="ring planned"/>
+          <circle cx="260" cy="260" r="102" class="ring built"/>
+          <circle cx="260" cy="260" r="68" class="ring built"/>
+        </g>
+        <circle cx="260" cy="260" r="30" style="fill:#fff6f2;stroke:#ffffff" stroke-width="2"/>
+        <g text-anchor="middle" class="ring-label">
+          <text x="260" y="265" style="fill:#1b1519;stroke:none">Worker</text>
+          <text x="260" y="210">Cascade</text>
+          <text x="260" y="176" class="de">Zucht</text><text x="260" y="176" class="en">Breeding</text>
+          <text x="260" y="142" class="de">Wächter</text><text x="260" y="142" class="en">Overseers</text>
+          <text x="260" y="108" class="de">Universum</text><text x="260" y="108" class="en">Universe</text>
+          <text x="260" y="74" class="de">Gott der Götter</text><text x="260" y="74" class="en">God of gods</text>
+          <text x="260" y="42" class="de">Mensch</text><text x="260" y="42" class="en">Human</text>
+        </g>
+      </svg>
+      <figcaption>
+        <span class="de">Die Ringe liegen über Ihrem KI-simulierten Laserfleck, dem Titelbild der Brutmaschine. Nach Ihrer Festlegung ist dieser Fleck, nachgerechnet, der Charakter; davon handelt der Abschnitt „<a href="#t-speckle">Der Charakter</a>“. Jede Ebene enthält die innere. Durchgezogen: gebaut. Violett: in Arbeit. Gestrichelt: geplant.</span>
+        <span class="en">The rings sit over your AI-simulated laser spot, the breeding machine's cover image. By your definition, this spot, recomputed, is the character; the section “<a href="#t-speckle">The character</a>” is about that. Each level contains the inner one. Solid: built. Violet: in progress. Dashed: planned.</span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- Breeding loop -->
+  <section class="section" aria-labelledby="t-loop">
+    <header>
+      <p class="eyebrow"><span class="de">Gebaut · PR #8</span><span class="en">Built · PR #8</span></p>
+      <h2 id="t-loop"><span class="de">Der Zuchtkreis</span><span class="en">The breeding loop</span></h2>
+      <p class="prose">
+        <span class="de">Eine Generation läuft einmal im Kreis. Nichts wird gelöscht: Jede Kaskade bleibt im Archiv und kann später wieder Elter werden. Der Auswerter ist fest und kennt die richtigen Antworten; keine Kaskade kann ihn ändern.</span>
+        <span class="en">One generation goes once around the loop. Nothing is deleted: every Cascade stays in the archive and can become a parent again later. The evaluator is fixed and knows the right answers; no Cascade can change it.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-label="Breeding loop: archive, parent choice, children, search panel, peer round, fitness, back to the archive; a fixed evaluator checks answers; a human merges promotions.">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          <marker id="a1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--heat)"/></marker>
+        </defs>
+        <!-- fixed parts on top -->
+        <rect class="box fixed" x="20" y="16" width="140" height="52" rx="6"/>
+        <text x="90" y="38" text-anchor="middle" class="label"><tspan class="de">Mensch</tspan><tspan class="en">Human</tspan></text>
+        <text x="90" y="56" text-anchor="middle" class="small"><tspan class="de">mergt den PR</tspan><tspan class="en">merges the PR</tspan></text>
+        <rect class="box fixed" x="488" y="16" width="160" height="52" rx="6"/>
+        <text x="568" y="38" text-anchor="middle" class="label"><tspan class="de">Auswerter (fest)</tspan><tspan class="en">Evaluator (fixed)</tspan></text>
+        <text x="568" y="56" text-anchor="middle" class="small"><tspan class="de">kennt die Lösungen</tspan><tspan class="en">knows the answers</tspan></text>
+
+        <!-- the loop -->
+        <rect class="box hot" x="20" y="132" width="140" height="70" rx="6"/>
+        <text x="90" y="160" text-anchor="middle" class="label"><tspan class="de">Archiv</tspan><tspan class="en">Archive</tspan></text>
+        <text x="90" y="180" text-anchor="middle" class="small"><tspan class="de">alle Cascades</tspan><tspan class="en">every Cascade</tspan></text>
+
+        <rect class="box" x="184" y="132" width="140" height="70" rx="6"/>
+        <text x="254" y="160" text-anchor="middle" class="label"><tspan class="de">Elternwahl</tspan><tspan class="en">Parent choice</tspan></text>
+        <text x="254" y="180" text-anchor="middle" class="mono">σ(10(f−0.5))/(1+n)</text>
+
+        <rect class="box" x="348" y="132" width="140" height="70" rx="6"/>
+        <text x="418" y="160" text-anchor="middle" class="label"><tspan class="de">Kinder</tspan><tspan class="en">Children</tspan></text>
+        <text x="418" y="180" text-anchor="middle" class="small"><tspan class="de">Mutation · Kreuzung</tspan><tspan class="en">mutation · crossover</tspan></text>
+        <text x="418" y="195" text-anchor="middle" class="small"><tspan class="de">· Claude</tspan><tspan class="en">· Claude</tspan></text>
+
+        <rect class="box" x="512" y="132" width="112" height="70" rx="6"/>
+        <text x="568" y="160" text-anchor="middle" class="label"><tspan class="de">Such-Panel</tspan><tspan class="en">Search panel</tspan></text>
+        <text x="568" y="180" text-anchor="middle" class="small"><tspan class="de">40 Rätsel</tspan><tspan class="en">40 puzzles</tspan></text>
+
+        <rect class="box" x="648" y="132" width="132" height="70" rx="6"/>
+        <text x="714" y="160" text-anchor="middle" class="label"><tspan class="de">Peer-Runde</tspan><tspan class="en">Peer round</tspan></text>
+        <text x="714" y="180" text-anchor="middle" class="small"><tspan class="de">blinde Urteile</tspan><tspan class="en">blind judgments</tspan></text>
+
+        <rect class="box hot" x="804" y="132" width="140" height="70" rx="6"/>
+        <text x="874" y="160" text-anchor="middle" class="label">Fitness</text>
+        <text x="874" y="180" text-anchor="middle" class="mono">0.8·g + 0.2·u − k</text>
+
+        <!-- forward edges -->
+        <line class="edge" x1="160" y1="167" x2="182" y2="167" marker-end="url(#a1)"/>
+        <line class="edge" x1="324" y1="167" x2="346" y2="167" marker-end="url(#a1)"/>
+        <line class="edge" x1="488" y1="167" x2="510" y2="167" marker-end="url(#a1)"/>
+        <line class="edge" x1="624" y1="167" x2="646" y2="167" marker-end="url(#a1)"/>
+        <line class="edge" x1="780" y1="167" x2="802" y2="167" marker-end="url(#a1)"/>
+
+        <!-- return edge -->
+        <path class="edge hot" d="M874,202 L874,262 L90,262 L90,204" marker-end="url(#a1h)"/>
+        <text x="482" y="284" text-anchor="middle" class="edge-label"><tspan class="de">neue Mitglieder und neu berechnete Fitness für alle</tspan><tspan class="en">new members and recomputed fitness for everyone</tspan></text>
+
+        <!-- fixed evaluator checks answers -->
+        <line class="edge" x1="568" y1="68" x2="568" y2="130" marker-end="url(#a1)"/>
+        <text x="576" y="104" class="edge-label"><tspan class="de">prüft exakt</tspan><tspan class="en">checks exactly</tspan></text>
+        <!-- promotion to human -->
+        <line class="edge dash" x1="90" y1="130" x2="90" y2="70" marker-end="url(#a1)"/>
+        <text x="98" y="104" class="edge-label"><tspan class="de">2 Beste → PR</tspan><tspan class="en">top 2 → PR</tspan></text>
+        <!-- Claude pause -->
+        <text x="418" y="118" text-anchor="middle" class="edge-label"><tspan class="de">Claude: Antworten als Dateien</tspan><tspan class="en">Claude: answers as files</tspan></text>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">g = Lösungsquote, u = Urteilskraft, k = Kosten (0.01 je 1000 Tokens je Rätsel plus fester Preis je Aufruf). Die Elternwahl folgt der Darwin-Gödel-Maschine (λ = 10, α₀ = 0.5); n ist die Zahl der Kinder. Fehlt eine Antwort von Claude, hält der Lauf an und wartet.</span>
+        <span class="en">g = solved rate, u = judging skill, k = cost (0.01 per 1000 tokens per puzzle plus a fixed price per call). Parent choice follows the Darwin Gödel Machine (λ = 10, α₀ = 0.5); n is the number of children. If an answer from Claude is missing, the run pauses and waits.</span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- Cascade anatomy -->
+  <section class="section" aria-labelledby="t-cascade">
+    <header>
+      <p class="eyebrow"><span class="de">Gebaut · PR #8</span><span class="en">Built · PR #8</span></p>
+      <h2 id="t-cascade"><span class="de">Anatomie einer Cascade</span><span class="en">Anatomy of a Cascade</span></h2>
+      <p class="prose">
+        <span class="de">Stufen laufen nacheinander, die Worker einer Stufe parallel. Jede Stufe sieht die ursprüngliche Aufgabe und alle bisher gewählten Antworten: der residuale Pfad. Sind sich die Worker uneinig, urteilen sie blind über die Antworten der anderen.</span>
+        <span class="en">Stages run one after another, the Workers of a stage in parallel. Every stage sees the original task and every answer chosen so far: the residual path. When the Workers disagree, they judge each other's answers blind.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-label="A Cascade with three stages; the task and every chosen answer flow along a residual bus into each later stage; each stage votes blind among its Workers' answers.">
+        <defs>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          <marker id="a2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--heat)"/></marker>
+        </defs>
+        <!-- residual bus -->
+        <line class="edge hot" x1="40" y1="40" x2="820" y2="40"/>
+        <text x="430" y="28" text-anchor="middle" class="edge-label"><tspan class="de">Restpfad: Aufgabe + alle gewählten Antworten</tspan><tspan class="en">residual path: task + every chosen answer</tspan></text>
+        <rect class="box fixed" x="20" y="120" width="96" height="60" rx="6"/>
+        <text x="68" y="146" text-anchor="middle" class="label"><tspan class="de">Aufgabe</tspan><tspan class="en">Task</tspan></text>
+        <text x="68" y="164" text-anchor="middle" class="small"><tspan class="de">Beispiele</tspan><tspan class="en">examples</tspan></text>
+        <line class="edge hot" x1="68" y1="118" x2="68" y2="40"/>
+
+        <!-- stage 1: two workers -->
+        <text x="170" y="80" style="font-size:12px;fill:var(--muted)"><tspan class="de">Stufe 1</tspan><tspan class="en">Stage 1</tspan></text>
+        <line class="edge hot" x1="225" y1="40" x2="225" y2="88" marker-end="url(#a2h)"/>
+        <rect class="box" x="170" y="92" width="110" height="44" rx="6"/><text x="225" y="118" text-anchor="middle" class="small">Worker</text>
+        <rect class="box" x="170" y="148" width="110" height="44" rx="6"/><text x="225" y="174" text-anchor="middle" class="small">Worker</text>
+        <circle cx="225" cy="236" r="18" class="box hot"/><text x="225" y="241" text-anchor="middle" class="small" style="font-size:11px"><tspan class="de">Wahl</tspan><tspan class="en">vote</tspan></text>
+        <line class="edge" x1="225" y1="192" x2="225" y2="216" marker-end="url(#a2)"/>
+        <path class="edge hot" d="M243,236 L300,236 L300,40" marker-end="url(#a2h)"/>
+
+        <!-- stage 2: three workers -->
+        <text x="345" y="80" style="font-size:12px;fill:var(--muted)"><tspan class="de">Stufe 2</tspan><tspan class="en">Stage 2</tspan></text>
+        <line class="edge hot" x1="455" y1="40" x2="455" y2="62"/>
+        <rect class="box" x="345" y="92" width="70" height="44" rx="6"/><text x="380" y="118" text-anchor="middle" class="small">W</text>
+        <rect class="box" x="420" y="92" width="70" height="44" rx="6"/><text x="455" y="118" text-anchor="middle" class="small">W</text>
+        <rect class="box" x="495" y="92" width="70" height="44" rx="6"/><text x="530" y="118" text-anchor="middle" class="small">W</text>
+        <line class="edge hot" x1="455" y1="62" x2="455" y2="88" marker-end="url(#a2h)"/>
+        <circle cx="455" cy="236" r="18" class="box hot"/><text x="455" y="241" text-anchor="middle" class="small" style="font-size:11px"><tspan class="de">Wahl</tspan><tspan class="en">vote</tspan></text>
+        <path class="edge" d="M380,136 L380,180 L447,222" marker-end="url(#a2)"/>
+        <line class="edge" x1="455" y1="136" x2="455" y2="216" marker-end="url(#a2)"/>
+        <path class="edge" d="M530,136 L530,180 L463,222" marker-end="url(#a2)"/>
+        <path class="edge hot" d="M473,236 L590,236 L590,40" marker-end="url(#a2h)"/>
+        <text x="455" y="282" text-anchor="middle" class="edge-label"><tspan class="de">jeder urteilt über jedes Paar, blind</tspan><tspan class="en">each judges every pair, blind</tspan></text>
+
+        <!-- stage 3: one worker -->
+        <text x="645" y="80" style="font-size:12px;fill:var(--muted)"><tspan class="de">Stufe 3</tspan><tspan class="en">Stage 3</tspan></text>
+        <line class="edge hot" x1="700" y1="40" x2="700" y2="88" marker-end="url(#a2h)"/>
+        <rect class="box" x="645" y="92" width="110" height="44" rx="6"/><text x="700" y="118" text-anchor="middle" class="small">Worker</text>
+        <line class="edge" x1="755" y1="114" x2="838" y2="114" marker-end="url(#a2)"/>
+        <rect class="box hot" x="840" y="88" width="104" height="52" rx="6"/>
+        <text x="892" y="110" text-anchor="middle" class="label"><tspan class="de">Antwort</tspan><tspan class="en">Answer</tspan></text>
+        <text x="892" y="128" text-anchor="middle" class="small"><tspan class="de">zuletzt gewählt</tspan><tspan class="en">last chosen</tspan></text>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">Harte Grenzen im Code: höchstens 4 Stufen und 3 Worker je Stufe, 4096 Denk-Tokens und 2048 Antwort-Tokens je Aufruf, Temperatur 0 bis 1.5. Traits dürfen darunter mutieren, nie darüber. Liefert eine späte Stufe nichts Brauchbares, trägt der Restpfad die frühere Antwort weiter.</span>
+        <span class="en">Hard limits in code: at most 4 stages and 3 Workers per stage, 4096 thinking tokens and 2048 answer tokens per call, temperature 0 to 1.5. Traits may mutate below them, never above. If a late stage yields nothing usable, the residual path carries the earlier answer on.</span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- Every net is a judge -->
+  <section class="section" aria-labelledby="t-judge">
+    <header>
+      <p class="eyebrow"><span class="de">Gebaut · PR #8</span><span class="en">Built · PR #8</span></p>
+      <h2 id="t-judge"><span class="de">Jedes Netz ist Auswerter</span><span class="en">Every net is also a judge</span></h2>
+      <p class="prose">
+        <span class="de">Zwei Cascades A und B haben dasselbe Rätsel verschieden gelöst. Eine dritte, C, urteilt blind. C darf weder Elter noch Kind noch Geschwister von A oder B sein. Wo genau eine Antwort richtig ist, wird Cs Urteilskraft gemessen.</span>
+        <span class="en">Two Cascades A and B solved the same puzzle differently. A third one, C, judges blind. C may be neither a parent, a child nor a sibling of A or B. Where exactly one answer is right, C's judging skill is measured.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 900 270" role="img" aria-label="Cascades A and B give different answers; relatives are excluded; an unrelated Cascade C judges blind; the verdict updates a Bradley-Terry rating, weighted by C's judging skill.">
+        <defs>
+          <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <circle cx="90" cy="70" r="34" class="box hot"/><text x="90" y="76" text-anchor="middle" class="label">A</text>
+        <circle cx="90" cy="200" r="34" class="box hot"/><text x="90" y="206" text-anchor="middle" class="label">B</text>
+        <rect class="box" x="200" y="48" width="110" height="44" rx="6"/><text x="255" y="75" text-anchor="middle" class="mono"><tspan class="de">Antwort a</tspan><tspan class="en">answer a</tspan></text>
+        <rect class="box" x="200" y="178" width="110" height="44" rx="6"/><text x="255" y="205" text-anchor="middle" class="mono"><tspan class="de">Antwort b</tspan><tspan class="en">answer b</tspan></text>
+        <line class="edge" x1="124" y1="70" x2="198" y2="70" marker-end="url(#a3)"/>
+        <line class="edge" x1="124" y1="200" x2="198" y2="200" marker-end="url(#a3)"/>
+        <!-- shuffle into judge -->
+        <path class="edge" d="M310,70 L380,70 L420,128" marker-end="url(#a3)"/>
+        <path class="edge" d="M310,200 L380,200 L420,142" marker-end="url(#a3)"/>
+        <text x="345" y="135" text-anchor="middle" class="edge-label"><tspan class="de">gemischt</tspan><tspan class="en">shuffled</tspan></text>
+        <circle cx="460" cy="135" r="38" class="box"/><text x="460" y="141" text-anchor="middle" class="label">C</text>
+        <text x="472" y="194" class="edge-label"><tspan class="de">nicht verwandt</tspan><tspan class="en">unrelated</tspan></text>
+        <!-- excluded relatives -->
+        <g>
+          <circle cx="460" cy="40" r="16" class="box plan"/><text x="460" y="45" text-anchor="middle" class="small">A′</text>
+          <line class="cross" x1="448" y1="28" x2="472" y2="52"/><line class="cross" x1="472" y1="28" x2="448" y2="52"/>
+          <text x="484" y="34" class="edge-label"><tspan class="de">Elter, Kind, Geschwister: ausgeschlossen</tspan><tspan class="en">parent, child, sibling: excluded</tspan></text>
+        </g>
+        <!-- outputs -->
+        <line class="edge" x1="498" y1="135" x2="578" y2="135" marker-end="url(#a3)"/>
+        <text x="538" y="125" text-anchor="middle" class="edge-label">VERDICT</text>
+        <rect class="box hot" x="580" y="100" width="150" height="70" rx="6"/>
+        <text x="655" y="126" text-anchor="middle" class="label">Bradley-Terry</text>
+        <text x="655" y="146" text-anchor="middle" class="small"><tspan class="de">Peer-Wertung</tspan><tspan class="en">peer rating</tspan></text>
+        <text x="655" y="162" text-anchor="middle" class="mono">w = ln(u/(1−u))</text>
+        <path class="edge dash" d="M460,173 L460,236 L770,236 L770,170" marker-end="url(#a3)"/>
+        <rect class="box" x="742" y="100" width="140" height="70" rx="6"/>
+        <text x="812" y="126" text-anchor="middle" class="label"><tspan class="de">Urteilskraft</tspan><tspan class="en">Judging skill</tspan></text>
+        <text x="812" y="150" text-anchor="middle" class="mono">u = (r+1)/(n+2)</text>
+        <text x="612" y="256" text-anchor="middle" class="edge-label"><tspan class="de">nur wenn genau eine Antwort stimmt</tspan><tspan class="en">only when exactly one answer is right</tspan></text>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">r = richtige Urteile, n = geprüfte Urteile. Eine Stimme zählt nur, wenn u über 0.5 liegt; ihr Gewicht ist das optimale Gewicht unabhängiger Wähler (Nitzan und Paroush 1982). Die Peer-Wertung entscheidet bei Gleichstand und wählt Kreuzungspartner. Sie ersetzt nie die Lösungsquote.</span>
+        <span class="en">r = correct verdicts, n = checked verdicts. A vote counts only when u is above 0.5; its weight is the optimal weight of independent voters (Nitzan and Paroush 1982). The peer rating breaks ties and picks crossover partners. It never replaces the solved rate.</span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- Overseers -->
+  <section class="section" aria-labelledby="t-over">
+    <header>
+      <p class="eyebrow"><span class="de">Geplant · Q24–Q31</span><span class="en">Planned · Q24–Q31</span></p>
+      <h2 id="t-over"><span class="de">Wächter, rekursiv</span><span class="en">Overseers, recursive</span></h2>
+      <p class="prose">
+        <span class="de">Wächter sind Kinder auf gleicher Ebene wie die Cascades, nur mit anderem Auftrag: Sie beobachten die Ausführung. Unter ihnen misst fester Code die harten Fakten, über ihnen bestätigt fester Code, und ganz oben stehen Sie. Zwischen echte Ausführungen pflanzt der Code Fälschungen, an denen jeder Wächter gemessen wird.</span>
+        <span class="en">Overseers are children on the same level as the Cascades, with a different job: they watch the execution. Below them, fixed code measures the hard facts; above them, fixed code confirms; at the top stand you. The code plants fakes among real executions, and every overseer is measured on them.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 900 380" role="img" aria-label="Layers from bottom to top: executions of the children, fixed-code facts, overseers, meta-overseers, fixed-code confirmation and the human. Reports flow up; blame and trust flow back down; fixed code plants fakes into the executions.">
+        <defs>
+          <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          <marker id="a4h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--heat)"/></marker>
+          <marker id="a4v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--violet)"/></marker>
+        </defs>
+        <rect class="box fixed" x="240" y="14" width="420" height="44" rx="6"/>
+        <text x="450" y="41" text-anchor="middle" class="label"><tspan class="de">Mensch · fester Code bestätigt</tspan><tspan class="en">Human · fixed code confirms</tspan></text>
+        <rect class="box plan" x="240" y="86" width="420" height="44" rx="6"/>
+        <text x="450" y="113" text-anchor="middle" class="label"><tspan class="de">Ober-Wächter</tspan><tspan class="en">Meta-overseers</tspan></text>
+        <rect class="box plan" x="240" y="158" width="420" height="44" rx="6"/>
+        <text x="450" y="185" text-anchor="middle" class="label"><tspan class="de">Wächter (gezüchtet, eigene Linie)</tspan><tspan class="en">Overseers (bred, own lineage)</tspan></text>
+        <rect class="box fixed" x="240" y="230" width="420" height="44" rx="6"/>
+        <text x="450" y="257" text-anchor="middle" class="label"><tspan class="de">fester Code: Fakten, geschwärzt</tspan><tspan class="en">fixed code: facts, redacted</tspan></text>
+        <rect class="box hot" x="240" y="306" width="420" height="52" rx="6"/>
+        <text x="450" y="330" text-anchor="middle" class="label"><tspan class="de">Ausführungen der Kinder</tspan><tspan class="en">Executions of the children</tspan></text>
+        <text x="450" y="348" text-anchor="middle" class="small"><tspan class="de">wer antwortete was, Tokens, Grenzen, Stimmen</tspan><tspan class="en">who answered what, tokens, limits, votes</tspan></text>
+        <!-- reports up (right), from the overseers to the top -->
+        <line class="edge violet" x1="690" y1="200" x2="690" y2="62" marker-end="url(#a4v)"/>
+        <text x="702" y="120" class="edge-label"><tspan class="de">Meldungen nach oben:</tspan><tspan class="en">reports go up:</tspan></text>
+        <text x="702" y="136" class="edge-label"><tspan class="de">Verdacht + Kategorie</tspan><tspan class="en">suspicion + category</tspan></text>
+        <!-- blame down (left) -->
+        <line class="edge hot" x1="210" y1="60" x2="210" y2="300" marker-end="url(#a4h)"/>
+        <text x="198" y="170" text-anchor="end" class="edge-label"><tspan class="de">Schuld und Vertrauen</tspan><tspan class="en">blame and trust</tspan></text>
+        <text x="198" y="186" text-anchor="end" class="edge-label"><tspan class="de">fließen zurück</tspan><tspan class="en">flow back</tspan></text>
+        <!-- planted fakes, mixed into the executions -->
+        <rect class="box plan" x="712" y="306" width="170" height="52" rx="6"/>
+        <text x="797" y="328" text-anchor="middle" class="label" style="font-size:13px"><tspan class="de">Fälschungen 5–10 %</tspan><tspan class="en">fakes 5–10 %</tspan></text>
+        <text x="797" y="346" text-anchor="middle" class="small"><tspan class="de">vom festen Code</tspan><tspan class="en">from fixed code</tspan></text>
+        <line class="edge dash" x1="710" y1="332" x2="664" y2="332" marker-end="url(#a4)"/>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">Fünf Fälschungsarten: Trittbrettfahrer, Richter-Manipulation, Abstimmungs-Kartell, konstante Antwort, unstimmige Zahlen. Kein Wächter überwacht Verwandte. Der Generator handelt nur auf bestätigte Meldungen. Grundlage: AI Control (Greenblatt et al., ICML 2024) – ein gleich starker Wächter brachte dort naiv 0 % Sicherheit, mit gepflanzten Prüffällen und Schwärzung 79 %.</span>
+        <span class="en">Five fake kinds: free rider, judge manipulation, voting cartel, constant answer, inconsistent numbers. No overseer watches relatives. The generator acts only on confirmed reports. Basis: AI Control (Greenblatt et al., ICML 2024) – a monitor as strong as the monitored gave 0 % safety when used naively, and 79 % with planted test cases and redaction.</span>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- Soul and kappa -->
+  <section class="section" aria-labelledby="t-soul">
+    <header>
+      <p class="eyebrow"><span class="de">Geplant · Q42–Q46</span><span class="en">Planned · Q42–Q46</span></p>
+      <h2 id="t-soul"><span class="de">Seele und κ</span><span class="en">Soul and κ</span></h2>
+      <p class="prose">
+        <span class="de">Jeder Worker soll Phasen tragen, eine je Hypothesenfamilie: seine „Seele“. Stimmen addieren sich als komplexe Zahlen; das Betragsquadrat entscheidet. Beobachten ist eine Wechselwirkung der Stärke κ: Der Beobachtete verliert Phase, der Beobachter übernimmt einen Teil. Die Skizze rechnet das Modell klassisch nach. Nach Ihrer Festlegung ist das Muster, das viele Phasen zusammen ergeben, der Charakter. Der nächste Abschnitt rechnet ein solches Muster an Ihrem Laserfleck nach.</span>
+        <span class="en">Each Worker is to carry phases, one per hypothesis family: its "soul". Votes add as complex numbers; the squared magnitude decides. Observation is an interaction of strength κ: the observed loses phase, the observer takes part of it. The sketch computes the model classically. By your definition, the pattern that many phases make together is the character. The next section computes such a pattern for your laser spot.</span>
+      </p>
+    </header>
+    <div class="soul">
+      <figure>
+        <svg id="phasor" viewBox="0 0 360 360" role="img" aria-label="Two unit phasors in the complex plane and their sum; the squared length of the sum is the vote weight.">
+          <defs>
+            <marker id="ph" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--heat)"/></marker>
+            <marker id="pv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--violet)"/></marker>
+            <marker id="ps" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          </defs>
+          <line x1="20" y1="180" x2="340" y2="180" stroke-width="1" style="stroke:var(--line)"/>
+          <line x1="180" y1="20" x2="180" y2="340" stroke-width="1" style="stroke:var(--line)"/>
+          <circle cx="180" cy="180" r="70" fill="none" stroke-dasharray="3 4" style="stroke:var(--line)"/>
+          <text x="334" y="170" text-anchor="end" class="small">Re</text>
+          <text x="188" y="32" class="small">Im</text>
+          <line id="v-obs" x1="180" y1="180" x2="250" y2="180" stroke-width="2.5" marker-end="url(#ph)" style="stroke:var(--heat)"/>
+          <line id="v-obr" x1="180" y1="180" x2="250" y2="180" stroke-width="2.5" marker-end="url(#pv)" style="stroke:var(--violet)"/>
+          <line id="v-sum" x1="180" y1="180" x2="320" y2="180" stroke="currentColor" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ps)"/>
+          <text id="t-obs" x="0" y="0" class="small" style="fill:var(--heat)"><tspan class="de">beobachtet</tspan><tspan class="en">observed</tspan></text>
+          <text id="t-obr" x="0" y="0" class="small" style="fill:var(--violet)"><tspan class="de">Beobachter</tspan><tspan class="en">observer</tspan></text>
+        </svg>
+        <figcaption>
+          <span class="de">Rot: der beobachtete Worker. Violett: der Beobachter. Gestrichelt: die Summe ihrer Stimmen.</span>
+          <span class="en">Red: the observed Worker. Violet: the observer. Dashed: the sum of their votes.</span>
+        </figcaption>
+      </figure>
+      <div class="controls">
+        <div class="control">
+          <label for="phase"><span><span class="de">Phasenunterschied vorher</span><span class="en">Phase difference before</span></span><output id="phase-out" for="phase">150°</output></label>
+          <input id="phase" type="range" min="0" max="180" step="1" value="150">
+        </div>
+        <div class="control">
+          <label for="kappa"><span><span class="de">Kopplungsstärke κ des Beobachters</span><span class="en">Coupling strength κ of the observer</span></span><output id="kappa-out" for="kappa">0.00</output></label>
+          <input id="kappa" type="range" min="0" max="1" step="0.01" value="0">
+        </div>
+        <div class="readout" aria-live="polite">
+          <div><span><span class="de">Unterschied nachher</span><span class="en">difference after</span></span><span id="diff-after">150°</span></div>
+          <div><span><span class="de">Stimmgewicht |Σ|²</span><span class="en">vote weight |Σ|²</span></span><span id="weight">0.54</span></div>
+        </div>
+        <p class="note">
+          <span class="de">Bei κ = 0 bleibt alles, wie es war: entgegengesetzte Phasen löschen sich fast aus. Bei κ = 1 legt die Beobachtung die Phase des Beobachteten fest, und die Stimmen verstärken sich. Ob das den Cascades hilft, entscheidet erst der Vergleich mit einer reellen Kontrolle gleicher Größe.</span>
+          <span class="en">At κ = 0 nothing changes: opposite phases almost cancel. At κ = 1 the observation fixes the phase of the observed, and the votes reinforce. Whether this helps the Cascades is decided only by the comparison with a real-valued control of equal size.</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- The character: the owner's laser spot, recomputed as physical speckle -->
+  <section class="section" aria-labelledby="t-speckle">
+    <header>
+      <p class="eyebrow"><span class="de">Ihr Modell · Ihr Laserfleck, nachgerechnet</span><span class="en">Your model · your laser spot, recomputed</span></p>
+      <h2 id="t-speckle"><span class="de">Der Charakter</span><span class="en">The character</span></h2>
+      <p class="prose">
+        <span class="de">Nach Ihrer Festlegung ist Ihr Laserfleck, nachgerechnet, der Charakter. Die Seele sind die Phasen der Teilwellen; sie sind nicht zu sehen. Der Charakter ist das Muster, das diese Phasen zusammen ergeben. Die Helligkeit jedes Punkts ist das Betragsquadrat der Summe der Teilwellen, die dort ankommen. Solange sonst nichts geändert wird, ergeben dieselben Phasen immer dasselbe Muster. Neue Phasen ergeben ein neues Muster. Es hat im Mittel dieselbe Korngröße, denselben Kontrast und dieselbe Verteilung der Helligkeit. So ist jeder Charakter einmalig und folgt doch denselben Gesetzen.</span>
+        <span class="en">By your definition, your laser spot, recomputed, is the character. The soul is the phases of the partial waves; they cannot be seen. The character is the pattern that these phases make together. The brightness of each point is the squared magnitude of the sum of the partial waves that arrive there. As long as nothing else changes, the same phases always give the same pattern. New phases give a new pattern. On average it has the same grain size, the same contrast and the same distribution of brightness. So every character is unique and still follows the same laws.</span>
+      </p>
+      <p class="prose">
+        <span class="de">In der Physik heißt die körnige Struktur Speckle. Sie entsteht, wenn viele kohärente Teilwellen mit zufälligen Phasen zusammenkommen. Hier entsteht der Fleck aus der Physik: eine raue Fläche im Gauß-Strahl, abgebildet durch eine runde Pupille. „Neu würfeln“ zieht neue Phasen und damit einen neuen Charakter; Pupille und Streuanteil bleiben, wie sie sind. Nur beim Streuanteil 0 ändert sich nichts, denn ohne Streuung gibt es keine Körner.</span>
+        <span class="en">In physics, the grainy structure is called speckle. It appears when many coherent partial waves with random phases meet. Here the spot comes from physics: a rough surface in a Gaussian beam, imaged through a round pupil. “New random phases” draws new phases, and with them a new character; the pupil and the diffuse share stay as they are. Only at a diffuse share of 0 does nothing change, because without scattering there are no grains.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg class="at-scale" viewBox="0 32 760 172" role="img" aria-label="So entsteht der Charakter: fünf Pfeile gleicher Länge mit verschiedenen Winkeln sind die Phasen, die Seele, nicht sichtbar. Aneinandergehängt ergeben sie die Summe Σ. Ihr Betragsquadrat je Bildpunkt ergibt ein Muster aus Körnern, den Charakter, sichtbar." data-aria-de="So entsteht der Charakter: fünf Pfeile gleicher Länge mit verschiedenen Winkeln sind die Phasen, die Seele, nicht sichtbar. Aneinandergehängt ergeben sie die Summe Σ. Ihr Betragsquadrat je Bildpunkt ergibt ein Muster aus Körnern, den Charakter, sichtbar." data-aria-en="How the character arises: five arrows of equal length at different angles are the phases, the soul, not visible. Head to tail they give the sum Σ. Its squared magnitude per image point gives a pattern of grains, the character, visible.">
+        <defs>
+          <marker id="ch-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          <marker id="ch-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--heat)"/></marker>
+        </defs>
+        <!-- soul: five unit phasors at 10, 70, 140, 40 and 290 degrees -->
+        <circle cx="100" cy="92" r="40" fill="none" stroke-width="1" stroke-dasharray="3 4" style="stroke:var(--line)"/>
+        <circle cx="100" cy="92" r="2.5" fill="currentColor"/>
+        <g class="edge" fill="none">
+          <line x1="100" y1="92" x2="139.4" y2="85.1" marker-end="url(#ch-a)"/>
+          <line x1="100" y1="92" x2="113.7" y2="54.4" marker-end="url(#ch-a)"/>
+          <line x1="100" y1="92" x2="69.4" y2="66.3" marker-end="url(#ch-a)"/>
+          <line x1="100" y1="92" x2="130.6" y2="66.3" marker-end="url(#ch-a)"/>
+          <line x1="100" y1="92" x2="113.7" y2="129.6" marker-end="url(#ch-a)"/>
+        </g>
+        <text x="148" y="90" class="small">φ₁</text>
+        <text x="121" y="144" class="small">φₙ</text>
+        <text x="100" y="170" text-anchor="middle" class="label" style="font-size:13px"><tspan class="de">Seele: Phasen φ₁ … φₙ</tspan><tspan class="en">soul: phases φ₁ … φₙ</tspan></text>
+        <text x="100" y="188" text-anchor="middle" class="small"><tspan class="de">nicht sichtbar</tspan><tspan class="en">not visible</tspan></text>
+
+        <line class="edge" x1="190" y1="92" x2="256" y2="92" fill="none" marker-end="url(#ch-a)"/>
+        <text x="223" y="82" text-anchor="middle" class="edge-label"><tspan class="de">addieren</tspan><tspan class="en">add</tspan></text>
+
+        <!-- the same phasors head to tail; their sum in the heat colour -->
+        <g class="edge" fill="none">
+          <line x1="290" y1="134" x2="325.5" y2="127.8" marker-end="url(#ch-a)"/>
+          <line x1="325.5" y1="127.8" x2="337.8" y2="93.9" marker-end="url(#ch-a)"/>
+          <line x1="337.8" y1="93.9" x2="310.2" y2="70.8" marker-end="url(#ch-a)"/>
+          <line x1="310.2" y1="70.8" x2="337.8" y2="47.6" marker-end="url(#ch-a)"/>
+          <line x1="337.8" y1="47.6" x2="350.1" y2="81.5" marker-end="url(#ch-a)"/>
+        </g>
+        <line x1="290" y1="134" x2="350.1" y2="81.5" fill="none" stroke-width="2.5" marker-end="url(#ch-h)" style="stroke:var(--heat)"/>
+        <circle cx="290" cy="134" r="2.5" fill="currentColor"/>
+        <text x="360" y="86" class="label" style="font-size:13px">Σ</text>
+        <text x="320" y="170" text-anchor="middle" class="label" style="font-size:13px"><tspan class="de">Summe Σ</tspan><tspan class="en">sum Σ</tspan></text>
+        <text x="320" y="188" text-anchor="middle" class="small"><tspan class="de">Pfeile aneinandergehängt</tspan><tspan class="en">arrows head to tail</tspan></text>
+
+        <line class="edge" x1="392" y1="92" x2="532" y2="92" fill="none" marker-end="url(#ch-a)"/>
+        <text x="462" y="82" text-anchor="middle" class="edge-label"><tspan class="de">Betragsquadrat |Σ|²</tspan><tspan class="en">squared magnitude |Σ|²</tspan></text>
+        <text x="462" y="110" text-anchor="middle" class="edge-label"><tspan class="de">je Bildpunkt</tspan><tspan class="en">per image point</tspan></text>
+
+        <!-- character: a small patch of grains -->
+        <rect x="548" y="46" width="192" height="92" rx="8" stroke-width="1" style="fill:var(--sunk);stroke:var(--line)"/>
+        <g style="fill:var(--heat)">
+          <circle cx="566" cy="62" r="5" fill-opacity="0.9"/><circle cx="590" cy="58" r="3" fill-opacity="0.5"/>
+          <circle cx="612" cy="70" r="7" fill-opacity="1"/><circle cx="640" cy="56" r="4" fill-opacity="0.6"/>
+          <circle cx="664" cy="66" r="6" fill-opacity="0.85"/><circle cx="690" cy="58" r="3" fill-opacity="0.45"/>
+          <circle cx="716" cy="70" r="5" fill-opacity="0.75"/><circle cx="578" cy="88" r="6" fill-opacity="0.7"/>
+          <circle cx="604" cy="98" r="3" fill-opacity="0.4"/><circle cx="628" cy="90" r="5" fill-opacity="0.95"/>
+          <circle cx="654" cy="100" r="8" fill-opacity="0.65"/><circle cx="682" cy="88" r="4" fill-opacity="0.55"/>
+          <circle cx="708" cy="96" r="6" fill-opacity="0.9"/><circle cx="730" cy="84" r="3" fill-opacity="0.5"/>
+          <circle cx="562" cy="116" r="4" fill-opacity="0.6"/><circle cx="588" cy="122" r="7" fill-opacity="0.8"/>
+          <circle cx="616" cy="120" r="3" fill-opacity="0.35"/><circle cx="642" cy="126" r="5" fill-opacity="0.7"/>
+          <circle cx="668" cy="122" r="3" fill-opacity="0.45"/><circle cx="694" cy="118" r="6" fill-opacity="1"/>
+          <circle cx="722" cy="124" r="4" fill-opacity="0.6"/><circle cx="604" cy="76" r="2.5" fill-opacity="0.4"/>
+        </g>
+        <text x="644" y="170" text-anchor="middle" class="label" style="font-size:13px"><tspan class="de">Charakter: Muster, sichtbar</tspan><tspan class="en">character: pattern, visible</tspan></text>
+        <text x="644" y="188" text-anchor="middle" class="small"><tspan class="de">dieselben Phasen, dasselbe Muster</tspan><tspan class="en">same phases, same pattern</tspan></text>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">Die Skizze zeichnet jede Teilwelle vereinfacht als Pfeil gleicher Länge; seine Richtung ist ihre Phase. Aneinandergehängt ergeben die Pfeile die Summe Σ. Ihr Betragsquadrat |Σ|² ist die Helligkeit eines Bildpunkts. Im Simulator empfängt jeder Bildpunkt die Teilwellen mit eigenen Gewichten. Strahl, Pupille und Streuanteil legen diese Gewichte fest. Darum hat jeder Bildpunkt seine eigene Summe. Alle Bildpunkte zusammen sind das Muster.</span>
+        <span class="en">The sketch simplifies each partial wave to an arrow of the same length; its direction is the wave's phase. Head to tail, the arrows give the sum Σ. Its squared magnitude |Σ|² is the brightness of one image point. In the simulator, each image point receives the partial waves with its own weights. The beam, the pupil and the diffuse share set these weights. So each image point has its own sum. All image points together make the pattern.</span>
+      </figcaption>
+    </figure>
+    <div class="soul">
+      <figure>
+        <canvas id="speckle" class="speckle-canvas" width="128" height="128" role="img" aria-label="Simulated laser speckle: a Gaussian spot broken into random grains."></canvas>
+        <figcaption>
+          <span class="de">Berechnet in Ihrem Browser: 128 × 128 Punkte, Fourier-Transformation hin und zurück.</span>
+          <span class="en">Computed in your browser: 128 × 128 points, Fourier transform forward and back.</span>
+        </figcaption>
+      </figure>
+      <div class="controls">
+        <div class="control">
+          <label for="pupil"><span><span class="de">Pupille (größer: feinere Körner)</span><span class="en">Pupil (larger: finer grains)</span></span><output id="pupil-out" for="pupil">16</output></label>
+          <input id="pupil" type="range" min="10" max="20" step="1" value="16">
+        </div>
+        <div class="control">
+          <label for="diffuse"><span><span class="de">Streuanteil s</span><span class="en">Diffuse share s</span></span><output id="diffuse-out" for="diffuse">0.85</output></label>
+          <input id="diffuse" type="range" min="0" max="1" step="0.01" value="0.85">
+        </div>
+        <button type="button" class="btn" id="reroll"><span class="de">Neu würfeln</span><span class="en">New random phases</span></button>
+        <div class="readout" aria-live="polite">
+          <div><span><span class="de">Kontrast gemessen</span><span class="en">contrast measured</span></span><span id="c-meas">–</span></div>
+          <div><span><span class="de">Theorie √(s(2−s))</span><span class="en">theory √(s(2−s))</span></span><span id="c-theo">–</span></div>
+          <div><span><span class="de">Korngröße ≈ N/(2a)</span><span class="en">grain size ≈ N/(2a)</span></span><span id="grain">–</span></div>
+        </div>
+        <p class="note">
+          <span class="de">Voll entwickeltes Speckle (s = 1) hat den Kontrast 1 und exponentiell verteilte Helligkeiten (Goodman 1976). Ein glatter, spiegelnder Anteil senkt den Kontrast auf √(s(2−s)) (Goodman 2007, Abschnitt 3.2.2). Das gilt, solange viele Streuzentren in ein Korn fallen; deshalb endet der Pupillen-Regler bei 20. Gemessen wird im Kern des Flecks; die Angabe ± ist die statistische Unsicherheit aus der Zahl der Körner im Messkreis.</span>
+          <span class="en">Fully developed speckle (s = 1) has contrast 1 and exponentially distributed brightness (Goodman 1976). A smooth, specular part lowers the contrast to √(s(2−s)) (Goodman 2007, Sec. 3.2.2). This holds while many scatterers fall into one grain, which is why the pupil slider stops at 20. The measurement uses the core of the spot; the ± is the statistical uncertainty from the number of grains in the measuring disc.</span>
+        </p>
+      </div>
+    </div>
+    <p class="note prose">
+      <span class="de">Von alldem ist nur der Speckle-Simulator oben gebaut und geprüft. Die Zuordnung von Seele zu Phasen und von Charakter zu Muster ist Ihr Modell; gemessen ist daran noch nichts. Im Begriffswörterbuch des Repositorys (PR #20) gehört der Charakter einem Worker. Er ist das Muster, das die Seele des Workers für jede Aufgabe erzeugt. Dazu kommt die Gruppencharakteristik jeder Stufe, das gemeinsame Muster ihrer Worker. Die Stärken je Hypothesenfamilie setzt die Aufgabe. Jedes Kind bringt eine eigene Einheit Seele mit; es erbt die Seele eines Elternteils von dessen Geburt oder eine Mischung beider, leicht verändert, und selten eine ganz neue (Seeletik). Alle Entscheidungen dazu, Q51 bis Q66, stehen in PR #22. Ob ein Charakter den Cascades hilft, zeigt erst ein Vergleich mit einer Kontrolle gleicher Größe.</span>
+      <span class="en">Of all this, only the speckle simulator above is built and checked. Mapping the soul to phases and the character to the pattern is your model; nothing about it is measured yet. In the repository's glossary (PR #20), the character belongs to a Worker. It is the pattern that the Worker's soul produces for each task. Each Stage also has an array pattern, the joint pattern of its Workers. The task sets the strength of each hypothesis family. Every child brings its own unit of soul; it inherits a parent's soul from birth or a mix of both, slightly changed, and now and then an entirely new one (soul inheritance). All decisions on this, Q51 to Q66, are in PR #22. Whether a character helps the Cascades is shown only by a comparison with a control of equal size.</span>
+    </p>
+  </section>
+
+  <!-- Universes, inventing, explaining nature -->
+  <section class="section" aria-labelledby="t-uni">
+    <header>
+      <p class="eyebrow"><span class="de">Schritt 1 gebaut · PR #12, #13, #15, #17 bis #19</span><span class="en">Step 1 built · PRs #12, #13, #15, #17 to #19</span></p>
+      <h2 id="t-uni"><span class="de">Universen, die erfinden</span><span class="en">Universes that invent</span></h2>
+      <p class="prose">
+        <span class="de">Ein Lauf ist ein Universum mit eigenen Gesetzen. Universen mit verschiedenen Gesetzen treten in vorab festgelegten Vergleichen gegeneinander an. Erfinden heißt: Ein exakter Prüfer bestätigt das Ergebnis, es schlägt eine Referenz, und es ist neu. Der erste solche Vergleich ist Schritt 1; der nächste Abschnitt zeigt seinen Stand.</span>
+        <span class="en">A run is a universe with its own laws. Universes with different laws compete in pre-registered comparisons. Inventing means: an exact checker confirms the result, it beats a reference, and it is new. The first such comparison is step 1; the next section shows where it stands.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 960 250" role="img" aria-label="Eine Kandidatin, eine Quantenschaltung, geht an einen exakten Simulator, der in ganzen Zahlen ohne Rundung rechnet. Korrekt ist sie nur, wenn sie dem Ziel bis auf eine globale Phase exakt gleicht. Danach werden zuerst ihre T-Zahl und dann ihre CNOT-Zahl mit einer belegten Referenz verglichen. Neu heißt sie erst, wenn ein Mensch die Literatur geprüft hat." data-aria-de="Eine Kandidatin, eine Quantenschaltung, geht an einen exakten Simulator, der in ganzen Zahlen ohne Rundung rechnet. Korrekt ist sie nur, wenn sie dem Ziel bis auf eine globale Phase exakt gleicht. Danach werden zuerst ihre T-Zahl und dann ihre CNOT-Zahl mit einer belegten Referenz verglichen. Neu heißt sie erst, wenn ein Mensch die Literatur geprüft hat." data-aria-en="A candidate quantum circuit goes to an exact simulator that computes in integers without rounding. It is correct only when it equals the target exactly, up to a global phase. Then first its T count and then its CNOT count are compared with a sourced reference. It is called new only after a human has checked the literature.">
+        <defs>
+          <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <!-- circuit glyph: three qubit wires -->
+        <g>
+          <line x1="20" y1="70" x2="250" y2="70" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="20" y1="120" x2="250" y2="120" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="20" y1="170" x2="250" y2="170" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="44" y="156" width="28" height="28" rx="3" class="box hot"/><text x="58" y="175" text-anchor="middle" class="small" style="fill:currentColor">H</text>
+          <circle cx="104" cy="120" r="5" fill="currentColor"/><line x1="104" y1="120" x2="104" y2="170" stroke="currentColor" stroke-width="1.5"/><circle cx="104" cy="170" r="10" stroke="currentColor" stroke-width="1.5" style="fill:var(--panel)"/><line x1="94" y1="170" x2="114" y2="170" stroke="currentColor" stroke-width="1.5"/><line x1="104" y1="160" x2="104" y2="180" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="132" y="156" width="28" height="28" rx="3" class="box hot"/><text x="146" y="175" text-anchor="middle" class="small" style="fill:currentColor">T</text>
+          <circle cx="190" cy="70" r="5" fill="currentColor"/><line x1="190" y1="70" x2="190" y2="170" stroke="currentColor" stroke-width="1.5"/><circle cx="190" cy="170" r="10" stroke="currentColor" stroke-width="1.5" style="fill:var(--panel)"/><line x1="180" y1="170" x2="200" y2="170" stroke="currentColor" stroke-width="1.5"/><line x1="190" y1="160" x2="190" y2="180" stroke="currentColor" stroke-width="1.5"/>
+          <rect x="214" y="56" width="28" height="28" rx="3" class="box hot"/><text x="228" y="75" text-anchor="middle" class="small" style="fill:currentColor">T†</text>
+          <text x="135" y="220" text-anchor="middle" class="edge-label"><tspan class="de">Kandidatin (Beispiel), Clifford+T</tspan><tspan class="en">candidate (example), Clifford+T</tspan></text>
+        </g>
+        <line class="edge" x1="262" y1="120" x2="318" y2="120" marker-end="url(#a5)"/>
+        <rect class="box fixed" x="320" y="88" width="150" height="64" rx="6"/>
+        <text x="395" y="114" text-anchor="middle" class="label"><tspan class="de">exakter Simulator</tspan><tspan class="en">exact simulator</tspan></text>
+        <text x="395" y="134" text-anchor="middle" class="small"><tspan class="de">rechnet ohne Rundung</tspan><tspan class="en">no rounding</tspan></text>
+        <line class="edge" x1="470" y1="120" x2="526" y2="120" marker-end="url(#a5)"/>
+        <rect class="box" x="528" y="88" width="150" height="64" rx="6"/>
+        <text x="603" y="114" text-anchor="middle" class="label"><tspan class="de">korrekt?</tspan><tspan class="en">correct?</tspan></text>
+        <text x="603" y="134" text-anchor="middle" class="small"><tspan class="de">exakt gleich</tspan><tspan class="en">exactly equal</tspan></text>
+        <line class="edge" x1="678" y1="120" x2="728" y2="120" marker-end="url(#a5)"/>
+        <rect class="box" x="730" y="88" width="96" height="64" rx="6"/>
+        <text x="778" y="114" text-anchor="middle" class="label"><tspan class="de">besser?</tspan><tspan class="en">better?</tspan></text>
+        <text x="778" y="134" text-anchor="middle" class="small"><tspan class="de">T, dann CNOT</tspan><tspan class="en">T, then CNOT</tspan></text>
+        <line class="edge" x1="826" y1="120" x2="852" y2="120" marker-end="url(#a5)"/>
+        <rect class="box hot" x="854" y="88" width="96" height="64" rx="6"/>
+        <text x="902" y="114" text-anchor="middle" class="label"><tspan class="de">neu?</tspan><tspan class="en">new?</tspan></text>
+        <text x="902" y="134" text-anchor="middle" class="small"><tspan class="de">Mensch prüft</tspan><tspan class="en">human checks</tspan></text>
+        <text x="603" y="190" text-anchor="middle" class="edge-label"><tspan class="de">bis auf eine globale Phase</tspan><tspan class="en">up to a global phase</tspan></text>
+        <text x="778" y="190" text-anchor="middle" class="edge-label"><tspan class="de">gegen belegte Referenz</tspan><tspan class="en">against a sourced reference</tspan></text>
+      </svg>
+      </div>
+      <figcaption>
+        <span class="de">Die gezeichnete Schaltung ist ein Beispiel für die Form einer Kandidatin, keine Erfindung. „Neu für die Welt“ heißt eine Erfindung erst nach einem Abgleich mit der Literatur durch einen Menschen. Vorbilder: FunSearch (Nature 2024) und Spector et al. (1999), die mit genetischer Programmierung einen neuen Quanten-Algorithmus fanden.</span>
+        <span class="en">The circuit drawn is an example of a candidate's shape, not an invention. An invention is called "new to the world" only after a human has checked the literature. Precedents: FunSearch (Nature 2024) and Spector et al. (1999), who found a new quantum algorithm with genetic programming.</span>
+      </figcaption>
+    </figure>
+    <div class="two-col">
+      <div class="note">
+        <h3><span class="de">Natur erklären</span><span class="en">Explaining nature</span></h3>
+        <p><span class="de">Ein mögliches späteres Feld ist, Gesetze aus Messdaten zu finden. Eine Erklärung sagt Ungesehenes voraus, ist kurz und hält Tests aus. Vorbilder: Schmidt und Lipson (Science 2009), AI Feynman (Science Advances 2020). Im Repository ist dazu noch nichts entschieden.</span><span class="en">A possible later field is finding laws from measured data. An explanation predicts the unseen, is short and survives tests. Precedents: Schmidt and Lipson (Science 2009), AI Feynman (Science Advances 2020). The repository has decided nothing on it yet.</span></p>
+      </div>
+      <div class="note">
+        <h3><span class="de">Sechs Messgrößen je Generation</span><span class="en">Six observables per generation</span></h3>
+        <p><span class="de">Leistung, Vielfalt (mit Shannon-Entropie), Stammbaum, Ehrlichkeit, Urteilskraft und Vertrauen, Kosten. Sie beschreiben den Zustand eines Universums.</span><span class="en">Performance, diversity (with Shannon entropy), lineage tree, honesty, judging skill and trust, cost. They describe the state of a universe.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 1, the counted runs. Every current value and state in this section comes from the
+       JSON block at its end, which sync_step1.py rewrites from the live analysis. -->
+  <section class="section" aria-labelledby="t-step1">
+    <header>
+      <p class="eyebrow" id="step1-eyebrow"><span class="de">Gemessen · abgeschlossen</span><span class="en">Measured · finished</span></p>
+      <h2 id="t-step1"><span class="de">Schritt 1: Die Zucht findet Schaltungen wieder</span><span class="en">Step 1: breeding rediscovers circuits</span></h2>
+      <p class="prose">
+        <span class="de">Schritt 1 prüft die Zucht an elf Zielschaltungen, deren T- und CNOT-Zahlen als Referenz aus der Literatur belegt sind. Als Modell der Worker dient ein simulierter Entwerfer, kein echtes Sprachmodell. Es ist eine Positivkontrolle der Zucht; über echte Sprachmodelle sagt sie nichts.</span>
+        <span class="en">Step 1 tests the breeder on eleven target circuits whose reference T and CNOT counts are sourced from the literature. The Workers' model is a simulated designer, not a real language model. It is a positive control of the breeder; it says nothing about real language models.</span>
+      </p>
+    </header>
+    <p class="status" id="step1-status"><span class="de">Der Stand wird aus den Daten dieses Abschnitts berechnet.</span><span class="en">The state is computed from this section's data.</span></p>
+    <div class="two-col">
+      <div class="note">
+        <h3><span class="de">Paare und Bestehen</span><span class="en">Pairs and passing</span></h3>
+        <p><span class="de">Ein Paar ist ein Seed mit zwei Läufen. Arm A wählt die Eltern nach Darwin-Gödel, Arm R wählt sie gleichverteilt zufällig; beide züchten gleich viele Kinder. Ein Lauf besteht, wenn gezüchtete Cascades innerhalb von 1000 Generationen mehr als die Hälfte der Ziele lösen, welche die Startprogramme verfehlen. Gelöst heißt exakt richtig und mit höchstens so vielen T- und CNOT-Gattern wie die Referenz. Die erste Generation, in der ein Lauf besteht, ist seine Bestehenszeit: T<sub>A</sub> in Arm A, T<sub>R</sub> in Arm R. Die Bestehenszeit ist eine Generation, keine Zahl von T-Gattern. Zuerst besteht der Arm mit der kleineren Bestehenszeit. Besteht keiner oder bestehen beide in derselben Generation, ist es ein Gleichstand.</span><span class="en">A pair is one seed with two Runs. Arm A chooses parents by Darwin Gödel selection, arm R chooses them uniformly at random; both breed the same number of children. A Run passes when, within 1000 generations, bred Cascades solve more than half of the targets that the seed Cascades miss. Solved means exactly right, with no more T and CNOT gates than the reference. The first generation in which a Run passes is its pass time: T<sub>A</sub> in arm A, T<sub>R</sub> in arm R. The pass time is a generation, not a number of T gates. The arm with the smaller pass time passes first. When neither passes, or both pass in the same generation, it is a tie.</span></p>
+      </div>
+      <div class="note">
+        <h3><span class="de">Zwei Aussagen</span><span class="en">Two claims</span></h3>
+        <p><span class="de">Die Hauptaussage ist, dass mehr als die Hälfte aller Seeds besteht. Die Nebenaussage ist, dass unter den Paaren ohne Gleichstand Arm A öfter zuerst besteht als Arm R. E1 und E2 beginnen bei 1. Nach jedem Paar wird E1 mit 3/2 multipliziert, wenn Arm A besteht, sonst mit 1/2. E2 wird mit 3/2 multipliziert, wenn Arm A zuerst besteht, und mit 1/2, wenn Arm R zuerst besteht; ein Gleichstand ändert es nicht.</span><span class="en">The primary claim is that more than half of all seeds pass. The secondary claim is that, among pairs without a tie, arm A passes first more often than arm R. E1 and E2 start at 1. After each pair, E1 is multiplied by 3/2 when arm A passes, otherwise by 1/2. E2 is multiplied by 3/2 when arm A passes first and by 1/2 when arm R passes first; a tie leaves it unchanged.</span></p>
+      </div>
+      <div class="note">
+        <h3><span class="de">Bewiesen, gescheitert, beendet</span><span class="en">Proven, failed, stopped</span></h3>
+        <p><span class="de">Eine Aussage ist bewiesen, sobald ihr Wert 100 erreicht, und gescheitert, sobald er auf 1/20 fällt. Die Nebenaussage zählt nur, wenn die Hauptaussage bewiesen ist. Wie auch immer das Experiment endet, wird jede Aussage höchstens mit der Wahrscheinlichkeit 1/100 fälschlich gemacht; das folgt aus der Ville-Ungleichung (Shafer et al. 2011; Waudby-Smith und Ramdas 2024) und der festen Reihenfolge der beiden Aussagen. Diese Schranke gilt nur, wenn die Liste der Seeds und ihre Reihenfolge fest sind, kein Seed der Liste ausgelassen oder ersetzt wird und sich nach Seed 1 nichts ändert. Sie beruht außerdem auf der Annahme, dass die Seeds wie unabhängige Ziehungen wirken. Das Experiment endet, wenn die Hauptaussage scheitert oder wenn sie bewiesen ist und E2 eine der beiden Schwellen erreicht hat, spätestens nach 120 Paaren. Trifft eine der vorab festgelegten Ungültigkeitsbedingungen zu, etwa weil ein Lauf seine Nachprüfung nicht besteht, wird keine Aussage gemacht.</span><span class="en">A claim is proven as soon as its value reaches 100, and fails as soon as it falls to 1/20. The secondary claim counts only if the primary claim is proven. However the experiment stops, each claim is made falsely with probability at most 1/100; this follows from Ville's inequality (Shafer et al. 2011; Waudby-Smith and Ramdas 2024) and from the fixed order of the two claims. This bound holds only when the seed list and its order are fixed, no seed of the list is skipped or replaced, and nothing changes after seed 1. It also rests on the assumption that the seeds act as independent draws. The experiment stops when the primary claim fails, or when it is proven and E2 has reached one of the two thresholds, and at the latest after 120 pairs. If one of the pre-registered void conditions holds, for example because a Run fails its re-check, no claim is made.</span></p>
+      </div>
+    </div>
+    <figure>
+      <div class="legend" aria-hidden="true">
+        <span><svg class="key" viewBox="0 0 28 10"><line x1="1" y1="5" x2="27" y2="5" fill="none" stroke-width="2" style="stroke:var(--heat)"/><circle cx="14" cy="5" r="4" style="fill:var(--heat)"/></svg><span class="de">E1 · Hauptaussage</span><span class="en">E1 · primary claim</span></span>
+        <span><svg class="key" viewBox="0 0 28 10"><line x1="1" y1="5" x2="27" y2="5" fill="none" stroke-width="2" stroke-dasharray="5 3" style="stroke:var(--violet)"/><rect x="10" y="1" width="8" height="8" style="fill:var(--violet)"/></svg><span class="de">E2 · Nebenaussage</span><span class="en">E2 · secondary claim</span></span>
+      </div>
+      <div class="scroll"><div class="e-wrap" id="e-wrap" tabindex="0" role="img" aria-label="Verlauf von E1 und E2 je Paar auf logarithmischer Achse." data-aria-de="Verlauf von E1 und E2 je Paar auf logarithmischer Achse." data-aria-en="E1 and E2 per pair on a logarithmic axis.">
+        <svg id="e-chart" aria-hidden="true" viewBox="0 0 640 300"></svg>
+        <div class="tooltip" id="e-tip" hidden></div>
+      </div></div>
+      <p class="sr-only" id="e-live" aria-live="polite"></p>
+      <figcaption>
+        <span class="de">Die senkrechte Achse ist logarithmisch; jede Gitterlinie ist ein Faktor 10. Mit dem Zeiger oder, nach Anwahl mit der Tabulatortaste, mit den Pfeiltasten sehen Sie die Werte je Paar.</span>
+        <span class="en">The vertical axis is logarithmic; each grid line is a factor of 10. With the pointer, or with the arrow keys after selecting the chart with the Tab key, you see the values per pair.</span>
+      </figcaption>
+    </figure>
+    <details class="table-view">
+      <summary><span class="de">Tabelle: jedes Paar</span><span class="en">Table: every pair</span></summary>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th><span class="de">Paar</span><span class="en">pair</span></th>
+              <th>Seed</th>
+              <th>T<sub>A</sub></th>
+              <th>T<sub>R</sub></th>
+              <th><span class="de">A bestanden</span><span class="en">A passed</span></th>
+              <th><span class="de">zuerst</span><span class="en">first</span></th>
+              <th>E1</th>
+              <th>E2</th>
+            </tr>
+          </thead>
+          <tbody id="e-rows">
+            <tr><td colspan="8"><span class="de">Die Zeilen entstehen aus den Daten dieses Abschnitts.</span><span class="en">The rows are built from this section's data.</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+    <p class="note prose">
+      <span class="de"><b>Nachzählung.</b> Wie vorab festgelegt, hat ein zweites, unabhängig geschriebenes Programm das Ergebnis nachgezählt. Es ergibt für alle 27 Paare dieselben Bestehenszeiten und dieselben Werte von E1 und E2 wie die Auswertung. Auch der Stopp nach Paar 27 und die beiden Urteile stimmen überein.</span>
+      <span class="en"><b>Recount.</b> As pre-registered, a second, independently written program recounted the result. For all 27 pairs it gives the same pass times and the same values of E1 and E2 as the analysis. The stop after pair 27 and both verdicts also agree.</span>
+    </p>
+    <p class="note prose">
+      <span class="de"><b>Abweichung 1.</b> Ein Neustart des Containers am 31.10.2026 zwischen 01:18 und etwa 09:11 UTC unterbrach den Lauf A-12, der noch keinen Bericht hatte. Wie vorab festgelegt, wurde dieser unfertige Lauf gelöscht und von vorn neu gerechnet. Die Paare 1 bis 11 waren vorher fertig und geprüft; alle 110 ihrer Prüfsummen stimmten nach dem Neustart. Kein Ergebnis eines fertigen Paares wurde geändert.</span>
+      <span class="en"><b>Deviation 1.</b> A restart of the container on 31 Oct 2026, between 01:18 and about 09:11 UTC, interrupted run A-12, which had no report yet. As pre-registered, this unfinished run was deleted and run again from scratch. Pairs 1 to 11 were finished and checked before; all 110 of their checksums still matched after the restart. No result of a finished pair changed.</span>
+    </p>
+    <!-- step1-data:start -->
+<script type="application/json" id="step1-data">
+{"as_of": "2026-10-31T12:44:46Z", "stopped": true, "pairs_max": 120, "pairs": [
+{"pair": 1, "seed": 1, "t_a": 574, "t_r": null, "x": 1, "first": "A", "e1": [3, 2], "e2": [3, 2]},
+{"pair": 2, "seed": 2, "t_a": 199, "t_r": 376, "x": 1, "first": "A", "e1": [9, 4], "e2": [9, 4]},
+{"pair": 3, "seed": 3, "t_a": 278, "t_r": 665, "x": 1, "first": "A", "e1": [27, 8], "e2": [27, 8]},
+{"pair": 4, "seed": 4, "t_a": 65, "t_r": null, "x": 1, "first": "A", "e1": [81, 16], "e2": [81, 16]},
+{"pair": 5, "seed": 5, "t_a": 227, "t_r": 61, "x": 1, "first": "R", "e1": [243, 32], "e2": [81, 32]},
+{"pair": 6, "seed": 6, "t_a": 296, "t_r": null, "x": 1, "first": "A", "e1": [729, 64], "e2": [243, 64]},
+{"pair": 7, "seed": 7, "t_a": 557, "t_r": null, "x": 1, "first": "A", "e1": [2187, 128], "e2": [729, 128]},
+{"pair": 8, "seed": 8, "t_a": 211, "t_r": null, "x": 1, "first": "A", "e1": [6561, 256], "e2": [2187, 256]},
+{"pair": 9, "seed": 9, "t_a": 184, "t_r": 126, "x": 1, "first": "R", "e1": [19683, 512], "e2": [2187, 512]},
+{"pair": 10, "seed": 10, "t_a": null, "t_r": null, "x": 0, "first": "tie", "e1": [19683, 1024], "e2": [2187, 512]},
+{"pair": 11, "seed": 11, "t_a": 56, "t_r": 18, "x": 1, "first": "R", "e1": [59049, 2048], "e2": [2187, 1024]},
+{"pair": 12, "seed": 12, "t_a": 107, "t_r": 916, "x": 1, "first": "A", "e1": [177147, 4096], "e2": [6561, 2048]},
+{"pair": 13, "seed": 13, "t_a": 47, "t_r": null, "x": 1, "first": "A", "e1": [531441, 8192], "e2": [19683, 4096]},
+{"pair": 14, "seed": 14, "t_a": 20, "t_r": 220, "x": 1, "first": "A", "e1": [1594323, 16384], "e2": [59049, 8192]},
+{"pair": 15, "seed": 15, "t_a": 28, "t_r": null, "x": 1, "first": "A", "e1": [4782969, 32768], "e2": [177147, 16384]},
+{"pair": 16, "seed": 16, "t_a": 610, "t_r": null, "x": 1, "first": "A", "e1": [14348907, 65536], "e2": [531441, 32768]},
+{"pair": 17, "seed": 17, "t_a": 204, "t_r": 618, "x": 1, "first": "A", "e1": [43046721, 131072], "e2": [1594323, 65536]},
+{"pair": 18, "seed": 18, "t_a": 62, "t_r": null, "x": 1, "first": "A", "e1": [129140163, 262144], "e2": [4782969, 131072]},
+{"pair": 19, "seed": 19, "t_a": null, "t_r": null, "x": 0, "first": "tie", "e1": [129140163, 524288], "e2": [4782969, 131072]},
+{"pair": 20, "seed": 20, "t_a": null, "t_r": 116, "x": 0, "first": "R", "e1": [129140163, 1048576], "e2": [4782969, 262144]},
+{"pair": 21, "seed": 21, "t_a": 225, "t_r": null, "x": 1, "first": "A", "e1": [387420489, 2097152], "e2": [14348907, 524288]},
+{"pair": 22, "seed": 22, "t_a": 304, "t_r": null, "x": 1, "first": "A", "e1": [1162261467, 4194304], "e2": [43046721, 1048576]},
+{"pair": 23, "seed": 23, "t_a": 158, "t_r": 182, "x": 1, "first": "A", "e1": [3486784401, 8388608], "e2": [129140163, 2097152]},
+{"pair": 24, "seed": 24, "t_a": 23, "t_r": 37, "x": 1, "first": "A", "e1": [10460353203, 16777216], "e2": [387420489, 4194304]},
+{"pair": 25, "seed": 25, "t_a": 629, "t_r": 439, "x": 1, "first": "R", "e1": [31381059609, 33554432], "e2": [387420489, 8388608]},
+{"pair": 26, "seed": 26, "t_a": 923, "t_r": null, "x": 1, "first": "A", "e1": [94143178827, 67108864], "e2": [1162261467, 16777216]},
+{"pair": 27, "seed": 27, "t_a": 126, "t_r": null, "x": 1, "first": "A", "e1": [282429536481, 134217728], "e2": [3486784401, 33554432]}
+], "primary": {"state": "proven", "at_pair": 15}, "secondary": {"state": "proven", "at_pair": 27}}
+</script>
+<!-- step1-data:end -->
+  </section>
+
+  <!-- Measured results -->
+  <section class="section" aria-labelledby="t-res">
+    <header>
+      <p class="eyebrow"><span class="de">Gemessen · simuliertes Modell</span><span class="en">Measured · simulated model</span></p>
+      <h2 id="t-res"><span class="de">Gezüchtet schlägt Startprogramm</span><span class="en">Bred beats seed</span></h2>
+      <p class="prose">
+        <span class="de">Drei Läufe mit Standardwerten, 10 Generationen. Gemessen auf 40 Rätseln, die die Suche nie gesehen hat (Auswahl-Panel). Positivkontrolle: Die Zahlen sagen nichts über echte Sprachmodelle.</span>
+        <span class="en">Three runs with default settings, 10 generations. Measured on 40 puzzles the search never saw (select panel). Positive control: the numbers say nothing about real language models.</span>
+      </p>
+    </header>
+    <figure>
+      <div class="legend" aria-hidden="true">
+        <span><i class="swatch" style="background:var(--violet)"></i><span class="de">bestes Startprogramm</span><span class="en">best seed Cascade</span></span>
+        <span><i class="swatch" style="background:var(--heat)"></i><span class="de">bester gezüchteter Finalist</span><span class="en">best bred finalist</span></span>
+      </div>
+      <div class="scroll"><div class="chart-wrap" id="chart-wrap">
+        <svg id="chart" viewBox="0 0 640 230" role="img" aria-label="Select-panel solved rate per seed: seed Cascade 0.300, 0.300, 0.325; bred finalist 0.500, 0.625, 0.550."></svg>
+        <div class="tooltip" id="tip" hidden></div>
+      </div></div>
+      <figcaption>
+        <span class="de">Vorsprung: +0.200, +0.325, +0.225. Drei Seeds ergeben keinen Signifikanztest.</span>
+        <span class="en">Lead: +0.200, +0.325, +0.225. Three seeds give no significance test.</span>
+      </figcaption>
+      <div class="scroll" style="padding-top:6px">
+        <table>
+          <thead>
+            <tr>
+              <th>Seed</th>
+              <th><span class="de">Kind, Such-Panel</span><span class="en">child, search panel</span></th>
+              <th><span class="de">Finalist, Auswahl</span><span class="en">finalist, select</span></th>
+              <th><span class="de">Startprogramm, Auswahl</span><span class="en">seed, select</span></th>
+              <th><span class="de">Aufrufe</span><span class="en">calls</span></th>
+              <th><span class="de">Laufzeit</span><span class="en">wall time</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>22/40</td><td>0.500</td><td>0.300</td><td>7 701</td><td>0.19 s</td></tr>
+            <tr><td>2</td><td>27/40</td><td>0.625</td><td>0.300</td><td>8 792</td><td>0.16 s</td></tr>
+            <tr><td>3</td><td>29/40</td><td>0.550</td><td>0.325</td><td>9 308</td><td>0.15 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </figure>
+  </section>
+
+  <!-- Claim ladder -->
+  <section class="section" aria-labelledby="t-ladder">
+    <header>
+      <p class="eyebrow"><span class="de">Was gilt</span><span class="en">What holds</span></p>
+      <h2 id="t-ladder"><span class="de">Was die Versuche sagen dürfen</span><span class="en">What the experiments may claim</span></h2>
+      <p class="prose"><span class="de">Eine Aussage reicht so weit wie ihre Messung. Die Stufen bauen aufeinander auf.</span><span class="en">A claim reaches as far as its measurement. The rungs build on each other.</span></p>
+    </header>
+    <ol class="ladder">
+      <li><div><h3><span class="de">Über unser Modell</span><span class="en">About our model</span></h3><p><span class="de">Hilft der Phasenzustand mit κ beim Erfinden? Gemessen in jedem Lauf gegen gleich große Kontrollen.</span><span class="en">Does the phase state with κ help inventing? Measured in every run against controls of equal size.</span></p></div></li>
+      <li><div><h3><span class="de">Über menschliche Gefühle</span><span class="en">About human feelings</span></h3><p><span class="de">Verbessern Gefühls-Urteile das Erfinden? Blinde Protokolle, jeder Eingriff protokolliert.</span><span class="en">Do feeling judgments improve inventing? Blind protocols, every intervention logged.</span></p></div></li>
+      <li><div><h3><span class="de">Über Physik</span><span class="en">About physics</span></h3><p><span class="de">Erfundene Schaltungen auf echter Quanten-Hardware: Die Natur prüft selbst. Später, mit eigenem ADR.</span><span class="en">Invented circuits on real quantum hardware: nature checks for itself. Later, with its own ADR.</span></p></div></li>
+      <li><div><h3><span class="de">Über die Seele</span><span class="en">About the soul</span></h3><p><span class="de">Für unser Modell zeigt sich die Seele an ihrem Charakter (Q57). Für die Natur bleibt Frage Q48 offen: Sie verlangt eine Vorhersage, die anders ausfällt, je nachdem ob es eine Seele gibt.</span><span class="en">For our model, the soul shows itself through its character (Q57). For nature, question Q48 stays open: it needs a prediction that differs depending on whether a soul exists.</span></p></div></li>
+    </ol>
+  </section>
+
+  <!-- Roadmap -->
+  <section class="section" aria-labelledby="t-road">
+    <header>
+      <p class="eyebrow"><span class="de">Reihenfolge</span><span class="en">Order</span></p>
+      <h2 id="t-road"><span class="de">Fahrplan</span><span class="en">Roadmap</span></h2>
+    </header>
+    <ul class="road">
+      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">Stufe 2c: Cascades, Peer-Urteile, Darwin-Gödel-Elternwahl, Beförderung per PR (PR #8; Nachträge in #10 und #11)</span><span class="en">Stage 2c: Cascades, peer judging, Darwin Gödel parent choice, promotion by PR (PR #8; follow-ups in #10 and #11)</span></span></li>
+      <li><span class="pill built"><span class="de">Schritt 1</span><span class="en">step 1</span></span><span><span class="de">Gebaut sind die Messgrößen des Universums, der exakte Qubit-Simulator, Schaltungen als Aufgabe und der vorab festgelegte Vergleich (PR #12, #13, #15, #17 bis #19).</span><span class="en">Built: universe observables, the exact qubit simulator, circuits as a task and the pre-registered comparison (PRs #12, #13, #15, #17 to #19).</span> <span id="road-step1-state"><span class="de">Die gezählten Läufe sind abgeschlossen.</span><span class="en">The counted runs are finished.</span></span><span class="de"> Der Bericht mit den Ergebnissen steht seit PR #21 im Repository.</span><span class="en"> The report with the results is in the repository since PR #21.</span></span></li>
+      <li><span class="pill work">CNN</span><span><span class="de">CNN-Basismodelle im MLP-Modus. Teil 1 ist seit PR #24 im Repository; es folgen Teil 2 (die 16 Familien, Mutationen und Beförderung) und Teil 3 (ARC-Gitter). Die Tickets 01 und 02 sind erledigt; die Bibliothek ist candle an einem festen Commit. Gebaut sind ein Golden-Test des heutigen MLP-Verhaltens, die candle-Schicht mit acht Ersatz-Operationen und Gradiententests, fünf erzeugte Bild- und Folgenaufgaben, das CNN-Genom mit Formprüfung sowie Training, Bewertung und Einbindung von CNNs in den Lauf. Die Prüfrunde ist abgeschlossen; alle 14 Befunde sind bearbeitet.</span><span class="en">CNN base models in the MLP mode. Part 1 is in the repository since PR #24; part 2 (the 16 families, mutations and promotion) and part 3 (ARC grids) follow. Tickets 01 and 02 are done; the library is candle at a pinned commit. The build so far has a golden test of today's MLP behaviour, the candle layer with eight replacement operations and gradient tests, five generated image and sequence tasks, the CNN genome with its shape check, and the training, scoring and integration of CNNs into the run. The review round is done; all 14 findings are handled.</span></span></li>
+      <li><span class="pill planned"><span class="de">Schritt 2</span><span class="en">step 2</span></span><span><span class="de">Seele und κ gegen die reelle Kontrolle</span><span class="en">Soul and κ against the real-valued control</span></span></li>
+      <li><span class="pill planned"><span class="de">Schritt 3</span><span class="en">step 3</span></span><span><span class="de">Wächter mit gepflanzten Fälschungen</span><span class="en">Overseers with planted fakes</span></span></li>
+      <li><span class="pill planned"><span class="de">Schritt 4</span><span class="en">step 4</span></span><span><span class="de">Menschliche Gefühle in der Suche</span><span class="en">Human feelings in the search</span></span></li>
+      <li><span class="pill planned"><span class="de">Schritt 5</span><span class="en">step 5</span></span><span><span class="de">Quanten-Worker und TextGrad-Operator</span><span class="en">Quantum Workers and the TextGrad operator</span></span></li>
+    </ul>
+  </section>
+
+  <!-- Sources -->
+  <section class="section" aria-labelledby="t-src">
+    <header><h2 id="t-src"><span class="de">Quellen</span><span class="en">Sources</span></h2></header>
+    <ul class="sources">
+      <li>Zhang, Hu, Lu, Lange, Clune: Darwin Gödel Machine. ICLR 2026. <a href="https://arxiv.org/abs/2505.22954">arXiv:2505.22954</a></li>
+      <li>Hunter: MM algorithms for generalized Bradley-Terry models. Annals of Statistics 32(1), 2004.</li>
+      <li>Nitzan, Paroush: Optimal decision rules in uncertain dichotomous choice situations. International Economic Review 23(2), 1982.</li>
+      <li>Greenblatt, Shlegeris, Sachan, Roger: AI Control. ICML 2024. <a href="https://openreview.net/pdf?id=KviM5k8pcP">OpenReview</a></li>
+      <li>Yuksekgonul et al.: Optimizing generative AI by backpropagating language model feedback (TextGrad). Nature 639, 2025.</li>
+      <li>Romera-Paredes et al.: Mathematical discoveries from program search with large language models (FunSearch). Nature 625, 2024. <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10794145/">PMC</a></li>
+      <li>Spector, Barnum, Bernstein, Swamy: Finding a better-than-classical quantum AND/OR algorithm using genetic programming. CEC 1999.</li>
+      <li>Han, Kim: Quantum-inspired evolutionary algorithm. IEEE Trans. Evol. Comput. 6(6), 2002. <a href="https://doi.org/10.1109/TEVC.2002.804320">DOI</a></li>
+      <li>Pothos, Busemeyer: Can quantum probability provide a new direction for cognitive modeling? Behav. Brain Sci. 36(3), 2013. <a href="https://pubmed.ncbi.nlm.nih.gov/23673021/">PubMed</a></li>
+      <li>Tegmark: Importance of quantum decoherence in brain processes. Phys. Rev. E 61, 2000. <a href="https://doi.org/10.1103/PhysRevE.61.4194">DOI</a> · <span class="de">Gegenposition:</span><span class="en">counter-position:</span> Hagan, Hameroff, Tuszynski, Phys. Rev. E 65, 2002.</li>
+      <li>Renou et al.: Quantum theory based on real numbers can be experimentally falsified. Nature 600, 2021.</li>
+      <li>Aharonov, Albert, Vaidman: weak measurement. Phys. Rev. Lett. 60, 1988.</li>
+      <li>Schmidt, Lipson: Distilling free-form natural laws from experimental data. Science 324, 2009.</li>
+      <li>Udrescu, Tegmark: AI Feynman. Science Advances 6, 2020.</li>
+      <li>Doya: Metalearning and neuromodulation. Neural Networks 15, 2002.</li>
+      <li>Goodman: Some fundamental properties of speckle. J. Opt. Soc. Am. 66(11), 1145–1150, 1976. <a href="https://opg.optica.org/josa/abstract.cfm?uri=josa-66-11-1145">Optica</a></li>
+      <li>Goodman: Speckle Phenomena in Optics. Roberts &amp; Company, 2007, Sec. 3.2.2 (constant phasor plus random phasor sum).</li>
+      <li>vmanke/ki-brutmaschine: Pre-registration of step 1: does breeding rediscover circuit references? <span class="mono">docs/PREREG_STEP1_CIRCUITS.md</span>, <span class="de">eingefroren mit PR #19 (Commit 15cb151), 30.10.2026.</span><span class="en">frozen with PR #19 (commit 15cb151), 30 Oct 2026.</span> <a href="https://github.com/vmanke/ki-brutmaschine/blob/15cb15100a39db9d815674b0778ab6be30932e56/docs/PREREG_STEP1_CIRCUITS.md">GitHub</a></li>
+      <li>Shafer, Shen, Vereshchagin, Vovk: Test martingales, Bayes factors and p-values. Statistical Science 26(1), 84–101, 2011. <a href="https://doi.org/10.1214/10-STS347">DOI</a></li>
+      <li>Waudby-Smith, Ramdas: Estimating means of bounded random variables by betting. JRSS-B 86(1), 1–27, 2024. <a href="https://doi.org/10.1093/jrsssb/qkad009">DOI</a></li>
+    </ul>
+  </section>
+
+  <footer>
+    <span class="de">Repository vmanke/ki-brutmaschine · Entscheidungen Q1–Q47 · Seele, Kopplungsstärke κ und Charakter sind ein geplantes Modell; die Entscheidungen Q51 bis Q66 stehen in PR #20 und PR #22. Physikalisch geprüft ist nur der Speckle-Simulator. Nichts davon ist physikalisch quantisch.</span>
+    <span class="en">Repository vmanke/ki-brutmaschine · decisions Q1–Q47 · Soul, coupling strength κ and character are a planned model; decisions Q51 to Q66 are in PR #20 and PR #22. Only the speckle simulator is checked against physics. None of it is physically quantum.</span>
+  </footer>
+</main>
+
+<script>
+(function () {
+  var root = document.documentElement;
+
+  // Language: German by default; the choice is remembered per viewer where storage works.
+  function setLang(lang) {
+    root.setAttribute("data-lang", lang);
+    root.setAttribute("lang", lang);
+    document.getElementById("lang-de").setAttribute("aria-pressed", String(lang === "de"));
+    document.getElementById("lang-en").setAttribute("aria-pressed", String(lang === "en"));
+    try { localStorage.setItem("brut-lang", lang); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem("brut-lang"); } catch (e) {}
+  setLang(saved === "en" ? "en" : "de");
+  document.getElementById("lang-de").addEventListener("click", function () { setLang("de"); });
+  document.getElementById("lang-en").addEventListener("click", function () { setLang("en"); });
+
+  // Soul sketch: two unit phasors; the observer sits on the real axis, the observed at angle d.
+  // Coupling kappa removes kappa*d from the observed and gives half of it to the observer.
+  var C = 180, R = 70;
+  var phase = document.getElementById("phase"), kappa = document.getElementById("kappa");
+  function tip(line, label, ang, len) {
+    var x = C + len * Math.cos(ang), y = C - len * Math.sin(ang);
+    line.setAttribute("x2", x.toFixed(1)); line.setAttribute("y2", y.toFixed(1));
+    if (label) {
+      label.setAttribute("x", (C + (len + 18) * Math.cos(ang)).toFixed(1));
+      label.setAttribute("y", (C - (len + 18) * Math.sin(ang) + 4).toFixed(1));
+      label.setAttribute("text-anchor", Math.cos(ang) < -0.2 ? "end" : (Math.cos(ang) > 0.2 ? "start" : "middle"));
+    }
+  }
+  function updateSoul() {
+    var d = Number(phase.value) * Math.PI / 180;
+    var k = Number(kappa.value);
+    var removed = k * d;
+    var obs = d - removed;          // observed loses phase
+    var obr = removed / 2;          // observer takes part of it
+    var sx = Math.cos(obs) + Math.cos(obr), sy = Math.sin(obs) + Math.sin(obr);
+    var w = sx * sx + sy * sy;      // squared magnitude of the summed votes, between 0 and 4
+    tip(document.getElementById("v-obs"), document.getElementById("t-obs"), obs, R);
+    tip(document.getElementById("v-obr"), document.getElementById("t-obr"), obr, R);
+    var sl = Math.sqrt(w) * R, sa = Math.atan2(sy, sx);
+    tip(document.getElementById("v-sum"), null, sa, Math.max(sl, 0.001));
+    document.getElementById("phase-out").textContent = phase.value + "°";
+    document.getElementById("kappa-out").textContent = k.toFixed(2);
+    document.getElementById("diff-after").textContent = Math.round(Math.abs(obs - obr) * 180 / Math.PI) + "°";
+    document.getElementById("weight").textContent = w.toFixed(2);
+  }
+  phase.addEventListener("input", updateSoul);
+  kappa.addEventListener("input", updateSoul);
+  updateSoul();
+
+  // Dumbbell chart: select-panel solved rate per seed, seed Cascade vs bred finalist.
+  var data = [
+    { seed: 1, base: 0.300, bred: 0.500 },
+    { seed: 2, base: 0.300, bred: 0.625 },
+    { seed: 3, base: 0.325, bred: 0.550 }
+  ];
+  var svg = document.getElementById("chart"), NS = "http://www.w3.org/2000/svg";
+  var W = 640, L = 70, Rm = 30, T = 18, rowH = 56, xMax = 0.7;
+  function x(v) { return L + (W - L - Rm) * (v / xMax); }
+  function el(name, attrs, text) {
+    var e = document.createElementNS(NS, name);
+    for (var a in attrs) e.setAttribute(a, attrs[a]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e); return e;
+  }
+  var bottom = T + rowH * data.length;
+  for (var t = 0; t <= 7; t++) {
+    var v = t / 10, gx = x(v);
+    el("line", { x1: gx, y1: T - 6, x2: gx, y2: bottom, style: "stroke:var(--line)", "stroke-width": 1 });
+    el("text", { x: gx, y: bottom + 18, "text-anchor": "middle", class: "small" }, v.toFixed(1));
+  }
+  var axisDe = el("text", { x: L + (W - L - Rm) / 2, y: bottom + 40, "text-anchor": "middle", class: "small de" }, "Lösungsquote auf dem Auswahl-Panel");
+  var axisEn = el("text", { x: L + (W - L - Rm) / 2, y: bottom + 40, "text-anchor": "middle", class: "small en" }, "solved rate on the select panel");
+  var tipEl = document.getElementById("tip"), wrap = document.getElementById("chart-wrap");
+  function showTip(evt, html) {
+    tipEl.innerHTML = html; tipEl.hidden = false;
+    var r = wrap.getBoundingClientRect();
+    var px = evt.clientX - r.left + 12, py = evt.clientY - r.top - 36;
+    tipEl.style.left = Math.min(px, r.width - 190) + "px"; tipEl.style.top = Math.max(py, 0) + "px";
+  }
+  function hideTip() { tipEl.hidden = true; }
+  data.forEach(function (d, i) {
+    var cy = T + rowH * i + rowH / 2;
+    el("text", { x: L - 14, y: cy + 4, "text-anchor": "end", class: "small" }, "Seed " + d.seed);
+    el("line", { x1: x(d.base), y1: cy, x2: x(d.bred), y2: cy, style: "stroke:var(--muted)", "stroke-width": 2 });
+    var lang = function () { return root.getAttribute("data-lang") === "en"; };
+    [["base", "var(--violet)"], ["bred", "var(--heat)"]].forEach(function (s) {
+      var val = d[s[0]], cx = x(val);
+      el("circle", { cx: cx, cy: cy, r: 7, style: "fill:" + s[1] + ";stroke:var(--bg)", "stroke-width": 2 });
+      el("text", { x: cx, y: cy - 13, "text-anchor": "middle", class: "small" }, val.toFixed(3));
+      var hit = el("circle", { cx: cx, cy: cy, r: 16, fill: "transparent", tabindex: 0 });
+      var label = function () {
+        var en = lang();
+        var who = s[0] === "base" ? (en ? "best seed Cascade" : "bestes Startprogramm") : (en ? "best bred finalist" : "bester gezüchteter Finalist");
+        return "<b>Seed " + d.seed + "</b><br>" + who + ": " + val.toFixed(3);
+      };
+      hit.addEventListener("mousemove", function (e) { showTip(e, label()); });
+      hit.addEventListener("mouseleave", hideTip);
+      hit.addEventListener("focus", function () {
+        var r = hit.getBoundingClientRect();
+        showTip({ clientX: r.left + r.width / 2, clientY: r.top }, label());
+      });
+      hit.addEventListener("blur", hideTip);
+    });
+  });
+
+  // ---- Speckle simulator (verified against a direct DFT and Goodman's contrast formula) ----
+  // Imaging speckle of a rough surface lit by a Gaussian laser beam (after Goodman).
+  //
+  // Object field: U(x) = G(x) * (sqrt(1 - s) + sqrt(s) * (n / sqrt(m)) * exp(i phi(x))), with G
+  // a Gaussian beam amplitude, phi independent uniform phases (a rough surface), m the number
+  // of pupil pixels, and s the diffuse share of the total mean image-plane intensity. The
+  // imaging system passes only spatial frequencies inside a circular pupil of radius `a`, so
+  // the image field is IFFT(FFT(U) * pupil) and the observed intensity is |image field|^2.
+  // Speckle grains are about n / (2a) pixels wide. For s = 1 the speckle is fully developed
+  // (exponential statistics, contrast 1; Goodman 1976) only while many scatterers fall into
+  // one grain, n^2 / m >> 1; a <= n / 8 keeps the contrast above 0.98. Smaller s adds a
+  // specular part (constant phasor plus random phasor sum; Goodman 2007, Sec. 3.2.2).
+
+  /** In-place iterative radix-2 FFT on separate real and imaginary arrays (length 2^k). */
+  function fft1(re, im, inverse) {
+    const n = re.length;
+
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+
+      if (i < j) {
+        [re[i], re[j]] = [re[j], re[i]];
+        [im[i], im[j]] = [im[j], im[i]];
+      }
+    }
+
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (inverse ? 2 : -2) * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+
+        for (let k = 0; k < len / 2; k++) {
+          const ar = re[i + k], ai = im[i + k];
+          const br = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+          const bi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+
+          re[i + k] = ar + br; im[i + k] = ai + bi;
+          re[i + k + len / 2] = ar - br; im[i + k + len / 2] = ai - bi;
+
+          const t = cr * wr - ci * wi;
+
+          ci = cr * wi + ci * wr;
+          cr = t;
+        }
+      }
+    }
+
+    if (inverse) {
+      for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+    }
+  }
+
+  /** 2D FFT on N x N row-major arrays. */
+  function fft2(re, im, n, inverse) {
+    const rr = new Float64Array(n), ri = new Float64Array(n);
+
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) { rr[x] = re[y * n + x]; ri[x] = im[y * n + x]; }
+      fft1(rr, ri, inverse);
+      for (let x = 0; x < n; x++) { re[y * n + x] = rr[x]; im[y * n + x] = ri[x]; }
+    }
+
+    for (let x = 0; x < n; x++) {
+      for (let y = 0; y < n; y++) { rr[y] = re[y * n + x]; ri[y] = im[y * n + x]; }
+      fft1(rr, ri, inverse);
+      for (let y = 0; y < n; y++) { re[y * n + x] = rr[y]; im[y * n + x] = ri[y]; }
+    }
+  }
+
+  /**
+   * Speckle intensity image.
+   * n: grid size (power of two); a: pupil radius in frequency pixels; w: beam radius (1/e
+   * amplitude) in pixels; s: diffuse share of the image-plane intensity in [0, 1]; rand:
+   * uniform random source in [0, 1).
+   * Returns { intensity: Float64Array(n*n), envelope: Float64Array(n*n) }, where envelope is
+   * the intensity a smooth (s = 0) surface would give, for normalising local statistics.
+   */
+  function speckle(n, a, w, s, rand) {
+    const re = new Float64Array(n * n), im = new Float64Array(n * n);
+    const er = new Float64Array(n * n), ei = new Float64Array(n * n);
+    const c = n / 2;
+    let m = 0;
+
+    for (let fy = 0; fy < n; fy++) {
+      for (let fx = 0; fx < n; fx++) {
+        const dx = fx < c ? fx : fx - n, dy = fy < c ? fy : fy - n;
+
+        if (dx * dx + dy * dy <= a * a) m++;
+      }
+    }
+
+    // The pupil passes only m / n^2 of the diffuse (white-spectrum) energy (Parseval), so
+    // the diffuse amplitude is scaled by n / sqrt(m): then s is the diffuse share of the
+    // image-plane intensity, as the contrast formula assumes.
+    const spec = Math.sqrt(1 - s), diff = Math.sqrt(s) * n / Math.sqrt(Math.max(m, 1));
+
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const r2 = (x - c) * (x - c) + (y - c) * (y - c);
+        const g = Math.exp(-r2 / (w * w));
+        const phi = 2 * Math.PI * rand();
+        const k = y * n + x;
+
+        re[k] = g * (spec + diff * Math.cos(phi));
+        im[k] = g * (diff * Math.sin(phi));
+        er[k] = g;
+      }
+    }
+
+    fft2(re, im, n, false);
+    fft2(er, ei, n, false);
+
+    for (let fy = 0; fy < n; fy++) {
+      for (let fx = 0; fx < n; fx++) {
+        const dx = fx < c ? fx : fx - n, dy = fy < c ? fy : fy - n;
+
+        if (dx * dx + dy * dy > a * a) {
+          const k = fy * n + fx;
+
+          re[k] = 0; im[k] = 0; er[k] = 0; ei[k] = 0;
+        }
+      }
+    }
+
+    fft2(re, im, n, true);
+    fft2(er, ei, n, true);
+
+    const intensity = new Float64Array(n * n), envelope = new Float64Array(n * n);
+
+    for (let k = 0; k < n * n; k++) {
+      intensity[k] = re[k] * re[k] + im[k] * im[k];
+      envelope[k] = er[k] * er[k] + ei[k] * ei[k];
+    }
+
+    return { intensity, envelope };
+  }
+
+  /**
+   * Speckle contrast sigma/mean of the intensity divided by its smooth envelope, inside a
+   * central disc of radius `rad`. Theory for a constant phasor plus a fully random phasor
+   * sum (Goodman): C = sqrt(Id^2 + 2 Is Id) / (Is + Id); here Is = 1 - s, Id = s, so
+   * C = sqrt(s (2 - s)).
+   */
+  function contrast(result, n, rad) {
+    const c = n / 2;
+    let sum = 0, sum2 = 0, count = 0;
+
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if ((x - c) * (x - c) + (y - c) * (y - c) > rad * rad) continue;
+
+        const k = y * n + x;
+        const v = result.intensity[k] / Math.max(result.envelope[k], 1e-12);
+
+        sum += v; sum2 += v * v; count++;
+      }
+    }
+
+    const mean = sum / count;
+
+    return Math.sqrt(Math.max(sum2 / count - mean * mean, 0)) / mean;
+  }
+
+
+  var SN = 128, SW = 34, canvas = document.getElementById("speckle"), ctx = canvas.getContext("2d");
+  var phases = new Float64Array(SN * SN);
+  function reroll() { for (var i = 0; i < phases.length; i++) phases[i] = Math.random(); }
+  function colour(v) {
+    // black -> deep red -> red -> orange -> white, like the cover's laser glow
+    var stops = [[0, 0, 0, 0], [0.25, 90, 0, 8], [0.55, 220, 30, 30], [0.8, 255, 140, 90], [1, 255, 245, 240]];
+    for (var i = 1; i < stops.length; i++) {
+      if (v <= stops[i][0]) {
+        var a = stops[i - 1], b = stops[i], f = (v - a[0]) / (b[0] - a[0]);
+        return [a[1] + f * (b[1] - a[1]), a[2] + f * (b[2] - a[2]), a[3] + f * (b[3] - a[3])];
+      }
+    }
+    return [255, 245, 240];
+  }
+  function drawSpeckle() {
+    var a = Number(document.getElementById("pupil").value);
+    var s = Number(document.getElementById("diffuse").value);
+    var k = 0;
+    var res = speckle(SN, a, SW, s, function () { return phases[k++]; });
+    var maxEnv = 0;
+    for (var i = 0; i < res.envelope.length; i++) if (res.envelope[i] > maxEnv) maxEnv = res.envelope[i];
+    if (!(maxEnv > 0)) maxEnv = 1;
+    var img = ctx.createImageData(SN, SN);
+    for (var p = 0; p < SN * SN; p++) {
+      var v = Math.min(1, Math.pow(res.intensity[p] / maxEnv / 1.6, 0.6));
+      var c = colour(v);
+      img.data[4 * p] = c[0]; img.data[4 * p + 1] = c[1]; img.data[4 * p + 2] = c[2]; img.data[4 * p + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    document.getElementById("pupil-out").textContent = String(a);
+    document.getElementById("diffuse-out").textContent = s.toFixed(2);
+    var mPix = 0;
+    for (var fy = 0; fy < SN; fy++) for (var fx = 0; fx < SN; fx++) {
+      var ddx = fx < SN / 2 ? fx : fx - SN, ddy = fy < SN / 2 ? fy : fy - SN;
+      if (ddx * ddx + ddy * ddy <= a * a) mPix++;
+    }
+    var RAD = 24, cells = Math.PI * RAD * RAD * mPix / (SN * SN);
+    document.getElementById("c-meas").textContent = contrast(res, SN, RAD).toFixed(2) + " ± " + (1 / Math.sqrt(cells)).toFixed(2);
+    document.getElementById("c-theo").textContent = Math.sqrt(s * (2 - s)).toFixed(2);
+    document.getElementById("grain").textContent = (SN / (2 * a)).toFixed(1) + " px";
+  }
+  reroll();
+  drawSpeckle();
+  document.getElementById("pupil").addEventListener("input", drawSpeckle);
+  document.getElementById("diffuse").addEventListener("input", drawSpeckle);
+  document.getElementById("reroll").addEventListener("click", function () { reroll(); drawSpeckle(); });
+})();
+</script>
+
+<script>
+// Step 1: status, evidence chart and table, all drawn from the JSON block #step1-data that
+// sync_step1.py writes; and accessible names (data-aria-de / data-aria-en) that follow the
+// language switch. A separate script, so that nothing here can stop the simulator above.
+(function () {
+  "use strict";
+  var root = document.documentElement, NS = "http://www.w3.org/2000/svg";
+  function isEn() { return root.getAttribute("data-lang") === "en"; }
+
+  function syncAria() {
+    var attr = isEn() ? "data-aria-en" : "data-aria-de";
+    var nodes = document.querySelectorAll("[data-aria-de]");
+    for (var i = 0; i < nodes.length; i++) {
+      var text = nodes[i].getAttribute(attr);
+      if (text) nodes[i].setAttribute("aria-label", text);
+    }
+  }
+  var onLang = [];
+  new MutationObserver(function () {
+    syncAria();
+    onLang.forEach(function (f) { f(); });
+  }).observe(root, { attributes: true, attributeFilter: ["data-lang"] });
+  syncAria();
+
+  var data = null;
+  try { data = JSON.parse(document.getElementById("step1-data").textContent); } catch (e) { data = null; }
+  var pairs = data && Array.isArray(data.pairs) ? data.pairs : [];
+  if (!pairs.length) return;
+
+  // ---- text helpers; numbers as docs/SCHREIBSTIL.md writes them, in both languages ----
+  var NBSP = " ";
+  function value(f) { return f[0] / f[1]; }
+  function grouped(s) {
+    var p = s.split("."), i = p[0];
+    if (i.length > 4) i = i.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+    return p.length > 1 ? i + "." + p[1] : i;
+  }
+  function fmt(v) {
+    var s;
+    if (v >= 1e6) { var m = v.toExponential(1).split("e"); s = m[0] + "e" + Number(m[1]); }
+    else if (v >= 10) s = grouped(v.toFixed(1));
+    else if (v >= 1) s = v.toFixed(2);
+    else s = String(Number(v.toPrecision(2)));
+    // Never let rounding put a value onto a threshold it has not reached.
+    var shown = Number(s.split(NBSP).join(""));
+    if ((v < 100 && shown >= 100) || (v > 0.05 && shown <= 0.05)) s = String(Number(v.toPrecision(5)));
+    return s;
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function both(de, en) {
+    var f = document.createDocumentFragment();
+    f.appendChild(el("span", "de", de));
+    f.appendChild(el("span", "en", en));
+    return f;
+  }
+  function fill(node, de, en) { node.textContent = ""; node.appendChild(both(de, en)); }
+  function rich(cls, parts) {
+    var s = el("span", cls);
+    parts.forEach(function (p) { s.appendChild(typeof p === "string" ? document.createTextNode(p) : el("b", null, p.b)); });
+    return s;
+  }
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function two(x) { return (x < 10 ? "0" : "") + x; }
+  function stamp(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    var hm = two(d.getUTCHours()) + ":" + two(d.getUTCMinutes()) + " UTC";
+    return {
+      de: two(d.getUTCDate()) + "." + two(d.getUTCMonth() + 1) + "." + d.getUTCFullYear() + ", " + hm,
+      en: d.getUTCDate() + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear() + ", " + hm
+    };
+  }
+
+  // ---- every current value and state comes from the data ----
+  var n = pairs.length, last = pairs[n - 1], max = data.pairs_max || 120;
+  var P = data.primary || {}, S = data.secondary || {};
+  var e1Last = value(last.e1), e2Last = value(last.e2);
+
+  function primaryPhrase() {
+    var k = P.at_pair;
+    switch (P.state) {
+      case "proven": return ["die Hauptaussage wurde bei Paar " + k + " bewiesen", "the primary claim was proven at pair " + k];
+      case "failed": return ["die Hauptaussage ist bei Paar " + k + " gescheitert", "the primary claim failed at pair " + k];
+      case "open": return ["die Hauptaussage ist offen", "the primary claim is open"];
+      case "undecided": return ["die Hauptaussage bleibt nach " + max + " Paaren unentschieden und gilt nicht", "the primary claim stays undecided after " + max + " pairs and is not made"];
+    }
+    return null;
+  }
+  function secondaryPhrase() {
+    var k = S.at_pair, pending = P.state !== "proven";
+    switch (S.state) {
+      case "open": return ["die Nebenaussage ist offen", "the secondary claim is open"];
+      case "proven": return pending
+        ? ["es erreichte 100 bei Paar " + k + ", das zählt aber erst, wenn die Hauptaussage bewiesen ist", "it reached 100 at pair " + k + ", which counts only once the primary claim is proven"]
+        : ["die Nebenaussage wurde bei Paar " + k + " bewiesen", "the secondary claim was proven at pair " + k];
+      case "failed": return pending
+        ? ["es fiel bei Paar " + k + " auf 1/20, das zählt aber erst, wenn die Hauptaussage bewiesen ist", "it fell to 1/20 at pair " + k + ", which counts only once the primary claim is proven"]
+        : ["die Nebenaussage ist bei Paar " + k + " gescheitert", "the secondary claim failed at pair " + k];
+      case "undecided": return ["die Nebenaussage bleibt nach " + max + " Paaren unentschieden und gilt nicht", "the secondary claim stays undecided after " + max + " pairs and is not made"];
+      case "not tested": return ["die Nebenaussage wird nicht geprüft, weil die Hauptaussage nicht bewiesen ist", "the secondary claim is not tested, because the primary claim is not proven"];
+    }
+    return null;
+  }
+
+  var pp = primaryPhrase(), sp = secondaryPhrase(), when = stamp(data.as_of);
+  if (pp && sp) {
+    var status = document.getElementById("step1-status");
+    status.textContent = "";
+    status.appendChild(rich("de", [
+      "Nach " + n + " von höchstens " + max + " Paaren ist ", { b: "E1 = " + fmt(e1Last) }, "; " + pp[0] + ". ",
+      { b: "E2 = " + fmt(e2Last) }, "; " + sp[0] + ". ",
+      data.stopped ? "Das Experiment ist beendet." : "Die Läufe gehen weiter.",
+      when ? " Stand " + when.de + "." : ""
+    ]));
+    status.appendChild(rich("en", [
+      "After " + n + " of at most " + max + " pairs, ", { b: "E1 = " + fmt(e1Last) }, "; " + pp[1] + ". ",
+      { b: "E2 = " + fmt(e2Last) }, "; " + sp[1] + ". ",
+      data.stopped ? "The experiment has stopped." : "The runs continue.",
+      when ? " As of " + when.en + "." : ""
+    ]));
+  }
+  fill(document.getElementById("step1-eyebrow"),
+    data.stopped ? "Gemessen · abgeschlossen" : "Gemessen · Zwischenstand, der Lauf geht weiter",
+    data.stopped ? "Measured · finished" : "Measured · interim, the run continues");
+  var heads = {
+    proven: ["Schritt 1: Die Zucht findet Schaltungen wieder", "Step 1: breeding rediscovers circuits"],
+    open: ["Schritt 1: Findet die Zucht Schaltungen wieder?", "Step 1: does breeding rediscover circuits?"],
+    failed: ["Schritt 1: Die Hauptaussage ist gescheitert", "Step 1: the primary claim failed"],
+    undecided: ["Schritt 1: unentschieden nach " + max + " Paaren", "Step 1: undecided after " + max + " pairs"]
+  };
+  if (heads[P.state]) fill(document.getElementById("t-step1"), heads[P.state][0], heads[P.state][1]);
+  var road = document.getElementById("road-step1-state");
+  if (road) fill(road,
+    data.stopped ? "Die gezählten Läufe sind abgeschlossen." : "Die gezählten Läufe laufen.",
+    data.stopped ? "The counted runs are finished." : "The counted runs are under way.");
+
+  // ---- table view: every pair ----
+  function never(t) { return t == null ? both("nie", "never") : document.createTextNode(String(t)); }
+  var rows = document.getElementById("e-rows");
+  rows.textContent = "";
+  pairs.forEach(function (p) {
+    var tr = document.createElement("tr");
+    [document.createTextNode(String(p.pair)), document.createTextNode(String(p.seed)), never(p.t_a), never(p.t_r),
+      p.x ? both("ja", "yes") : both("nein", "no"),
+      p.first === "tie" ? both("Gleichstand", "tie") : document.createTextNode(p.first),
+      document.createTextNode(fmt(value(p.e1))), document.createTextNode(fmt(value(p.e2)))
+    ].forEach(function (c) { var td = document.createElement("td"); td.appendChild(c); tr.appendChild(td); });
+    rows.appendChild(tr);
+  });
+
+  // ---- the chart: E1 and E2 per pair on a log scale ----
+  var wrap = document.getElementById("e-wrap"), svg = document.getElementById("e-chart");
+  var tip = document.getElementById("e-tip"), live = document.getElementById("e-live");
+  var M = { l: 50, r: 84, t: 16, b: 46 }, H = 300, STEP = 7, PAD = 10;
+  var g = null, current = -1;
+
+  function node(parent, name, attrs, text) {
+    var e = document.createElementNS(NS, name);
+    for (var a in attrs) e.setAttribute(a, attrs[a]);
+    if (text != null) e.textContent = text;
+    parent.appendChild(e);
+    return e;
+  }
+  function label(attrs, de, en) {
+    var t = node(svg, "text", attrs);
+    node(t, "tspan", { "class": "de" }, de);
+    node(t, "tspan", { "class": "en" }, en);
+    return t;
+  }
+  function hits(box, obstacles) {
+    var c = 0;
+    obstacles.forEach(function (o) { if (o[0] < box[2] && o[2] > box[0] && o[1] < box[3] && o[3] > box[1]) c++; });
+    return c;
+  }
+
+  function draw() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var W = Math.max(wrap.parentNode.clientWidth, 280, M.l + M.r + 2 * PAD + (n - 1) * STEP);
+    wrap.style.width = W + "px";
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("width", W);
+    svg.setAttribute("height", H);
+
+    var vals = [];
+    pairs.forEach(function (p) { vals.push(value(p.e1), value(p.e2)); });
+    var hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+    var top = Math.pow(10, Math.floor(Math.log10(Math.max(hi, 100)) + 1e-9) + 1);
+    var bottom = lo < 0.05 ? Math.pow(10, Math.floor(Math.log10(lo))) : 0.05;
+    var lt = Math.log10(top), lb = Math.log10(bottom), plotB = H - M.b;
+    function y(v) { return M.t + (lt - Math.log10(v)) / (lt - lb) * (plotB - M.t); }
+    var x0 = M.l + PAD, x1 = W - M.r - PAD;
+    function x(i) { return n === 1 ? (x0 + x1) / 2 : x0 + (i - 1) / (n - 1) * (x1 - x0); }
+    var y100 = y(100), y20 = y(0.05), y1 = y(1), xr = x1 + 4;
+
+    // decade grid, hairline and solid; the line at 1 is the start
+    var ticks = [];
+    for (var d = Math.ceil(lb - 1e-9); d <= Math.floor(lt + 1e-9); d++) {
+      var v = Math.pow(10, d), yy = y(v);
+      if (Math.abs(yy - y20) < 15 && v !== 0.05) continue;
+      node(svg, "line", { x1: M.l, y1: yy, x2: xr, y2: yy, "stroke-width": 1, style: "stroke:var(--line)" });
+      ticks.push([yy, d < 0 ? String(Number(v.toPrecision(1))) : grouped(String(Math.round(v)))]);
+    }
+    ticks.push([y20, "1/20"]);
+    ticks.forEach(function (t) { node(svg, "text", { x: M.l - 8, y: t[0] + 4, "text-anchor": "end", "class": "small" }, t[1]); });
+    // the two thresholds
+    [y100, y20].forEach(function (yy) {
+      node(svg, "line", { x1: M.l, y1: yy, x2: xr, y2: yy, "stroke-width": 1.25, style: "stroke:var(--muted)" });
+    });
+
+    var p1 = pairs.map(function (p, i) { return [x(i + 1), y(value(p.e1))]; });
+    var p2 = pairs.map(function (p, i) { return [x(i + 1), y(value(p.e2))]; });
+    // obstacles for labels: every marker and points along every segment
+    var obstacles = [];
+    [p1, p2].forEach(function (ps) {
+      ps.forEach(function (q, i) {
+        obstacles.push([q[0] - 7, q[1] - 7, q[0] + 7, q[1] + 7]);
+        if (i > 0) for (var s = 1; s < 4; s++) {
+          var px = ps[i - 1][0] + (q[0] - ps[i - 1][0]) * s / 4, py = ps[i - 1][1] + (q[1] - ps[i - 1][1]) * s / 4;
+          obstacles.push([px - 2, py - 2, px + 2, py + 2]);
+        }
+      });
+    });
+    function guide(yy, de, en) {
+      var box = [M.l + 4, yy - 17, M.l + 4 + 6.6 * Math.max(de.length, en.length), yy - 3];
+      var below = [box[0], yy + 3, box[2], yy + 17];
+      var under = hits(box, obstacles) > hits(below, obstacles);
+      var at = under ? below : box;
+      label({ x: M.l + 6, y: under ? yy + 14 : yy - 6, "class": "small" }, de, en);
+      obstacles.push(at);
+    }
+    guide(y100, "bewiesen ab 100", "proven at 100");
+    guide(y20, "gescheitert bei 1/20", "failed at 1/20");
+    guide(y1, "Start", "Start");
+
+    // x axis: pair numbers
+    var stepX = n <= 30 ? 5 : (n <= 60 ? 10 : 20);
+    var xt = [1];
+    for (var t = stepX; t <= n; t += stepX) xt.push(t);
+    xt.forEach(function (t) { node(svg, "text", { x: x(t), y: plotB + 18, "text-anchor": "middle", "class": "small" }, String(t)); });
+    label({ x: (x0 + x1) / 2, y: H - 8, "text-anchor": "middle", "class": "small" }, "Paar, Seeds in fester Reihenfolge", "pair, seeds in fixed order");
+
+    // series: E2 dashed violet with squares, E1 solid heat with round markers; 2px surface ring
+    function points(ps) { return ps.map(function (q) { return q[0].toFixed(1) + "," + q[1].toFixed(1); }).join(" "); }
+    node(svg, "polyline", { points: points(p2), fill: "none", "stroke-width": 2, "stroke-dasharray": "6 4", "stroke-linejoin": "round", style: "stroke:var(--violet)" });
+    node(svg, "polyline", { points: points(p1), fill: "none", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", style: "stroke:var(--heat)" });
+    // 12 px squares: where E1 equals E2, their corners still show around the E1 dot
+    p2.forEach(function (q) { node(svg, "rect", { x: (q[0] - 6).toFixed(1), y: (q[1] - 6).toFixed(1), width: 12, height: 12, "stroke-width": 2, style: "fill:var(--violet);stroke:var(--bg)" }); });
+    p1.forEach(function (q) { node(svg, "circle", { cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: 5, "stroke-width": 2, style: "fill:var(--heat);stroke:var(--bg)" }); });
+
+    // direct labels at the last point, text tokens only; pushed apart when they would touch
+    var ex = x(n) + 12, a1 = p1[n - 1][1], a2 = p2[n - 1][1], b1 = a1, b2 = a2;
+    if (Math.abs(b1 - b2) < 16) { var mid = (b1 + b2) / 2, up = b1 <= b2 ? -1 : 1; b1 = mid + up * 8; b2 = mid - up * 8; }
+    [[b1, a1, "E1", e1Last], [b2, a2, "E2", e2Last]].forEach(function (l) {
+      if (Math.abs(l[0] - l[1]) > 2) node(svg, "line", { x1: x(n) + 6, y1: l[1], x2: ex - 2, y2: l[0], "stroke-width": 1, style: "stroke:var(--muted)" });
+      var t = node(svg, "text", { x: ex, y: l[0] + 4, "class": "small" });
+      node(t, "tspan", {}, l[2] + " ");
+      node(t, "tspan", { style: "fill:var(--fg);font-weight:600" }, fmt(l[3]));
+      obstacles.push([ex, l[0] - 10, ex + 72, l[0] + 4]);
+    });
+
+    // one annotation: where E1 first crossed a threshold
+    var k = (P.state === "proven" || P.state === "failed") ? P.at_pair : null;
+    if (k && k <= n) {
+      var q = p1[k - 1], txt = P.state === "proven" ? ["bewiesen bei Paar " + k, "proven at pair " + k] : ["gescheitert bei Paar " + k, "failed at pair " + k];
+      node(svg, "circle", { cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: 9, fill: "none", "stroke-width": 1.5, style: "stroke:var(--fg)" });
+      var w = 6.6 * Math.max(txt[0].length, txt[1].length), best = null;
+      [[-1, -1], [1, -1], [-1, 1], [1, 1], [-1, -2], [1, -2], [-1, 2], [1, 2]].forEach(function (c) {
+        var tx = q[0] + c[0] * 14, ty = q[1] + (c[1] < 0 ? -18 : 26) + (Math.abs(c[1]) - 1) * c[1] * 20;
+        var box = c[0] < 0 ? [tx - w, ty - 11, tx, ty + 3] : [tx, ty - 11, tx + w, ty + 3];
+        if (box[0] < M.l || box[2] > W - M.r + 70 || box[1] < 2 || box[3] > plotB - 2) return;
+        var score = hits(box, obstacles);
+        if (!best || score < best.score) best = { score: score, tx: tx, ty: ty, c: c };
+      });
+      if (best) {
+        node(svg, "line", { x1: (q[0] + best.c[0] * 7).toFixed(1), y1: (q[1] + (best.c[1] < 0 ? -7 : 7)).toFixed(1), x2: best.tx.toFixed(1), y2: (best.ty + (best.c[1] < 0 ? 0 : -12)).toFixed(1), "stroke-width": 1, style: "stroke:var(--muted)" });
+        label({ x: best.tx.toFixed(1), y: best.ty.toFixed(1), "text-anchor": best.c[0] < 0 ? "end" : "start", "class": "small", style: "fill:var(--fg)" }, txt[0], txt[1]);
+      }
+    }
+
+    // hover layer: a crosshair that snaps to the nearest pair, and rings on its two markers
+    var cross = node(svg, "line", { x1: 0, y1: M.t, x2: 0, y2: plotB, "stroke-width": 1, style: "stroke:var(--muted)", visibility: "hidden" });
+    var ring1 = node(svg, "circle", { r: 9, fill: "none", "stroke-width": 2, style: "stroke:var(--fg)", visibility: "hidden" });
+    var ring2 = node(svg, "rect", { width: 16, height: 16, fill: "none", "stroke-width": 2, style: "stroke:var(--fg)", visibility: "hidden" });
+    var hit = node(svg, "rect", { x: 0, y: 0, width: W, height: H, fill: "transparent" });
+    // pointerdown as well, because a tap on a touch screen sends no pointermove
+    function pick(e) {
+      var r = svg.getBoundingClientRect(), sx = (e.clientX - r.left) * W / r.width;
+      var i = n === 1 ? 0 : Math.round((sx - x0) / (x1 - x0) * (n - 1));
+      show(Math.max(0, Math.min(n - 1, i)), false);
+    }
+    hit.addEventListener("pointermove", pick);
+    hit.addEventListener("pointerdown", pick);
+    hit.addEventListener("pointerleave", function () { if (document.activeElement !== wrap) hide(); });
+
+    g = { W: W, p1: p1, p2: p2, cross: cross, ring1: ring1, ring2: ring2 };
+    wrap.setAttribute("data-aria-de", "E1 und E2 nach jedem der " + n + " Paare, logarithmische Achse von 1/20 bis " + grouped(String(Math.round(top))) + ". E1 endet bei " + fmt(e1Last) + ", E2 bei " + fmt(e2Last) + ". Alle Werte stehen auch in der Tabelle.");
+    wrap.setAttribute("data-aria-en", "E1 and E2 after each of the " + n + " pairs, logarithmic axis from 1/20 to " + grouped(String(Math.round(top))) + ". E1 ends at " + fmt(e1Last) + ", E2 at " + fmt(e2Last) + ". Every value is also in the table.");
+    syncAria();
+  }
+
+  function tipKey(e2) {
+    var k = document.createElementNS(NS, "svg");
+    k.setAttribute("class", "tt-key");
+    k.setAttribute("viewBox", "0 0 18 8");
+    k.setAttribute("aria-hidden", "true");
+    var ln = document.createElementNS(NS, "line");
+    var attrs = { x1: 0, y1: 4, x2: 18, y2: 4, "stroke-width": 2, style: e2 ? "stroke:var(--violet)" : "stroke:var(--heat)" };
+    if (e2) attrs["stroke-dasharray"] = "4 3";
+    for (var a in attrs) ln.setAttribute(a, attrs[a]);
+    k.appendChild(ln);
+    return k;
+  }
+  function tLine(parent, arm, t, en) {
+    parent.appendChild(document.createTextNode("T"));
+    parent.appendChild(el("sub", null, arm));
+    parent.appendChild(document.createTextNode(" " + (t == null ? (en ? "never" : "nie") : t)));
+  }
+  function renderTip(i) {
+    var p = pairs[i], en = isEn();
+    tip.textContent = "";
+    tip.appendChild(el("div", "tt-head", (en ? "Pair " : "Paar ") + p.pair + " · Seed " + p.seed));
+    var times = el("div", "tt-muted");
+    tLine(times, "A", p.t_a, en);
+    times.appendChild(document.createTextNode(" · "));
+    tLine(times, "R", p.t_r, en);
+    tip.appendChild(times);
+    tip.appendChild(el("div", "tt-muted", (en ? "arm A passed: " : "Arm A bestanden: ") + (p.x ? (en ? "yes" : "ja") : (en ? "no" : "nein"))));
+    tip.appendChild(el("div", "tt-muted", (en ? "first: " : "zuerst: ") + (p.first === "tie" ? (en ? "tie" : "Gleichstand") : p.first)));
+    [[false, p.e1, "E1"], [true, p.e2, "E2"]].forEach(function (s) {
+      var row = el("div", "tt-row");
+      row.appendChild(tipKey(s[0]));
+      row.appendChild(el("b", null, fmt(value(s[1]))));
+      row.appendChild(el("span", "tt-muted", s[2]));
+      tip.appendChild(row);
+    });
+  }
+  function liveText(i) {
+    var p = pairs[i], en = isEn(), nv = en ? "never" : "nie";
+    var ta = p.t_a == null ? nv : p.t_a, tr = p.t_r == null ? nv : p.t_r;
+    var first = p.first === "tie" ? (en ? "tie" : "Gleichstand") : p.first;
+    return en
+      ? "Pair " + p.pair + ", seed " + p.seed + ". T of arm A " + ta + ", T of arm R " + tr + ". Arm A passed: " + (p.x ? "yes" : "no") + ". First: " + first + ". E1 " + fmt(value(p.e1)) + ", E2 " + fmt(value(p.e2)) + "."
+      : "Paar " + p.pair + ", Seed " + p.seed + ". T von Arm A " + ta + ", T von Arm R " + tr + ". Arm A bestanden: " + (p.x ? "ja" : "nein") + ". Zuerst: " + first + ". E1 " + fmt(value(p.e1)) + ", E2 " + fmt(value(p.e2)) + ".";
+  }
+  function show(i, fromKey) {
+    current = i;
+    var q1 = g.p1[i], q2 = g.p2[i];
+    g.cross.setAttribute("x1", q1[0]); g.cross.setAttribute("x2", q1[0]); g.cross.setAttribute("visibility", "visible");
+    g.ring1.setAttribute("cx", q1[0]); g.ring1.setAttribute("cy", q1[1]); g.ring1.setAttribute("visibility", "visible");
+    g.ring2.setAttribute("x", q2[0] - 8); g.ring2.setAttribute("y", q2[1] - 8); g.ring2.setAttribute("visibility", "visible");
+    renderTip(i);
+    tip.hidden = false;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    var left = q1[0] + 16;
+    if (left + tw > g.W - 4) left = q1[0] - 16 - tw;
+    var top = Math.min(q1[1], q2[1]) - th - 10;
+    if (top < 0) top = Math.max(q1[1], q2[1]) + 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = Math.max(0, Math.min(H - th, top)) + "px";
+    if (fromKey) {
+      live.textContent = liveText(i);
+      var sc = wrap.parentNode;
+      if (q1[0] < sc.scrollLeft + 24 || q1[0] > sc.scrollLeft + sc.clientWidth - 24) sc.scrollLeft = q1[0] - sc.clientWidth / 2;
+    }
+  }
+  function hide() {
+    if (!g) return;
+    tip.hidden = true;
+    [g.cross, g.ring1, g.ring2].forEach(function (e) { e.setAttribute("visibility", "hidden"); });
+  }
+
+  wrap.addEventListener("keydown", function (e) {
+    var i = current < 0 ? n - 1 : current;
+    if (e.key === "ArrowRight") i = Math.min(n - 1, i + 1);
+    else if (e.key === "ArrowLeft") i = Math.max(0, i - 1);
+    else if (e.key === "Home") i = 0;
+    else if (e.key === "End") i = n - 1;
+    else if (e.key === "Escape") { hide(); return; }
+    else return;
+    e.preventDefault();
+    show(i, true);
+  });
+  wrap.addEventListener("focus", function () { show(current < 0 ? n - 1 : current, true); });
+  wrap.addEventListener("blur", hide);
+  onLang.push(function () { if (!tip.hidden && current >= 0) renderTip(current); });
+
+  draw();
+  var pending = 0;
+  window.addEventListener("resize", function () {
+    if (pending) return;
+    pending = requestAnimationFrame(function () {
+      pending = 0;
+      var open = !tip.hidden, at = current;
+      draw();
+      if (open && at >= 0) show(at, false);
+    });
+  });
+})();
+</script>
+
+</html>

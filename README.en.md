@@ -4,6 +4,9 @@ This page is the English version of the Stage 2c and step 1 parts of the German
 [README.md](README.md). The rest of the project documentation is in German; the code,
 its comments, `CONTEXT.md` and the ADRs are in English.
 
+An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
+with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
+
 ## Cascade breeding (Stage 2c)
 
 Status: built with the simulated model (PR #8); the findings of two adversarial reviews
