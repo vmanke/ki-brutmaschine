@@ -1,6 +1,6 @@
 # 11 Pilot of the step 2 comparison
 
-Status: needs-info (Q71, Q74)
+Status: needs-triage (waits for the owner's approval of the design; Q71 and Q74 are decided)
 Blocked by: 10 (its draft and analysis; ticket 10 is resolved only after this pilot)
 Spec: `../spec.md`, sections 12.2 and 17
 

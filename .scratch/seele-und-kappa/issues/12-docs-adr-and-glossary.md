@@ -1,6 +1,6 @@
 # 12 ADR 0009, READMEs, report skeleton and glossary
 
-Status: needs-triage (waits for the owner's answers to Q67 to Q74)
+Status: needs-triage (waits for the owner's approval of the design; Q67 to Q74 are decided, and the ADR records them)
 Blocked by: 09
 Spec: `../spec.md`, section 20
 

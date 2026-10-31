@@ -1,6 +1,6 @@
 # 07 Upbringing at birth: imprinting and teaching
 
-Status: needs-info (Q73, both parts; the step of imprinting follows Q69)
+Status: needs-triage (waits for the owner's approval of the design; Q73 is decided in both parts; the step of imprinting follows Q69)
 Blocked by: 05, 06
 Spec: `../spec.md`, section 10
 

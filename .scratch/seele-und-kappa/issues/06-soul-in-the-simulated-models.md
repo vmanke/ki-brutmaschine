@@ -1,19 +1,20 @@
 # 06 The Soul in the simulated models
 
-Status: needs-info (Q72)
+Status: needs-triage (waits for the owner's approval of the design; Q72 is decided)
 Blocked by: 04
 Spec: `../spec.md`, section 11
 
 ## What to do
 
 - `src/backend.rs`: `GenRequest` gets `phases: Option<Vec<u16>>`, left out of the JSON when `None`,
-  so every request key stays as it is. `GenResponse` gets `soul_decided: bool`, left out of the
-  JSON when false. `ModelBackend` gets `reads_phases()`, false by default and true for `SimModel`
-  and `SimDesigner`.
+  so every request key stays as it is. `GenResponse` gets `soul_decided: bool`, with the serde
+  default false and left out of the JSON when false. `ModelBackend` gets `reads_phases()`, false
+  by default and true for `SimModel` and `SimDesigner`.
 - `docs/STAGE2_BACKEND_CONTRACT.md`, which is normative for the backend: contract-v3, with the two
   fields and `reads_phases()`. `phases` has the serde default `None`, is left out of the JSON when
   `None` and is never filled for a backend whose `reads_phases()` is false, so the Ollama adapter
-  and every recorded request stay as they are.
+  and every recorded request stay as they are. `soul_decided` has the serde default false, so a
+  response from an adapter that does not know it still reads.
 - The breeder fills `phases` with the Worker's current phases, readout applied (0 or 32768 in arm
   V), only when `simulator` is on, only for a backend that reads phases, and only in the solve and
   Stage-vote requests of a Cascade's own evaluation, on the search and on the select panel; never

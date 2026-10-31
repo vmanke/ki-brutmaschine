@@ -1,11 +1,12 @@
 # 03 Souletics at birth
 
-Status: needs-info (Q71)
+Status: needs-triage (waits for the owner's approval of the design; Q71 is decided)
 Blocked by: 02
 Spec: `../spec.md`, sections 9 and 15
 
 The ticket has two parts, built and committed in this order. Part A changes no behaviour, and its
-tests pass before part B starts, so a failure in part B is not one of part A.
+tests pass before part B starts, so a failure in part B is not one of part A. When part A is done, a
+line under Comments records its commit. Part A does not wait for Q71.
 
 ## What to do
 

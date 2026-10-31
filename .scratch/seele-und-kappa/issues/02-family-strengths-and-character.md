@@ -1,6 +1,6 @@
 # 02 Family strengths, readouts and the Character
 
-Status: needs-info (Q67, Q70)
+Status: needs-triage (waits for the owner's approval of the design; Q67 and Q70 are decided)
 Blocked by: 01
 Spec: `../spec.md`, sections 5, 6 and 12.1
 
