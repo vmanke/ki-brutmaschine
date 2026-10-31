@@ -207,11 +207,11 @@ _Avoid_: condition, group
 ### Soul and Character (planned, step 2)
 
 **Soul**:
-A Worker's hidden phase state, code name `phase_state`. It is never seen directly, only through the Character it produces.
+A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but come from the Task. It is never seen directly, only through the Character it produces.
 _Avoid_: spirit, psyche, mind
 
 **Character**:
-The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of its amplitudes under the phases that Task sets. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by a strength that the Task sets. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
 _Avoid_: personality, temperament, profile
 
 **Observation**:
