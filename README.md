@@ -33,6 +33,10 @@ Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
 Beides beschreiben die Abschnitte „Kaskaden-Zucht (Stufe 2c)“ und „Universen, die
 erfinden (Schritt 1)“.
 
+Einen bebilderten Überblick gibt der [Atlas](docs/atlas/index.html), eine Seite auf
+Deutsch und Englisch mit Diagrammen, einem Speckle-Simulator und dem Ergebnis von Schritt 1.
+Man öffnet die Datei im Browser.
+
 ## Was die Brutmaschine nicht ist
 
 - **Kein selbstverändernder Code.** Ein Kandidat ist reine Daten (ein
