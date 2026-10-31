@@ -207,20 +207,40 @@ _Avoid_: condition, group
 ### Soul and Character (planned, step 2)
 
 **Soul**:
-A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but come from the Task. It is never seen directly, only through the Character it produces.
+A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but are the Family strengths of the Task. It is never seen directly, only through the Character it produces.
 _Avoid_: spirit, psyche, mind
 
+**Soul population**:
+All Souls of a universe. Every child brings its own unit of Soul and nobody gives any up; since the archive keeps every member, the Soul population only grows.
+_Avoid_: soul pool, total soul
+
+**Family strength**:
+How well a hypothesis family fits a Task, as the Domain states it; the same for every Worker on that Task. It weights the Soul's phases when the Character is computed.
+_Avoid_: prior, weight (alone)
+
 **Character**:
-The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by a strength that the Task sets. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
 _Avoid_: personality, temperament, profile
 
+**Array pattern**:
+The joint pattern of a Stage: for each answer, the squared magnitude of the sum of its Workers' contributions. Observations steer it by shifting phases.
+_Avoid_: stage character, collective judgment, vox populi
+
 **Observation**:
-A Worker judging answers of others, in the vote of its own Stage or as a peer judge. It changes the Souls of both sides, with a strength κ that the observer inherits.
+A Worker judging answers of others, in the vote of its own Stage or as a peer judge. It changes the Souls of both sides, as strongly as the observer's Coupling strength says.
 _Avoid_: measurement (alone), look
+
+**Coupling strength**:
+The inherited number κ between 0 and 1 with which an observer pulls the phases of the Worker it observes toward its own and is pulled in turn. At 1 the observed takes the observer's phases.
+_Avoid_: feeling, measurement strength, gain
 
 **Upbringing**:
 What a child receives from its parents' lives besides genes and Soul. In imprinting, its parents observe its first answers and so shift its Soul toward theirs. In teaching, a prompt section is written fresh at birth from its parents' best solved examples and lessons; it is never inherited as a gene.
 _Avoid_: training, education (alone)
+
+**Souletics**:
+Soul inheritance: a child's Soul is a copy of one parent's Soul from birth, or a mix of both parents' Souls, with small random changes, and now and then an entirely new Soul. It is one of three channels of inheritance besides genes and Upbringing; experience passes only through Upbringing. German reports call it Seeletik.
+_Avoid_: soul genetics
 
 ### Records and control
 
