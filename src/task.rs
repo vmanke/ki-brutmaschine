@@ -100,11 +100,19 @@ pub enum TaskKind {
     /// middle column, 1 pixel thick for an odd side and 2 for an even one. Every shape
     /// touches all four sides of its box, and no two classes draw the same picture. Then
     /// pixel noise.
+    ///
+    /// The clean pictures repeat between the splits: square, circle and cross have 620
+    /// each, the triangle 2480. So about 31 % of the Hidden samples show a clean picture
+    /// that Train holds as well, under other noise (seed 3: 0.308). A hidden score of this
+    /// task is partly a score on pictures seen in training.
     Shapes,
     /// 16x16 images of lines (bars and stripes), 2 classes. Each of the 16 lines is on or
     /// off at random, but never all on or all off. The class decides the direction: 0 rows
     /// (horizontal stripes: every row is all on or all off), 1 columns (vertical bars:
     /// every column is all on or all off). Then pixel noise.
+    ///
+    /// Each class has 65 534 clean pictures, so about 1 % of the Hidden samples show a
+    /// clean picture of Train, under other noise (seed 3: 0.009).
     BarsAndStripes,
     /// 16x16 images with 1 to 4 blobs, 4 classes: the class is the number of blobs minus 1.
     /// A blob is a filled rectangle with a random height and width from `BLOB_MIN` to
@@ -112,6 +120,10 @@ pub enum TaskKind {
     /// between two blobs, also diagonally, so the blobs are the connected parts of the
     /// image. Their area overlaps between counts (four 2x2 blobs cover 16 pixels, two 3x3
     /// blobs 18), so a model has to count them. Then pixel noise.
+    ///
+    /// A single blob has only 841 clean pictures (4 sizes at their places), so about a
+    /// quarter of the one-blob samples, 6 % of all Hidden samples, show a clean picture of
+    /// Train, under other noise (seed 3: 0.062). Two or more blobs almost never repeat.
     BlobCount,
     /// 16x16 images of random pixels, 2 classes: 1 mirror symmetric about the vertical
     /// axis, 0 not. Each pixel of the left half is on with probability 1/2. For class 1 the

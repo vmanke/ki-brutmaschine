@@ -485,8 +485,11 @@ pub(crate) mod testing {
         genome(cnn, vec![32], Activation::Tanh)
     }
 
-    /// VGG-like, for a 1 x 16 x 16 image: 3x3 convolutions with batch norm and ReLU, two of
-    /// them followed by 2x2 max pooling, then flatten and one dense layer to the classes.
+    /// VGG-like, for a 1 x 16 x 16 image: 3x3 convolutions with batch norm and ReLU, three
+    /// of them followed by 2x2 max pooling, then flatten and one dense layer to the classes.
+    ///
+    /// The stem pools as well: at 16 x 16 throughout its first two units this CNN took 21 s
+    /// for 5 epochs at one thread, above the time budget of the default limits.
     pub(crate) fn vgg() -> Genome {
         let pooled = |width| Stage {
             stride: 2,
@@ -499,7 +502,7 @@ pub(crate) mod testing {
             stem: Stem {
                 width: 8,
                 kernel: 3,
-                stride: 1,
+                stride: 2,
                 down: Downsample::MaxPool,
                 norm: Norm::Batch,
                 activation: CnnActivation::Relu,
@@ -554,7 +557,12 @@ pub(crate) mod testing {
             head: Head::GlobalAvgPool,
         };
 
-        genome(cnn, vec![8], Activation::Gelu)
+        let mut g = genome(cnn, vec![8], Activation::Gelu);
+
+        // 5 epochs keep it well within the time budget of the default limits.
+        g.epochs = 5;
+
+        g
     }
 
     /// 1-D, for a 4 x 64 one-hot sequence: a convolution of 5, then a dilated convolution

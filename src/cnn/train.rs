@@ -677,6 +677,157 @@ mod tests {
         }
     }
 
+    /// Valid CNNs that come as close to the time budget as `validate` allows, one per kind
+    /// of layout that runs slowly per FLOP: narrow layers at full size, batch norm on 4
+    /// channels, layer norm with GELU, depthwise convolutions, many tiny layers, 1-D layers
+    /// of one channel, and group norm with pooling. Each takes the most stages that are
+    /// valid at 5 epochs, then the most epochs that are valid.
+    fn slow_valid_cnns() -> Vec<(TaskKind, Genome)> {
+        let unit = |width: usize, kernel: usize, norm: Norm, activation: CnnActivation| Stage {
+            norm,
+            ..genomes::plain(width, kernel, activation)
+        };
+        let stem = |stage: &Stage, stride: usize, down: Downsample| Stem {
+            width: stage.width,
+            kernel: stage.kernel,
+            stride,
+            down,
+            norm: stage.norm,
+            activation: stage.activation,
+        };
+        let make = |dims: Dims, first: Stem, stage: Stage, n: usize, head: Head| Genome {
+            batch_size: 16,
+            epochs: 5,
+            ..genomes::genome(
+                CnnGenome {
+                    dims,
+                    stem: first,
+                    stages: vec![stage; n],
+                    head,
+                },
+                Vec::new(),
+                Activation::Relu,
+            )
+        };
+        let relu = CnnActivation::Relu;
+        let layouts: Vec<(TaskKind, Box<dyn Fn(usize) -> Genome>)> = vec![
+            (TaskKind::Shapes, {
+                let s = unit(1, 9, Norm::None, relu);
+                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Shapes, {
+                let s = unit(4, 3, Norm::Batch, relu);
+                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Shapes, {
+                let s = unit(8, 1, Norm::Layer, CnnActivation::Gelu);
+                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Shapes, {
+                let s = Stage {
+                    groups: 32,
+                    ..unit(32, 3, Norm::Batch, relu)
+                };
+                let first = Stem {
+                    width: 32,
+                    kernel: 3,
+                    stride: 2,
+                    down: Downsample::Conv,
+                    norm: Norm::Batch,
+                    activation: relu,
+                };
+                Box::new(move |n| make(Dims::TwoD, first.clone(), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Shapes, {
+                let s = unit(1, 1, Norm::None, relu);
+                Box::new(move |n| make(Dims::TwoD, stem(&s, 1, Downsample::Conv), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Motif1d, {
+                let s = Stage {
+                    dilation: 2,
+                    ..unit(1, 11, Norm::None, relu)
+                };
+                let first = Stem {
+                    width: 1,
+                    kernel: 11,
+                    stride: 1,
+                    down: Downsample::Conv,
+                    norm: Norm::None,
+                    activation: relu,
+                };
+                Box::new(move |n| make(Dims::OneD, first.clone(), s.clone(), n, Head::GlobalAvgPool))
+            }),
+            (TaskKind::Shapes, {
+                let s = unit(8, 3, Norm::Group, CnnActivation::Silu);
+                let first = Stem {
+                    stride: 2,
+                    down: Downsample::MaxPool,
+                    ..stem(&s, 1, Downsample::Conv)
+                };
+                Box::new(move |n| make(Dims::TwoD, first.clone(), s.clone(), n, Head::Flatten))
+            }),
+        ];
+        let limits = Limits::default();
+
+        layouts
+            .into_iter()
+            .filter_map(|(task, layout)| {
+                let spec = task.spec();
+                let stages = (1..=crate::cnn::genome::MAX_STAGES)
+                    .filter(|&n| layout(n).validate(&limits, &spec).is_ok())
+                    .max()?;
+                let mut genome = layout(stages);
+
+                while genome.epochs < limits.max_epochs {
+                    genome.epochs += 1;
+
+                    if genome.validate(&limits, &spec).is_err() {
+                        genome.epochs -= 1;
+                        break;
+                    }
+                }
+
+                Some((task, genome))
+            })
+            .collect()
+    }
+
+    /// The time model keeps slow CNNs from the clock: each of `slow_valid_cnns` trains on
+    /// the whole Train split within its time budget, so the FLOP limit ends it. This takes
+    /// about 1.5 minutes and measures time, so it runs only on request, alone:
+    /// `cargo test --lib slow_valid -- --ignored --test-threads 1`.
+    #[test]
+    #[ignore]
+    fn slow_valid_cnns_train_within_the_time_budget() {
+        let limits = Limits::default();
+        let budget = limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
+        let cnns = slow_valid_cnns();
+
+        assert_eq!(cnns.len(), 7);
+
+        for (task, genome) in cnns {
+            let spec = task.spec();
+            let data = generate(&spec, Split::Train, 1);
+            let plan = genome.cnn_plan(&spec).expect("plan");
+            let estimate =
+                plan.train_nanos_per_sample() * (spec.n_train * genome.epochs) as f64 / 1e9;
+            let started = Instant::now();
+            let (_, stats) = train(&genome, &spec, &data, &limits).expect("train");
+            let seconds = started.elapsed().as_secs_f64();
+
+            eprintln!(
+                "{}: {} epochs, estimate {estimate:.1} s, trained in {seconds:.1} s: {}",
+                task.name(),
+                genome.epochs,
+                genome.summary()
+            );
+
+            assert!(estimate <= budget);
+            assert!(!stats.stopped_by_budget && stats.epochs_done == genome.epochs);
+            assert!(seconds < budget, "{seconds} s");
+        }
+    }
+
     #[test]
     fn every_optimizer_reduces_the_loss() {
         let spec = TaskKind::BarsAndStripes.spec();

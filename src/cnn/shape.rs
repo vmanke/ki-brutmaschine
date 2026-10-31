@@ -886,29 +886,30 @@ mod tests {
         let plan = valid_plan(&g, TaskKind::Shapes);
 
         // Every convolution has batch norm, so no bias; each batch norm has 2 values per
-        // channel. Stem 1 -> 8 and stage 1 8 -> 8 at 16x16; stage 2 8 -> 16 at 16x16, then
-        // max pooling to 8x8; stage 3 16 -> 16 at 8x8, then max pooling to 4x4.
+        // channel. Stem 1 -> 8 at 16x16, then max pooling to 8x8; stage 1 8 -> 8 at 8x8;
+        // stage 2 8 -> 16 at 8x8, then max pooling to 4x4; stage 3 16 -> 16 at 4x4, then
+        // max pooling to 2x2. Flatten: 16 * 2 * 2 = 64 values.
         let stem = 3 * 3 * 8;
         let stage1 = 3 * 3 * 8 * 8;
         let stage2 = 3 * 3 * 8 * 16;
         let stage3 = 3 * 3 * 16 * 16;
         let norms = 2 * (8 + 8 + 16 + 16);
-        let out = 256 * 4 + 4;
+        let out = 64 * 4 + 4;
 
         assert_eq!(
             (stem, stage1, stage2, stage3, norms, out),
-            (72, 576, 1152, 2304, 96, 1028)
+            (72, 576, 1152, 2304, 96, 260)
         );
-        assert_eq!(plan.params, 5228);
+        assert_eq!(plan.params, 4460);
         assert_eq!(plan.params, stem + stage1 + stage2 + stage3 + norms + out);
 
         let forward = 2 * (stem + 2 * 8) * 256
-            + 2 * (stage1 + 2 * 8) * 256
-            + 2 * (stage2 + 2 * 16) * 256
-            + 2 * (stage3 + 2 * 16) * 64
+            + 2 * (stage1 + 2 * 8) * 64
+            + 2 * (stage2 + 2 * 16) * 64
+            + 2 * (stage3 + 2 * 16) * 16
             + 2 * out;
 
-        assert_eq!(forward, 1_255_432);
+        assert_eq!(forward, 347_656);
         assert_eq!(plan.forward_flops, forward as u64);
         assert_eq!(
             plan.steps[1].layer,
@@ -921,7 +922,7 @@ mod tests {
             plan.steps.last().map(|s| s.output.clone()),
             Some(Shape::vector(4))
         );
-        assert_eq!(g.train_flops(&spec), 3 * 1_255_432 * 1000 * 5);
+        assert_eq!(g.train_flops(&spec), 3 * 347_656 * 1000 * 5);
     }
 
     #[test]
