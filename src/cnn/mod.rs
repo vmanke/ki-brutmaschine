@@ -13,9 +13,11 @@
 //!
 //! `net` builds the network of a plan from `ops`, `train` trains it in the training loop
 //! of the MLP (`crate::train`), and `model` holds a trained CNN and its file. The
-//! `crate::model::Model` of a CNN is a `model::CnnModel`.
+//! `crate::model::Model` of a CNN is a `model::CnnModel`. `families` names the 16 families
+//! of the spec and holds a scaled-down base model of each.
 #![forbid(unsafe_code)]
 
+pub mod families;
 pub mod genome;
 pub mod model;
 pub(crate) mod net;

@@ -360,6 +360,7 @@ mod tests {
             n_in: 2,
             input: crate::task::InputShape::Flat,
             n_out: 2,
+            output: crate::task::OutputShape::Flat,
             objective: Objective::Classification { classes: 2 },
             n_train: 4,
             n_valid: 4,

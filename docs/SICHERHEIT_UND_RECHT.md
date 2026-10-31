@@ -182,7 +182,7 @@ belegt sehr viel Speicher oder führt Code aus.
 - Eine Datei mit `"kind": "cnn"` ist ein Faltungsnetz. Sie darf keine
   unbekannten Felder enthalten, auch nicht im Genom. Der Leser bricht ab,
   sobald die Listen der trainierten Werte zusammen mehr als 2 000 000 Zahlen
-  halten oder die Listen der laufenden Statistiken mehr als 6656
+  halten oder die Listen der laufenden Statistiken mehr als 86 528
   (`MAX_RUNNING_VALUES`), denn mehr Werte hat kein gültiges Modell. Bevor
   `brut-eval` einen Tensor anlegt, prüft es die Architektur: die Formprüfung
   des Genoms gegen die Aufgabe, die Parameterzahl (höchstens 2 000 000), Tiefe

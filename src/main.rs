@@ -16,7 +16,7 @@
 //!   brut help
 //!
 //! Tasks: spirals, checkerboard, parity, sine, shapes, bars-and-stripes, blob-count,
-//! mirror-symmetry, motif-1d (`TaskKind::from_name`).
+//! mirror-symmetry, motif-1d, mirror-grid (`TaskKind::from_name`).
 //!
 //! `run`, `status`, `lineage`, `verify` and `approve` work on both run kinds: a directory
 //! with `meta.json` is a learner run, one with `config.json` an MLP run.
@@ -62,7 +62,8 @@ usage:
   brut help
 
 tasks: spirals, checkerboard, parity, sine (flat inputs); shapes, bars-and-stripes,
-blob-count, mirror-symmetry (16x16 images); motif-1d (one-hot sequences of 64)
+blob-count, mirror-symmetry (16x16 images); motif-1d (one-hot sequences of 64);
+mirror-grid (8x8 grids to their mirror images)
 
 learner mode: --secret defaults to $HOME/.brut/learner/hidden.env (create it once with
 brut learner secret-init); run, status, lineage, verify and approve detect the run kind
