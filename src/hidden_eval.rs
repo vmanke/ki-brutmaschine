@@ -85,7 +85,8 @@ pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
 /// Most seconds that scoring one CNN may take by the time model of `cnn::shape`
 /// (`Plan::eval_nanos` for the hidden split, in the chunks of `score::evaluate`): half of
 /// `EVAL_TIMEOUT_SECONDS`. Every file of the measurements of ticket 02 scored in less than
-/// 0.92 of its estimate, at one thread.
+/// 0.91 of its estimate, at one thread. Two files just below this cap scored in 17 s and
+/// 42 s (`files_just_below_the_time_cap_score_within_the_timeout`).
 pub const MAX_EVAL_SECONDS: f64 = 60.0;
 
 /// How long the orchestrator waits for one `brut-eval` answer before it stops the process.
@@ -1297,10 +1298,18 @@ mod tests {
 
             plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9
         };
+        // The layout that `check_cnn` admits with the largest estimate.
+        let admitted = |genome: &Genome| {
+            let plan = genome.cnn_plan(&spec).expect("plan");
+
+            plan.params <= MAX_EVAL_PARAMS
+                && plan.forward_flops * spec.n_hidden as u64 <= MAX_EVAL_FLOPS
+                && estimate(genome) <= MAX_EVAL_SECONDS
+        };
         let closest = |layouts: Vec<Genome>| {
             layouts
                 .into_iter()
-                .filter(|genome| estimate(genome) <= MAX_EVAL_SECONDS)
+                .filter(admitted)
                 .max_by(|a, b| estimate(a).total_cmp(&estimate(b)))
                 .expect("a layout below the cap")
         };

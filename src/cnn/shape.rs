@@ -39,10 +39,10 @@
 //! cannot keep the training of a CNN within `max_candidate_seconds`; when the clock stops
 //! it, its result depends on the load of the machine. The time model therefore prices what
 //! the time goes into, the `Counts` of the plan, with the `TRAIN_NANOS_*` and `EVAL_NANOS_*`
-//! constants. They come from timing the training of 75 CNNs and the scoring of 73 on the
-//! machine that wrote this check, mostly at one thread and with the opt-level 2 of
-//! `cargo test`, and they hold a safety factor: every measured time stayed below 0.89 of
-//! the training estimate and 0.92 of the scoring estimate. More threads made most plans
+//! constants. They come from timing the training of 77 CNNs (134 runs, 102 of them at one
+//! thread) and the scoring of 81 (at one thread) on the machine that wrote this check, with
+//! the opt-level 2 of `cargo test`, and they hold a safety factor: every measured time
+//! stayed below 0.89 of the training estimate and 0.91 of the scoring estimate. More threads made most plans
 //! faster; grouped convolutions got up to 15 % slower at four threads, within that factor. `Genome::validate` holds a CNN's estimated training time to
 //! `max_train_flops` divided by `TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the default limits,
 //! and `brut-eval` holds the estimated time of scoring to `MAX_EVAL_SECONDS`. Another or a
