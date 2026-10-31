@@ -10,7 +10,8 @@
 //! The seeds then take the first allowed model (`adapt_seeds`).
 //!
 //! Tags `vllm:<served model name>` go to a vLLM server instead (module `vllm`), which
-//! decodes the parallel requests of a panel in one batch.
+//! decodes the parallel requests of a panel in one batch. The thinking model
+//! `vllm:qwen3.8-27b` files its reasoning beside each answer in the same record.
 //!
 //! Answers are shared across runs through a call cache (`SharedCache`): a request that any
 //! run on this machine already answered is taken from there, filed in this run's record
@@ -30,7 +31,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use backend_ollama::vllm::{self, VllmBackend};
-use backend_ollama::{DEFAULT_BASE, OllamaBackend, Recorded, TAG_PREFIX};
+use backend_ollama::{DEFAULT_BASE, Detailed, OllamaBackend, Recorded, TAG_PREFIX};
 use brutmaschine::backend::ModelBackend;
 
 struct Settings {
@@ -58,7 +59,7 @@ fn ollama(tag: &str) -> Option<Box<dyn ModelBackend>> {
 }
 
 /// `backend`, wrapped in `Recorded` when the run has a directory (I7).
-fn recorded<B: ModelBackend + 'static>(
+fn recorded<B: Detailed + 'static>(
     backend: brutmaschine::util::Result<B>,
     s: &Settings,
 ) -> Option<Box<dyn ModelBackend>> {

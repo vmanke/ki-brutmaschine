@@ -508,8 +508,9 @@ Zusatz: Für jeden Tag `ollama:<modell>` in der Erlaubnisliste baut es einen Bac
 Dieser spricht nur mit einer Loopback-Adresse, kennt eine eigene Modellliste, eine
 Zeitgrenze und eine Bytegrenze. Jeder Worker-Aufruf landet samt voller Antwort in
 `<out>/llm/worker-calls.jsonl`, und ein Fortsetzen spielt ihn ab, statt das Modell neu
-zu fragen (Vertrag I7). Zugelassen sind vorerst nur Modelle ohne Denkmodus
-(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`).
+zu fragen (Vertrag I7). Über Ollama sind nur Modelle ohne Denkmodus zugelassen
+(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`); das Denkmodell
+`qwen3.8-27b` läuft über vLLM (unten).
 
 ```sh
 ollama pull qwen2.5:7b
@@ -534,6 +535,52 @@ VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve Qwen/Qwen2.5-32B-Instruct --host 127.0.
 `VLLM_URL` (Vorgabe `http://127.0.0.1:8000`), `OLLAMA_URL` (Vorgabe `http://127.0.0.1:11434`) und `OLLAMA_TIMEOUT_SECS` (Vorgabe 300, für beide Server); `BRUT_CALL_CACHE` nennt den Antwort-Cache, den alle Läufe auf einem Rechner teilen (Vorgabe `~/.cache/brut/calls.jsonl`, `off` schaltet ihn ab). Eine Anfrage, die ein Lauf schon beantwortet bekam, geht nicht noch einmal ans Modell; der Lauf legt die Antwort mit `"cached": true` in seiner eigenen Aufzeichnung ab
 stellen den Server und die Zeitgrenze ein. Der Live-Test:
 `cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
+
+**Denkmodell `vllm:qwen3.8-27b`.** Als einziges Modell mit Denkmodus steht Qwen3.8-27B
+auf der Erlaubnisliste von `vllm:`. Der Server muss es mit dem Reasoning-Parser
+anbieten, damit Denktext und sichtbare Antwort getrennt zurückkommen:
+
+```sh
+vllm serve Qwen/Qwen3.8-27B --host 127.0.0.1 --port 8000 --served-model-name qwen3.8-27b \
+  --reasoning-parser qwen3 --max-model-len 32768 --limit-mm-per-prompt '{"image": 0, "video": 0}'
+# in config.json: "models": [{"tag": "vllm:qwen3.8-27b", "cost_per_call": 0.002}]
+```
+
+Der Worker-Trait `think_tokens` wählt den Denkmodus nach Vertrag I5. Die Schwellen stehen
+nur im Adapter (`backend-ollama/src/vllm.rs`, `EFFORT_LOW_MAX` und `EFFORT_MEDIUM_MAX`):
+
+| think_tokens | Denkmodus | reasoning_effort | max_tokens an den Server |
+|---|---|---|---|
+| 0 | aus (`enable_thinking: false`) | keiner | answer_tokens |
+| 1 bis 2048 | an | low | answer_tokens + think_tokens |
+| 2049 bis 3072 | an | medium | answer_tokens + think_tokens |
+| 3073 bis 4096 | an | xhigh | answer_tokens + think_tokens |
+
+Die Schwellen beruhen auf einer Probe, welche wir am 31. Oktober 2026 ohne Kappung
+gemessen haben: sechs Aufrufe auf einem Rätsel mit 3x5-Gitter, zwei Worker-Prompts, je
+Stufe zwei Aufrufe. Das Modell dachte bei `low` 1921 und 2457 Token, bei `medium` 2079
+und 3391, bei `xhigh` 2901 und 4990. Unter etwa 1900 Token passt somit keine Stufe,
+weshalb `low` als kürzeste alle Budgets bis 2048 erhält. Darüber erhält jede Stufe das
+Band, dessen Obergrenze sie in einem der zwei Aufrufe einhielt. Auf den Zweierpotenzen,
+welche ThinkUp und ThinkDown durchlaufen, springt der Schritt von 2048 auf 4096 also von
+`low` direkt auf `xhigh`; `medium` erreichen nur Budgets dazwischen. Sechs Aufrufe sind
+ein erster Ansatz und keine Messung; wir passen die Schwellen an, sobald die ersten Läufe
+vorliegen. In derselben Probe schrieb das Modell bei `low` und `medium` 348 bis 613 Token
+sichtbare Antwort, bei `xhigh` 35 Token, was bei `answer_tokens` 512 zählt.
+
+`max_tokens` begrenzt nur die Summe. Jeden Teil prüft der Adapter einzeln: Eine sichtbare
+Antwort über `answer_tokens`, ein Denkteil über `think_tokens` oder ein `finish_reason`
+`length` ergeben `StopReason::Length`, sodass der Lauf die Antwort nicht wertet. Die
+Tokenzahlen meldet vLLM 0.32 selbst (`usage.completion_tokens_details.reasoning_tokens`).
+Fehlen sie, schätzt der Adapter beide Teile nach Leerzeichen-Wörtern und vermerkt die
+Schätzung; sie zählt zu wenig, in der Probe 0.36 bis 0.48 Wörter je Token. Der Worker
+erhält nur die sichtbare Antwort. Denktext, beide Tokenzahlen, Stufe und den Vermerk
+`estimated` legt der Adapter im Feld `thinking` von `<out>/llm/worker-calls.jsonl` neben
+jeden Aufruf. Die Sampling-Parameter folgen der Modellkarte: mit Denken top_p 0.95 und
+top_k 20, ohne Denken top_p 0.8, top_k 20 und presence_penalty 1.5; die Temperatur kommt
+stets vom Worker. Für die Modelle `qwen2.5-*` bleibt die Anfrage Byte für Byte wie
+bisher. Der Live-Test:
+`cd backend-ollama && VLLM_THINK_LIVE=1 cargo test --release -- --ignored live_think --nocapture`.
 
 Die ersten drei Läufe auf einer H200 (`qwen2.5:7b` und `qwen2.5:32b`, 2704
 Worker-Aufrufe) fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
