@@ -463,6 +463,12 @@ backend-ollama/target/release/brut-breed-ollama --out runs/q1 --config config.js
 stellen den Server und die Zeitgrenze ein. Der Live-Test:
 `cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
 
+Die ersten drei Läufe auf einer H200 (`qwen2.5:7b` und `qwen2.5:32b`, 2704
+Worker-Aufrufe) fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
+zusammen. Kurz: Die Maschine läuft mit echten Modellen, ein Zuchtgewinn ist bei
+Panels von 12 bis 24 Rätseln nicht messbar, und Ollama arbeitet die parallel
+geschickten Anfragen nacheinander ab (0.35 s je Aufruf bei 7B, 1.7 s bei 32B).
+
 Mit `--llm-every K` ist jede K-te Generation eine LLM-Runde. Fehlt eine Antwort des
 Mutators, hält der Lauf an und endet mit Exit-Code 3. Die Anfragen liegen dann unter
 `runs/k1/llm/requests/`. Schreiben Sie (oder eine Claude-Sitzung) jede Antwort als
