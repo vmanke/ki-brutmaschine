@@ -54,6 +54,8 @@ search, and runs studied as universes.
 | Q61 | The joint pattern of a Stage is its Array pattern (German "Gruppencharakteristik der Stufe"), the antenna term for separate elements with their own phases. |
 | Q62 | Observations are both the judgments in a Stage's vote and peer judgments. |
 | Q63 | Family strengths come from the Task as its Domain states them, the same for every Worker on that Task; equal strengths are the control, learned strengths a later variant. |
+| Q64 | Souletics: a child's Soul is a copy of one parent's Soul or, after a crossover, a mix of both parents' phases; each phase moves by a small random angle; now and then the child gets an entirely new Soul, as the new colour in Hoppe's urn. Each part can be switched off for a control. |
+| Q65 | A parent passes on its Soul from birth, not the Soul as Observations changed it; experience passes only through Upbringing, so the three channels stay separable. |
 | Q66 | The glossary calls the third channel Souletics and defines it as soul inheritance; German reports keep the owner's word "Seeletik". |
 
 ## What the experiments may claim
@@ -74,8 +76,6 @@ record the ladder of claims the evidence can carry:
 ## Open
 
 - Q48: an operational definition of "soul" that yields a measurable prediction. For the model, Q57 answers it through the Character; for nature it stays open.
-- Souletics: how a child gets its Soul (Q64), and whether a parent passes on its Soul from birth or its Soul as changed by Observations (Q65).
-
 ## Tickets
 
 See `issues/`.

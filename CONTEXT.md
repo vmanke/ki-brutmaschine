@@ -239,7 +239,7 @@ What a child receives from its parents' lives besides genes and Soul. In imprint
 _Avoid_: training, education (alone)
 
 **Souletics**:
-Soul inheritance: the way a child gets its Soul, one of three channels of inheritance besides genes and Upbringing. German reports call it Seeletik.
+Soul inheritance: a child's Soul is a copy of one parent's Soul from birth, or a mix of both parents' Souls, with small random changes, and now and then an entirely new Soul. It is one of three channels of inheritance besides genes and Upbringing; experience passes only through Upbringing. German reports call it Seeletik.
 _Avoid_: soul genetics
 
 ### Records and control
