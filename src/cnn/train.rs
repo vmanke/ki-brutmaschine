@@ -243,6 +243,7 @@ mod tests {
     use crate::score;
     use crate::task::{Split, TaskKind, generate};
     use crate::train::{TrainStats, train, train_logged, train_with_stop};
+    use crate::util::sha256_hex;
 
     /// A plain 2-D CNN for a 1 x 16 x 16 image: two 3x3 convolutions of 8 and 16 channels,
     /// each followed by ReLU and 2x2 max pooling, then flatten and dense layers of 32 and
@@ -400,7 +401,21 @@ mod tests {
 
     #[test]
     fn a_plain_cnn_learns_the_motif() {
-        assert!(learns(TaskKind::Motif1d, &plain_1d()) > 0.65, "chance 0.5");
+        let cnn = learns(TaskKind::Motif1d, &plain_1d());
+
+        assert!(cnn > 0.65, "chance 0.5");
+
+        // An MLP with the same head and training genes on the flat sequence stays near
+        // chance, so the convolutions do the work: they find the motif at every place, a
+        // dense layer would have to learn each place on its own. On this machine the MLP
+        // reached 0.52 (review of ticket 02).
+        let mlp = Genome {
+            arch: crate::genome::Arch::Mlp,
+            ..plain_1d()
+        };
+        let mlp = learns(TaskKind::Motif1d, &mlp);
+
+        assert!(cnn > mlp + 0.15, "CNN {cnn}, MLP {mlp}");
     }
 
     /// `stats` without the wall-clock time, the one field that differs between runs.
@@ -426,13 +441,22 @@ mod tests {
         )
     }
 
-    #[test]
-    fn training_is_byte_equal_twice_and_in_pools_of_1_and_4_threads() {
-        // VGG-like with batch norm and max pooling, and a 1-D CNN with every norm and pool.
-        for (task, genome) in [
+    /// VGG-like with batch norm and max pooling, and a 1-D CNN with every norm and pool.
+    fn thread_test_genomes() -> [(TaskKind, Genome); 2] {
+        [
             (TaskKind::Shapes, genomes::vgg()),
             (TaskKind::Motif1d, normed_1d()),
-        ] {
+        ]
+    }
+
+    /// The training runs in rayon pools of 1 and 4 threads, as candidates do in a run.
+    ///
+    /// This does not change the threads of candle's matrix products: gemm takes their
+    /// number from `RAYON_NUM_THREADS` when a product starts, not from the pool around it.
+    /// `training_is_byte_equal_at_1_and_3_matrix_threads` varies that number.
+    #[test]
+    fn training_is_byte_equal_twice_and_in_rayon_pools_of_1_and_4_threads() {
+        for (task, genome) in thread_test_genomes() {
             let first = fingerprint(task, &genome);
             let second = fingerprint(task, &genome);
             let pool = |threads: usize| {
@@ -453,6 +477,203 @@ mod tests {
 
             untrained.learning_rate = crate::genome::LR_MIN;
             assert_ne!(first.1, fingerprint(task, &untrained).1, "{task:?}");
+        }
+    }
+
+    /// Prints the hash of each fingerprint of `thread_test_genomes`, one line each, for
+    /// `training_is_byte_equal_at_1_and_3_matrix_threads`, which runs it in child
+    /// processes. Alone it checks nothing, so it is ignored.
+    #[test]
+    #[ignore]
+    fn print_the_fingerprints_for_the_thread_test() {
+        for (task, genome) in thread_test_genomes() {
+            let (losses, file, stats) = fingerprint(task, &genome);
+            let text = format!("{losses:?} {file} {stats:?}");
+
+            println!("FINGERPRINT {task:?} {}", sha256_hex(text.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn training_is_byte_equal_at_1_and_3_matrix_threads() {
+        // candle splits a matrix product into `RAYON_NUM_THREADS` parts, read from the
+        // environment when the product starts (candle-core/src/utils.rs:403-422 and
+        // cpu_backend/mod.rs:1482-1487 at the pinned commit): 1 means no split at all. A
+        // test cannot change the environment of its own process, so this one runs the
+        // test above in child processes, with 1 and with 3 threads.
+        let run = |threads: &str| -> Vec<String> {
+            let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "cnn::train::tests::print_the_fingerprints_for_the_thread_test",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads",
+                    "1",
+                ])
+                .env("RAYON_NUM_THREADS", threads)
+                .output()
+                .expect("run the test binary");
+
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|line| line.starts_with("FINGERPRINT "))
+                .map(str::to_string)
+                .collect()
+        };
+        let one = run("1");
+
+        assert_eq!(one.len(), 2, "{one:?}");
+        assert_eq!(one, run("3"));
+    }
+
+    #[test]
+    fn every_tensor_gets_a_gradient_and_moves() {
+        for (task, genome) in thread_test_genomes() {
+            let spec = task.spec();
+            let data = head(&generate(&spec, Split::Train, 1), 64);
+            let crate::genome::Arch::Cnn(cnn) = &genome.arch else {
+                panic!("expected a CNN genome");
+            };
+            let mut learner = CnnLearner::new(&genome, cnn, &spec, &data).expect("learner");
+            let initial = learner.values.clone();
+            let rows: Vec<usize> = (0..32).collect();
+
+            learner.loss_and_grad(&rows).expect("loss");
+
+            // Every kernel, matrix, bias, scale and shift gets a gradient from one batch.
+            let grads = learner.grad_weights.iter().chain(&learner.grad_biases);
+
+            for (i, grad) in grads.enumerate() {
+                assert!(
+                    grad.iter().any(|&g| g != 0.0),
+                    "{task:?}: tensor {i} got no gradient"
+                );
+            }
+
+            for _ in 0..3 {
+                learner.loss_and_grad(&rows).expect("loss");
+                learner.update(genome.learning_rate, 0.0).expect("update");
+            }
+
+            // After three steps every tensor differs from its initial value, also inside
+            // candle: the network reads the same values back.
+            let now = learner.values.weights.iter().chain(&learner.values.biases);
+            let before = initial.weights.iter().chain(&initial.biases);
+
+            for (i, (now, before)) in now.zip(before).enumerate() {
+                assert_ne!(now, before, "{task:?}: tensor {i} did not move");
+            }
+
+            for (param, values) in learner.net.weights().iter().zip(&learner.values.weights) {
+                assert_eq!(&param.tensor().to_vec_f32().expect("values"), values);
+            }
+        }
+    }
+
+    /// A small CNN of smooth parts only, so that finite differences apply: batch norm,
+    /// group norm and layer norm, tanh, SiLU and GELU, average pooling, a strided and a
+    /// grouped dilated convolution, and a dense head with tanh.
+    fn smooth(dims: Dims) -> Genome {
+        let cnn = CnnGenome {
+            dims,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::AvgPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![
+                Stage {
+                    dilation: 2,
+                    groups: 2,
+                    norm: Norm::Group,
+                    ..genomes::plain(4, 3, CnnActivation::Silu)
+                },
+                Stage {
+                    stride: 2,
+                    down: Downsample::Conv,
+                    norm: Norm::Layer,
+                    ..genomes::plain(6, 3, CnnActivation::Gelu)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        genomes::genome(cnn, vec![5], Activation::Tanh)
+    }
+
+    #[test]
+    fn loss_and_grad_matches_finite_differences() {
+        // f32 throughout, so the step is large and the bound loose; the gradient check of
+        // `ops` runs every operation in f64 with a bound of 1e-6.
+        let step = 1e-2;
+
+        for (task, dims) in [(TaskKind::Shapes, Dims::TwoD), (TaskKind::Motif1d, Dims::OneD)] {
+            let spec = task.spec();
+            let data = head(&generate(&spec, Split::Train, 1), 16);
+            let genome = smooth(dims);
+            let crate::genome::Arch::Cnn(cnn) = &genome.arch else {
+                panic!("expected a CNN genome");
+            };
+            let mut learner = CnnLearner::new(&genome, cnn, &spec, &data).expect("learner");
+            let rows: Vec<usize> = (0..16).collect();
+
+            learner.loss_and_grad(&rows).expect("loss");
+
+            let analytic = (learner.grad_weights.clone(), learner.grad_biases.clone());
+            let mut checked = 0;
+
+            for (decay, lists) in [(true, &analytic.0), (false, &analytic.1)] {
+                for (t, grads) in lists.iter().enumerate() {
+                    for j in [0, grads.len() / 2, grads.len() - 1] {
+                        let mut loss_at = |delta: f32| {
+                            let list = if decay {
+                                &mut learner.values.weights[t]
+                            } else {
+                                &mut learner.values.biases[t]
+                            };
+
+                            list[j] += delta;
+                            learner
+                                .net
+                                .set(&learner.values.weights, &learner.values.biases)
+                                .expect("set");
+
+                            let loss = learner.loss_and_grad(&rows).expect("loss");
+                            let list = if decay {
+                                &mut learner.values.weights[t]
+                            } else {
+                                &mut learner.values.biases[t]
+                            };
+
+                            list[j] -= delta;
+
+                            loss as f64
+                        };
+                        let numeric = (loss_at(step) - loss_at(-step)) / (2.0 * step as f64);
+                        let analytic = grads[j] as f64;
+
+                        assert!(
+                            (numeric - analytic).abs() <= 2e-3 + 0.05 * analytic.abs(),
+                            "{task:?}: tensor {t} ({decay}) value {j}: analytic {analytic}, \
+                             numeric {numeric}"
+                        );
+
+                        checked += 1;
+                    }
+                }
+            }
+
+            assert!(checked >= 30, "{task:?}: {checked} values checked");
         }
     }
 

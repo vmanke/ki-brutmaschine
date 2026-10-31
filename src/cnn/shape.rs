@@ -39,11 +39,11 @@
 //! cannot keep the training of a CNN within `max_candidate_seconds`; when the clock stops
 //! it, its result depends on the load of the machine. The time model therefore prices what
 //! the time goes into, the `Counts` of the plan, with the `TRAIN_NANOS_*` and `EVAL_NANOS_*`
-//! constants. They come from timing 47 CNNs on the machine that wrote this check, at one
-//! thread and with the opt-level 2 of `cargo test`, and they hold a safety factor: every
-//! measured time stayed below 0.86 of the training estimate and 0.94 of the scoring
-//! estimate. More threads made most plans faster; grouped convolutions got up to 15 %
-//! slower at four threads. `Genome::validate` holds a CNN's estimated training time to
+//! constants. They come from timing the training of 75 CNNs and the scoring of 73 on the
+//! machine that wrote this check, mostly at one thread and with the opt-level 2 of
+//! `cargo test`, and they hold a safety factor: every measured time stayed below 0.89 of
+//! the training estimate and 0.92 of the scoring estimate. More threads made most plans
+//! faster; grouped convolutions got up to 15 % slower at four threads, within that factor. `Genome::validate` holds a CNN's estimated training time to
 //! `max_train_flops` divided by `TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the default limits,
 //! and `brut-eval` holds the estimated time of scoring to `MAX_EVAL_SECONDS`. Another or a
 //! busier machine can be slower than the model; then the clock can still stop a candidate.
@@ -299,7 +299,7 @@ pub const EVAL_NANOS_PER_FLOP: f64 = 0.035;
 pub const EVAL_NANOS_PER_TAP: f64 = 5.0;
 
 /// Scoring nanoseconds per value after a layer (`Counts::values`).
-pub const EVAL_NANOS_PER_VALUE: f64 = 8.5;
+pub const EVAL_NANOS_PER_VALUE: f64 = 10.0;
 
 /// Scoring nanoseconds per window cell of a pooling layer (`Counts::pool_taps`).
 pub const EVAL_NANOS_PER_POOL_TAP: f64 = 8.0;

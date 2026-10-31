@@ -1129,8 +1129,62 @@ mod tests {
         }
     }
 
+    /// The clean picture of each sample: its values rounded. The noise stays below 0.5.
+    fn clean_rows(data: &Dataset) -> Vec<Vec<u8>> {
+        data.x
+            .chunks_exact(data.n_in)
+            .map(|row| row.iter().map(|&v| v.round() as u8).collect())
+            .collect()
+    }
+
     #[test]
-    fn grid_splits_and_seeds_share_no_sample() {
+    fn clean_pictures_repeat_across_splits_only_in_the_small_tasks() {
+        for kind in GRID {
+            let spec = kind.spec();
+            let train: HashSet<Vec<u8>> = clean_rows(&generate(&spec, Split::Train, 3))
+                .into_iter()
+                .collect();
+            let valid = clean_rows(&generate(&spec, Split::Valid, 3));
+            let hidden = clean_rows(&generate(&spec, Split::Hidden, 3));
+            let in_train = |rows: &[Vec<u8>]| rows.iter().filter(|r| train.contains(*r)).count();
+            let share = in_train(&hidden) as f64 / hidden.len() as f64;
+            let distinct: HashSet<&Vec<u8>> = train.iter().chain(&valid).chain(&hidden).collect();
+
+            eprintln!(
+                "{}: {:.3} of the Hidden samples show a clean picture of Train, {} of the Valid \
+                 samples; {} distinct pictures in {} samples",
+                kind.name(),
+                share,
+                in_train(&valid),
+                distinct.len(),
+                spec.n_train + spec.n_valid + spec.n_hidden
+            );
+
+            // The bounds hold the documented shares (`TaskKind`) for this seed.
+            let (low, high) = match kind {
+                TaskKind::Shapes => (0.28, 0.38),
+                TaskKind::BarsAndStripes => (0.0, 0.02),
+                TaskKind::BlobCount => (0.03, 0.10),
+                _ => (0.0, 0.0),
+            };
+
+            assert!((low..=high).contains(&share), "{kind:?}: {share}");
+
+            // The large spaces repeat no picture at all, also within a split.
+            if high == 0.0 {
+                assert_eq!(
+                    distinct.len(),
+                    spec.n_train + spec.n_valid + spec.n_hidden,
+                    "{kind:?}"
+                );
+            }
+        }
+    }
+
+    /// The noisy values: fresh noise makes every sample new, even where the clean picture
+    /// repeats (see `clean_pictures_repeat_across_splits_only_in_the_small_tasks`).
+    #[test]
+    fn grid_splits_and_seeds_share_no_noisy_sample() {
         for kind in GRID {
             let spec = kind.spec();
             let mut seen: HashSet<Vec<u32>> = HashSet::new();

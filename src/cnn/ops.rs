@@ -1814,13 +1814,14 @@ mod tests {
     }
 
     /// Public functions of this file that are not differentiable operations.
-    const NOT_OPS: [&str; 13] = [
+    const NOT_OPS: [&str; 14] = [
         "from_f32",
         "normal",
         "dims",
         "to_vec_f32",
         "new",
         "tensor",
+        "value",
         "set",
         "get",
         "backward",
@@ -2356,6 +2357,26 @@ mod tests {
             used.set(&Tensor::from_f32(vec![1.0], &[1]).unwrap())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_value_records_no_graph() {
+        let param = Param::new(&Tensor::from_f32(vec![1.0, 2.0], &[2]).unwrap()).unwrap();
+        let square_sum = |x: Tensor| Tensor(x.0.sqr().unwrap().sum_all().unwrap());
+
+        // The same numbers, but the backward pass of a loss from `value` finds no param.
+        let traced = square_sum(param.tensor());
+        let cut = square_sum(param.value());
+
+        assert_eq!(traced.to_vec_f32().unwrap(), cut.to_vec_f32().unwrap());
+        assert!(backward(&traced).unwrap().get(&param).is_some());
+        assert!(backward(&cut).unwrap().get(&param).is_none());
+
+        // It shares the values: a later `set` shows in a new `value`.
+        param
+            .set(&Tensor::from_f32(vec![3.0, 4.0], &[2]).unwrap())
+            .unwrap();
+        assert_eq!(param.value().to_vec_f32().unwrap(), vec![3.0, 4.0]);
     }
 
     #[test]

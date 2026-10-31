@@ -624,7 +624,9 @@ mod tests {
     #[test]
     fn evaluation_uses_the_running_statistics_of_batch_norm() {
         let (mut model, spec) = vgg();
-        let rows = 3;
+
+        // A full chunk of `score::evaluate`: 512 rows.
+        let rows = 512;
         let x: Vec<f32> = (0..rows * spec.n_in)
             .map(|i| (i % 7) as f32 / 7.0)
             .collect();
@@ -634,15 +636,26 @@ mod tests {
                 .outputs(&x[..rows * spec.n_in], rows)
                 .expect("outputs")
         };
-        let three = outputs(&model, rows);
+        let chunk = outputs(&model, rows);
 
-        // Each row is scored on its own: the batch does not change its outputs.
-        assert_eq!(&three[..spec.n_out], &outputs(&model, 1)[..]);
+        // The same chunk gives the same bits again.
+        assert_eq!(chunk, outputs(&model, rows));
+
+        // A row alone gives its outputs in the chunk up to rounding. The other rows play no
+        // part, since a batch norm uses its running statistics here. But candle's matrix
+        // products may sum in another order for another number of rows, so the last bits
+        // may differ (`score::rows_per_chunk`).
+        for (alone, within) in outputs(&model, 1).iter().zip(&chunk) {
+            assert!(
+                (alone - within).abs() <= 1e-4 * alone.abs().max(1.0),
+                "{alone} {within}"
+            );
+        }
 
         // The running statistics are used: other ones give other outputs.
         model.batch_norm[0] = vec![0.5; model.batch_norm[0].len()];
         model.batch_norm[1] = vec![4.0; model.batch_norm[1].len()];
 
-        assert_ne!(three, outputs(&model, rows));
+        assert_ne!(chunk, outputs(&model, rows));
     }
 }

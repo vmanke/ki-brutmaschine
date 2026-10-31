@@ -85,7 +85,7 @@ pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
 /// Most seconds that scoring one CNN may take by the time model of `cnn::shape`
 /// (`Plan::eval_nanos` for the hidden split, in the chunks of `score::evaluate`): half of
 /// `EVAL_TIMEOUT_SECONDS`. Every file of the measurements of ticket 02 scored in less than
-/// 0.94 of its estimate, at one thread.
+/// 0.92 of its estimate, at one thread.
 pub const MAX_EVAL_SECONDS: f64 = 60.0;
 
 /// How long the orchestrator waits for one `brut-eval` answer before it stops the process.
