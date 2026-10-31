@@ -574,6 +574,49 @@ steht in `timings.jsonl`; diese Datei gehört nicht zum geprüften Protokoll.
 (Schritt 1, unten). `--verify` rechnet den Bericht eines fertigen Laufs ohne Modellaufruf
 aus dem Checkpoint nach, auch seinen Stoppgrund.
 
+### Kontrollarm Mehrheitsvotum bei gleichem Aufwand (`vote-control`)
+
+Ein Vorsprung des besten gezüchteten Finalisten mischt Zucht mit Rechenaufwand, da er
+oft mehr Worker-Aufrufe je Rätsel macht als die Startprogramme
+([docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md), „Nicht rechenmäßig
+abgeglichen“). Das Programm `vote-control` aus `backend-ollama` rechnet dafür den
+Kontrollarm mit gleich vielen Aufrufen: Self-Consistency nach Wang et al. (2022), also
+ein Startprogramm N-mal fragen und das häufigste Gitter nehmen, kostengleich wie in
+arXiv 2606.13003 (Vorabdruck).
+
+- **Startprogramm.** Vorgabe ist der Start-Finalist mit der besten Such-Fitness. Die
+  Wahl liest kein Ergebnis des Auswahl-Panels.
+- **N.** Die mittleren Worker-Aufrufe je Such-Rätsel des Champions (des gezüchteten
+  Finalisten mit der besten Such-Fitness), geteilt durch die des Startprogramms,
+  gerundet, mindestens 1. Bei einem Champion mit 3.18 Aufrufen je Rätsel ist N = 3.
+- **Panel.** Das Programm erzeugt das Auswahl-Panel genau wie die Arena neu und prüft
+  es gegen den Checkpoint und die erste Zeile des Protokolls.
+- **Stimmen.** Jede Stichprobe läuft mit eigenem Seed durch `run_cascade` des Kerns, also
+  mit denselben Prompts und demselben Parser wie im Lauf. Das häufigste Gitter gewinnt,
+  bei Gleichstand das zuerst gesehene. Bewertet wird exakt gegen die verdeckte
+  Testausgabe.
+
+```sh
+# Plan ansehen, ohne Modellaufruf (geht auch bei einem unfertigen Lauf)
+backend-ollama/target/release/vote-control --run runs/q1 --dry-run
+# Kontrollarm rechnen; Ergebnis auf stdout und in runs/q1/vote-control.json
+backend-ollama/target/release/vote-control --run runs/q1
+```
+
+Das Ergebnis nennt je Rätsel die Stimmen, ob das Mehrheitsgitter stimmt und ob
+irgendeine Stichprobe stimmte. Zum Vergleich stehen daneben die Antworten von Champion und
+Startprogramm aus der Auswahlphase des Laufs. Die Summen enthalten die diskordanten Paare
+gegen den Champion mit exaktem Vorzeichentest sowie Aufrufe und Tokens. `--samples N`
+setzt N fest, `--cascade ID` wählt ein anderes Archivmitglied, `--temperature T` setzt
+die Temperatur aller Worker (eine andere Kaskade mit eigener Id), `--puzzles K` rechnet
+als Rauchtest nur die ersten K Rätsel und schreibt keine Datei, `--jobs J` (Vorgabe 16)
+legt die gleichzeitigen Stichproben fest. Echte Modelle laufen über `Recorded` in
+`<run>/vote-control/worker-calls.jsonl`, getrennt vom Protokoll des Laufs. Eine
+Wiederholung spielt sie ab, und ein größeres N nutzt die Stichproben eines kleineren mit.
+Ein gescheiterter Aufruf zählt als Enthaltung, steht in `worker-errors.jsonl` daneben und
+setzt den Exit-Code 1; ein erneuter Aufruf holt ihn nach. Exit-Code 2 heißt falsche
+Bedienung, auch bei einem unfertigen Lauf.
+
 ## Universen, die erfinden (Schritt 1)
 
 Stand: gebaut; das gezählte Experiment ist gelaufen. Die sechs Entscheidungen unten wurden

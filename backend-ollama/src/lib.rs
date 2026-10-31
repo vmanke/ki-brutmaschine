@@ -14,10 +14,12 @@
 //! separate caps are built.
 //!
 //! The module `vllm` holds a second backend with the same guarantees for a batching
-//! server with an OpenAI-compatible API (vLLM).
+//! server with an OpenAI-compatible API (vLLM). The module `vote` holds the compute-equal
+//! majority-vote control of a finished run (binary `vote-control`).
 #![forbid(unsafe_code)]
 
 pub mod vllm;
+pub mod vote;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
