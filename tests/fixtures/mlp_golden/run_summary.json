@@ -1,0 +1,24 @@
+{
+  "generations_done": 2,
+  "candidates": 10,
+  "best_id": "9abf5123c80e8213",
+  "best_fitness": 0.5677758728759458,
+  "best_valid_primary": 0.59,
+  "flops_used": 21338400,
+  "wall_seconds": 0.0,
+  "stop_reason": "completed",
+  "hidden": [
+    {
+      "candidate_id": "9abf5123c80e8213",
+      "valid_primary": 0.59,
+      "hidden_primary": 0.56,
+      "quarantined": false
+    },
+    {
+      "candidate_id": "50e78f3e89935987",
+      "valid_primary": 0.5875,
+      "hidden_primary": 0.56,
+      "quarantined": false
+    }
+  ]
+}

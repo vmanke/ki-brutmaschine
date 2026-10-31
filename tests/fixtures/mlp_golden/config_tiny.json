@@ -1,0 +1,27 @@
+{
+  "task": "TwoSpirals",
+  "master_seed": 1,
+  "population_init": 4,
+  "generations": 2,
+  "children_per_generation": 3,
+  "crossover_rate": 0.3,
+  "limits": {
+    "max_hidden_layers": 2,
+    "max_width": 12,
+    "max_params": 20000,
+    "max_epochs": 20,
+    "max_train_flops": 20000000000,
+    "max_candidate_seconds": 30.0,
+    "max_total_seconds": 300.0,
+    "max_total_flops": 2000000000000
+  },
+  "score": {
+    "param_penalty": 0.005,
+    "flop_penalty": 0.002
+  },
+  "hidden_eval_top_k": 2,
+  "hidden_gap_threshold": 0.05,
+  "hidden_query_budget": 30,
+  "hidden_score_step": 0.01,
+  "threads": 0
+}

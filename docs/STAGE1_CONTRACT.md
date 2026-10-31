@@ -32,6 +32,7 @@ time, GPU code, changes to the existing MLP mode's behaviour.
 
 - I1. **No new dependencies.** `[dependencies]` in `Cargo.toml` stays exactly
   `hex, rand, rand_chacha, rayon, serde, serde_json, sha2` (a test enforces this).
+  Amended by ADR 0007 (errata E15): `candle-core` and `candle-nn` from commit 9515d410 only.
 - I2. **No unsafe code.** Every new `.rs` file starts with `#![forbid(unsafe_code)]`.
 - I3. **No I/O in `src/learner/`.** Files under `src/learner/` never mention `std::fs`,
   `std::net`, `std::process`, `File::`, `Command`, `TcpStream`, `env::var`, `include_bytes`,
@@ -2108,7 +2109,7 @@ Integration tests:
 | T-E2E-9 | tests/learner_e2e.rs | ARC check on a 5-task fixture set (in `tests/fixtures/arc/`, hand-made) end-to-end with ledger entries |
 | T-SEC-1 | tests/learner_security.rs | S1 grep test (forbidden identifiers in orchestrator files) |
 | T-SEC-2 | tests/learner_security.rs | S2/I3 grep test over `src/learner/**` + forbid attribute present |
-| T-SEC-3 | tests/learner_security.rs | Cargo.toml `[dependencies]` keys == the seven allowed |
+| T-SEC-3 | tests/learner_security.rs | Cargo.toml `[dependencies]` keys == the seven allowed (since ADR 0007, errata E15: also `candle-core` and `candle-nn` from commit 9515d410 only) |
 | T-SEC-4 | tests/learner_security.rs | brut-eval with a 2 MiB request fails without charging |
 | T-BENCH-1 | tests/bench.rs | `#[ignore]` interpreter throughput report (GFLOP/s, tasks/s at F = 8, 16, 32) |
 | existing | tests/e2e.rs | all existing tests unchanged; `orchestrator_never_touches_the_secret` extended to the new orchestrator files and identifiers |
@@ -2119,7 +2120,7 @@ Integration tests:
 
 | ID | Criterion |
 |---|---|
-| AC-1 | `cargo test` passes (all old and new non-ignored tests); `cargo clippy --all-targets -- -D warnings` clean; `cargo audit` 0 vulnerabilities; `[dependencies]` unchanged. |
+| AC-1 | `cargo test` passes (all old and new non-ignored tests); `cargo clippy --all-targets -- -D warnings` clean; `cargo audit` 0 vulnerabilities; `[dependencies]` unchanged (since ADR 0007, errata E15: except `candle-core` and `candle-nn` from commit 9515d410). |
 | AC-2 | Interpreter: nn2-sgd at F = 16 runs at ≥ 2.5 GFLOP/s counted per thread and ≥ 3 000 full tasks (384 steps + 3 × 64 predictions) per second on 4 threads. |
 | AC-3 | E0 smoke run (`--flops 1e11`, defaults otherwise) finishes in ≤ 5 min wall, evaluates ≥ 10 000 children, and writes report.json. |
 | AC-4 | Determinism: T-E2E-2 and T-E2E-3 pass. |

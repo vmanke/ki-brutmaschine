@@ -655,10 +655,19 @@ fn activation_backward(act: Activation, z: &[f32], a: &[f32], d: &mut [f32]) {
 
 impl OptimizerState {
     pub fn new(kind: Optimizer, model: &Mlp) -> OptimizerState {
-        let zeros_w =
-            || -> Vec<Vec<f32>> { model.weights.iter().map(|w| vec![0.0; w.len()]).collect() };
-        let zeros_b =
-            || -> Vec<Vec<f32>> { model.biases.iter().map(|b| vec![0.0; b.len()]).collect() };
+        OptimizerState::for_lists(kind, &model.weights, &model.biases)
+    }
+
+    /// The state for two lists of values: `weights`, which get weight decay, and `biases`,
+    /// which do not. A CNN keeps its values in two such lists, so it trains with the
+    /// formulas of the MLP.
+    pub(crate) fn for_lists(
+        kind: Optimizer,
+        weights: &[Vec<f32>],
+        biases: &[Vec<f32>],
+    ) -> OptimizerState {
+        let zeros_w = || -> Vec<Vec<f32>> { weights.iter().map(|w| vec![0.0; w.len()]).collect() };
+        let zeros_b = || -> Vec<Vec<f32>> { biases.iter().map(|b| vec![0.0; b.len()]).collect() };
 
         let (m_w, m_b) = match kind {
             Optimizer::Sgd => (Vec::new(), Vec::new()),
@@ -683,11 +692,32 @@ impl OptimizerState {
     /// One update. Applies decoupled L2 weight decay `l2` to weights only.
     /// SGD: w -= lr * g. Momentum: beta 0.9. Adam: beta1 0.9, beta2 0.999, eps 1e-8, bias-corrected.
     pub fn step(&mut self, model: &mut Mlp, grads: &Gradients, lr: f32, l2: f32) {
+        self.step_lists(
+            &mut model.weights,
+            &mut model.biases,
+            &grads.weights,
+            &grads.biases,
+            lr,
+            l2,
+        );
+    }
+
+    /// `step` on two lists of values (see `for_lists`), with their gradients in the same
+    /// order and shapes. Only `weights` get the decay.
+    pub(crate) fn step_lists(
+        &mut self,
+        weights: &mut [Vec<f32>],
+        biases: &mut [Vec<f32>],
+        grad_weights: &[Vec<f32>],
+        grad_biases: &[Vec<f32>],
+        lr: f32,
+        l2: f32,
+    ) {
         self.step = self.step.saturating_add(1);
 
         let decay = 1.0 - lr * l2;
 
-        for w in model.weights.iter_mut() {
+        for w in weights.iter_mut() {
             for wi in w.iter_mut() {
                 *wi *= decay;
             }
@@ -695,12 +725,12 @@ impl OptimizerState {
 
         match self.kind {
             Optimizer::Sgd => {
-                sgd(&mut model.weights, &grads.weights, lr);
-                sgd(&mut model.biases, &grads.biases, lr);
+                sgd(weights, grad_weights, lr);
+                sgd(biases, grad_biases, lr);
             }
             Optimizer::Momentum => {
-                momentum(&mut model.weights, &grads.weights, &mut self.m_w, lr);
-                momentum(&mut model.biases, &grads.biases, &mut self.m_b, lr);
+                momentum(weights, grad_weights, &mut self.m_w, lr);
+                momentum(biases, grad_biases, &mut self.m_b, lr);
             }
             Optimizer::Adam => {
                 let t = self.step as f64;
@@ -708,20 +738,8 @@ impl OptimizerState {
                 let bc2 = (1.0 - 0.999f64.powf(t)) as f32;
                 let consts = AdamConsts { lr, bc1, bc2 };
 
-                adam(
-                    &mut model.weights,
-                    &grads.weights,
-                    &mut self.m_w,
-                    &mut self.v_w,
-                    consts,
-                );
-                adam(
-                    &mut model.biases,
-                    &grads.biases,
-                    &mut self.m_b,
-                    &mut self.v_b,
-                    consts,
-                );
+                adam(weights, grad_weights, &mut self.m_w, &mut self.v_w, consts);
+                adam(biases, grad_biases, &mut self.m_b, &mut self.v_b, consts);
             }
         }
     }

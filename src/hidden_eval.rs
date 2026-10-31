@@ -18,7 +18,9 @@
 //! Production needs a separate user, container or machine.
 //!
 //! `brut-eval` accepts three request kinds (`AnyEvalRequest`): legacy MLP requests (no "kind"
-//! key, unchanged), learner requests and ARC requests (see `learner_hidden`).
+//! key, unchanged), learner requests and ARC requests (see `learner_hidden`). The model file
+//! of a legacy request holds an MLP or a CNN (`model::Model`). A CNN file is checked against
+//! the task and the caps of this module before any tensor is built (`check_cnn`).
 #![forbid(unsafe_code)]
 
 use std::io::{Read, Write};
@@ -29,10 +31,12 @@ use std::time::{Duration, Instant};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::cnn::model::CnnModel;
 use crate::config::{HARD_MAX_HIDDEN_LAYERS, HARD_MAX_PARAMS, HARD_MAX_WIDTH};
+use crate::model::Model;
 use crate::nn::Mlp;
 use crate::score;
-use crate::task::{Split, TaskKind, generate};
+use crate::task::{Split, TaskKind, TaskSpec, generate};
 use crate::util::{BrutError, Result, parse_env_file, write_atomic};
 
 /// Env key in the secret file that holds the hidden seed (u64, decimal).
@@ -67,6 +71,25 @@ pub const MAX_MODEL_BYTES: u64 = 64 * 1024 * 1024;
 /// Largest model the evaluator scores (parameters).
 pub const MAX_EVAL_PARAMS: usize = HARD_MAX_PARAMS;
 
+/// Most forward FLOPs the evaluator spends on one CNN: its forward FLOPs per sample
+/// (`cnn::shape`) times the hidden split. A CNN reuses each weight at every position, so
+/// its parameter count does not bound its cost. A CNN within the default limits needs less
+/// than 3 % of it.
+///
+/// The count alone does not bound the time. A plan of grouped or narrow convolutions with
+/// norms and activations spends most of its time copying values and calling candle, not
+/// multiplying: 200 rows of a file of 9.2e10 FLOPs took 17.9 s at one thread, so all 2000
+/// would take about 179 s (ticket 02). So `MAX_EVAL_SECONDS` caps the estimated time as
+/// well, and that cap binds for such plans.
+pub const MAX_EVAL_FLOPS: u64 = 100_000_000_000;
+
+/// Most seconds that scoring one CNN may take by the time model of `cnn::shape`
+/// (`Plan::eval_nanos` for the hidden split, in the chunks of `score::evaluate`): half of
+/// `EVAL_TIMEOUT_SECONDS`. Every file of the measurements of ticket 02 scored in less than
+/// 0.91 of its estimate, at one thread. Two files just below this cap scored in 17 s and
+/// 42 s (`files_just_below_the_time_cap_score_within_the_timeout`).
+pub const MAX_EVAL_SECONDS: f64 = 60.0;
+
 /// How long the orchestrator waits for one `brut-eval` answer before it stops the process.
 pub const EVAL_TIMEOUT_SECONDS: f64 = 120.0;
 
@@ -79,7 +102,8 @@ const EVAL_POLL: Duration = Duration::from_millis(10);
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvalRequest {
     pub candidate_id: String,
-    /// Path to the model JSON (serialized `nn::Mlp`).
+    /// Path to the model file (`model::Model`): the JSON of an `nn::Mlp`, or of a
+    /// `cnn::model::CnnModel`.
     pub model_path: PathBuf,
     pub task: TaskKind,
 }
@@ -294,11 +318,16 @@ impl HiddenEvaluator {
         let model = load_model(&path)?;
         let spec = req.task.spec();
 
-        if model.n_in() != spec.n_in || model.n_out() != spec.n_out {
-            return Err(BrutError::Invalid(format!(
-                "model sizes {:?} do not match task {:?}",
-                model.sizes, req.task
-            )));
+        match &model {
+            Model::Mlp(mlp) => {
+                if mlp.n_in() != spec.n_in || mlp.n_out() != spec.n_out {
+                    return Err(BrutError::Invalid(format!(
+                        "model sizes {:?} do not match task {:?}",
+                        mlp.sizes, req.task
+                    )));
+                }
+            }
+            Model::Cnn(cnn) => check_cnn(cnn, &spec)?,
         }
 
         let used = self.charge()?;
@@ -371,7 +400,12 @@ impl HiddenEvaluator {
 /// Devices, FIFOs and directories are refused before they are opened (opening a FIFO could
 /// block, and /dev/zero reports length 0). The read itself stops after `MAX_MODEL_BYTES`,
 /// so a file that grows after the size check cannot exhaust memory either.
-fn load_model(path: &Path) -> Result<Mlp> {
+///
+/// A CNN file (`"kind":"cnn"`) is parsed with unknown fields refused, at most
+/// `HARD_MAX_PARAMS` trained values and at most `MAX_RUNNING_VALUES` running statistics
+/// (`cnn::model`). Its dense head gets the caps of an MLP here; its shapes are checked
+/// against the task by `check_cnn`.
+fn load_model(path: &Path) -> Result<Model> {
     let not_regular = || {
         BrutError::Invalid(format!(
             "model path {} is not a regular file",
@@ -400,11 +434,15 @@ fn load_model(path: &Path) -> Result<Mlp> {
 
     let bytes = read_limited_bytes(file, MAX_MODEL_BYTES)?;
 
-    // A generic message: the parser's own error would quote strings from the file.
-    let model: Mlp = serde_json::from_slice(&bytes).map_err(|_| {
-        BrutError::Invalid("model file is not a valid model (JSON of nn::Mlp)".into())
-    })?;
+    // Generic messages: the parser's own error would quote strings from the file.
+    match Model::from_json(&bytes)? {
+        Model::Mlp(mlp) => check_mlp(&mlp).map(|()| Model::Mlp(mlp)),
+        Model::Cnn(cnn) => check_cnn_head(&cnn).map(|()| Model::Cnn(cnn)),
+    }
+}
 
+/// The checks of an MLP file: shape, depth, width, parameter cap and finite weights.
+fn check_mlp(model: &Mlp) -> Result<()> {
     model.check_shape()?;
 
     // Depth and width bound the activation memory and the run time of scoring;
@@ -433,7 +471,64 @@ fn load_model(path: &Path) -> Result<Mlp> {
         return Err(BrutError::Invalid("model has non-finite weights".into()));
     }
 
-    Ok(model)
+    Ok(())
+}
+
+/// The caps of an MLP for the dense head of a CNN file: depth, width and parameters.
+fn check_cnn_head(model: &CnnModel) -> Result<()> {
+    if model.hidden.len() > HARD_MAX_HIDDEN_LAYERS {
+        return Err(BrutError::Invalid(format!(
+            "model has {} hidden layers, max {HARD_MAX_HIDDEN_LAYERS}",
+            model.hidden.len()
+        )));
+    }
+
+    if model.hidden.iter().any(|&w| w > HARD_MAX_WIDTH) {
+        return Err(BrutError::Invalid(format!(
+            "model has a layer wider than {HARD_MAX_WIDTH}"
+        )));
+    }
+
+    if model.param_count() > MAX_EVAL_PARAMS {
+        return Err(BrutError::Invalid(format!(
+            "model has more than {MAX_EVAL_PARAMS} parameters"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Check a CNN file against the task before it is scored: the shape check of its genome,
+/// the parameter cap, `MAX_EVAL_FLOPS` and `MAX_EVAL_SECONDS` for its architecture, then
+/// every value against its tensor (`CnnModel::check_values`). This builds no tensor and
+/// touches no hidden data.
+fn check_cnn(model: &CnnModel, spec: &TaskSpec) -> Result<()> {
+    let plan = model.plan(spec)?;
+
+    if plan.params > MAX_EVAL_PARAMS {
+        return Err(BrutError::Invalid(format!(
+            "model has more than {MAX_EVAL_PARAMS} parameters"
+        )));
+    }
+
+    let flops = plan.forward_flops.saturating_mul(spec.n_hidden as u64);
+
+    if flops > MAX_EVAL_FLOPS {
+        return Err(BrutError::Invalid(format!(
+            "scoring the model would cost {flops} FLOPs, max {MAX_EVAL_FLOPS}"
+        )));
+    }
+
+    let seconds = plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9;
+
+    if seconds > MAX_EVAL_SECONDS {
+        return Err(BrutError::Invalid(format!(
+            "scoring the model would take about {seconds:.0} s by the time model, max \
+             {MAX_EVAL_SECONDS} s"
+        )));
+    }
+
+    model.check_values(&plan)
 }
 
 #[cfg(unix)]
@@ -973,6 +1068,298 @@ mod tests {
         let mut ev = HiddenEvaluator::open(&secret, 2, 0.01).expect("open");
 
         assert!(matches!(ev.evaluate(&req(&good)), Err(BrutError::Eval(_))));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cnn_files_are_scored_and_bad_ones_cost_no_query() {
+        use crate::cnn::genome::{
+            Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
+        };
+
+        let (dir, secret, models) = layout("cnn");
+        let spec = TaskKind::Shapes.spec();
+        let good =
+            crate::cnn::model::testing::untrained(&crate::cnn::genome::testing::vgg(), &spec, 1);
+        let good_path = models.join("good.json");
+
+        create_secret(&secret).expect("secret");
+        std::fs::write(
+            &good_path,
+            serde_json::to_vec(&Model::Cnn(good.clone())).expect("json"),
+        )
+        .expect("write");
+
+        let req = |path: &Path| EvalRequest {
+            candidate_id: "cnn".into(),
+            model_path: path.to_path_buf(),
+            task: TaskKind::Shapes,
+        };
+        let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
+        let resp = ev.evaluate(&req(&good_path)).expect("a valid CNN file");
+
+        assert!((0.0..=1.0).contains(&resp.hidden_primary));
+        assert_eq!(resp.queries_used, 1);
+
+        // Architectures without trained values: they must be refused before the values.
+        let wide = |width: usize, kernel: usize, stages: usize| {
+            let stage = Stage {
+                block: Block::Plain,
+                width,
+                kernel,
+                stride: 1,
+                down: Downsample::Conv,
+                dilation: 1,
+                groups: 1,
+                se: false,
+                residual: false,
+                norm: Norm::None,
+                activation: CnnActivation::Relu,
+            };
+            let arch = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width: 64,
+                    kernel: 3,
+                    stride: 1,
+                    down: Downsample::Conv,
+                    norm: Norm::None,
+                    activation: CnnActivation::Relu,
+                },
+                stages: vec![stage; stages],
+                head: Head::GlobalAvgPool,
+            };
+
+            CnnModel::new(arch, Vec::new(), Activation::Relu, Vec::new(), Vec::new())
+        };
+        // The file of the review of ticket 02 that took 145 s to score (release build): 12
+        // depthwise 5x5 convolutions of 256 channels with layer norm and GELU. It passes
+        // the parameter and FLOP caps (9.2e10 FLOPs); the time model refuses it.
+        let depthwise = {
+            let stage = Stage {
+                block: Block::Plain,
+                width: 256,
+                kernel: 5,
+                stride: 1,
+                down: Downsample::Conv,
+                dilation: 1,
+                groups: 256,
+                se: false,
+                residual: false,
+                norm: Norm::Layer,
+                activation: CnnActivation::Gelu,
+            };
+            let arch = CnnGenome {
+                dims: Dims::TwoD,
+                stem: Stem {
+                    width: 256,
+                    kernel: 5,
+                    stride: 1,
+                    down: Downsample::Conv,
+                    norm: Norm::Layer,
+                    activation: CnnActivation::Gelu,
+                },
+                stages: vec![stage; 12],
+                head: Head::GlobalAvgPool,
+            };
+
+            CnnModel::new(arch, Vec::new(), Activation::Relu, Vec::new(), Vec::new())
+        };
+        let depthwise_plan = depthwise.plan(&spec).expect("plan");
+
+        assert!(depthwise_plan.params <= MAX_EVAL_PARAMS);
+        assert!(depthwise_plan.forward_flops * spec.n_hidden as u64 <= MAX_EVAL_FLOPS);
+
+        let text = |model: &CnnModel| serde_json::to_string(model).expect("json");
+        let good_text = text(&good);
+        let mut short = good.clone();
+
+        short.params[0].pop();
+
+        let mut one_d = good.clone();
+
+        one_d.arch.dims = Dims::OneD;
+
+        let mut deep = good.clone();
+
+        deep.hidden = vec![1; HARD_MAX_HIDDEN_LAYERS + 1];
+
+        let over_cap = format!("[{}]", vec!["0"; HARD_MAX_PARAMS + 1].join(","));
+        let bad: Vec<(&str, String, &str)> = vec![
+            (
+                "only the kind",
+                "{\"kind\":\"cnn\"}".into(),
+                "not a valid CNN model",
+            ),
+            (
+                "an unknown field",
+                good_text.replacen("\"hidden\":", "\"extra\":0,\"hidden\":", 1),
+                "not a valid CNN model",
+            ),
+            (
+                "an unknown kind",
+                good_text.replacen("\"cnn\"", "\"rnn\"", 1),
+                "not a valid model",
+            ),
+            (
+                "too many values",
+                good_text.replacen(
+                    "\"batch_norm\":[",
+                    &format!("\"batch_norm\":[{over_cap},"),
+                    1,
+                ),
+                "not a valid CNN model",
+            ),
+            ("too costly to score", text(&wide(256, 3, 2)), "FLOPs, max"),
+            ("too slow to score", text(&depthwise), "by the time model"),
+            ("too many parameters", text(&wide(256, 11, 2)), "parameters"),
+            ("too deep a head", text(&deep), "hidden layers"),
+            ("a tensor too short", text(&short), "tensor 1 has"),
+            ("a 1-D genome on an image", text(&one_d), "needs a sequence"),
+            // serde_json refuses a number beyond the range of f32 while it parses.
+            (
+                "a value beyond f32",
+                good_text.replacen("[1.0,", "[1e40,", 1),
+                "not a valid CNN model",
+            ),
+        ];
+
+        for (what, contents, expected) in bad {
+            let path = models.join("bad.json");
+
+            std::fs::write(&path, &contents).expect("write");
+
+            let message = match ev.evaluate(&req(&path)) {
+                Err(BrutError::Invalid(m)) => m,
+                other => panic!("{what}: expected Invalid, got {other:?}"),
+            };
+
+            assert!(message.contains(expected), "{what}: {message}");
+        }
+
+        // None of the refused files cost a query.
+        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CNN files just below `MAX_EVAL_SECONDS` score within `EVAL_TIMEOUT_SECONDS`. The
+    /// files are of the two kinds that ran slowest per FLOP in the measurements of ticket 02:
+    /// depthwise convolutions of 256 channels with layer norm and GELU, and one large kernel
+    /// over 256 channels into few. For each kind the test takes the layout whose estimate
+    /// comes closest to the cap. This takes up to two minutes and measures time, so it runs
+    /// only on request, alone: `cargo test --lib just_below -- --ignored --test-threads 1`.
+    #[test]
+    #[ignore]
+    fn files_just_below_the_time_cap_score_within_the_timeout() {
+        use crate::cnn::genome::{CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stem};
+        use crate::cnn::genome::{MAX_STAGES, Stage, testing};
+        use crate::genome::Genome;
+
+        let spec = TaskKind::Shapes.spec();
+        let stem = |kernel: usize, norm: Norm, activation: CnnActivation| Stem {
+            width: 256,
+            kernel,
+            stride: 1,
+            down: Downsample::Conv,
+            norm,
+            activation,
+        };
+        let cnn = |stem: Stem, stages: Vec<Stage>| {
+            let cnn = CnnGenome {
+                dims: Dims::TwoD,
+                stem,
+                stages,
+                head: Head::GlobalAvgPool,
+            };
+
+            testing::genome(cnn, Vec::new(), Activation::Relu)
+        };
+        let depthwise = |kernel: usize, stages: usize| {
+            let stage = Stage {
+                groups: 256,
+                norm: Norm::Layer,
+                ..testing::plain(256, kernel, CnnActivation::Gelu)
+            };
+
+            cnn(
+                stem(kernel, Norm::Layer, CnnActivation::Gelu),
+                vec![stage; stages],
+            )
+        };
+        let narrow = |kernel: usize, width: usize| {
+            cnn(
+                stem(3, Norm::None, CnnActivation::Relu),
+                vec![testing::plain(width, kernel, CnnActivation::Relu)],
+            )
+        };
+        let estimate = |genome: &Genome| {
+            let plan = genome.cnn_plan(&spec).expect("plan");
+
+            plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9
+        };
+        // The layout that `check_cnn` admits with the largest estimate.
+        let admitted = |genome: &Genome| {
+            let plan = genome.cnn_plan(&spec).expect("plan");
+
+            plan.params <= MAX_EVAL_PARAMS
+                && plan.forward_flops * spec.n_hidden as u64 <= MAX_EVAL_FLOPS
+                && estimate(genome) <= MAX_EVAL_SECONDS
+        };
+        let closest = |layouts: Vec<Genome>| {
+            layouts
+                .into_iter()
+                .filter(admitted)
+                .max_by(|a, b| estimate(a).total_cmp(&estimate(b)))
+                .expect("a layout below the cap")
+        };
+        let files = [
+            closest(
+                [1, 3, 5]
+                    .into_iter()
+                    .flat_map(|kernel| (1..=MAX_STAGES).map(move |n| depthwise(kernel, n)))
+                    .collect(),
+            ),
+            closest(
+                [3, 5, 7, 9, 11]
+                    .into_iter()
+                    .flat_map(|kernel| [1, 2, 4, 8].map(|width| narrow(kernel, width)))
+                    .collect(),
+            ),
+        ];
+        let (dir, secret, models) = layout("time-cap");
+
+        create_secret(&secret).expect("secret");
+
+        let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
+
+        for (i, genome) in files.iter().enumerate() {
+            let model = crate::cnn::model::testing::untrained(genome, &spec, 1);
+            let path = models.join(format!("slow{i}.json"));
+
+            std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
+                .expect("write");
+
+            let started = std::time::Instant::now();
+            let resp = ev
+                .evaluate(&EvalRequest {
+                    candidate_id: "slow".into(),
+                    model_path: path,
+                    task: TaskKind::Shapes,
+                })
+                .expect("a file below the cap is scored");
+            let seconds = started.elapsed().as_secs_f64();
+
+            eprintln!(
+                "estimate {:.1} s, scored in {seconds:.1} s: {}",
+                estimate(genome),
+                genome.summary()
+            );
+
+            assert_eq!(resp.queries_used, i + 1);
+            assert!(seconds < EVAL_TIMEOUT_SECONDS, "{seconds} s");
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

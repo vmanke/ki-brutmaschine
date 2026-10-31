@@ -2,7 +2,8 @@
 //!
 //! Usage: brut-eval --secret <file> --budget <n> --step <f>
 //! Reads one request JSON from stdin (at most 1 MiB) and writes one response JSON to stdout:
-//! - no "kind" key: legacy MLP `EvalRequest` -> `EvalResponse` (unchanged);
+//! - no "kind" key: legacy MLP `EvalRequest` -> `EvalResponse` (unchanged). Its model file
+//!   holds an MLP or a CNN (`model::Model`);
 //! - "kind": "learner": `LearnerEvalRequest` -> `LearnerEvalResponse`;
 //! - "kind": "arc": `ArcEvalRequest` -> `ArcEvalResponse`.
 //!
