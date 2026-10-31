@@ -1,6 +1,6 @@
 # 05 Observations and the Coupling strength
 
-Status: needs-info (Q69)
+Status: needs-triage (waits for the owner's approval of the design; Q69 is decided)
 Blocked by: 04
 Spec: `../spec.md`, section 8
 

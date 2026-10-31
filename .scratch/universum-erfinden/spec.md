@@ -57,6 +57,19 @@ search, and runs studied as universes.
 | Q64 | Souletics: a child's Soul is a copy of one parent's Soul or, after a crossover, a mix of both parents' phases; each phase moves by a small random angle; now and then the child gets an entirely new Soul, as the new colour in Hoppe's urn. Each part can be switched off for a control. |
 | Q65 | A parent passes on its Soul from birth, not the Soul as Observations changed it; experience passes only through Upbringing, so the three channels stay separable. |
 | Q66 | The glossary calls the third channel Souletics and defines it as soul inheritance; German reports keep the owner's word "Seeletik". |
+| Q67 | Family strengths come from the construction routes: each family of a step-1 route that provably reaches the reference gets strength 1, every other family 0; for grids, the families of the hidden rule get 1. Equal strengths stay the control. |
+| Q68 | In a Stage vote, a judgment's phasor is the judge's phase sum weighted by the task's family strengths; its squared length is the judge's Character for that task, so a Worker whose Soul fits the task votes louder. |
+| Q69 | An Observation moves the observed Worker toward the observer by kappa times the phase gap, and the observer back by half of that; both start from the state before the Observation, as in the atlas sketch. |
+| Q70 | The real control (arm V) carries the same hidden angles as the complex arm and reads only a sign; in a vote, ties go first to the number of judgments, then to the order of the answers. |
+| Q71 | Seed programs start with a fixed kappa, which the pilot sets (about 0.2); a child inherits kappa from its source Worker with a small random step at birth; kappa is not a gene, and the Mutator does not see it. |
+| Q72 | In the simulator the Soul acts only where a model today takes the first of equals or flips a coin; costs, scores and the step-1 calibration stay as they are. |
+| Q73 | Imprinting follows the child's first answer: each child Worker moves toward its source Worker's current Soul by the Q69 rule, with no model call and no change to the parents. Teaching uses only solved examples written by fixed code and stays off in the comparison. |
+| Q74 | Two separate claims, "S before V" and "S before K", each wrong with probability at most 1/200, both together at most 1/100. Arm E (equal strengths) runs in the pilot for description; if S beats E there, a third claim can still be added before the pre-registration is frozen. |
+
+Q67 to Q74 were decided on 2026-10-31 by the recommended answers (Q67 a, Q68 a, Q69 a, Q70 a,
+Q71 a, Q72 a, Q73 a and d, Q74 a). This follows the owner's standing rule: Claude decides open
+design questions by its recommendation and reports each decision, and the owner can overrule any
+of them. The questions with all their options are in `.scratch/seele-und-kappa/owner-questions.md`.
 
 ## What the experiments may claim
 

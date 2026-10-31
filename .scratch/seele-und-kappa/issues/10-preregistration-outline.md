@@ -1,6 +1,6 @@
 # 10 Pre-registration of the step 2 comparison (outline)
 
-Status: needs-info (Q74; the numbers come from the pilot, ticket 11)
+Status: needs-triage (waits for the owner's approval of the design; Q74 is decided; the numbers come from the pilot, ticket 11)
 Blocked by: 09
 Spec: `../spec.md`, section 17
 
@@ -38,10 +38,11 @@ brut-breed --out runs/K-s ... --soul k
 
 Every other setting stays at its default, as in section 6 of the step 1 pre-registration. G and M:
 pilot (step 1 used 1000 and 13 000 000). The Soul adds no call beyond the bound of step 1,
-12 723 412 calls for 1000 generations: imprinting makes no call, and no Stage votes more often than
-that bound counts. But the Soul can change whether the Workers of a Stage agree, and so how many
-judge calls a Stage makes, so the calls of the arms can differ; the analysis reports calls per arm
-and checks that no Run ended at the cap. Teaching is off in all three arms [Q73 d].
+12 723 412 calls for 1000 generations: imprinting makes no call [Q73 a], and no Stage votes more
+often than that bound counts. Under Q73 (c), each child adds one judge call per parent, at most 16
+per generation, and the bound becomes 12 739 412. But the Soul can change whether the Workers of a
+Stage agree, and so how many judge calls a Stage makes, so the calls of the arms can differ; the
+analysis reports calls per arm and checks that no Run ended at the cap. Teaching is off in all three arms [Q73 d].
 
 **4. Gates.** (G1) In every counted Run the seed Cascades solve exactly swap and cs, so the gate
 3 · |R_seed| ≤ |L| of step 1 holds. (G2) At the frozen commit the test of ticket 02 on

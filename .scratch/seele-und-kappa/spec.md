@@ -1,10 +1,10 @@
 # Spec: Soul and Coupling strength (step 2)
 
-Status: needs-info. This is the build design of step 2 of the build order (Q47). Nothing is
-built yet. Eight design choices that the decisions leave open go to the owner as Q67 to
-Q74. Until the owner answers, this spec describes the recommended answer and marks the
-place with the question, for example [Q69 a]. The owner approves this design before any
-ticket starts.
+Status: needs-triage. This is the build design of step 2 of the build order (Q47). Nothing is
+built yet. Eight design choices that the earlier decisions left open, Q67 to Q74, were
+decided on 2026-10-31 by their recommended answers (`.scratch/universum-erfinden/spec.md`,
+`owner-questions.md`). A marker such as [Q69 a] shows where a decision applies. The owner
+approves this design before any ticket starts.
 
 Builds on step 1 ([ADR 0006](../../docs/adr/0006-cascades-breed-on-domains-and-circuits-are-checked-exactly.md),
 `docs/STEP1_CIRCUITS.md`, `docs/PREREG_STEP1_CIRCUITS.md`), on the decisions Q42 to Q47 and
@@ -345,10 +345,11 @@ Observation aligns phases. That is a choice of the model, as the Q60 research no
 **8.4 When an Observation acts** (Q56). During a generation every Soul is frozen. Each
 evaluation, vote and peer judgment reads the current Souls as committed after the previous
 generation; a newborn uses its birth Soul on its first task and its imprinted Soul afterwards
-(section 10.1). Observations are recorded with the evaluation and applied at the commit, one
-after another, in log order: the newborns in birth order; within a newborn, its tasks in panel
-order, its Stages in order, the pairs (x, y) in order, the judges in order and the observed
-authors in order; then the peer judgments in the order of the plan. A stopped or failed
+(section 10.1). Observations are recorded with the evaluation and applied at the commit, after
+each newborn's current Souls are set to its imprinted Souls, one after another, in log order: the
+newborns in birth order; within a newborn, its tasks in panel order, its Stages in order, the
+pairs (x, y) in order, the judges in order and the observed authors in order; then the peer
+judgments in the order of the plan. A stopped or failed
 generation commits nothing, so its Observations vanish with it, and a resume repeats them
 exactly. Apart from a newborn's imprinting after its first task (section 10.1), which changes only
 that newborn's own Souls, no evaluation changes a Soul, so the other tasks still run in parallel.
@@ -486,9 +487,9 @@ generation 0, whose seeds hold no vote and whose only judgments are peer judgmen
 without Souls. Real model backends never receive phases; with real language models the Soul acts
 only in the vote (Q46). Strengths never reach a request (section 5.1): the simulated models
 interfere with unit phasors over their own explicit hypotheses. `GenResponse` gets
-`soul_decided: bool`, left out of the JSON when false: a simulated model sets it when its reply
-differs from its reply to the same request without phases, which it knows at no cost (11.2,
-11.3). The logs count these replies (section 13.1). The two fields and `reads_phases()` are
+`soul_decided: bool`, with the serde default false, so responses written without it still read,
+and left out of the JSON when false: a simulated model sets it when its reply differs from its
+reply to the same request without phases, which it knows at no cost (11.2, 11.3). The logs count these replies (section 13.1). The two fields and `reads_phases()` are
 contract-v3 of the normative `docs/STAGE2_BACKEND_CONTRACT.md` (ticket 06).
 
 **11.2 The circuit designer.** Today the pool keeps the first verified candidate of the best
@@ -692,17 +693,20 @@ pilot (ticket 11) and the owner's approval [Q74 a].
   2^20 = 1 048 576 fresh Souls per Domain; the Runs without Souls still reproduce step 1. The
   second gate checks the code, since for independent Souls the formulas are exact. At this size its
   tolerance of 0.01 is about seven standard errors or more; at 65 536 Souls it would be about two
-  for the real readout, and a correct implementation would fail at 4 to 5 seeds in 10 (Monte Carlo
-  checks of the review on 300 and on 60 seeds).
+  for the real readout, and a correct implementation would fail at 4 to 5 seeds in 10 (three Monte
+  Carlo checks in the design review, on 300, 300 and 60 seeds, saw it fail at 39 %, 44 % and 53 % of
+  the seeds; none failed at 2^20 Souls, on 40, 40 and 6 seeds).
 - **Rule.** Two evidence values, one per control, updated in the order of a fixed seed list; each
   claim with an error bound of 1/200, both together 1/100, by Ville's inequality as in step 1
   [Q74 a]. Q74 (d) would add a third value, against arm E, at 1/300 per claim.
 - **Calls and run time** (planning figures). The Soul adds no call beyond the bound of step 1,
-  12 723 412 calls for 1000 generations: imprinting makes no call, and no Stage votes more often
-  than that bound counts. The calls of the arms can differ, since the Soul can change whether the
-  Workers of a Stage agree. If a Run of arm S, V or K takes as long as one of arm A of step 1 (mean
-  7.36 min, 4.87 to 11.18 min; `docs/STEP1_CIRCUITS.md`), a triple takes about 22 min and N_max =
-  120 triples about 44 hours. The pilot's 60 Runs (5 arms, 12 seeds) take about 7.4 hours, its
+  12 723 412 calls for 1000 generations: imprinting makes no call [Q73 a], and no Stage votes more
+  often than that bound counts. Under Q73 (c), each child would add one judge call per parent, at
+  most 16 per generation, and the bound would become 12 739 412, still below 13 000 000, the cap of
+  step 1. The calls of the arms can differ, since the Soul can change whether the Workers of a Stage
+  agree. If a Run of arm S, V or K takes as long as one of arm A of step 1 (mean 7.36 min, 4.87 to
+  11.18 min; `docs/STEP1_CIRCUITS.md`), a triple takes about 22 min and N_max = 120 triples about
+  44 hours. The pilot's 60 Runs (5 arms, 12 seeds) take about 7.4 hours, its
   optional second batch of 40 Runs about 4.9 hours, and the thread check of gate G4, six Runs at 1
   and 4 threads, about 1.1 hours at the times step 1 measured for A-1 (14.42 min at 1 thread, 8.00
   min at 4). The pilot measures calls and wall time per arm.
@@ -846,3 +850,8 @@ reviewed once by an independent reviewer; further rounds only on the owner's req
   Souls (17); calls and run time are estimated (17); the real-readout arm is called V, not R
   (3, 12.3); the scope of Q45's third form is stated (1, 18). In the owner's questions, Q73 has two
   parts, Q74 an option (d), and Q67 to Q72 are corrected where they said too much.
+- 2026-10-31, check of the revision. Every change above was checked again against the code, the
+  step 1 records and our own reruns of the review's Monte Carlo checks. Added in the same revision:
+  a newborn's current Souls start as its imprinted Souls before the commit's Observations apply
+  (8.4); `soul_decided` has a serde default (11.1); the call bound under Q73 (c) (17); the counts of
+  the three Monte Carlo checks of gate G2 (17).

@@ -1,6 +1,6 @@
 # 04 The complex Stage vote and the Array pattern
 
-Status: needs-info (Q68)
+Status: needs-triage (waits for the owner's approval of the design; Q68 is decided)
 Blocked by: 02, 03
 Spec: `../spec.md`, section 7
 
