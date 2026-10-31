@@ -1580,10 +1580,17 @@ mod tests {
         );
 
         // A biased 1-D convolution: x feeds the convolution, the bias every position.
-        let inputs = vec![c.plain(&[2, 3, 8]), c.plain(&[4, 3, 3]), c.plain(&[1, 4, 1])];
-        c.add("broadcast_add", "conv1d plus a bias (1, 4, 1)", inputs, |t| {
-            broadcast_add(&conv1d(&t[0], &t[1], 1, 1, 1, 1)?, &t[2])
-        });
+        let inputs = vec![
+            c.plain(&[2, 3, 8]),
+            c.plain(&[4, 3, 3]),
+            c.plain(&[1, 4, 1]),
+        ];
+        c.add(
+            "broadcast_add",
+            "conv1d plus a bias (1, 4, 1)",
+            inputs,
+            |t| broadcast_add(&conv1d(&t[0], &t[1], 1, 1, 1, 1)?, &t[2]),
+        );
 
         let inputs = vec![c.plain(&[2, 4, 5, 5]), c.plain(&[4, 4, 3, 3])];
         c.add("add", "residual x + conv2d(x), input shared", inputs, |t| {
@@ -1623,7 +1630,12 @@ mod tests {
         let inputs = vec![c.plain(&[5, 3]), c.plain(&[5, 3])];
         c.add("mse", "5 rows of 3 values", inputs, |t| mse(&t[0], &t[1]));
 
-        let inputs = vec![c.plain(&[4, 6]), c.plain(&[2, 6]), c.plain(&[2]), c.plain(&[4, 2])];
+        let inputs = vec![
+            c.plain(&[4, 6]),
+            c.plain(&[2, 6]),
+            c.plain(&[2]),
+            c.plain(&[4, 2]),
+        ];
         c.add("mse", "a dense layer against fixed targets", inputs, |t| {
             mse(&linear(&t[0], &t[1], &t[2])?, &t[3])
         });
@@ -2389,7 +2401,10 @@ mod tests {
             max_pool1d(&zeros(&[2, 3, 4]), 5, 5).is_err(),
             "a window wider than the input"
         );
-        assert!(avg_pool1d(&zeros(&[2, 3, 4]), 0, 1).is_err(), "an empty window");
+        assert!(
+            avg_pool1d(&zeros(&[2, 3, 4]), 0, 1).is_err(),
+            "an empty window"
+        );
         assert!(
             broadcast_add(&x, &zeros(&[1, 3, 1, 1])).is_err(),
             "3 biases for 4 channels"

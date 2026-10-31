@@ -81,10 +81,13 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   burn 0.22.1 (tracel-ai) has a larger layer zoo, but it needs Rust 1.95, brings 133 new
   crates against candle's 103, and its lockfile fails `cargo audit` as well. Ticket 01
   settled this (Comments there).
-- **Reproducibility.** The project compares logs byte for byte. Ticket 01 tests whether
-  candle trains a fixed genome to byte-equal results at 1 and 4 threads. If not, each
-  candidate trains on a fixed number of threads, and the population runs in parallel
-  around it.
+- **Reproducibility.** The project compares logs byte for byte. CNN training gives the
+  same bits at any thread count on one machine: ticket 01 checked 19 thread settings, and
+  the tests of ticket 02 compare every step's loss and the model file across runs and
+  rayon pools of 1 and 4 threads. So no fixed thread count is needed, and candidates train
+  in parallel as MLPs do. Other CPUs may give other bits, because gemm picks its kernel
+  (with or without fused multiply-add) and its cache blocking at run time (ADR 0007).
+  Tests therefore compare results within one machine only.
 - **Security.** Before candle entered `Cargo.toml`, `cargo audit` (RustSec, cargo-audit
   0.22.2, advisory database of 2026-10-30) checked it and every new transitive dependency;
   a crate with an open advisory is not admitted. With the pinned commit the audit of the

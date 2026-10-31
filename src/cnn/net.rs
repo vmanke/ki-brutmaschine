@@ -99,10 +99,7 @@ pub(crate) fn param_specs(plan: &Plan, activation: Activation) -> Vec<ParamSpec>
                 specs.push(weight(vec![outputs, inputs], next, inputs, outputs));
                 specs.push(constant(outputs, Init::Zeros));
             }
-            Layer::Activation(_)
-            | Layer::Pool { .. }
-            | Layer::GlobalAvgPool
-            | Layer::Flatten => {}
+            Layer::Activation(_) | Layer::Pool { .. } | Layer::GlobalAvgPool | Layer::Flatten => {}
         }
     }
 
@@ -126,10 +123,12 @@ pub(crate) fn batch_norm_channels(plan: &Plan) -> Vec<usize> {
 
 /// The first activation after step `i` of the plan, if any.
 fn next_activation(plan: &Plan, i: usize) -> Option<CnnActivation> {
-    plan.steps[i + 1..].iter().find_map(|step| match step.layer {
-        Layer::Activation(activation) => Some(activation),
-        _ => None,
-    })
+    plan.steps[i + 1..]
+        .iter()
+        .find_map(|step| match step.layer {
+            Layer::Activation(activation) => Some(activation),
+            _ => None,
+        })
 }
 
 /// A kernel or matrix with He or Xavier init for the activation that follows it.
@@ -426,6 +425,11 @@ impl Net {
             net.units.push(unit);
         }
 
+        // Every tensor belongs to one layer, so the indices above stay inside the lists.
+        if next_weight != net.weights.len() || next_bias != net.biases.len() {
+            return Err(mismatch("the tensors do not match the layers of the plan"));
+        }
+
         Ok(net)
     }
 
@@ -485,11 +489,7 @@ impl Net {
 
     /// The forward pass of `x` (rows, then the axes of `sample`) to the outputs (rows,
     /// n_out). With `train`, the running statistics there are updated.
-    fn forward(
-        &self,
-        x: &Tensor,
-        mut train: Option<&mut Vec<(Tensor, Tensor)>>,
-    ) -> Result<Tensor> {
+    fn forward(&self, x: &Tensor, mut train: Option<&mut Vec<(Tensor, Tensor)>>) -> Result<Tensor> {
         let one_d = self.sample.len() == 2;
         let mut h = x.clone();
 
@@ -646,7 +646,13 @@ mod tests {
                 };
                 let values: usize = next.by_ref().take(tensors).map(ParamSpec::len).sum();
 
-                assert_eq!(values, step.params, "{}: {:?}", genome.summary(), step.layer);
+                assert_eq!(
+                    values,
+                    step.params,
+                    "{}: {:?}",
+                    genome.summary(),
+                    step.layer
+                );
             }
 
             assert!(next.next().is_none());
@@ -668,7 +674,10 @@ mod tests {
 
         assert_eq!(a, b);
         assert_ne!(a.weights, c.weights);
-        assert_eq!(a.biases, c.biases, "biases, scales and shifts are constants");
+        assert_eq!(
+            a.biases, c.biases,
+            "biases, scales and shifts are constants"
+        );
 
         // The stem (8 x 1 x 3 x 3, then ReLU) is He-initialized: std sqrt(2 / 9).
         assert_eq!(specs[0].shape, vec![8, 1, 3, 3]);
@@ -704,7 +713,11 @@ mod tests {
         };
 
         assert_eq!(specs[2].shape, vec![16, 6, 5, 5]);
-        assert!((rms / (2.0 * std) - 1.0).abs() < 0.1, "{rms} vs {}", 2.0 * std);
+        assert!(
+            (rms / (2.0 * std) - 1.0).abs() < 0.1,
+            "{rms} vs {}",
+            2.0 * std
+        );
     }
 
     #[test]
@@ -721,8 +734,14 @@ mod tests {
             })
             .expect("input");
 
-            assert_eq!(net.forward_eval(&x).expect("eval").dims(), [rows, spec.n_out]);
-            assert_eq!(net.forward_train(&x).expect("train").dims(), [rows, spec.n_out]);
+            assert_eq!(
+                net.forward_eval(&x).expect("eval").dims(),
+                [rows, spec.n_out]
+            );
+            assert_eq!(
+                net.forward_train(&x).expect("train").dims(),
+                [rows, spec.n_out]
+            );
         }
     }
 

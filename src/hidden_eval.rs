@@ -18,7 +18,9 @@
 //! Production needs a separate user, container or machine.
 //!
 //! `brut-eval` accepts three request kinds (`AnyEvalRequest`): legacy MLP requests (no "kind"
-//! key, unchanged), learner requests and ARC requests (see `learner_hidden`).
+//! key, unchanged), learner requests and ARC requests (see `learner_hidden`). The model file
+//! of a legacy request holds an MLP or a CNN (`model::Model`). A CNN file is checked against
+//! the task and the caps of this module before any tensor is built (`check_cnn`).
 #![forbid(unsafe_code)]
 
 use std::io::{Read, Write};
@@ -1055,12 +1057,16 @@ mod tests {
 
         let (dir, secret, models) = layout("cnn");
         let spec = TaskKind::Shapes.spec();
-        let good = crate::cnn::model::testing::untrained(&crate::cnn::genome::testing::vgg(), &spec, 1);
+        let good =
+            crate::cnn::model::testing::untrained(&crate::cnn::genome::testing::vgg(), &spec, 1);
         let good_path = models.join("good.json");
 
         create_secret(&secret).expect("secret");
-        std::fs::write(&good_path, serde_json::to_vec(&Model::Cnn(good.clone())).expect("json"))
-            .expect("write");
+        std::fs::write(
+            &good_path,
+            serde_json::to_vec(&Model::Cnn(good.clone())).expect("json"),
+        )
+        .expect("write");
 
         let req = |path: &Path| EvalRequest {
             candidate_id: "cnn".into(),
@@ -1120,7 +1126,11 @@ mod tests {
 
         let over_cap = format!("[{}]", vec!["0"; HARD_MAX_PARAMS + 1].join(","));
         let bad: Vec<(&str, String, &str)> = vec![
-            ("only the kind", "{\"kind\":\"cnn\"}".into(), "not a valid CNN model"),
+            (
+                "only the kind",
+                "{\"kind\":\"cnn\"}".into(),
+                "not a valid CNN model",
+            ),
             (
                 "an unknown field",
                 good_text.replacen("\"hidden\":", "\"extra\":0,\"hidden\":", 1),
@@ -1133,7 +1143,11 @@ mod tests {
             ),
             (
                 "too many values",
-                good_text.replacen("\"batch_norm\":[", &format!("\"batch_norm\":[{over_cap},"), 1),
+                good_text.replacen(
+                    "\"batch_norm\":[",
+                    &format!("\"batch_norm\":[{over_cap},"),
+                    1,
+                ),
                 "not a valid CNN model",
             ),
             ("too costly to score", text(&wide(256, 3, 2)), "FLOPs, max"),

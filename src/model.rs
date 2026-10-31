@@ -119,7 +119,11 @@ mod tests {
         let (model, _) = train::train(&genome, &spec, &data, &Limits::default()).expect("train");
         let text = serde_json::to_string(&model).expect("json");
 
-        assert!(text.starts_with("{\"kind\":\"cnn\",\"arch\":{"), "{}", &text[..40]);
+        assert!(
+            text.starts_with("{\"kind\":\"cnn\",\"arch\":{"),
+            "{}",
+            &text[..40]
+        );
         assert_eq!(Model::from_json(text.as_bytes()).expect("parse"), model);
     }
 

@@ -162,8 +162,8 @@ belegt sehr viel Speicher oder führt Code aus.
 
 **Gegenmaßnahmen im Code:**
 
-- Modelle sind reines JSON (`nn::Mlp`): Zahlenlisten, kein ausführbares
-  Format.
+- Modelle sind reines JSON (`nn::Mlp`, für Faltungsnetze
+  `cnn::model::CnnModel`): Zahlenlisten, kein ausführbares Format.
 - `brut-eval` liest nur Modelldateien im Ordner `models/` des
   Lauf-Verzeichnisses (oder in dem Ordner, den `BRUT_MODELS_DIR` in der
   geheimen Datei nennt). Symbolische Links und `..` werden vorher aufgelöst.
@@ -179,6 +179,20 @@ belegt sehr viel Speicher oder führt Code aus.
   passende Ein- und Ausgabegröße. Gemessen: Ein Modell mit einer Schicht aus
   399 999 Neuronen belegte vorher 3.1 GB Speicher und brauchte 34 Sekunden;
   jetzt wird es sofort abgewiesen.
+- Eine Datei mit `"kind": "cnn"` ist ein Faltungsnetz. Sie darf keine
+  unbekannten Felder enthalten, auch nicht im Genom. Der Leser bricht ab,
+  sobald ihre Wertelisten zusammen mehr als 2 000 000 Zahlen halten, denn mehr
+  Werte hat kein gültiges Modell. Bevor `brut-eval` einen Tensor anlegt,
+  prüft es die Architektur: die Formprüfung des Genoms gegen die Aufgabe, die
+  Parameterzahl (höchstens 2 000 000), Tiefe und Breite des dichten Kopfes wie
+  beim MLP und die Rechenkosten. Der Vorwärtslauf über den verborgenen Teil
+  darf höchstens 1e11 FLOPs kosten (`MAX_EVAL_FLOPS`), da ein Faltungsnetz
+  jedes Gewicht an jeder Bildstelle wiederverwendet und die Parameterzahl
+  seine Kosten nicht begrenzt. Nach unserer Rechnung braucht ein Faltungsnetz
+  innerhalb der voreingestellten Grenzen auf den Bild- und Sequenzaufgaben
+  weniger als 3 % davon. Danach prüft `brut-eval` jede Werteliste gegen ihre
+  Tensorform, auf endliche Werte und auf laufende Varianzen nicht unter 0.
+  Eine abgewiesene Datei kostet keine Abfrage.
 - Beim Bewerten rechnet `score::evaluate` in Blöcken, deren Größe von der
   Netzbreite abhängt. Ein Block braucht höchstens etwa 8 MiB für
   Zwischenwerte. Puffer für die Rückwärtsrechnung legt die reine Bewertung

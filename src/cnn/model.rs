@@ -224,7 +224,9 @@ impl Evaluator {
 
         shape.extend_from_slice(self.net.sample());
 
-        let out = self.net.forward_eval(&Tensor::from_f32(x.to_vec(), &shape)?)?;
+        let out = self
+            .net
+            .forward_eval(&Tensor::from_f32(x.to_vec(), &shape)?)?;
 
         if out.dims() != [rows, self.outputs] {
             return Err(invalid(format!(
@@ -263,7 +265,10 @@ impl<'de> Visitor<'de> for Lists {
         write!(f, "lists of at most {HARD_MAX_PARAMS} numbers in all")
     }
 
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error> {
+    fn visit_seq<A: SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> std::result::Result<Self::Value, A::Error> {
         let mut left = HARD_MAX_PARAMS;
         let mut lists = Vec::new();
 
@@ -283,7 +288,10 @@ struct List<'a> {
 impl<'de> DeserializeSeed<'de> for List<'_> {
     type Value = Vec<f32>;
 
-    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> std::result::Result<Vec<f32>, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> std::result::Result<Vec<f32>, D::Error> {
         deserializer.deserialize_seq(self)
     }
 }
@@ -416,9 +424,18 @@ mod tests {
             "a running variance is missing",
         );
         refused(&|m| m.batch_norm[0].push(0.0), "a running mean too long");
-        refused(&|m| m.hidden = vec![4], "dense layers the values do not have");
-        refused(&|m| m.arch.stages[0].width = 9, "a width the values do not have");
-        refused(&|m| m.arch.dims = crate::cnn::genome::Dims::OneD, "a 1-D genome on an image");
+        refused(
+            &|m| m.hidden = vec![4],
+            "dense layers the values do not have",
+        );
+        refused(
+            &|m| m.arch.stages[0].width = 9,
+            "a width the values do not have",
+        );
+        refused(
+            &|m| m.arch.dims = crate::cnn::genome::Dims::OneD,
+            "a 1-D genome on an image",
+        );
         refused(&|m| m.arch.stem.kernel = 4, "an even kernel");
 
         // A sequence task does not fit the image model at all.
@@ -436,7 +453,11 @@ mod tests {
             text.replacen("\"kind\":\"cnn\"", "\"kind\":\"mlp\"", 1),
             text.replacen("\"kind\":\"cnn\",", "", 1),
         ] {
-            assert!(serde_json::from_str::<CnnModel>(&bad).is_err(), "{}", &bad[..60]);
+            assert!(
+                serde_json::from_str::<CnnModel>(&bad).is_err(),
+                "{}",
+                &bad[..60]
+            );
         }
     }
 
@@ -453,7 +474,11 @@ mod tests {
             .map(|&n| format!("[{}]", vec!["0"; n].join(",")))
             .collect();
 
-        text.replacen("\"params\":[]", &format!("\"params\":[{}]", lists.join(",")), 1)
+        text.replacen(
+            "\"params\":[]",
+            &format!("\"params\":[{}]", lists.join(",")),
+            1,
+        )
     }
 
     #[test]
@@ -487,7 +512,9 @@ mod tests {
     fn evaluation_uses_the_running_statistics_of_batch_norm() {
         let (mut model, spec) = vgg();
         let rows = 3;
-        let x: Vec<f32> = (0..rows * spec.n_in).map(|i| (i % 7) as f32 / 7.0).collect();
+        let x: Vec<f32> = (0..rows * spec.n_in)
+            .map(|i| (i % 7) as f32 / 7.0)
+            .collect();
         let outputs = |m: &CnnModel, rows: usize| {
             m.evaluator(&spec)
                 .expect("evaluator")

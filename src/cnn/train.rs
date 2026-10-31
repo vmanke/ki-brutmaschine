@@ -236,9 +236,7 @@ mod tests {
     use super::testing::head;
     use super::*;
     use crate::cnn::genome::testing as genomes;
-    use crate::cnn::genome::{
-        CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
-    };
+    use crate::cnn::genome::{CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem};
     use crate::config::Limits;
     use crate::genome::Optimizer;
     use crate::model::Model;
@@ -367,8 +365,9 @@ mod tests {
     }
 
     // Chance is 1 / classes, since every split holds each class equally often. The bounds
-    // lie about 0.1 to 0.2 below what the genomes reached on this machine (shapes 0.678,
-    // bars and stripes 1.000, blob count 0.677, mirror symmetry 0.771, motif 0.803).
+    // lie 0.10 to 0.23 below what the genomes reached on the machine that wrote these tests
+    // (shapes 0.678, bars and stripes 1.000, blob count 0.677, mirror symmetry 0.771, motif
+    // 0.803), as room for the other bits of another CPU.
 
     #[test]
     fn a_plain_cnn_learns_shapes() {
@@ -377,17 +376,26 @@ mod tests {
 
     #[test]
     fn a_plain_cnn_learns_bars_and_stripes() {
-        assert!(learns(TaskKind::BarsAndStripes, &plain_2d()) > 0.9, "chance 0.5");
+        assert!(
+            learns(TaskKind::BarsAndStripes, &plain_2d()) > 0.9,
+            "chance 0.5"
+        );
     }
 
     #[test]
     fn a_plain_cnn_learns_blob_count() {
-        assert!(learns(TaskKind::BlobCount, &plain_2d()) > 0.45, "chance 0.25");
+        assert!(
+            learns(TaskKind::BlobCount, &plain_2d()) > 0.45,
+            "chance 0.25"
+        );
     }
 
     #[test]
     fn a_plain_cnn_learns_mirror_symmetry() {
-        assert!(learns(TaskKind::MirrorSymmetry, &plain_2d()) > 0.65, "chance 0.5");
+        assert!(
+            learns(TaskKind::MirrorSymmetry, &plain_2d()) > 0.65,
+            "chance 0.5"
+        );
     }
 
     #[test]
@@ -456,7 +464,11 @@ mod tests {
         for optimizer in [Optimizer::Sgd, Optimizer::Momentum, Optimizer::Adam] {
             let genome = Genome {
                 optimizer,
-                learning_rate: if optimizer == Optimizer::Adam { 0.003 } else { 0.05 },
+                learning_rate: if optimizer == Optimizer::Adam {
+                    0.003
+                } else {
+                    0.05
+                },
                 l2: 0.001,
                 batch_size: 16,
                 ..plain_2d()
@@ -544,7 +556,10 @@ mod tests {
         assert!(stats.diverged);
         assert_eq!(stats.final_train_loss, f32::MAX);
         assert_eq!(stats.epochs_done, 0);
-        assert!(model.is_finite(), "no step was taken with a non-finite loss");
+        assert!(
+            model.is_finite(),
+            "no step was taken with a non-finite loss"
+        );
     }
 
     #[test]

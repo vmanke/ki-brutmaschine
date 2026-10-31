@@ -106,7 +106,10 @@ therefore cannot be compared byte for byte with another; a change of the commit 
 of the numbers. Other CPUs may give other bits. gemm chooses its kernel at run time, FMA
 or scalar (gemm-common `gemm.rs:1018`). For products with more than 64 rows or columns it
 also sizes its blocks from the L1 cache it detects (gemm-common `cache.rs:514-570`; read,
-not tested). Tests therefore compare results within one machine only.
+not tested). Tests therefore compare results within one machine only. The CNN training
+of the crate keeps this property: its tests compare the loss of every step and the model
+file of two runs in a row and in rayon pools of 1 and 4 threads, and the candidates and
+model files of a run with 1 and 2 worker threads (ticket 02).
 
 **A training step is fast enough for the budget.** On this machine, with the experiment of
 step 1 running and at nice 10, one step of that CNN on a batch of 64 images of 16x16

@@ -375,6 +375,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn base_genomes_are_left_out_when_empty_and_checked_when_given() {
+        let plain = Config::default();
+        let text = serde_json::to_string(&plain).expect("json");
+
+        assert!(!text.contains("base_genomes"), "{text}");
+
+        let cnn = crate::cnn::genome::testing::lenet();
+        let with_cnn = Config {
+            task: TaskKind::Shapes,
+            base_genomes: vec![cnn.clone()],
+            ..Config::default()
+        };
+        let text = serde_json::to_string(&with_cnn).expect("json");
+
+        assert!(with_cnn.validate().is_ok());
+        assert_eq!(
+            serde_json::from_str::<Config>(&text).expect("parse"),
+            with_cnn
+        );
+        assert_eq!(
+            with_cnn.resume_conflicts(&Config {
+                task: TaskKind::Shapes,
+                ..Config::default()
+            }),
+            vec!["base_genomes".to_string()]
+        );
+
+        // A CNN does not fit the flat inputs of two spirals.
+        let message = Config {
+            base_genomes: vec![cnn.clone()],
+            ..Config::default()
+        }
+        .validate()
+        .expect_err("refused")
+        .to_string();
+
+        assert!(message.contains("base genome 1: "), "{message}");
+
+        let mut over = cnn;
+
+        over.epochs = Limits::default().max_epochs + 1;
+
+        assert!(
+            Config {
+                task: TaskKind::Shapes,
+                base_genomes: vec![over],
+                ..Config::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn resume_conflicts_names_experiment_fields_only() {
         let base = Config::default();
         let allowed = Config {
