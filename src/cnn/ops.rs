@@ -510,6 +510,53 @@ fn avg_pool2d_views(
     }
 }
 
+/// Max pooling of `x` (n, c, len) along the sequence, with a window of `kernel` cells.
+///
+/// candle has no 1-D pooling. Like `max_pool2d` (W3), this function takes the
+/// running maximum over the `kernel` shifted views of the input. Cells behind
+/// the last window are dropped.
+pub fn max_pool1d(x: &Tensor, kernel: usize, stride: usize) -> Result<Tensor> {
+    let (_, _, len) = x.0.dims3()?;
+    let out = out_len(len, 0, kernel, stride, 1)?;
+
+    let mut running: Option<candle::Tensor> = None;
+    for j in 0..kernel {
+        let tap = take_strided(&x.0, 2, j, stride, out)?;
+        running = Some(match running {
+            None => tap,
+            Some(max) => max.maximum(&tap)?,
+        });
+    }
+
+    running
+        .map(Tensor)
+        .ok_or_else(|| BrutError::Invalid("max_pool1d: the kernel is empty".into()))
+}
+
+/// Average pooling of `x` (n, c, len) along the sequence, with a window of `kernel` cells.
+///
+/// candle has no 1-D pooling. Like the general path of `avg_pool2d` (W4), this
+/// function sums the `kernel` shifted views of the input. Cells behind the last
+/// window are dropped.
+pub fn avg_pool1d(x: &Tensor, kernel: usize, stride: usize) -> Result<Tensor> {
+    let (_, _, len) = x.0.dims3()?;
+    let out = out_len(len, 0, kernel, stride, 1)?;
+
+    let mut sum: Option<candle::Tensor> = None;
+    for j in 0..kernel {
+        let tap = take_strided(&x.0, 2, j, stride, out)?;
+        sum = Some(match sum {
+            None => tap,
+            Some(running) => (running + tap)?,
+        });
+    }
+
+    match sum {
+        Some(sum) => Ok(Tensor((sum * (1.0 / kernel as f64))?)),
+        None => Err(BrutError::Invalid("avg_pool1d: the kernel is empty".into())),
+    }
+}
+
 /// Nearest upsampling of `x` (n, c, h, w) by an integer factor on both axes.
 ///
 /// Replacement W5 for defect D5. candle's backward pass of
@@ -719,6 +766,11 @@ pub fn add(a: &Tensor, b: &Tensor) -> Result<Tensor> {
     Ok(Tensor((&a.0 + &b.0)?))
 }
 
+/// Elementwise sum; an axis of length 1 is repeated, as in a bias (1, c, 1, 1) added to (n, c, h, w).
+pub fn broadcast_add(a: &Tensor, b: &Tensor) -> Result<Tensor> {
+    Ok(Tensor(a.0.broadcast_add(&b.0)?))
+}
+
 /// The channel shuffle of ShuffleNet on `x` (n, c, h, w): channel `g * (c / groups) + i` moves to `i * groups + g`.
 pub fn channel_shuffle(x: &Tensor, groups: usize) -> Result<Tensor> {
     let (n, c, h, w) = x.0.dims4()?;
@@ -803,6 +855,22 @@ pub fn cross_entropy(logits: &Tensor, labels: &[u32]) -> Result<Tensor> {
     let targets = candle::Tensor::from_vec(labels.to_vec(), n, logits.0.device())?;
 
     Ok(Tensor(candle_nn::loss::cross_entropy(&logits.0, &targets)?))
+}
+
+/// Mean squared error: the mean of `(prediction - target)^2` over all values.
+///
+/// Both tensors have the same shape. This is the loss of the MLP for regression
+/// (`src/nn.rs`).
+pub fn mse(prediction: &Tensor, target: &Tensor) -> Result<Tensor> {
+    if prediction.dims() != target.dims() || prediction.0.elem_count() == 0 {
+        return Err(BrutError::Invalid(format!(
+            "mse: prediction {:?} and target {:?} do not fit",
+            prediction.dims(),
+            target.dims()
+        )));
+    }
+
+    Ok(Tensor((&prediction.0 - &target.0)?.sqr()?.mean_all()?))
 }
 
 /// The mean over every axis after the channels: (n, c, ...) becomes (n, c).
@@ -1317,6 +1385,26 @@ mod tests {
             avg_pool2d(&t[0], 3, 2, 1)
         });
 
+        let inputs = vec![c.distinct(&[2, 3, 9])];
+        c.add("max_pool1d", "window 2, stride 2, length 9", inputs, |t| {
+            max_pool1d(&t[0], 2, 2)
+        });
+
+        let inputs = vec![c.distinct(&[2, 2, 10])];
+        c.add("max_pool1d", "window 3, stride 2, length 10", inputs, |t| {
+            max_pool1d(&t[0], 3, 2)
+        });
+
+        let inputs = vec![c.plain(&[2, 3, 10])];
+        c.add("avg_pool1d", "window 4, stride 4, length 10", inputs, |t| {
+            avg_pool1d(&t[0], 4, 4)
+        });
+
+        let inputs = vec![c.plain(&[2, 2, 9])];
+        c.add("avg_pool1d", "window 3, stride 2, length 9", inputs, |t| {
+            avg_pool1d(&t[0], 3, 2)
+        });
+
         let inputs = vec![c.plain(&[2, 3, 3, 4])];
         c.add("upsample_nearest2d", "factor 2, 3x4", inputs, |t| {
             upsample_nearest2d(&t[0], 2)
@@ -1483,6 +1571,20 @@ mod tests {
             },
         );
 
+        let inputs = vec![c.plain(&[2, 4, 3, 3]), c.plain(&[1, 4, 1, 1])];
+        c.add(
+            "broadcast_add",
+            "(2, 4, 3, 3) plus a bias (1, 4, 1, 1)",
+            inputs,
+            |t| broadcast_add(&t[0], &t[1]),
+        );
+
+        // A biased 1-D convolution: x feeds the convolution, the bias every position.
+        let inputs = vec![c.plain(&[2, 3, 8]), c.plain(&[4, 3, 3]), c.plain(&[1, 4, 1])];
+        c.add("broadcast_add", "conv1d plus a bias (1, 4, 1)", inputs, |t| {
+            broadcast_add(&conv1d(&t[0], &t[1], 1, 1, 1, 1)?, &t[2])
+        });
+
         let inputs = vec![c.plain(&[2, 4, 5, 5]), c.plain(&[4, 4, 3, 3])];
         c.add("add", "residual x + conv2d(x), input shared", inputs, |t| {
             add(&t[0], &conv2d(&t[0], &t[1], 1, 1, 1, 1)?)
@@ -1516,6 +1618,14 @@ mod tests {
         let inputs = vec![c.uniform(&[5, 4], -2.0, 2.0)];
         c.add("cross_entropy", "5 rows of 4 classes", inputs, |t| {
             cross_entropy(&t[0], &[0, 3, 1, 2, 1])
+        });
+
+        let inputs = vec![c.plain(&[5, 3]), c.plain(&[5, 3])];
+        c.add("mse", "5 rows of 3 values", inputs, |t| mse(&t[0], &t[1]));
+
+        let inputs = vec![c.plain(&[4, 6]), c.plain(&[2, 6]), c.plain(&[2]), c.plain(&[4, 2])];
+        c.add("mse", "a dense layer against fixed targets", inputs, |t| {
+            mse(&linear(&t[0], &t[1], &t[2])?, &t[3])
         });
 
         // A small smooth network, end to end: every input reaches the loss through several ops.
@@ -2046,6 +2156,30 @@ mod tests {
             max_gap(&gelu_erf(&x).unwrap(), &x.0.gelu_erf().unwrap()),
         ));
 
+        // The 1-D pools against candle's 2-D pools with a 1 x k window on a height of 1.
+        for (len, kernel, stride) in [(9, 2, 2), (10, 3, 2), (11, 4, 4)] {
+            let x = tensor_of(&c.plain(&[2, 3, len]));
+            let rows = x.0.unsqueeze(2).unwrap();
+            let theirs = rows
+                .max_pool2d_with_stride((1, kernel), (1, stride))
+                .unwrap()
+                .squeeze(2)
+                .unwrap();
+            gaps.push((
+                format!("max_pool1d {len} {kernel} {stride}"),
+                max_gap(&max_pool1d(&x, kernel, stride).unwrap(), &theirs),
+            ));
+            let theirs = rows
+                .avg_pool2d_with_stride((1, kernel), (1, stride))
+                .unwrap()
+                .squeeze(2)
+                .unwrap();
+            gaps.push((
+                format!("avg_pool1d {len} {kernel} {stride}"),
+                max_gap(&avg_pool1d(&x, kernel, stride).unwrap(), &theirs),
+            ));
+        }
+
         // The global average pool against candle's mean over height and width.
         let ours = global_avg_pool(&x).unwrap();
         gaps.push((
@@ -2250,6 +2384,18 @@ mod tests {
             avg_pool2d(&x, 3, 1, 2).is_err(),
             "padding above half the kernel"
         );
+        assert!(max_pool1d(&x, 2, 2).is_err(), "a 4-D input");
+        assert!(
+            max_pool1d(&zeros(&[2, 3, 4]), 5, 5).is_err(),
+            "a window wider than the input"
+        );
+        assert!(avg_pool1d(&zeros(&[2, 3, 4]), 0, 1).is_err(), "an empty window");
+        assert!(
+            broadcast_add(&x, &zeros(&[1, 3, 1, 1])).is_err(),
+            "3 biases for 4 channels"
+        );
+        assert!(mse(&zeros(&[2, 3]), &zeros(&[3, 2])).is_err());
+        assert!(mse(&zeros(&[0, 3]), &zeros(&[0, 3])).is_err(), "no values");
         assert!(upsample_nearest2d(&x, 0).is_err());
         assert!(channel_shuffle(&x, 3).is_err());
         assert!(group_norm(&x, &zeros(&[4]), &zeros(&[4]), 3, 1e-5).is_err());
