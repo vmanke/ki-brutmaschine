@@ -150,6 +150,56 @@ _Avoid_: test set, hidden panel
 Moving the two best finalist Cascades of a Run into `candidates/cascades/` through a human-reviewed draft pull request.
 _Avoid_: deploy, release, merge (the human merges, not the Run)
 
+### LLMs using CNNs (planned)
+
+**CNN Worker**:
+A Worker whose model tag is `cnn:` plus the content id of a CNN genome. For each task it trains a fresh CNN of that genome on the task's worked examples and answers with the CNN's output grid. It ignores its prompt sections, its Traits and earlier answers. It refuses tasks whose examples change the grid size.
+_Avoid_: CNN agent, vision model, net (alone)
+
+**Per-task training**:
+Training a CNN from its genome's own seed on the worked examples of one task only, just before it answers that task. No clock can stop it. Fixed limits bound its work before it starts. The trained CNN serves only that task and is never written to disk.
+_Avoid_: test-time training, fine-tuning, pretraining
+
+**Call record**:
+The stored request and full reply, or error, of one call that a Run makes to a model that is not simulated: a CNN Worker, the CNN tool or a real language model. It is one line of the Run's `llm/worker-calls.jsonl`, filed under a key of its model tag and its request. A resumed Run uses a stored reply instead of calling again. A replayed Run answers these calls from their records and never calls the model. `brut-breed-ollama` already keeps such records for the answered calls of real language models (contract I7); CNN calls and errors are planned.
+_Avoid_: cache, transcript, log
+
+**Neighbour rule**:
+A hidden grid rule that sets a cell's colour from its own colour and the colours of its four neighbours. No hypothesis of the simulated Worker model fits it. A CNN is meant to learn it from the worked examples. Half of the puzzles of the grid-mix Domain follow such a rule; it is the positive control of CNN Workers and of the CNN tool.
+_Avoid_: local rule, cellular automaton
+
+**Silent CNN**:
+A CNN Worker or CNN tool that refuses every task, under the reserved tag `cnn:0000000000000000`. It costs its calls and gives nothing. It is the negative control: breeding should not keep it.
+_Avoid_: dummy, null model
+
+**Knock-out**:
+Scoring a Cascade again on the same tasks with the same call seeds, with its CNN Workers or its CNN tool silenced. The paired difference is what the CNN contributes.
+_Avoid_: ablation (here that names a control search, as in Constants-only ablation), lesion
+
+**Architect**:
+The language model that writes CNN genomes in Architect rounds of an MLP-mode Run, given parents and their public validation scores. Its answers arrive as files and are recorded and replayed; a missing answer pauses the Run.
+_Avoid_: designer (that is the simulated circuit model), Mutator (that one writes Cascades), LLM proposer (that one writes Learners)
+
+**Blueprint**:
+One CNN genome returned by the Architect, before it is checked and trained. It is checked strictly and never repaired.
+_Avoid_: proposal (that is a Learner), design, suggestion
+
+**Architect round**:
+A generation of an MLP-mode Run, at fixed intervals, in which the Architect is asked for a fixed number of Blueprints.
+_Avoid_: LLM round (that one asks for Learners or Cascades)
+
+**CNN tool**:
+A CNN that a language-model Worker may ask, while it answers, for the CNN's output grid on a grid the Worker writes. It learns by Per-task training on the task's worked examples. A Run has at most one, and its tag is not on the Workers' allow-list.
+_Avoid_: plugin, function call, oracle
+
+**Tool turn**:
+One ask and reply inside one answer: the Worker's request, the CNN tool's grid, and the Worker's next reply. Each Tool turn costs one more call of the model. It also costs one call of the CNN tool, unless the requested grid has the wrong size.
+_Avoid_: step, round, function call
+
+**Tool budget**:
+The Trait `tool_calls`: the most Tool turns one answer of a Worker may take, from 0 to a ceiling of 3 in code. A Run may set a lower ceiling. At 0 the Worker has no tool.
+_Avoid_: tool limit (alone), quota
+
 ### Universes and invention (step 1)
 
 **Domain**:
