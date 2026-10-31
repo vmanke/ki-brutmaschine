@@ -21,5 +21,10 @@ ureq = { version = "3", default-features = false }
 name = "brut-breed-ollama"
 path = "src/main.rs"
 
+# Answers the Mutator requests of a paused run with a local model (module `mutator`).
+[[bin]]
+name = "brut-mutator"
+path = "src/bin/brut-mutator.rs"
+
 [profile.release]
 opt-level = 3

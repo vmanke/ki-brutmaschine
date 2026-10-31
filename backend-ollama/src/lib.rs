@@ -17,8 +17,12 @@
 //! (`qwen3.8-27b`) with the separate caps of I5; `Recorded` files what such a model
 //! thought (`Thinking`) beside the answer, through the `Detailed` trait, since the core's
 //! `GenResponse` has no place for it.
+//! The module `mutator` answers the Mutator
+//! requests of a paused run with one of these backends (program `brut-mutator`), recorded
+//! in `<out>/llm/mutator-calls.jsonl`.
 #![forbid(unsafe_code)]
 
+pub mod mutator;
 pub mod vllm;
 
 use std::collections::BTreeMap;
@@ -341,9 +345,10 @@ impl SharedCache {
 /// A backend whose answers are filed in a JSONL file and replayed from it. A request it
 /// has seen is never sent again, so a resumed or repeated run gets the same answers even
 /// though the model is not bit-for-bit deterministic (contract I7, ADR 0002). Failed calls
-/// are not filed as answers: each one goes to `worker-errors.jsonl` beside the record and
-/// to stderr, because the core counts a failed Worker call as an unsolved puzzle without a
-/// word, which hid a fault that failed half of all calls in the first vLLM runs.
+/// are not filed as answers: each one goes to an errors file beside the record (see
+/// `error_path`) and to stderr, because the core counts a failed Worker call as an
+/// unsolved puzzle without a word, which hid a fault that failed half of all calls in the
+/// first vLLM runs.
 pub struct Recorded<B: ModelBackend> {
     inner: B,
     path: PathBuf,
@@ -464,17 +469,33 @@ impl<B: ModelBackend> Recorded<B> {
         self.len() == 0
     }
 
+    /// True when the answer to `req` is on file, so `generate` replays it without a call.
+    pub fn contains(&self, req: &GenRequest) -> bool {
+        let key = call_key(self.inner.name(), req);
+
+        self.book.lock().is_ok_and(|b| b.contains_key(&key))
+    }
+
     /// Number of failed calls in this process.
     pub fn errors(&self) -> u64 {
         self.errors.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// The file that lists the failed calls, beside the record.
+    /// The file that lists the failed calls, beside the record: `<name>-errors.jsonl` for
+    /// a record `<name>-calls.jsonl` (`worker-errors.jsonl`, `mutator-errors.jsonl`), else
+    /// `worker-errors.jsonl`.
     pub fn error_path(&self) -> PathBuf {
-        self.path.with_file_name("worker-errors.jsonl")
+        let name = self.path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let errors = match name.strip_suffix("-calls.jsonl") {
+            Some(stem) if !stem.is_empty() => format!("{stem}-errors.jsonl"),
+            _ => "worker-errors.jsonl".to_string(),
+        };
+
+        self.path.with_file_name(errors)
     }
 
-    /// File a failed call and say so on stderr: the first five, then every thousandth.
+    /// File a failed call and say so on stderr, under the name of the running program:
+    /// the first five, then every thousandth.
     fn file_error(&self, key: &str, req: &GenRequest, e: &BrutError) {
         let n = self.errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let rec = ErrorRecord {
@@ -485,7 +506,12 @@ impl<B: ModelBackend> Recorded<B> {
         };
 
         if n <= 5 || n.is_multiple_of(1000) {
-            eprintln!("brut-breed-ollama: call {n} failed ({}): {}", rec.tag, rec.error);
+            let program = std::env::args_os()
+                .next()
+                .and_then(|a| Path::new(&a).file_name().map(|f| f.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "backend-ollama".to_string());
+
+            eprintln!("{program}: call {n} failed ({}): {}", rec.tag, rec.error);
         }
 
         if let Ok(mut line) = serde_json::to_string(&rec) {
@@ -613,6 +639,13 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].error.contains("HTTP 400"));
         assert_eq!(lines[0].tag, "vllm:qwen2.5-32b");
+        assert_eq!(b.error_path(), dir.join("worker-errors.jsonl"));
+
+        // The errors of another record go beside it under its own name.
+        let m = Recorded::open(Broken, &dir.join("mutator-calls.jsonl")).expect("open");
+        assert_eq!(m.error_path(), dir.join("mutator-errors.jsonl"));
+        let odd = Recorded::open(Broken, &dir.join("calls.jsonl")).expect("open");
+        assert_eq!(odd.error_path(), dir.join("worker-errors.jsonl"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
