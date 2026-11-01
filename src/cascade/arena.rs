@@ -15,6 +15,12 @@
 //! The breeder works on any task family (`Domain`, step 1); the grid puzzles of Stage 2c
 //! are the default. Every committed generation ends with a `state` event that holds the
 //! universe observables (`observe.rs`).
+//!
+//! In a Run with Souls (step 2, `.scratch/seele-und-kappa/spec.md`), Souletics gives every
+//! newborn Worker its birth Soul and Coupling strength from the Workers it was built from.
+//! The genetic operators see genes only, and novelty and the seeds of calls go by gene ids.
+//! A Stage vote then tallies amplitudes: the verdicts of each judge weigh with its vote
+//! phasor, and the answer with the largest squared magnitude goes on.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -27,12 +33,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
 use crate::cascade::domain::{Domain, DomainConfig, GenePool, GridDomain};
-use crate::cascade::genome::{Cascade, CascadeLimits, Worker, adapt_seeds};
+use crate::cascade::genome::{
+    COUPLING_MAX, Cascade, CascadeLimits, PhaseState, Worker, adapt_seeds,
+};
 use crate::cascade::observe::{ObserveInput, UniverseState, observe};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
+use crate::cascade::soul::{
+    ArrayVote, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, array_vote, count_winner,
+    souletics, vote_phasor,
+};
 use crate::cascade::variation::{
-    Op, llm_crossover_request_with, llm_mutate_request_with, mutate_with, parse_llm_cascade,
-    section_crossover, stage_crossover,
+    Op, Sources, llm_crossover_request_with, llm_mutate_request_with, mutate_sourced,
+    parse_llm_cascade, partner_sources, read_llm_cascade, section_crossover_sourced,
+    stage_crossover_sourced,
 };
 use crate::util::{BrutError, Result, derive_seed, sha256_hex};
 
@@ -41,6 +54,10 @@ const DRAW_ATTEMPTS: usize = 16;
 
 /// Partners drawn per crossover; the one with the best peer rating mates (Q2).
 const PARTNER_CANDIDATES: usize = 3;
+
+/// Why an LLM answer that writes a Soul or a Coupling strength is refused (step 2, spec
+/// 4.5): only Souletics gives a Soul.
+pub const SOUL_NOT_ADMITTED: &str = "not admitted: the Mutator does not write Souls";
 
 /// The models a run may call, by tag. Every allow-listed tag must resolve here.
 #[derive(Default)]
@@ -141,7 +158,11 @@ fn call_worker(
     usage: &mut Usage,
 ) -> Option<GenResponse> {
     let backend = ctx.pool.get(&w.model).ok()?;
-    let cost = ctx.limits.model(&w.model).map(|m| m.cost_per_call).unwrap_or(0.0);
+    let cost = ctx
+        .limits
+        .model(&w.model)
+        .map(|m| m.cost_per_call)
+        .unwrap_or(0.0);
 
     usage.calls += 1;
     usage.model_cost += cost;
@@ -205,7 +226,10 @@ fn stage_call_bound(width: usize) -> u64 {
 
 /// Upper bound on calls of one Cascade on one puzzle.
 pub fn cascade_call_bound(c: &Cascade) -> u64 {
-    c.stages.iter().map(|s| stage_call_bound(s.workers.len())).sum()
+    c.stages
+        .iter()
+        .map(|s| stage_call_bound(s.workers.len()))
+        .sum()
 }
 
 /// The result of one Cascade on one task.
@@ -215,6 +239,52 @@ pub struct CascadeRun<A = Grid> {
     /// later stage produces nothing usable).
     pub answer: Option<A>,
     pub usage: Usage,
+    /// The authors of the answer (step 2, spec 7.7): the Workers of the Stage that chose
+    /// it whose own answer it was, by their index over the Stages. Empty without an answer.
+    pub authors: Vec<usize>,
+    /// The Stage votes tallied by amplitudes, in a Run with Souls (spec 7.7).
+    pub votes: VoteTally,
+}
+
+/// What the Souls give one run of a Cascade on one task, frozen for the generation (step 2,
+/// spec 7.2 and 8.4): the current Soul of every Worker in Stage order, the task's Family
+/// strengths, and the settings that read them.
+#[derive(Clone, Copy, Debug)]
+pub struct RunSouls<'a> {
+    pub souls: &'a [PhaseState],
+    pub strengths: &'a [f64],
+    pub readout: Readout,
+    /// The complex Stage vote (spec 12.2); off, a vote counts its verdicts as today.
+    pub vote: bool,
+}
+
+/// The Stage votes a Cascade tallied by amplitudes (step 2, spec 7.7): its votes, those
+/// whose winner differs from the count's, those that the tie rule decided, and the sum of
+/// their coherence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct VoteTally {
+    pub complex: u64,
+    pub flipped: u64,
+    pub tied: u64,
+    pub coherence_sum: f64,
+}
+
+impl VoteTally {
+    /// Count one vote tallied by amplitudes.
+    fn count(&mut self, vote: &ArrayVote) {
+        self.complex += 1;
+        self.flipped += u64::from(vote.winner != vote.count_winner);
+        self.tied += u64::from(vote.tied);
+        self.coherence_sum += vote.coherence;
+    }
+
+    /// Add the votes of `other`.
+    fn add(&mut self, other: &VoteTally) {
+        self.complex += other.complex;
+        self.flipped += other.flipped;
+        self.tied += other.tied;
+        self.coherence_sum += other.coherence_sum;
+    }
 }
 
 /// Run Cascade `c` on puzzle `p`. Stage k sees the task and the answers chosen by stages
@@ -239,14 +309,36 @@ pub fn run_cascade_in<D: Domain>(
     task: &D::Task,
     seed: u64,
 ) -> CascadeRun<D::Answer> {
+    run_cascade_with(domain, pool, limits, c, task, seed, None)
+}
+
+/// `run_cascade_in` with the Souls of a Run with Souls (step 2, spec 7). With the complex
+/// vote on, a Stage vote tallies amplitudes: the verdicts of each judge weigh with its vote
+/// phasor, and the answer with the largest Π goes on (`soul::array_vote`). The run names the
+/// authors of its answer and tallies its complex votes. None runs as without Souls.
+pub fn run_cascade_with<D: Domain>(
+    domain: &D,
+    pool: &ModelPool,
+    limits: &CascadeLimits,
+    c: &Cascade,
+    task: &D::Task,
+    seed: u64,
+    souls: Option<&RunSouls<'_>>,
+) -> CascadeRun<D::Answer> {
     let ctx = Ctx { pool, limits };
     let check = domain.self_check_text();
     let mut usage = Usage::default();
     let mut chosen: Vec<D::Answer> = Vec::new();
+    let mut authors: Vec<usize> = Vec::new();
+    let mut votes = VoteTally::default();
+    // The index of the Stage's first Worker over all Stages.
+    let mut first = 0;
 
     for (k, stage) in c.stages.iter().enumerate() {
         let prompt = domain.solve_prompt(task, &chosen);
         let mut distinct: Vec<D::Answer> = Vec::new();
+        // The Workers whose own answer each distinct answer is (spec 7.7).
+        let mut by: Vec<Vec<usize>> = Vec::new();
 
         for (j, w) in stage.workers.iter().enumerate() {
             let s = derive_seed(seed, &format!("stage{k}/worker{j}"));
@@ -255,42 +347,76 @@ pub fn run_cascade_in<D: Domain>(
                 .filter(|r| r.stop_reason == StopReason::Stop)
                 .and_then(|r| domain.parse_answer(task, &r.text));
 
-            if let Some(a) = answer
-                && !distinct.contains(&a)
-            {
-                distinct.push(a);
+            if let Some(a) = answer {
+                match distinct.iter().position(|d| d == &a) {
+                    Some(x) => by[x].push(first + j),
+                    None => {
+                        distinct.push(a);
+                        by.push(vec![first + j]);
+                    }
+                }
             }
         }
 
+        // With Souls and the complex vote on, each judge votes with its phasor v_j =
+        // Z(P_j, t), from its current Soul and the task's strengths (spec 7.2).
+        let phasors: Option<Vec<Phasor>> = souls.filter(|r| r.vote).map(|r| {
+            (first..first + stage.workers.len())
+                .map(|w| {
+                    r.souls.get(w).map_or(Phasor::default(), |p| {
+                        vote_phasor(p, r.strengths, r.readout)
+                    })
+                })
+                .collect()
+        });
         let winner = match distinct.len() {
             0 => None,
             1 => Some(0),
-            _ => Some(stage_vote(
-                ctx,
-                domain,
-                &stage.workers,
-                task,
-                &distinct,
-                derive_seed(seed, &format!("vote{k}")),
-                &mut usage,
-            )),
+            _ => {
+                let (winner, array) = stage_vote(
+                    ctx,
+                    domain,
+                    &stage.workers,
+                    task,
+                    &distinct,
+                    derive_seed(seed, &format!("vote{k}")),
+                    &mut usage,
+                    phasors.as_deref(),
+                );
+
+                if let Some(vote) = &array {
+                    votes.count(vote);
+                }
+
+                Some(winner)
+            }
         };
 
         if let Some(i) = winner
             && let Some(a) = distinct.get(i)
         {
             chosen.push(a.clone());
+            authors = by[i].clone();
         }
+
+        first += stage.workers.len();
     }
 
     CascadeRun {
         answer: chosen.last().cloned(),
         usage,
+        authors,
+        votes,
     }
 }
 
 /// Blind vote among a stage's distinct answers: every Worker judges every pair. Returns
 /// the index of the answer with the most pairwise wins, ties to the lowest index.
+///
+/// With `phasors`, one per Worker, the same judgments are tallied by amplitudes instead
+/// (step 2, spec 7.3 and 7.4): the answer with the largest Π goes on, and the vote comes
+/// back with its Array pattern. The prompts, seeds and calls stay as they are.
+#[allow(clippy::too_many_arguments)]
 fn stage_vote<D: Domain>(
     ctx: Ctx,
     domain: &D,
@@ -299,8 +425,10 @@ fn stage_vote<D: Domain>(
     answers: &[D::Answer],
     seed: u64,
     usage: &mut Usage,
-) -> usize {
-    let mut wins = vec![0usize; answers.len()];
+    phasors: Option<&[Phasor]>,
+) -> (usize, Option<ArrayVote>) {
+    // The verdicts of each judge for each answer.
+    let mut verdicts = vec![vec![0u32; answers.len()]; workers.len()];
 
     for (x, ax) in answers.iter().enumerate() {
         for (y, ay) in answers.iter().enumerate().skip(x + 1) {
@@ -308,23 +436,28 @@ fn stage_vote<D: Domain>(
                 let s = derive_seed(seed, &format!("{x}/{y}/{j}"));
 
                 match judge_in(ctx, domain, w, task, (ax, ay), s, usage) {
-                    Judgment::Verdict(true) => wins[x] += 1,
-                    Judgment::Verdict(false) => wins[y] += 1,
+                    Judgment::Verdict(true) => verdicts[j][x] += 1,
+                    Judgment::Verdict(false) => verdicts[j][y] += 1,
                     Judgment::NoReply | Judgment::NoVerdict => {}
                 }
             }
         }
     }
 
-    let mut best = 0;
+    match phasors {
+        Some(p) => {
+            let vote = array_vote(&verdicts, p);
 
-    for (i, &n) in wins.iter().enumerate() {
-        if n > wins[best] {
-            best = i;
+            (vote.winner, Some(vote))
+        }
+        None => {
+            let wins: Vec<u32> = (0..answers.len())
+                .map(|x| verdicts.iter().map(|v| v[x]).sum())
+                .collect();
+
+            (count_winner(&wins), None)
         }
     }
-
-    best
 }
 
 /// Weighted Bradley-Terry strengths by the MM algorithm of Hunter (2004, Annals of
@@ -541,6 +674,11 @@ pub struct BreedConfig {
     /// hashes of earlier runs are unchanged.
     #[serde(default, skip_serializing_if = "ParentSelection::is_dgm")]
     pub selection: ParentSelection,
+    /// The Soul and its settings (step 2, spec 12.2); None, the default, is a Run without
+    /// Souls. It is left out of the JSON then, so configs and fixed hashes of earlier runs
+    /// are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul: Option<SoulConfig>,
 }
 
 /// How a generation draws its parents and crossover partners.
@@ -584,6 +722,7 @@ impl Default for BreedConfig {
             limits: CascadeLimits::default(),
             domain: DomainConfig::Grid,
             selection: ParentSelection::Dgm,
+            soul: None,
         }
     }
 }
@@ -597,7 +736,8 @@ impl BreedConfig {
             return bad("children_per_generation and search_puzzles must be at least 1");
         }
 
-        if !(0.0..=1.0).contains(&self.crossover_rate) || !(0.0..=1.0).contains(&self.judge_weight) {
+        if !(0.0..=1.0).contains(&self.crossover_rate) || !(0.0..=1.0).contains(&self.judge_weight)
+        {
             return bad("crossover_rate and judge_weight must lie in [0, 1]");
         }
 
@@ -614,8 +754,17 @@ impl BreedConfig {
         }
 
         // A negative price would reward calls; a huge one would overflow the cost sums.
-        if self.limits.models.iter().any(|m| !(0.0..=1.0).contains(&m.cost_per_call)) {
+        if self
+            .limits
+            .models
+            .iter()
+            .any(|m| !(0.0..=1.0).contains(&m.cost_per_call))
+        {
             return bad("every model's cost_per_call must lie in [0, 1]");
+        }
+
+        if let Some(soul) = &self.soul {
+            soul.check()?;
         }
 
         Ok(())
@@ -655,6 +804,41 @@ pub struct Member<A = Grid> {
     pub judge_wrong: u32,
     pub fitness: f64,
     pub rating: f64,
+    /// Where each Worker's birth Soul came from, in Stage order (step 2, spec 9 and 13.2).
+    /// None in a Run without Souls, and then left out of the JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul_sources: Option<Vec<SoulSource>>,
+    /// The current Soul of each Worker, in Stage order (spec 4.3). It starts as the birth
+    /// Soul of the genome, which never changes. None in a Run without Souls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul_now: Option<Vec<PhaseState>>,
+    /// The authors of the answer on each search task (spec 7.7). None without Souls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authors: Option<Vec<Vec<usize>>>,
+    /// The tally of the Stage votes at birth, on the search panel (spec 7.7). None without
+    /// Souls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub votes: Option<VoteTally>,
+}
+
+/// One Worker of one member: the member's id and the Worker's index over its Stages in
+/// order.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct WorkerRef {
+    pub member: String,
+    pub worker: usize,
+}
+
+/// Where a Worker's birth Soul came from (step 2, spec 9 and 13.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SoulSource {
+    /// The Workers it was built from, in parent order (spec 9.1); none for a seed.
+    pub sources: Vec<WorkerRef>,
+    /// True when the Worker got an entirely new Soul (spec 9.4).
+    pub new: bool,
+    /// The origin of the Soul, Hoppe's colour: the Worker where it was new. A copied or
+    /// mixed Soul keeps the origin of its first source.
+    pub origin: WorkerRef,
 }
 
 impl<A> Member<A> {
@@ -706,6 +890,17 @@ pub enum Event {
         /// not). Left out when no answer has a text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answers: Option<Vec<Option<String>>>,
+        /// Where each Worker's birth Soul came from (step 2, spec 13.2); left out in a Run
+        /// without Souls. The genome holds the birth Souls themselves.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        soul_sources: Option<Vec<SoulSource>>,
+        /// The authors of the answer on each search task (spec 7.7, 13.2); left out
+        /// without Souls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authors: Option<Vec<Vec<usize>>>,
+        /// The tally of the Stage votes at birth (spec 7.7, 13.2); left out without Souls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        votes: Option<VoteTally>,
     },
     LlmExchange {
         generation: usize,
@@ -819,6 +1014,11 @@ struct Draft {
     cascade: Cascade,
     parents: Vec<String>,
     op: Op,
+    /// The source Workers of each Worker, by the parent's place in `parents` (spec 9.1);
+    /// none for a seed.
+    sources: Sources,
+    /// Where each Worker's birth Soul came from, once Souletics gave it (Runs with Souls).
+    soul_sources: Option<Vec<SoulSource>>,
 }
 
 /// Receives a snapshot to store before calls are made (see `Breeder::step_with`).
@@ -841,6 +1041,10 @@ pub struct Breeder<'a, D: Domain = GridDomain> {
     next_generation: usize,
     select_answers: SelectAnswers<D::Answer>,
     finished: bool,
+    /// The gene id of every archived member, in archive order (spec 4.4): novelty, call
+    /// seeds and the last tie-break of the ranking go by genes. Without Souls these are the
+    /// ids.
+    gene_ids: Vec<String>,
 }
 
 impl<'a> Breeder<'a, GridDomain> {
@@ -879,7 +1083,29 @@ impl<'a, D: Domain> Breeder<'a, D> {
         let domain = D::from_config(&cfg)?;
 
         pool.covers(&cfg.limits)?;
-        adapt_seeds((genes.seeds)(), &cfg.limits)?;
+
+        let seeds = adapt_seeds((genes.seeds)(), &cfg.limits)?;
+
+        // A Soul has one phase per hypothesis family of the domain (spec 5.1).
+        if cfg.soul.is_some() && domain.families().is_empty() {
+            return Err(BrutError::Invalid(
+                "breed config: a Run with Souls needs a domain that names its hypothesis families"
+                    .to_string(),
+            ));
+        }
+
+        // A seed brings no Soul and no Coupling strength (spec 4.4): a Run without Souls has
+        // none, and in a Run with Souls Souletics gives every seed Worker its own.
+        if let Some((name, _)) = seeds.iter().find(|(_, c)| c.carries_soul()) {
+            let why = match cfg.soul {
+                None => "this Run has no Souls",
+                Some(_) => "Souletics gives the seeds their Souls",
+            };
+
+            return Err(BrutError::Invalid(format!(
+                "seed {name} carries a Soul or a Coupling strength, but {why}"
+            )));
+        }
 
         let search = domain.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
         let select = domain.panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
@@ -899,6 +1125,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             next_generation: 0,
             select_answers: BTreeMap::new(),
             finished: false,
+            gene_ids: Vec::new(),
         })
     }
 
@@ -913,13 +1140,49 @@ impl<'a, D: Domain> Breeder<'a, D> {
     ) -> Result<Breeder<'a, D>> {
         if snap.config_hash != cfg.fixed_hash() {
             return Err(BrutError::Invalid(
-                "resume refused: settings other than generations and max_calls changed"
-                    .to_string(),
+                "resume refused: settings other than generations and max_calls changed".to_string(),
             ));
         }
 
-        let mut b = Breeder::start(cfg, genes, pool, mutator)?;
+        let mut b: Breeder<'a, D> = Breeder::start(cfg, genes, pool, mutator)?;
 
+        match &b.cfg.soul {
+            // A Run without Souls has no Worker with a Soul or a Coupling strength, and no
+            // member with a record of Souls (spec 4.4).
+            None => {
+                let souled = |m: &Member<D::Answer>| {
+                    m.cascade.carries_soul()
+                        || m.soul_sources.is_some()
+                        || m.soul_now.is_some()
+                        || m.authors.is_some()
+                        || m.votes.is_some()
+                };
+
+                if let Some(m) = snap.archive.iter().find(|m| souled(m)) {
+                    return Err(BrutError::Invalid(format!(
+                        "resume refused: member {} carries a Soul, a Coupling strength or a record of Souls, but this Run has no Souls",
+                        m.id
+                    )));
+                }
+            }
+            // In a Run with Souls every Worker has a Soul of a phase per family (spec 4.4).
+            Some(_) => {
+                let n = b.domain.families().len();
+                let tasks = b.search.len();
+
+                for m in &snap.archive {
+                    check_souls(m, n, tasks).map_err(|why| {
+                        BrutError::Invalid(format!("resume refused: member {}: {why}", m.id))
+                    })?;
+                }
+            }
+        }
+
+        b.gene_ids = snap
+            .archive
+            .iter()
+            .map(|m| b.gene_key(&m.id, &m.cascade))
+            .collect();
         b.archive = snap.archive;
         b.comparisons = snap.comparisons;
         b.calls = snap.calls.saturating_add(snap.reserved);
@@ -934,6 +1197,108 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// The domain this run breeds on.
     pub fn domain(&self) -> &D {
         &self.domain
+    }
+
+    /// The key a member with this id and Cascade has for novelty, call seeds and the last
+    /// tie-break of the ranking: its gene id in a Run with Souls, its id otherwise. The two
+    /// agree without Souls, and the id keeps every recorded Run as it was.
+    fn gene_key(&self, id: &str, cascade: &Cascade) -> String {
+        match self.cfg.soul {
+            Some(_) => cascade.gene_id(),
+            None => id.to_string(),
+        }
+    }
+
+    /// Souletics for the drafts of generation `g`, in birth order (spec 9). Every Worker
+    /// gets its birth Soul and Coupling strength from its sources, by the draws of its
+    /// draft's own stream (spec 9.7), and the draft records where each came from. Hoppe's
+    /// urn holds the archive's Workers and the Workers drawn before (spec 9.4).
+    fn souletics(&self, g: usize, drafts: &mut [Draft], soul: &SoulConfig) -> Result<()> {
+        let n = self.domain.families().len();
+        let by_id: HashMap<&str, &Member<D::Answer>> =
+            self.archive.iter().map(|m| (m.id.as_str(), m)).collect();
+        let mut urn: usize = self.archive.iter().map(|m| m.cascade.worker_count()).sum();
+        let broken = |what: String| BrutError::Integrity(format!("Souletics: {what}"));
+
+        for (i, d) in drafts.iter_mut().enumerate() {
+            let tag = match g {
+                0 => format!("soul/seed/{i}"),
+                _ => format!("soul/{g}/{i}"),
+            };
+            let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(self.cfg.seed, &tag));
+            let parents = d
+                .parents
+                .iter()
+                .map(|p| by_id.get(p.as_str()).copied())
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| broken(format!("a parent of child {i} is not archived")))?;
+
+            if d.sources.len() != d.cascade.worker_count() {
+                return Err(broken(format!(
+                    "child {i} has {} source lists for {} Workers",
+                    d.sources.len(),
+                    d.cascade.worker_count()
+                )));
+            }
+
+            let mut births = Vec::with_capacity(d.sources.len());
+
+            for sources in &d.sources {
+                let draws = SoulDraws::draw(&mut rng, n);
+                let from = sources
+                    .iter()
+                    .map(|s| {
+                        let parent = parents.get(s.parent)?;
+
+                        source_soul(parent, s.worker)
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| broken(format!("a source of child {i} has no Soul")))?;
+                let inherited: Vec<Inheritance<'_>> = from.iter().map(|(x, _, _)| *x).collect();
+                let birth = souletics(soul, &inherited, urn, &draws);
+
+                urn += 1;
+                births.push((birth, from));
+            }
+
+            for (w, (birth, _)) in d
+                .cascade
+                .stages
+                .iter_mut()
+                .flat_map(|s| &mut s.workers)
+                .zip(&births)
+            {
+                w.traits.phase_state = Some(PhaseState(birth.phases.clone()));
+                w.traits.coupling = birth.coupling;
+            }
+
+            // A new Soul's origin is its own Worker, so the record needs the id with the
+            // Souls in it; a copied or mixed Soul keeps the origin of its first source.
+            let id = d.cascade.id();
+            let records = births
+                .into_iter()
+                .enumerate()
+                .map(|(k, (birth, from))| {
+                    let origin = match from.first() {
+                        Some((_, _, origin)) if !birth.new => (*origin).clone(),
+                        _ => WorkerRef {
+                            member: id.clone(),
+                            worker: k,
+                        },
+                    };
+
+                    SoulSource {
+                        sources: from.into_iter().map(|(_, at, _)| at).collect(),
+                        new: birth.new,
+                        origin,
+                    }
+                })
+                .collect();
+
+            d.soul_sources = Some(records);
+        }
+
+        Ok(())
     }
 
     /// The tasks of the search panel.
@@ -1058,9 +1423,11 @@ impl<'a, D: Domain> Breeder<'a, D> {
             let seeds = adapt_seeds((self.genes.seeds)(), &self.cfg.limits)?
                 .into_iter()
                 .map(|(_, c)| Draft {
+                    sources: vec![Vec::new(); c.worker_count()],
                     cascade: c,
                     parents: Vec::new(),
                     op: Op::Seed,
+                    soul_sources: None,
                 })
                 .collect();
 
@@ -1093,6 +1460,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         events.extend(llm_events);
 
+        let mut drafts = drafts;
+
+        if let Some(soul) = &self.cfg.soul {
+            self.souletics(g, &mut drafts, soul)?;
+        }
+
         let need = drafts
             .iter()
             .map(|d| cascade_call_bound(&d.cascade).saturating_mul(self.search.len() as u64))
@@ -1110,19 +1483,40 @@ impl<'a, D: Domain> Breeder<'a, D> {
         let mut calls = self.calls;
         let mut generation_usage = Usage::default();
         let first_new = archive.len();
+        let mut gene_ids = self.gene_ids.clone();
 
         for d in drafts {
             let id = d.cascade.id();
-            let tag = format!("search/{id}");
-            let (answers, usage) = self.evaluate(&d.cascade, &self.search, &tag, stop);
+            // Calls take their seeds from the genes (spec 15): members with the same genes
+            // and other Souls make the same calls.
+            let gene_id = self.gene_key(&id, &d.cascade);
+            let tag = format!("search/{gene_id}");
+            // A newborn answers with its birth Souls (spec 8.4).
+            let souls = d.soul_sources.as_ref().map(|_| birth_souls(&d.cascade));
+            let (runs, usage) =
+                self.evaluate(&d.cascade, souls.as_deref(), &self.search, &tag, stop);
 
             calls += usage.calls;
 
-            let Some(answers) = answers else {
+            let Some(runs) = runs else {
                 self.calls = calls;
 
                 return Ok((Status::Done("stopped".to_string()), Vec::new()));
             };
+            let mut answers = Vec::with_capacity(runs.len());
+            let mut authors = Vec::with_capacity(runs.len());
+            let mut votes = VoteTally::default();
+
+            // In panel order, so the sums do not depend on threads.
+            for r in runs {
+                votes.add(&r.votes);
+                authors.push(r.authors);
+                answers.push(r.answer);
+            }
+
+            let souled = souls.is_some();
+            let authors = souled.then_some(authors);
+            let votes = souled.then_some(votes);
             let (solved, quality) = match tally(&self.domain, &answers, &self.search) {
                 Ok(t) => t,
                 Err(e) => {
@@ -1155,7 +1549,15 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 usage,
                 quality,
                 answers: artefacts.iter().any(Option::is_some).then_some(artefacts),
+                soul_sources: d.soul_sources.clone(),
+                authors: authors.clone(),
+                votes,
             });
+
+            // The current Souls start as the birth Souls (spec 4.3).
+            let soul_now = d.soul_sources.as_ref().map(|_| birth_souls(&d.cascade));
+
+            gene_ids.push(gene_id);
 
             archive.push(Member {
                 id,
@@ -1172,6 +1574,10 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 judge_wrong: 0,
                 fitness: 0.0,
                 rating: 0.0,
+                soul_sources: d.soul_sources,
+                soul_now,
+                authors,
+                votes,
             });
         }
 
@@ -1199,7 +1605,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
         comparisons.extend(new_comparisons);
         refresh(&mut archive, &comparisons, &self.cfg, self.search.len());
 
-        let best = rank(&archive).first().map(|&i| archive[i].clone());
+        let best = rank(&archive, &gene_ids)
+            .first()
+            .map(|&i| archive[i].clone());
 
         if let Some(b) = best {
             events.push(Event::Generation {
@@ -1214,6 +1622,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         // Commit. The archive changed, so its select phase is still to come.
         self.archive = archive;
+        self.gene_ids = gene_ids;
         self.comparisons = comparisons;
         self.calls = calls;
         self.mutator_answers += answers_used;
@@ -1264,7 +1673,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
         stop_reason: &str,
         persist: &mut Persist<'_, D::Answer>,
     ) -> Result<Option<(Report, Vec<Event>)>> {
-        let order = rank(&self.archive);
+        let order = rank(&self.archive, &self.gene_ids);
         let mut events = Vec::new();
         let mut finalists = Vec::new();
         let picked = self.select_picks(&order);
@@ -1292,16 +1701,19 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 // member in flight.
                 persist(&self.snapshot_with(self.member_need(i)))?;
 
-                let tag = format!("select/{id}");
+                let tag = format!("select/{}", self.gene_ids[i]);
                 let tasks: Vec<&D::Task> = missing.iter().map(|&j| &self.select[j]).collect();
-                let (answers, usage) = self.run_panel(&self.archive[i].cascade, &tasks, &tag, stop);
+                // A member votes with its current Souls (spec 8.4, 8.6).
+                let m = &self.archive[i];
+                let (runs, usage) =
+                    self.run_panel(&m.cascade, m.soul_now.as_deref(), &tasks, &tag, stop);
                 let mut complete = true;
                 let got = self.select_answers.entry(id.clone()).or_default();
 
-                for (task, answer) in tasks.iter().zip(answers) {
-                    match answer {
-                        Some(a) => {
-                            got.insert(self.domain.task_id(task).to_string(), a);
+                for (task, run) in tasks.iter().zip(runs) {
+                    match run {
+                        Some(r) => {
+                            got.insert(self.domain.task_id(task).to_string(), r.answer);
                         }
                         None => complete = false,
                     }
@@ -1405,7 +1817,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// Worst-case calls the select phase still needs: 0 when every answer is kept, as
     /// for a finished run.
     pub fn select_need(&self) -> u64 {
-        self.select_picks(&rank(&self.archive))
+        self.select_picks(&rank(&self.archive, &self.gene_ids))
             .iter()
             .map(|&i| self.member_need(i))
             .fold(0u64, u64::saturating_add)
@@ -1424,33 +1836,38 @@ impl<'a, D: Domain> Breeder<'a, D> {
             .collect()
     }
 
-    /// Answers and usage of `c` on `panel`. The answers are None when `stop` fired before
-    /// some task; the usage still counts every call that was made.
+    /// The runs of `c` on `panel`, with `souls` as its Workers' Souls in a Run with Souls,
+    /// and their usage. The runs are None when `stop` fired before some task; the usage
+    /// still counts every call that was made.
     fn evaluate(
         &self,
         c: &Cascade,
+        souls: Option<&[PhaseState]>,
         panel: &[D::Task],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> (Option<Vec<Option<D::Answer>>>, Usage) {
+    ) -> (Option<Vec<CascadeRun<D::Answer>>>, Usage) {
         let tasks: Vec<&D::Task> = panel.iter().collect();
-        let (answers, usage) = self.run_panel(c, &tasks, tag, stop);
+        let (runs, usage) = self.run_panel(c, souls, &tasks, tag, stop);
 
-        (answers.into_iter().collect(), usage)
+        (runs.into_iter().collect(), usage)
     }
 
     /// Run `c` on every task of `panel`, in parallel. An entry is None when `stop` fired
     /// before that task started; a started task always finishes, and the usage counts
     /// every call made. Every call's seed comes from `tag` (which names the Cascade) and
     /// the task id, so the result depends neither on thread count nor on when, or with
-    /// which other tasks, the Cascade runs.
+    /// which other tasks, the Cascade runs. In a Run with Souls, `souls` holds the Souls
+    /// its Workers vote with, frozen for the generation, and each task gives its strengths
+    /// (spec 7.2, 8.4).
     fn run_panel(
         &self,
         c: &Cascade,
+        souls: Option<&[PhaseState]>,
         panel: &[&D::Task],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> (Vec<Option<Option<D::Answer>>>, Usage) {
+    ) -> (Vec<Option<CascadeRun<D::Answer>>>, Usage) {
         let runs: Vec<Option<CascadeRun<D::Answer>>> = panel
             .par_iter()
             .map(|task| {
@@ -1460,25 +1877,40 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
                 let id = self.domain.task_id(task);
                 let seed = derive_seed(self.cfg.seed, &format!("{tag}/{id}"));
-                let run = run_cascade_in(&self.domain, self.pool, &self.cfg.limits, c, task, seed);
+                let run = match (&self.cfg.soul, souls) {
+                    (Some(soul), Some(souls)) => {
+                        let strengths = soul.strengths.of(&self.domain, task);
+                        let with = RunSouls {
+                            souls,
+                            strengths: &strengths,
+                            readout: soul.readout,
+                            vote: soul.vote,
+                        };
+
+                        run_cascade_with(
+                            &self.domain,
+                            self.pool,
+                            &self.cfg.limits,
+                            c,
+                            task,
+                            seed,
+                            Some(&with),
+                        )
+                    }
+                    _ => run_cascade_in(&self.domain, self.pool, &self.cfg.limits, c, task, seed),
+                };
 
                 Some(run)
             })
             .collect();
 
         let mut usage = Usage::default();
-        let answers = runs
-            .into_iter()
-            .map(|r| {
-                r.map(|r| {
-                    usage.add(&r.usage);
 
-                    r.answer
-                })
-            })
-            .collect();
+        for r in runs.iter().flatten() {
+            usage.add(&r.usage);
+        }
 
-        (answers, usage)
+        (runs, usage)
     }
 
     /// Upper bound on judge calls of one peer round with `n` new members: each meets at
@@ -1520,10 +1952,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
             for &o in opponents.iter().take(self.cfg.peer_opponents) {
                 let mut differ: Vec<usize> = (0..self.search.len())
-                    .filter(|&i| match (&archive[c].answers.get(i), &archive[o].answers.get(i)) {
-                        (Some(Some(a)), Some(Some(b))) => a != b,
-                        _ => false,
-                    })
+                    .filter(
+                        |&i| match (&archive[c].answers.get(i), &archive[o].answers.get(i)) {
+                            (Some(Some(a)), Some(Some(b))) => a != b,
+                            _ => false,
+                        },
+                    )
                     .collect();
 
                 differ.shuffle(rng);
@@ -1556,7 +1990,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 }
 
                 let task = &self.search[i];
-                let (Some(Some(a)), Some(Some(b))) = (archive[c].answers.get(i), archive[o].answers.get(i))
+                let (Some(Some(a)), Some(Some(b))) =
+                    (archive[c].answers.get(i), archive[o].answers.get(i))
                 else {
                     return Some((None, Usage::default()));
                 };
@@ -1623,21 +2058,27 @@ impl<'a, D: Domain> Breeder<'a, D> {
         let mut drafts: Vec<Draft> = Vec::new();
         let mut events = Vec::new();
         let mut answers_used = 0u64;
-        let mut seen: HashSet<String> = self.archive.iter().map(|m| m.id.clone()).collect();
+        // Novelty goes by genes (spec 9.6): a child with the genes of a member and another
+        // Soul is no new child. Without Souls the gene ids are the ids.
+        let mut seen: HashSet<String> = self.gene_ids.iter().cloned().collect();
         let weights = self.selection_weights();
 
         let llm_round = self.cfg.llm_every > 0 && g.is_multiple_of(self.cfg.llm_every);
 
         if llm_round && let Some(mutator) = self.mutator {
             let n = self.cfg.llm_children.min(self.cfg.children_per_generation);
-            let mut planned: Vec<(GenRequest, Vec<String>, Op)> = Vec::new();
+            let mut planned: Vec<(GenRequest, Vec<usize>, Op)> = Vec::new();
 
             for i in 0..n {
                 let Some(a) = draw(&weights, rng) else {
                     break;
                 };
                 let seed = derive_seed(self.cfg.seed, &format!("llm/{g}/{i}"));
-                let partner = if i % 2 == 1 { self.partner(a, &weights, rng) } else { None };
+                let partner = if i % 2 == 1 {
+                    self.partner(a, &weights, rng)
+                } else {
+                    None
+                };
                 let pa = &self.archive[a];
 
                 match partner {
@@ -1651,7 +2092,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                             seed,
                         );
 
-                        planned.push((req, vec![pa.id.clone(), pb.id.clone()], Op::LlmCrossover));
+                        planned.push((req, vec![a, b], Op::LlmCrossover));
                     }
                     None => {
                         let req = llm_mutate_request_with(
@@ -1662,13 +2103,15 @@ impl<'a, D: Domain> Breeder<'a, D> {
                             seed,
                         );
 
-                        planned.push((req, vec![pa.id.clone()], Op::LlmMutate));
+                        planned.push((req, vec![a], Op::LlmMutate));
                     }
                 }
             }
 
-            let answered: Vec<Option<GenResponse>> =
-                planned.iter().map(|(req, _, _)| mutator.answer(req)).collect();
+            let answered: Vec<Option<GenResponse>> = planned
+                .iter()
+                .map(|(req, _, _)| mutator.answer(req))
+                .collect();
 
             if self.cfg.pause_for_llm && answered.iter().any(Option::is_none) {
                 let missing = planned
@@ -1696,8 +2139,17 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
                 let parsed = match &resp {
                     None => Err("no answer".to_string()),
-                    Some(r) if !r.is_usable() => Err(format!("unusable answer ({:?})", r.stop_reason)),
-                    Some(r) => parse_llm_cascade(&r.text, &self.cfg.limits).map_err(|e| e.to_string()),
+                    Some(r) if !r.is_usable() => {
+                        Err(format!("unusable answer ({:?})", r.stop_reason))
+                    }
+                    // The Mutator never writes a Soul (spec 4.5). This rule comes first, so
+                    // it names the reason also when the answer breaks other rules.
+                    Some(r) if read_llm_cascade(&r.text).is_ok_and(|c| c.carries_soul()) => {
+                        Err(SOUL_NOT_ADMITTED.to_string())
+                    }
+                    Some(r) => {
+                        parse_llm_cascade(&r.text, &self.cfg.limits).map_err(|e| e.to_string())
+                    }
                 };
                 // The gene pool's admission rule holds for every new Cascade.
                 let parsed = parsed.and_then(|c| match (self.genes.admit)(&c) {
@@ -1705,13 +2157,25 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     Err(e) => Err(format!("not admitted: {e}")),
                 });
                 let (accepted, reason) = match parsed {
-                    Ok(c) if seen.contains(&c.id()) => (false, "duplicate of an archived Cascade".to_string()),
+                    Ok(c) if seen.contains(&c.gene_id()) => {
+                        (false, "duplicate of an archived Cascade".to_string())
+                    }
                     Ok(c) => {
-                        seen.insert(c.id());
+                        // The Mutator writes any shape: each Worker's sources follow the
+                        // partner rule on every parent (spec 9.1).
+                        let from: Vec<&Cascade> =
+                            parents.iter().map(|&p| &self.archive[p].cascade).collect();
+
+                        seen.insert(c.gene_id());
                         drafts.push(Draft {
+                            sources: partner_sources(&c, &from),
                             cascade: c,
-                            parents: parents.clone(),
+                            parents: parents
+                                .iter()
+                                .map(|&p| self.archive[p].id.clone())
+                                .collect(),
                             op,
+                            soul_sources: None,
                         });
 
                         (true, "ok".to_string())
@@ -1758,28 +2222,36 @@ impl<'a, D: Domain> Breeder<'a, D> {
             };
             let parent = &self.archive[a];
             let crossover = rng.random_bool(self.cfg.crossover_rate);
-            let mut child: Option<(Cascade, Vec<String>, Op)> = None;
+            let mut child: Option<(Cascade, Vec<String>, Op, Sources)> = None;
 
+            // The operators see genes only: they remove the parents' Souls and Coupling
+            // strengths first, so their draws are those of a Run without Souls (spec 9.1).
             if crossover && let Some(b) = self.partner(a, weights, rng) {
                 let other = &self.archive[b];
                 let by_stage = rng.random_bool(0.5);
                 let made = if by_stage {
-                    stage_crossover(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
-                        .map(|c| (c, Op::StageCrossover))
+                    stage_crossover_sourced(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
+                        .map(|(c, s)| (c, Op::StageCrossover, s))
                 } else {
-                    section_crossover(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
-                        .map(|c| (c, Op::SectionCrossover))
+                    section_crossover_sourced(
+                        &parent.cascade,
+                        &other.cascade,
+                        &self.cfg.limits,
+                        rng,
+                    )
+                    .map(|(c, s)| (c, Op::SectionCrossover, s))
                 };
 
-                child = made.map(|(c, op)| (c, vec![parent.id.clone(), other.id.clone()], op));
+                child =
+                    made.map(|(c, op, s)| (c, vec![parent.id.clone(), other.id.clone()], op, s));
             }
 
             if child.is_none() {
-                child = mutate_with(&parent.cascade, &self.cfg.limits, self.genes.phrases, rng)
-                    .map(|(c, op)| (c, vec![parent.id.clone()], op));
+                child = mutate_sourced(&parent.cascade, &self.cfg.limits, self.genes.phrases, rng)
+                    .map(|(c, op, s)| (c, vec![parent.id.clone()], op, s));
             }
 
-            if let Some((c, parents, op)) = child
+            if let Some((c, parents, op, sources)) = child
                 && c.check(&self.cfg.limits).is_ok()
                 && (self.genes.admit)(&c).is_ok()
                 && seen.insert(c.id())
@@ -1788,6 +2260,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     cascade: c,
                     parents,
                     op,
+                    sources,
+                    soul_sources: None,
                 });
             }
         }
@@ -1821,7 +2295,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 let b = draw(weights, rng)?;
 
                 if b != a {
-                    let better = best.is_none_or(|x| self.archive[b].rating > self.archive[x].rating);
+                    let better =
+                        best.is_none_or(|x| self.archive[b].rating > self.archive[x].rating);
 
                     if better {
                         best = Some(b);
@@ -1968,7 +2443,11 @@ fn refresh<A>(
         .filter_map(|c| {
             let winner = c.winner.as_ref()?;
             let w = *index.get(winner)?;
-            let loser = if winner == &c.first { &c.second } else { &c.first };
+            let loser = if winner == &c.first {
+                &c.second
+            } else {
+                &c.first
+            };
             let l = *index.get(loser)?;
             let j = *index.get(&c.judge)?;
 
@@ -1990,9 +2469,13 @@ fn refresh<A>(
     }
 }
 
-/// Archive indices best first: fitness, then peer rating (tie-break, Q13), then id.
-fn rank<A>(archive: &[Member<A>]) -> Vec<usize> {
+/// Archive indices best first: fitness, then peer rating (tie-break, Q13), then `keys`, the
+/// members' gene ids, so that no Soul breaks a tie (spec 15). Without Souls the gene ids are
+/// the ids.
+fn rank<A>(archive: &[Member<A>], keys: &[String]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..archive.len()).collect();
+
+    debug_assert_eq!(archive.len(), keys.len());
 
     order.sort_by(|&a, &b| {
         let (x, y) = (&archive[a], &archive[b]);
@@ -2000,10 +2483,103 @@ fn rank<A>(archive: &[Member<A>]) -> Vec<usize> {
         y.fitness
             .total_cmp(&x.fitness)
             .then(y.rating.total_cmp(&x.rating))
-            .then(x.id.cmp(&y.id))
+            .then(keys[a].cmp(&keys[b]))
     });
 
     order
+}
+
+/// The birth Soul of every Worker of `c`, in Stage order.
+fn birth_souls(c: &Cascade) -> Vec<PhaseState> {
+    c.stages
+        .iter()
+        .flat_map(|s| &s.workers)
+        .map(|w| {
+            w.traits
+                .phase_state
+                .clone()
+                .unwrap_or(PhaseState(Vec::new()))
+        })
+        .collect()
+}
+
+/// What source Worker `worker` of `parent` passes on: its birth Soul from the genome, never
+/// its current Soul (Q65), and its Coupling strength; where it is; and its Soul's origin.
+fn source_soul<A>(
+    parent: &Member<A>,
+    worker: usize,
+) -> Option<(Inheritance<'_>, WorkerRef, &WorkerRef)> {
+    let w = parent
+        .cascade
+        .stages
+        .iter()
+        .flat_map(|s| &s.workers)
+        .nth(worker)?;
+    let origin = &parent.soul_sources.as_ref()?.get(worker)?.origin;
+    let inherited = Inheritance {
+        phases: w.traits.phase_state.as_deref()?,
+        coupling: w.traits.coupling,
+    };
+    let at = WorkerRef {
+        member: parent.id.clone(),
+        worker,
+    };
+
+    Some((inherited, at, origin))
+}
+
+/// Why member `m` breaks the rule of a Run with Souls of `n` phases (spec 4.4), if it does:
+/// every Worker has a Soul of exactly `n` phases and a Coupling strength of at most 1000,
+/// and the member records where each Soul came from, each current Soul, the authors on
+/// each of the `tasks` search tasks and its tally of votes.
+fn check_souls<A>(m: &Member<A>, n: usize, tasks: usize) -> std::result::Result<(), String> {
+    let workers = m.cascade.worker_count();
+
+    for (k, w) in m.cascade.stages.iter().flat_map(|s| &s.workers).enumerate() {
+        match &w.traits.phase_state {
+            None => {
+                return Err(format!(
+                    "Worker {k} has no Soul; a Soul of this Run has {n} phases"
+                ));
+            }
+            Some(p) if p.len() != n => {
+                return Err(format!(
+                    "Worker {k} has a Soul of {} phases; a Soul of this Run has {n}",
+                    p.len()
+                ));
+            }
+            Some(_) => {}
+        }
+
+        if w.traits.coupling > COUPLING_MAX {
+            return Err(format!(
+                "Worker {k} has a Coupling strength above {COUPLING_MAX}"
+            ));
+        }
+    }
+
+    if m.soul_sources.as_ref().map(Vec::len) != Some(workers) {
+        return Err(format!(
+            "it does not record where each of its {workers} Souls came from"
+        ));
+    }
+
+    match &m.soul_now {
+        Some(now) if now.len() == workers && now.iter().all(|p| p.len() == n) => {}
+        _ => {
+            return Err(format!(
+                "it does not hold a current Soul of {n} phases for each of its {workers} Workers"
+            ));
+        }
+    }
+
+    if m.authors.as_ref().map(Vec::len) != Some(tasks) || m.votes.is_none() {
+        return Err(format!(
+            "it does not record the authors on each of the {tasks} search tasks and its votes"
+        ));
+    }
+
+    Ok(())
 }
 
 fn ranked<A>(m: &Member<A>, puzzles: usize) -> Ranked {
@@ -2072,11 +2648,18 @@ pub fn breed_to_end_in<D: Domain>(
 mod tests {
     use super::*;
     use crate::backend::StubModel;
-    use crate::cascade::domain::Grade;
+    use crate::cascade::circuit::CircuitDomain;
+    use crate::cascade::circuit_genes::{CIRCUIT_BRIEF, circuit_pool};
+    use crate::cascade::designer::SimDesigner;
+    use crate::cascade::domain::{CircuitConfig, Grade};
     use crate::cascade::genome::{Section, Stage, Traits, seed_cascades, seeds_for};
     use crate::cascade::puzzle::generate_panel;
     use crate::cascade::sim::SimModel;
-    use crate::cascade::variation::MutatorBrief;
+    use crate::cascade::soul::{
+        Inheritance, SoulConfig, SoulDraws, Strengths, new_soul_chance, souletics,
+    };
+    use crate::cascade::variation::{GRID_BRIEF, MutatorBrief};
+    use std::collections::BTreeSet;
 
     fn sim_pool() -> ModelPool {
         let mut pool = ModelPool::new();
@@ -2124,7 +2707,10 @@ mod tests {
 
         let none = bradley_terry(2, &[(0, 1, 0.0)]);
 
-        assert!(none.iter().all(|x| x.abs() < 1e-9), "zero weight changes nothing");
+        assert!(
+            none.iter().all(|x| x.abs() < 1e-9),
+            "zero weight changes nothing"
+        );
     }
 
     #[test]
@@ -2161,8 +2747,12 @@ mod tests {
         let seeds = seed_cascades();
         let mut c = seeds[0].1.clone();
 
-        c.stages[0].workers.push(seeds[1].1.stages[0].workers[0].clone());
-        c.stages[0].workers.push(seeds[2].1.stages[0].workers[0].clone());
+        c.stages[0]
+            .workers
+            .push(seeds[1].1.stages[0].workers[0].clone());
+        c.stages[0]
+            .workers
+            .push(seeds[2].1.stages[0].workers[0].clone());
 
         for p in &panel {
             let run = run_cascade(&pool, &limits, &c, p, 3);
@@ -2343,8 +2933,18 @@ mod tests {
 
         for (_, c) in &seeds {
             assert!(c.check(&limits).is_ok());
-            assert!(c.stages.iter().flat_map(|s| &s.workers).all(|w| w.model == "sim:large"));
-            assert!(c.stages.iter().flat_map(|s| &s.workers).all(|w| w.traits.think_tokens == 0));
+            assert!(
+                c.stages
+                    .iter()
+                    .flat_map(|s| &s.workers)
+                    .all(|w| w.model == "sim:large")
+            );
+            assert!(
+                c.stages
+                    .iter()
+                    .flat_map(|s| &s.workers)
+                    .all(|w| w.traits.think_tokens == 0)
+            );
         }
     }
 
@@ -2392,7 +2992,10 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&child).expect("json");
 
-        book.insert(&request_key(&requests[0]), format!("Here you go:\n```json\n{json}\n```"));
+        book.insert(
+            &request_key(&requests[0]),
+            format!("Here you go:\n```json\n{json}\n```"),
+        );
         book.insert(&request_key(&requests[1]), "no idea".to_string());
 
         let snap = b.snapshot();
@@ -2407,10 +3010,12 @@ mod tests {
             .collect();
 
         assert_eq!(exchanges.len(), 2);
-        assert!(resumed
-            .archive()
-            .iter()
-            .any(|m| m.id == child.id() && m.op == Op::LlmMutate));
+        assert!(
+            resumed
+                .archive()
+                .iter()
+                .any(|m| m.id == child.id() && m.op == Op::LlmMutate)
+        );
     }
 
     #[test]
@@ -2426,7 +3031,15 @@ mod tests {
         let (report, events) = breed_to_end(cfg, &pool, Some(&live)).expect("run");
         let rejected = events
             .iter()
-            .filter(|e| matches!(e, Event::LlmExchange { accepted: false, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::LlmExchange {
+                        accepted: false,
+                        ..
+                    }
+                )
+            })
             .count();
 
         assert!(rejected > 0);
@@ -2459,16 +3072,31 @@ mod tests {
         let reserved = stored[0].clone();
 
         assert_eq!(reserved.calls, 0, "stored before the first call");
-        assert!(reserved.reserved >= b.calls_used(), "the worst case covers what was spent");
+        assert!(
+            reserved.reserved >= b.calls_used(),
+            "the worst case covers what was spent"
+        );
 
-        let mut resumed = Breeder::resume(small_config(23), &pool, None, reserved.clone()).expect("resume");
+        let mut resumed =
+            Breeder::resume(small_config(23), &pool, None, reserved.clone()).expect("resume");
 
-        assert_eq!(resumed.calls_used(), reserved.reserved, "a crash counts the reservation");
+        assert_eq!(
+            resumed.calls_used(),
+            reserved.reserved,
+            "a crash counts the reservation"
+        );
 
         while let (Status::Continue, _) = resumed.step(&never).expect("step") {}
 
-        assert_eq!(resumed.archive(), straight.archive(), "the repeated generation is the same");
-        assert_eq!(resumed.calls_used(), straight.calls_used() + reserved.reserved);
+        assert_eq!(
+            resumed.archive(),
+            straight.archive(),
+            "the repeated generation is the same"
+        );
+        assert_eq!(
+            resumed.calls_used(),
+            straight.calls_used() + reserved.reserved
+        );
     }
 
     #[test]
@@ -2497,7 +3125,11 @@ mod tests {
             let polls = AtomicUsize::new(0);
             let stop_later = || polls.fetch_add(1, Ordering::SeqCst) >= limit;
 
-            assert!(b.finish(&stop_later, "all generations done").expect("finish").is_none());
+            assert!(
+                b.finish(&stop_later, "all generations done")
+                    .expect("finish")
+                    .is_none()
+            );
         }
 
         let (again, again_events) = b
@@ -2505,7 +3137,11 @@ mod tests {
             .expect("finish")
             .expect("not stopped");
 
-        assert_eq!(b.calls_used() - before, select_calls, "every puzzle was scored once");
+        assert_eq!(
+            b.calls_used() - before,
+            select_calls,
+            "every puzzle was scored once"
+        );
         assert_eq!(again, report);
         assert_eq!(again_events, events);
 
@@ -2581,7 +3217,9 @@ mod tests {
         let refused = Breeder::new(cfg, &pool, None).err().map(|e| e.to_string());
 
         assert!(
-            refused.as_deref().is_some_and(|e| e.contains("another domain")),
+            refused
+                .as_deref()
+                .is_some_and(|e| e.contains("another domain")),
             "{refused:?}"
         );
     }
@@ -2628,7 +3266,11 @@ mod tests {
             assert_eq!(c.judge_correct, Some(false));
 
             // Only a scored pair (exactly one right answer) gives such a record.
-            let i = b.search.iter().position(|p| p.id == c.puzzle).expect("search puzzle");
+            let i = b
+                .search
+                .iter()
+                .position(|p| p.id == c.puzzle)
+                .expect("search puzzle");
             let right = |id: &str| {
                 let m = b.archive().iter().find(|m| m.id == id).expect("member");
 
@@ -2638,7 +3280,11 @@ mod tests {
             assert_ne!(right(&c.first), right(&c.second), "{c:?}");
         }
 
-        assert!(b.archive().iter().any(|m| m.judge_wrong > 0 && m.judge_skill() < 0.5));
+        assert!(
+            b.archive()
+                .iter()
+                .any(|m| m.judge_wrong > 0 && m.judge_skill() < 0.5)
+        );
     }
 
     #[test]
@@ -2679,23 +3325,34 @@ mod tests {
             for g in 0..=last {
                 let prefix = archive.iter().take_while(|m| m.generation <= g).count();
                 let kin = Kinship::new(&archive[..prefix]);
-                let new: Vec<usize> = (0..prefix).filter(|&i| archive[i].generation == g).collect();
+                let new: Vec<usize> = (0..prefix)
+                    .filter(|&i| archive[i].generation == g)
+                    .collect();
                 let mut assigned = vec![0usize; prefix];
 
                 for c in b.comparisons().iter().filter(|c| c.generation == g) {
                     let (x, y) = (index[c.first.as_str()], index[c.second.as_str()]);
                     let j = index[c.judge.as_str()];
-                    let fair = |k: usize| k != x && k != y && !kin.related(k, x) && !kin.related(k, y);
-                    let mut candidates: Vec<usize> = new.iter().copied().filter(|&k| fair(k)).collect();
+                    let fair =
+                        |k: usize| k != x && k != y && !kin.related(k, x) && !kin.related(k, y);
+                    let mut candidates: Vec<usize> =
+                        new.iter().copied().filter(|&k| fair(k)).collect();
 
                     if candidates.is_empty() {
                         candidates = (0..prefix).filter(|&k| fair(k)).collect();
                     }
 
-                    let fewest = candidates.iter().map(|&k| assigned[k]).min().expect("a fair judge");
+                    let fewest = candidates
+                        .iter()
+                        .map(|&k| assigned[k])
+                        .min()
+                        .expect("a fair judge");
 
                     assert!(fair(j), "seed {seed} gen {g}: judge {j} is related");
-                    assert_eq!(assigned[j], fewest, "seed {seed} gen {g}: judge {j} was not least used");
+                    assert_eq!(
+                        assigned[j], fewest,
+                        "seed {seed} gen {g}: judge {j} was not least used"
+                    );
                     assigned[j] += 1;
                 }
             }
@@ -2718,7 +3375,12 @@ mod tests {
                 .is_some_and(|(a, _)| a == self.right);
 
             Ok(GenResponse {
-                text: if first_is_right { "VERDICT A" } else { "VERDICT B" }.to_string(),
+                text: if first_is_right {
+                    "VERDICT A"
+                } else {
+                    "VERDICT B"
+                }
+                .to_string(),
                 prompt_tokens: 1,
                 completion_tokens: 2,
                 stop_reason: StopReason::Stop,
@@ -2737,7 +3399,12 @@ mod tests {
 
         let mut pool = ModelPool::new();
 
-        pool.insert("sim:small", Box::new(Oracle { right: right.clone() }));
+        pool.insert(
+            "sim:small",
+            Box::new(Oracle {
+                right: right.clone(),
+            }),
+        );
 
         let limits = CascadeLimits::default();
         let ctx = Ctx {
@@ -2750,8 +3417,14 @@ mod tests {
         for seed in 0..32u64 {
             let mut usage = Usage::default();
 
-            assert_eq!(judge_with(ctx, &w, &p, &right, &wrong, seed, &mut usage), Judgment::Verdict(true));
-            assert_eq!(judge_with(ctx, &w, &p, &wrong, &right, seed, &mut usage), Judgment::Verdict(false));
+            assert_eq!(
+                judge_with(ctx, &w, &p, &right, &wrong, seed, &mut usage),
+                Judgment::Verdict(true)
+            );
+            assert_eq!(
+                judge_with(ctx, &w, &p, &wrong, &right, seed, &mut usage),
+                Judgment::Verdict(false)
+            );
             orders.insert(ChaCha8Rng::seed_from_u64(derive_seed(seed, "order")).random_bool(0.5));
         }
 
@@ -2767,7 +3440,7 @@ mod tests {
         while let (Status::Continue, _) = b.step(&never).expect("step") {}
 
         let before = b.calls_used();
-        let picked = b.select_picks(&rank(&b.archive));
+        let picked = b.select_picks(&rank(&b.archive, &b.gene_ids));
         let mut stored: Vec<Snapshot> = Vec::new();
         let (report, _) = b
             .finish_with(&never, "all generations done", &mut |s| {
@@ -2783,13 +3456,17 @@ mod tests {
         assert_eq!(stored[0].calls, before);
 
         for (s, &i) in stored.iter().zip(&picked) {
-            assert_eq!(s.reserved, cascade_call_bound(&b.archive[i].cascade) * b.select.len() as u64);
+            assert_eq!(
+                s.reserved,
+                cascade_call_bound(&b.archive[i].cascade) * b.select.len() as u64
+            );
         }
 
         // A crash inside the first Cascade costs its reservation once more; the resumed
         // select phase still fits and gives the same finalists.
         let first = stored[0].clone();
-        let mut resumed = Breeder::resume(small_config(41), &pool, None, first.clone()).expect("resume");
+        let mut resumed =
+            Breeder::resume(small_config(41), &pool, None, first.clone()).expect("resume");
 
         assert_eq!(resumed.calls_used(), first.calls + first.reserved);
 
@@ -2849,7 +3526,9 @@ mod tests {
         };
 
         // Generation 0 needs 144 calls with its select reserve; scan above that.
-        let threshold = (150..600).find(|&cap| pauses(cap)).expect("a cap that pauses");
+        let threshold = (150..600)
+            .find(|&cap| pauses(cap))
+            .expect("a cap that pauses");
 
         assert!(!pauses(threshold - 1));
 
@@ -2870,7 +3549,8 @@ mod tests {
             book.insert(&request_key(req), serde_json::to_string(&c).expect("json"));
         }
 
-        let mut resumed = Breeder::resume(cfg(threshold), &pool, Some(&book), b.snapshot()).expect("resume");
+        let mut resumed =
+            Breeder::resume(cfg(threshold), &pool, Some(&book), b.snapshot()).expect("resume");
         let (status, events) = resumed.step(&never).expect("gen 1 again");
         let used = events
             .iter()
@@ -3700,6 +4380,10 @@ mod tests {
             judge_wrong: 0,
             fitness: 0.5,
             rating: 0.0,
+            soul_sources: None,
+            soul_now: None,
+            authors: None,
+            votes: None,
         };
         let mut snap = Snapshot {
             config_hash: "h".to_string(),
@@ -3736,5 +4420,1842 @@ mod tests {
 
         assert!(back.select_answers.is_empty());
         assert_eq!(back.archive, snap.archive);
+    }
+
+    /// Gives a Worker a Soul of seven phases.
+    fn give_phases(t: &mut Traits) {
+        t.phase_state = Some(PhaseState(vec![1, 2, 3, 4, 5, 6, 7]));
+    }
+
+    /// Gives a Worker a Coupling strength of 0.2.
+    fn give_coupling(t: &mut Traits) {
+        t.coupling = 200;
+    }
+
+    /// Gives a Worker a Coupling strength above the ceiling, which `check` refuses too.
+    fn give_too_much_coupling(t: &mut Traits) {
+        t.coupling = 5000;
+    }
+
+    /// Gives a Worker both a Soul and a Coupling strength.
+    fn give_both(t: &mut Traits) {
+        give_phases(t);
+        give_coupling(t);
+    }
+
+    /// `c` with `give` applied to every Worker.
+    fn souled(c: &Cascade, give: fn(&mut Traits)) -> Cascade {
+        let mut c = c.clone();
+
+        for w in c.stages.iter_mut().flat_map(|s| &mut s.workers) {
+            give(&mut w.traits);
+        }
+
+        c
+    }
+
+    /// Answers every Mutator request with the last grid seed and a note of the request's
+    /// seed, every Worker changed by `.0`.
+    struct SoulWriter(fn(&mut Traits));
+
+    impl Mutator for SoulWriter {
+        fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+            let mut c = seed_cascades()[3].1.clone();
+
+            c.stages[0].workers[0].sections.push(Section {
+                name: "note".to_string(),
+                text: format!("Variant {}.", req.seed),
+            });
+
+            Some(GenResponse {
+                text: serde_json::to_string(&souled(&c, self.0)).ok()?,
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                stop_reason: StopReason::Stop,
+                backend: "soul-writer".to_string(),
+            })
+        }
+    }
+
+    /// Whether each LLM answer was accepted, and why, in a short grid run with an LLM round
+    /// whose Mutator is `m`.
+    fn exchanges_with(m: &dyn Mutator) -> Vec<(bool, String)> {
+        let cfg = BreedConfig {
+            llm_every: 1,
+            generations: 1,
+            ..small_config(61)
+        };
+        let (_, events) = breed_to_end(cfg, &sim_pool(), Some(m)).expect("run");
+
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::LlmExchange {
+                    accepted, reason, ..
+                } => Some((*accepted, reason.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_mutator_never_sees_or_writes_a_soul() {
+        let limits = CascadeLimits::default();
+        let seeds = seed_cascades();
+        let (a, b) = (&seeds[0].1, &seeds[1].1);
+        let (sa, sb) = (souled(a, give_both), souled(b, give_phases));
+
+        for brief in [&GRID_BRIEF, &CIRCUIT_BRIEF] {
+            let plain = [
+                llm_mutate_request_with(brief, a, 0.25, &limits, 42),
+                llm_crossover_request_with(brief, (a, 0.25), (b, 0.5), &limits, 43),
+            ];
+            let with_souls = [
+                llm_mutate_request_with(brief, &sa, 0.25, &limits, 42),
+                llm_crossover_request_with(brief, (&sa, 0.25), (&sb, 0.5), &limits, 43),
+            ];
+
+            for (p, s) in plain.iter().zip(&with_souls) {
+                assert_eq!(
+                    serde_json::to_string(p).expect("json"),
+                    serde_json::to_string(s).expect("json")
+                );
+                assert_eq!(request_key(p), request_key(s));
+                assert!(!s.prompt.contains("phase_state") && !s.prompt.contains("coupling"));
+            }
+        }
+
+        // An answer that writes a Soul or a Coupling strength is refused, before any other
+        // rule: also when the Coupling strength is above the ceiling.
+        for give in [
+            give_phases,
+            give_coupling,
+            give_too_much_coupling,
+            give_both,
+        ] {
+            let exchanges = exchanges_with(&SoulWriter(give));
+
+            assert_eq!(exchanges.len(), 2);
+
+            for (accepted, reason) in &exchanges {
+                assert!(!accepted);
+                assert_eq!(reason, "not admitted: the Mutator does not write Souls");
+            }
+        }
+
+        // The same answers without either field are bred.
+        let exchanges = exchanges_with(&SoulWriter(|_| {}));
+
+        assert_eq!(exchanges.len(), 2);
+        assert!(
+            exchanges
+                .iter()
+                .all(|(accepted, reason)| *accepted && reason == "ok"),
+            "{exchanges:?}"
+        );
+    }
+
+    /// The grid seeds with a Soul on the colour seed's Worker.
+    fn seeds_with_phases() -> Vec<(String, Cascade)> {
+        let mut seeds = seed_cascades();
+
+        give_phases(&mut seeds[2].1.stages[0].workers[0].traits);
+        seeds
+    }
+
+    /// The grid seeds with a Coupling strength on the colour seed's Worker.
+    fn seeds_with_coupling() -> Vec<(String, Cascade)> {
+        let mut seeds = seed_cascades();
+
+        give_coupling(&mut seeds[2].1.stages[0].workers[0].traits);
+        seeds
+    }
+
+    /// The reason of an `Invalid` error, or a panic naming what was expected.
+    fn invalid<T>(result: Result<T>, what: &str) -> String {
+        match result {
+            Err(BrutError::Invalid(reason)) => reason,
+            Err(e) => panic!("{what}: expected Invalid, got {e}"),
+            Ok(_) => panic!("{what}: expected a refusal"),
+        }
+    }
+
+    #[test]
+    fn a_run_with_souls_needs_a_domain_that_names_its_families() {
+        let pool = scripted_pool();
+        let task = Doubling.panel(1, 1).remove(0);
+        let cfg = BreedConfig {
+            soul: Some(SoulConfig::arm_s()),
+            ..small_config(71)
+        };
+        let reason = invalid(
+            Breeder::<Doubling>::start(cfg, doubling_genes(), &pool, None),
+            "no families",
+        );
+
+        assert!(Doubling.families().is_empty() && Doubling.strengths(&task).is_empty());
+        assert!(reason.contains("families"), "{reason}");
+
+        // Without Souls the same domain breeds as before.
+        assert!(
+            Breeder::<Doubling>::start(small_config(71), doubling_genes(), &pool, None).is_ok()
+        );
+    }
+
+    #[test]
+    fn a_run_without_souls_refuses_souled_workers() {
+        let pool = sim_pool();
+        let never = || false;
+
+        // A seed.
+        for seeds in [
+            seeds_with_phases as fn() -> Vec<(String, Cascade)>,
+            seeds_with_coupling,
+        ] {
+            let genes = GenePool {
+                seeds,
+                ..GenePool::grid()
+            };
+            let reason = invalid(
+                Breeder::<GridDomain>::start(small_config(67), genes, &pool, None),
+                "seed",
+            );
+
+            assert!(
+                reason.contains("seed colour") && reason.contains("Soul"),
+                "{reason}"
+            );
+        }
+
+        // A resumed member.
+        let mut b = Breeder::new(small_config(67), &pool, None).expect("breeder");
+
+        b.step(&never).expect("gen 0");
+
+        let snap = b.snapshot();
+
+        assert!(Breeder::resume(small_config(67), &pool, None, snap.clone()).is_ok());
+
+        for give in [give_phases, give_coupling] {
+            let mut tampered = snap.clone();
+            let id = tampered.archive[1].id.clone();
+
+            give(&mut tampered.archive[1].cascade.stages[0].workers[0].traits);
+
+            let reason = invalid(
+                Breeder::resume(small_config(67), &pool, None, tampered),
+                "resumed member",
+            );
+
+            assert!(reason.contains(&id) && reason.contains("Soul"), "{reason}");
+        }
+
+        // A Mutator answer.
+        for give in [give_phases, give_coupling] {
+            for (accepted, reason) in exchanges_with(&SoulWriter(give)) {
+                assert!(!accepted && reason == SOUL_NOT_ADMITTED, "{reason}");
+            }
+        }
+
+        // A Run with Souls starts, since Souletics gives Souls to seeds and children
+        // (ticket 03). It refuses to resume the archive of a Run without Souls, whose
+        // Workers have none, and seeds that bring their own.
+        let souled_cfg = BreedConfig {
+            soul: Some(SoulConfig::arm_s()),
+            ..small_config(67)
+        };
+        let resumed = Snapshot {
+            config_hash: souled_cfg.fixed_hash(),
+            ..snap
+        };
+
+        assert!(Breeder::new(souled_cfg.clone(), &pool, None).is_ok());
+
+        let reason = invalid(
+            Breeder::resume(souled_cfg.clone(), &pool, None, resumed),
+            "resumed",
+        );
+
+        assert!(reason.contains("has no Soul"), "{reason}");
+
+        let genes = GenePool {
+            seeds: seeds_with_phases,
+            ..GenePool::grid()
+        };
+        let reason = invalid(
+            Breeder::<GridDomain>::start(souled_cfg, genes, &pool, None),
+            "seed with a Soul",
+        );
+
+        assert!(
+            reason.contains("Souletics gives the seeds their Souls"),
+            "{reason}"
+        );
+    }
+
+    /// The simulated designer under both tags, for circuit runs.
+    fn designer_pool() -> ModelPool {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(SimDesigner::small()));
+        pool.insert("sim:large", Box::new(SimDesigner::large()));
+
+        pool
+    }
+
+    /// A short circuit run: every verified target once on each panel.
+    fn circuit_config(seed: u64) -> BreedConfig {
+        BreedConfig {
+            seed,
+            generations: 3,
+            children_per_generation: 4,
+            search_puzzles: 11,
+            select_puzzles: 11,
+            finalists: 2,
+            domain: DomainConfig::Circuits(CircuitConfig::default()),
+            ..BreedConfig::default()
+        }
+    }
+
+    /// What `draft_children` drafts in generations 1 to 3 of a run: every child's id,
+    /// parents and operator, every LLM exchange, and the word position of the generation's
+    /// stream afterwards. The generations are committed by `step` in between.
+    fn drafting_record<D: Domain>(mut b: Breeder<'_, D>) -> String {
+        let never = || false;
+        let mut out = String::new();
+
+        assert_eq!(b.step(&never).expect("gen 0").0, Status::Continue);
+
+        for _ in 0..3 {
+            let g = b.next_generation();
+            let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(b.cfg.seed, &format!("gen/{g}")));
+            let Drafted::Ready(drafts, events, used) =
+                b.draft_children(g, &mut rng).expect("draft")
+            else {
+                panic!("generation {g} waits for answers");
+            };
+
+            for d in &drafts {
+                out.push_str(&format!(
+                    "g={g} id={} parents={} op={:?}\n",
+                    d.cascade.id(),
+                    d.parents.join(","),
+                    d.op
+                ));
+            }
+
+            for e in &events {
+                if let Event::LlmExchange {
+                    key,
+                    accepted,
+                    reason,
+                    ..
+                } = e
+                {
+                    out.push_str(&format!("g={g} llm={key} {accepted} {reason}\n"));
+                }
+            }
+
+            out.push_str(&format!("g={g} used={used} pos={}\n", rng.get_word_pos()));
+            assert_eq!(b.step(&never).expect("step").0, Status::Continue);
+        }
+
+        out
+    }
+
+    /// The digests of `drafting_record`, recorded before step 2 gave the operators their
+    /// source maps (ticket 03): a grid run, a grid run with an LLM round in every
+    /// generation, and a circuit run.
+    const DRAFTING_GRID: &str = "30e66fd96682aacb1a9ac062d7ae8bbede74bed3310bd192d53aaca6be2603d6";
+    const DRAFTING_GRID_LLM: &str =
+        "a11e9a3873d3a1bf8996487467bbe4594e75ec359ff900633879297a42001816";
+    const DRAFTING_CIRCUITS: &str =
+        "54cf9aae5b2f4e733c8f33a115ed5e0e02869aa9e6188fa63bbddb6229df209b";
+
+    #[test]
+    fn drafting_without_souls_is_unchanged() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let writer = SoulWriter(|_| {});
+        let llm = BreedConfig {
+            llm_every: 1,
+            ..small_config(43)
+        };
+        let records = [
+            drafting_record(Breeder::new(small_config(41), &pool, None).expect("grid")),
+            drafting_record(Breeder::new(llm, &pool, Some(&writer)).expect("grid llm")),
+            drafting_record(
+                Breeder::<CircuitDomain>::start(
+                    circuit_config(47),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            ),
+        ];
+        let digests = records.each_ref().map(|r| sha256_hex(r.as_bytes()));
+
+        assert_eq!(
+            digests,
+            [DRAFTING_GRID, DRAFTING_GRID_LLM, DRAFTING_CIRCUITS],
+            "{records:#?}"
+        );
+    }
+
+    /// `cfg` with the Soul settings `soul`.
+    fn with_souls(cfg: BreedConfig, soul: SoulConfig) -> BreedConfig {
+        BreedConfig {
+            soul: Some(soul),
+            ..cfg
+        }
+    }
+
+    /// The birth Soul of every Worker of `c`, in Stage order; empty without one.
+    fn birth_phases(c: &Cascade) -> Vec<Vec<u16>> {
+        c.stages
+            .iter()
+            .flat_map(|s| &s.workers)
+            .map(|w| w.traits.phase_state.as_deref().unwrap_or_default().to_vec())
+            .collect()
+    }
+
+    /// The Coupling strength of every Worker of `c`, in Stage order.
+    fn couplings(c: &Cascade) -> Vec<u16> {
+        c.stages
+            .iter()
+            .flat_map(|s| &s.workers)
+            .map(|w| w.traits.coupling)
+            .collect()
+    }
+
+    /// The circular distance of two phases, in phase units.
+    fn apart(a: u16, b: u16) -> u16 {
+        let d = a.wrapping_sub(b);
+
+        d.min(d.wrapping_neg())
+    }
+
+    /// The member with this id.
+    fn member<'m, A>(archive: &'m [Member<A>], id: &str) -> &'m Member<A> {
+        archive
+            .iter()
+            .find(|m| m.id == id)
+            .expect("an archived member")
+    }
+
+    /// The Soul records of `m`.
+    fn records<A>(m: &Member<A>) -> &[SoulSource] {
+        m.soul_sources.as_deref().expect("Soul records")
+    }
+
+    /// A breeder stepped until its generations are done.
+    fn bred<D: Domain>(mut b: Breeder<'_, D>) -> Breeder<'_, D> {
+        let never = || false;
+
+        while let (Status::Continue, _) = b.step(&never).expect("step") {}
+
+        b
+    }
+
+    /// The archive of a grid run with these settings, bred to its last generation.
+    fn grid_archive(cfg: BreedConfig) -> Vec<Member> {
+        let pool = sim_pool();
+
+        bred(Breeder::new(cfg, &pool, None).expect("breeder"))
+            .archive()
+            .to_vec()
+    }
+
+    /// A grid run of six generations with six children each.
+    fn longer_config(seed: u64) -> BreedConfig {
+        BreedConfig {
+            generations: 6,
+            children_per_generation: 6,
+            ..small_config(seed)
+        }
+    }
+
+    /// The gene ids of the members born in generation 1, in birth order, and the lengths of
+    /// the Souls of all Workers then.
+    fn generation_one<D: Domain>(mut b: Breeder<'_, D>) -> (Vec<String>, BTreeSet<usize>) {
+        let never = || false;
+
+        for _ in 0..2 {
+            assert_eq!(b.step(&never).expect("step").0, Status::Continue);
+        }
+
+        let ids = b
+            .archive()
+            .iter()
+            .filter(|m| m.generation == 1)
+            .map(|m| m.cascade.gene_id())
+            .collect();
+        let lengths = b
+            .archive()
+            .iter()
+            .flat_map(|m| birth_phases(&m.cascade))
+            .map(|p| p.len())
+            .collect();
+
+        (ids, lengths)
+    }
+
+    #[test]
+    fn souls_do_not_touch_the_genes() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let circuits = |cfg: BreedConfig| {
+            Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None)
+                .expect("circuits")
+        };
+        let plain_grid = generation_one(Breeder::new(small_config(83), &pool, None).expect("grid"));
+        let plain_circuits = generation_one(circuits(circuit_config(89)));
+
+        assert_eq!(plain_grid.1, BTreeSet::from([0]));
+        assert!(!plain_grid.0.is_empty() && !plain_circuits.0.is_empty());
+
+        for arm in [
+            SoulConfig::arm_s(),
+            SoulConfig::arm_v(),
+            SoulConfig::arm_k(),
+        ] {
+            let grid = generation_one(
+                Breeder::new(with_souls(small_config(83), arm.clone()), &pool, None).expect("grid"),
+            );
+            let circuit = generation_one(circuits(with_souls(circuit_config(89), arm)));
+
+            assert_eq!(grid.0, plain_grid.0, "the same children, in the same order");
+            assert_eq!(circuit.0, plain_circuits.0);
+            assert_eq!(grid.1, BTreeSet::from([7]), "a phase per grid family");
+            assert_eq!(circuit.1, BTreeSet::from([8]), "a phase per circuit family");
+        }
+    }
+
+    #[test]
+    fn copy_mix_and_drift() {
+        for drift in [512u16, 0] {
+            let soul = SoulConfig {
+                phase_drift: drift,
+                ..SoulConfig::arm_s()
+            };
+            let archive = grid_archive(with_souls(longer_config(97), soul));
+            let birth = |r: &WorkerRef| {
+                birth_phases(&member(&archive, &r.member).cascade)[r.worker].clone()
+            };
+            let (mut copies, mut mixes, mut moved, mut from_both) = (0, 0, 0, 0);
+
+            for m in archive.iter().filter(|m| m.op != Op::Seed) {
+                for (phases, rec) in birth_phases(&m.cascade).iter().zip(records(m)) {
+                    if rec.new {
+                        continue;
+                    }
+
+                    let sources: Vec<Vec<u16>> = rec.sources.iter().map(birth).collect();
+
+                    match sources.as_slice() {
+                        [one] => {
+                            for (&p, &q) in phases.iter().zip(one) {
+                                assert!(apart(p, q) <= drift, "{p} from {q}, drift {drift}");
+                                moved += usize::from(p != q);
+                            }
+
+                            copies += 1;
+                        }
+                        [a, b] => {
+                            let mut took = [false; 2];
+
+                            for f in 0..phases.len() {
+                                let (p, x, y) = (phases[f], a[f], b[f]);
+
+                                assert!(
+                                    apart(p, x) <= drift || apart(p, y) <= drift,
+                                    "{p} from {x} or {y}"
+                                );
+                                took[0] |= p == x && p != y;
+                                took[1] |= p == y && p != x;
+                            }
+
+                            from_both += usize::from(took == [true, true]);
+                            mixes += 1;
+                        }
+                        other => panic!("{} sources", other.len()),
+                    }
+                }
+            }
+
+            assert!(copies > 0 && mixes > 0, "{copies} copies, {mixes} mixes");
+
+            if drift == 0 {
+                assert_eq!(moved, 0, "with phase_drift 0 a copy is exact");
+                assert!(from_both > 0, "a mix takes phases of both sources");
+            } else {
+                assert!(moved > 0, "the phases drift");
+            }
+        }
+    }
+
+    #[test]
+    fn new_souls_come_at_hoppes_rate() {
+        // Over 100 000 draws the share of new Souls meets θ / (θ + N), within 3 standard
+        // errors; θ = 0 gives none.
+        let p = [0u16; 7];
+        let source = [Inheritance {
+            phases: &p,
+            coupling: 0,
+        }];
+
+        for (theta, urn) in [
+            (1.0, 4usize),
+            (1.0, 100),
+            (1.0, 1000),
+            (0.0, 4),
+            (0.0, 1000),
+        ] {
+            let cfg = SoulConfig {
+                new_soul_theta: theta,
+                ..SoulConfig::arm_s()
+            };
+            let mut rng =
+                ChaCha8Rng::seed_from_u64(derive_seed(5, &format!("hoppe/{theta}/{urn}")));
+            let n = 100_000;
+            let new = (0..n)
+                .filter(|_| souletics(&cfg, &source, urn, &SoulDraws::draw(&mut rng, 7)).new)
+                .count();
+            let expected = theta / (theta + urn as f64);
+            let se = (expected * (1.0 - expected) / n as f64).sqrt();
+            let share = new as f64 / n as f64;
+
+            if theta == 0.0 {
+                assert_eq!(new, 0, "θ = 0 never gives a new Soul");
+            } else {
+                assert!(
+                    (share - expected).abs() < 3.0 * se,
+                    "N {urn}: {share} against {expected}"
+                );
+            }
+        }
+
+        // In a Run, N counts the archive's Workers and the child Workers drawn before: each
+        // coin, replayed from its stream, decides as θ / (θ + N) says.
+        let theta = 20.0;
+        let soul = SoulConfig {
+            new_soul_theta: theta,
+            ..SoulConfig::arm_s()
+        };
+        let cfg = with_souls(longer_config(101), soul);
+        let archive = grid_archive(cfg.clone());
+        let (mut new, mut old) = (0, 0);
+
+        for m in archive.iter().filter(|m| m.generation == 0) {
+            assert!(records(m).iter().all(|r| r.new), "a seed's Soul is new");
+        }
+
+        for g in 1..=cfg.generations {
+            let mut urn: usize = archive
+                .iter()
+                .filter(|m| m.generation < g)
+                .map(|m| m.cascade.worker_count())
+                .sum();
+
+            for (i, m) in archive.iter().filter(|m| m.generation == g).enumerate() {
+                let mut rng =
+                    ChaCha8Rng::seed_from_u64(derive_seed(cfg.seed, &format!("soul/{g}/{i}")));
+
+                for rec in records(m) {
+                    let draws = SoulDraws::draw(&mut rng, 7);
+
+                    assert_eq!(
+                        rec.new,
+                        draws.new_coin < new_soul_chance(theta, urn),
+                        "generation {g}, child {i}, {urn} in the urn"
+                    );
+
+                    urn += 1;
+                    new += usize::from(rec.new);
+                    old += usize::from(!rec.new);
+                }
+            }
+        }
+
+        assert!(new > 0 && old > 0, "{new} new, {old} inherited");
+    }
+
+    #[test]
+    fn a_parent_passes_on_its_birth_soul() {
+        let pool = sim_pool();
+        let never = || false;
+        let cfg = with_souls(
+            BreedConfig {
+                generations: 5,
+                ..small_config(103)
+            },
+            SoulConfig::arm_s(),
+        );
+        let mut b = Breeder::new(cfg.clone(), &pool, None).expect("breeder");
+
+        for _ in 0..3 {
+            b.step(&never).expect("step");
+        }
+
+        let snap = b.snapshot();
+        let mut moved = snap.clone();
+
+        for m in &mut moved.archive {
+            for soul in m.soul_now.as_mut().expect("current Souls") {
+                for p in &mut soul.0 {
+                    *p = p.wrapping_add(12345);
+                }
+            }
+        }
+
+        // The children born after the resume, as their Born events record them.
+        let children = |snap: Snapshot| {
+            let mut b = Breeder::resume(cfg.clone(), &pool, None, snap).expect("resume");
+            let mut born = Vec::new();
+
+            while let (Status::Continue, events) = b.step(&never).expect("step") {
+                born.extend(
+                    events
+                        .into_iter()
+                        .filter(|e| matches!(e, Event::Born { .. })),
+                );
+            }
+
+            born
+        };
+        let straight = children(snap.clone());
+
+        assert!(!straight.is_empty());
+        assert_ne!(snap.archive, moved.archive);
+        assert_eq!(
+            children(moved),
+            straight,
+            "the current Souls pass on nothing"
+        );
+    }
+
+    #[test]
+    fn kappa_at_birth() {
+        let delta = 20;
+        let archive = grid_archive(with_souls(longer_config(127), SoulConfig::arm_s()));
+        let (mut copied, mut moved) = (0, 0);
+
+        for m in &archive {
+            for (k, (rec, &kappa)) in records(m).iter().zip(&couplings(&m.cascade)).enumerate() {
+                if m.op == Op::Seed {
+                    assert_eq!(kappa, 200, "κ of the seeds");
+                    continue;
+                }
+
+                // From one of its sources, moved by at most δ.
+                let near: Vec<u16> = rec
+                    .sources
+                    .iter()
+                    .map(|r| couplings(&member(&archive, &r.member).cascade)[r.worker])
+                    .filter(|&s| s.abs_diff(kappa) <= delta)
+                    .collect();
+
+                assert!(!near.is_empty(), "{} Worker {k}: κ {kappa}", m.id);
+                copied += usize::from(near.contains(&kappa));
+                moved += usize::from(!near.contains(&kappa));
+            }
+        }
+
+        assert!(copied > 0 && moved > 0, "{copied} {moved}");
+
+        // Clamped at 0 and at 1000.
+        for (start, edge) in [(0u16, 0u16), (1000, 1000)] {
+            let soul = SoulConfig {
+                kappa_seed: start,
+                kappa_drift: 1000,
+                ..SoulConfig::arm_s()
+            };
+            let all: Vec<u16> = grid_archive(with_souls(longer_config(131), soul))
+                .iter()
+                .filter(|m| m.op != Op::Seed)
+                .flat_map(|m| couplings(&m.cascade))
+                .collect();
+
+            assert!(all.iter().all(|&k| k <= 1000), "{all:?}");
+            assert!(all.contains(&edge), "clamped at {edge}: {all:?}");
+        }
+
+        // With κ fixed every Worker keeps κ of the seeds; arm K's all have 0.
+        let fixed = SoulConfig {
+            kappa_seed: 300,
+            kappa_fixed: true,
+            ..SoulConfig::arm_s()
+        };
+
+        for (soul, kappa) in [(fixed, 300), (SoulConfig::arm_k(), 0)] {
+            let all: BTreeSet<u16> = grid_archive(with_souls(longer_config(137), soul))
+                .iter()
+                .flat_map(|m| couplings(&m.cascade))
+                .collect();
+
+            assert_eq!(all, BTreeSet::from([kappa]));
+        }
+    }
+
+    #[test]
+    fn the_arms_share_their_soul_draws() {
+        let pool = sim_pool();
+        let never = || false;
+        let arms = [
+            SoulConfig::arm_s(),
+            SoulConfig::arm_v(),
+            SoulConfig::arm_k(),
+        ]
+        .map(|arm| {
+            let mut b =
+                Breeder::new(with_souls(longer_config(139), arm), &pool, None).expect("breeder");
+
+            for _ in 0..2 {
+                b.step(&never).expect("step");
+            }
+
+            b.archive().to_vec()
+        });
+        let [s, v, k] = &arms;
+
+        assert_eq!(s.len(), v.len());
+        assert_eq!(s.len(), k.len());
+        assert!(s.iter().any(|m| m.generation == 1));
+
+        // Generations 0 and 1: the same children with the same phases, new Souls and
+        // sources, in every arm; κ differs in arm K alone.
+        for ((x, y), z) in s.iter().zip(v).zip(k) {
+            let sources = |m: &Member| -> Vec<(bool, Vec<usize>)> {
+                records(m)
+                    .iter()
+                    .map(|r| (r.new, r.sources.iter().map(|w| w.worker).collect()))
+                    .collect()
+            };
+
+            assert_eq!(x.cascade.gene_id(), y.cascade.gene_id());
+            assert_eq!(x.cascade.gene_id(), z.cascade.gene_id());
+            assert_eq!(birth_phases(&x.cascade), birth_phases(&y.cascade));
+            assert_eq!(birth_phases(&x.cascade), birth_phases(&z.cascade));
+            assert_eq!(sources(x), sources(y));
+            assert_eq!(sources(x), sources(z));
+            assert_eq!(x.cascade, y.cascade, "arm V differs only in the readout");
+            assert!(couplings(&z.cascade).iter().all(|&c| c == 0));
+        }
+    }
+
+    /// Answers every Mutator request with the genes of the last grid seed, which the archive
+    /// holds from generation 0 on.
+    struct Repeater;
+
+    impl Mutator for Repeater {
+        fn answer(&self, _req: &GenRequest) -> Option<GenResponse> {
+            Some(GenResponse {
+                text: serde_json::to_string(&seed_cascades()[3].1).ok()?,
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                stop_reason: StopReason::Stop,
+                backend: "repeater".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn novelty_is_by_genes() {
+        let pool = sim_pool();
+        let cfg = with_souls(
+            BreedConfig {
+                llm_every: 1,
+                generations: 2,
+                ..small_config(109)
+            },
+            SoulConfig::arm_s(),
+        );
+        let (_, events, snap) =
+            breed_to_end_in::<GridDomain>(cfg, GenePool::grid(), &pool, Some(&Repeater))
+                .expect("run");
+        let repeated = seed_cascades()[3].1.clone();
+        let seed = snap
+            .archive
+            .iter()
+            .find(|m| m.cascade.gene_id() == repeated.id())
+            .expect("the seed is archived");
+
+        // The archived seed has another Soul, so only its genes repeat.
+        assert_ne!(seed.id, repeated.id());
+
+        let exchanges: Vec<(bool, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::LlmExchange {
+                    accepted, reason, ..
+                } => Some((*accepted, reason.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert!(!exchanges.is_empty());
+
+        for (accepted, reason) in exchanges {
+            assert!(
+                !accepted && reason == "duplicate of an archived Cascade",
+                "{reason}"
+            );
+        }
+
+        // No two members share their genes.
+        let genes: HashSet<String> = snap.archive.iter().map(|m| m.cascade.gene_id()).collect();
+
+        assert_eq!(genes.len(), snap.archive.len());
+    }
+
+    #[test]
+    fn a_soul_has_n_phases() {
+        let pool = sim_pool();
+        let never = || false;
+        let cfg = with_souls(small_config(113), SoulConfig::arm_s());
+        let mut b = Breeder::new(cfg.clone(), &pool, None).expect("breeder");
+
+        b.step(&never).expect("gen 0");
+
+        let snap = b.snapshot();
+
+        assert!(Breeder::resume(cfg.clone(), &pool, None, snap.clone()).is_ok());
+
+        let id = snap.archive[1].id.clone();
+
+        for phases in [None, Some(6usize), Some(8)] {
+            let mut tampered = snap.clone();
+
+            tampered.archive[1].cascade.stages[0].workers[0]
+                .traits
+                .phase_state = phases.map(|n| PhaseState(vec![7; n]));
+
+            let reason = invalid(
+                Breeder::resume(cfg.clone(), &pool, None, tampered),
+                "a Soul of the wrong size",
+            );
+
+            assert!(reason.contains(&id) && reason.contains('7'), "{reason}");
+        }
+
+        // The current Souls must fit as well.
+        let mut tampered = snap.clone();
+
+        tampered.archive[2]
+            .soul_now
+            .as_mut()
+            .expect("current Souls")[0]
+            .0
+            .pop();
+
+        let reason = invalid(Breeder::resume(cfg, &pool, None, tampered), "current Soul");
+
+        assert!(reason.contains(&snap.archive[2].id), "{reason}");
+    }
+
+    /// A backend that records every request as JSON before its model answers it.
+    struct Recording {
+        model: Box<dyn ModelBackend>,
+        log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl ModelBackend for Recording {
+        fn name(&self) -> &str {
+            self.model.name()
+        }
+
+        fn generate(&self, req: &GenRequest) -> Result<GenResponse> {
+            let json = serde_json::to_string(req).expect("request json");
+
+            self.log.lock().expect("log").push(json);
+            self.model.generate(req)
+        }
+    }
+
+    /// Every request a run with these settings sends, sorted, and its archive.
+    fn requests<D: Domain>(
+        cfg: BreedConfig,
+        genes: GenePool,
+        small: Box<dyn ModelBackend>,
+        large: Box<dyn ModelBackend>,
+    ) -> (Vec<String>, Vec<Member<D::Answer>>) {
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut pool = ModelPool::new();
+
+        pool.insert(
+            "sim:small",
+            Box::new(Recording {
+                model: small,
+                log: log.clone(),
+            }),
+        );
+        pool.insert(
+            "sim:large",
+            Box::new(Recording {
+                model: large,
+                log: log.clone(),
+            }),
+        );
+
+        let (_, _, snap) = breed_to_end_in::<D>(cfg, genes, &pool, None).expect("run");
+        let mut seen = log.lock().expect("log").clone();
+
+        seen.sort();
+
+        (seen, snap.archive)
+    }
+
+    #[test]
+    fn calls_are_seeded_by_genes() {
+        // Arms whose members have the same genes and other Souls: κ differs in arm K, the
+        // phases with another drift. The count decides every vote, so the outcomes agree.
+        let arms = [
+            SoulConfig::arm_s(),
+            SoulConfig::arm_k(),
+            SoulConfig {
+                phase_drift: 0,
+                ..SoulConfig::arm_s()
+            },
+        ]
+        .map(|arm| SoulConfig { vote: false, ..arm });
+        let grid = |soul: Option<SoulConfig>| {
+            requests::<GridDomain>(
+                BreedConfig {
+                    soul,
+                    ..small_config(149)
+                },
+                GenePool::grid(),
+                Box::new(SimModel::small()),
+                Box::new(SimModel::large()),
+            )
+        };
+        let circuits = |soul: Option<SoulConfig>| {
+            requests::<CircuitDomain>(
+                BreedConfig {
+                    soul,
+                    ..circuit_config(151)
+                },
+                circuit_pool(),
+                Box::new(SimDesigner::small()),
+                Box::new(SimDesigner::large()),
+            )
+        };
+        let (plain_grid, plain_archive) = grid(None);
+        let (plain_circuits, _) = circuits(None);
+
+        assert!(!plain_grid.is_empty() && !plain_circuits.is_empty());
+
+        let mut souls = BTreeSet::new();
+
+        for arm in arms {
+            let (sent, archive) = grid(Some(arm.clone()));
+
+            assert_eq!(sent, plain_grid, "the same requests with the same seeds");
+            assert_eq!(circuits(Some(arm)).0, plain_circuits);
+
+            // The same genes as without Souls, with other Souls in every arm.
+            for (m, plain) in archive.iter().zip(&plain_archive) {
+                assert_eq!(m.cascade.gene_id(), plain.id);
+                assert_ne!(m.id, plain.id);
+            }
+
+            souls.insert(
+                archive
+                    .iter()
+                    .map(|m| m.id.clone())
+                    .collect::<Vec<String>>(),
+            );
+        }
+
+        assert_eq!(souls.len(), 3, "each arm gives its members other Souls");
+    }
+
+    #[test]
+    fn switches_give_their_degenerate_case() {
+        // With `copy` off every child Worker gets a new Soul, whose origin is itself.
+        let fresh = SoulConfig {
+            copy: false,
+            ..SoulConfig::arm_s()
+        };
+
+        for m in grid_archive(with_souls(longer_config(157), fresh)) {
+            for (k, rec) in records(&m).iter().enumerate() {
+                assert!(rec.new, "{} Worker {k}", m.id);
+                assert_eq!(
+                    rec.origin,
+                    WorkerRef {
+                        member: m.id.clone(),
+                        worker: k
+                    }
+                );
+            }
+        }
+
+        // With `mix` off a crossover child copies its first source: exactly, with no drift.
+        let unmixed = SoulConfig {
+            mix: false,
+            phase_drift: 0,
+            ..SoulConfig::arm_s()
+        };
+        let archive = grid_archive(with_souls(longer_config(163), unmixed));
+        let mut paired = 0;
+
+        for m in archive.iter().filter(|m| m.op != Op::Seed) {
+            for (phases, rec) in birth_phases(&m.cascade).iter().zip(records(m)) {
+                if !rec.new && rec.sources.len() == 2 {
+                    let first = &rec.sources[0];
+
+                    assert_eq!(
+                        phases,
+                        &birth_phases(&member(&archive, &first.member).cascade)[first.worker]
+                    );
+                    assert_eq!(
+                        rec.origin,
+                        records(member(&archive, &first.member))[first.worker].origin
+                    );
+                    paired += 1;
+                }
+            }
+        }
+
+        assert!(paired > 0, "a crossover child with two sources");
+
+        // With θ = 0 no child gets a new Soul.
+        let none = SoulConfig {
+            new_soul_theta: 0.0,
+            ..SoulConfig::arm_s()
+        };
+
+        for m in grid_archive(with_souls(longer_config(167), none))
+            .iter()
+            .filter(|m| m.op != Op::Seed)
+        {
+            assert!(records(m).iter().all(|r| !r.new), "{}", m.id);
+        }
+    }
+
+    #[test]
+    fn a_souled_run_records_its_souls_and_resumes_like_a_straight_one() {
+        let pool = sim_pool();
+        let never = || false;
+        let cfg = with_souls(small_config(173), SoulConfig::arm_s());
+        let mut straight = Breeder::new(cfg.clone(), &pool, None).expect("straight");
+        let mut events_straight = Vec::new();
+
+        while let (Status::Continue, ev) = straight.step(&never).expect("step") {
+            events_straight.extend(ev);
+        }
+
+        let mut first = Breeder::new(cfg.clone(), &pool, None).expect("first");
+        let mut events_split = Vec::new();
+
+        for _ in 0..2 {
+            events_split.extend(first.step(&never).expect("step").1);
+        }
+
+        let json = serde_json::to_string(&first.snapshot()).expect("json");
+        let snap: Snapshot = serde_json::from_str(&json).expect("back");
+        let mut second = Breeder::resume(cfg, &pool, None, snap).expect("resume");
+
+        while let (Status::Continue, ev) = second.step(&never).expect("step") {
+            events_split.extend(ev);
+        }
+
+        assert_eq!(events_straight, events_split);
+        assert_eq!(straight.snapshot(), second.snapshot());
+
+        // Every member records its Souls, and its Born event the same; a seed's Workers have
+        // new Souls of their own origin; the current Souls start as the birth Souls.
+        let archive = straight.archive();
+        let born: Vec<&Option<Vec<SoulSource>>> = events_straight
+            .iter()
+            .filter_map(|e| match e {
+                Event::Born { soul_sources, .. } => Some(soul_sources),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(born.len(), archive.len());
+
+        for (m, logged) in archive.iter().zip(born) {
+            assert_eq!(logged, &m.soul_sources);
+            assert_eq!(records(m).len(), m.cascade.worker_count());
+
+            let now: Vec<Vec<u16>> = m
+                .soul_now
+                .as_ref()
+                .expect("current Souls")
+                .iter()
+                .map(|p| p.0.clone())
+                .collect();
+
+            assert_eq!(now, birth_phases(&m.cascade));
+
+            if m.op == Op::Seed {
+                for (k, r) in records(m).iter().enumerate() {
+                    assert!(r.new && r.sources.is_empty());
+                    assert_eq!(
+                        r.origin,
+                        WorkerRef {
+                            member: m.id.clone(),
+                            worker: k
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_ranking_breaks_ties_by_genes() {
+        // Members of equal fitness and rating are ordered by their keys, the gene ids, not
+        // by the ids that carry their Souls.
+        let (_, c) = seed_cascades().swap_remove(0);
+        let tied = |id: &str| Member::<Grid> {
+            id: id.to_string(),
+            cascade: c.clone(),
+            parents: Vec::new(),
+            op: Op::Seed,
+            generation: 0,
+            answers: Vec::new(),
+            solved: 0,
+            quality: None,
+            usage: Usage::default(),
+            children: 0,
+            judge_correct: 0,
+            judge_wrong: 0,
+            fitness: 0.5,
+            rating: 0.0,
+            soul_sources: None,
+            soul_now: None,
+            authors: None,
+            votes: None,
+        };
+        let archive = [tied("a"), tied("b")];
+        let keys = |x: &str, y: &str| [x.to_string(), y.to_string()];
+
+        assert_eq!(rank(&archive, &keys("y", "x")), [1, 0]);
+        assert_eq!(rank(&archive, &keys("x", "y")), [0, 1]);
+
+        // The breeder keeps the key of every member: its gene id in a Run with Souls, its
+        // id otherwise, also after a resume.
+        let pool = sim_pool();
+
+        for soul in [None, Some(SoulConfig::arm_s())] {
+            let cfg = BreedConfig {
+                soul: soul.clone(),
+                ..small_config(179)
+            };
+            let b = bred(Breeder::new(cfg.clone(), &pool, None).expect("breeder"));
+            let expected: Vec<String> = b
+                .archive()
+                .iter()
+                .map(|m| match soul {
+                    Some(_) => m.cascade.gene_id(),
+                    None => m.id.clone(),
+                })
+                .collect();
+            let resumed = Breeder::resume(cfg, &pool, None, b.snapshot()).expect("resume");
+
+            assert_eq!(b.gene_ids, expected);
+            assert_eq!(resumed.gene_ids, expected);
+            assert_eq!(
+                soul.is_some(),
+                b.archive().iter().all(|m| m.id != m.cascade.gene_id())
+            );
+        }
+    }
+
+    /// What a run with these settings decides and calls: every request it sends, sorted,
+    /// and per member its id, parents, operator, answers, solved count, graded value and
+    /// usage, as one digest.
+    fn decisions<D: Domain>(
+        cfg: BreedConfig,
+        genes: GenePool,
+        small: Box<dyn ModelBackend>,
+        large: Box<dyn ModelBackend>,
+    ) -> String {
+        let (sent, archive) = requests::<D>(cfg, genes, small, large);
+        let mut out = sent.join("\n");
+
+        for m in &archive {
+            out.push_str(&format!(
+                "\n{} {:?} {:?} {} {} {:?} {:?}",
+                m.id,
+                m.parents,
+                m.op,
+                serde_json::to_string(&m.answers).expect("answers json"),
+                m.solved,
+                m.quality,
+                m.usage
+            ));
+        }
+
+        sha256_hex(out.as_bytes())
+    }
+
+    /// The digests of `decisions`, recorded before the complex Stage vote (ticket 04): a
+    /// grid run and a circuit run, each without Souls and with the Souls of arm S and
+    /// `vote: false`.
+    const VOTES_GRID: &str = "615c03e6c95c10c2d3fc741b0c7143425fc4f189882afd34d66e52ed9fd47048";
+    const VOTES_GRID_OFF: &str = "cf7f18fddcb7373b02bc2da02b5af2a4d2735a842025cdb7a708b68f07a22231";
+    const VOTES_CIRCUITS: &str = "564d8c123739e069cc43545c81c46c0cea45049ab91a06d6e8d90fcfa1cec400";
+    const VOTES_CIRCUITS_OFF: &str =
+        "598b6afd918233dcf0f9dfd3ebd670abf0027be5c8da6d83ef33bc37d50ea67e";
+
+    #[test]
+    fn without_souls_the_vote_is_todays() {
+        let off = Some(SoulConfig {
+            vote: false,
+            ..SoulConfig::arm_s()
+        });
+        let grid = |soul: Option<SoulConfig>| {
+            decisions::<GridDomain>(
+                BreedConfig {
+                    soul,
+                    ..small_config(191)
+                },
+                GenePool::grid(),
+                Box::new(SimModel::small()),
+                Box::new(SimModel::large()),
+            )
+        };
+        let circuits = |soul: Option<SoulConfig>| {
+            decisions::<CircuitDomain>(
+                BreedConfig {
+                    soul,
+                    ..circuit_config(193)
+                },
+                circuit_pool(),
+                Box::new(SimDesigner::small()),
+                Box::new(SimDesigner::large()),
+            )
+        };
+        let digests = [
+            grid(None),
+            grid(off.clone()),
+            circuits(None),
+            circuits(off.clone()),
+        ];
+
+        assert_eq!(
+            digests,
+            [
+                VOTES_GRID,
+                VOTES_GRID_OFF,
+                VOTES_CIRCUITS,
+                VOTES_CIRCUITS_OFF
+            ]
+        );
+
+        // Those short runs hold no Stage vote, so longer ones that do are compared with the
+        // same runs without Souls, which the goldens of `tests/universe.rs` and the pilot
+        // hash hold: with `vote: false` every vote picks the same answer by the same calls.
+        fn compare<D: Domain>(
+            cfg: BreedConfig,
+            genes: GenePool,
+            pool: fn() -> [Box<dyn ModelBackend>; 2],
+            off: &Option<SoulConfig>,
+        ) {
+            let run = |soul: Option<SoulConfig>| {
+                let [small, large] = pool();
+
+                requests::<D>(
+                    BreedConfig {
+                        soul,
+                        ..cfg.clone()
+                    },
+                    genes,
+                    small,
+                    large,
+                )
+            };
+            let (plain, plain_archive) = run(None);
+            let (counted, counted_archive) = run(off.clone());
+            let (_, voted_archive) = run(Some(SoulConfig::arm_s()));
+            let complex: u64 = voted_archive
+                .iter()
+                .filter_map(|m| m.votes)
+                .map(|v| v.complex)
+                .sum();
+
+            assert!(complex > 0, "the run holds complex votes");
+            assert_eq!(counted, plain, "the same calls");
+            assert_eq!(counted_archive.len(), plain_archive.len());
+
+            for (m, p) in counted_archive.iter().zip(&plain_archive) {
+                assert_eq!(m.cascade.gene_id(), p.id);
+                assert_eq!(m.answers, p.answers, "{}", p.id);
+                assert_eq!(m.votes.map(|v| v.complex), Some(0));
+            }
+        }
+
+        compare::<GridDomain>(
+            BreedConfig {
+                generations: 8,
+                children_per_generation: 6,
+                ..small_config(191)
+            },
+            GenePool::grid(),
+            || [Box::new(SimModel::small()), Box::new(SimModel::large())],
+            &off,
+        );
+        compare::<CircuitDomain>(
+            BreedConfig {
+                generations: 20,
+                children_per_generation: 6,
+                max_calls: 200_000,
+                ..circuit_config(41)
+            },
+            circuit_pool(),
+            || {
+                [
+                    Box::new(SimDesigner::small()),
+                    Box::new(SimDesigner::large()),
+                ]
+            },
+            &off,
+        );
+    }
+
+    #[test]
+    fn strengths_never_reach_a_request() {
+        let soul = |strengths: Strengths, vote: bool| {
+            Some(SoulConfig {
+                vote,
+                strengths,
+                ..SoulConfig::arm_s()
+            })
+        };
+        let grid = |soul: Option<SoulConfig>| {
+            requests::<GridDomain>(
+                BreedConfig {
+                    soul,
+                    ..small_config(197)
+                },
+                GenePool::grid(),
+                Box::new(SimModel::small()),
+                Box::new(SimModel::large()),
+            )
+        };
+        let circuits = |soul: Option<SoulConfig>| {
+            requests::<CircuitDomain>(
+                BreedConfig {
+                    soul,
+                    ..circuit_config(199)
+                },
+                circuit_pool(),
+                Box::new(SimDesigner::small()),
+                Box::new(SimDesigner::large()),
+            )
+        };
+        fn answers<A: Serialize>(archive: &[Member<A>]) -> Vec<String> {
+            archive
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {}",
+                        m.id,
+                        serde_json::to_string(&m.answers).expect("json")
+                    )
+                })
+                .collect()
+        }
+
+        // Without the complex vote, the strengths of the Domain and equal strengths give the
+        // same requests, byte for byte, and the same answers.
+        let (grid_domain, grid_archive) = grid(soul(Strengths::Domain, false));
+        let (grid_equal, grid_equal_archive) = grid(soul(Strengths::Equal, false));
+        let (circuit_domain, circuit_archive) = circuits(soul(Strengths::Domain, false));
+        let (circuit_equal, circuit_equal_archive) = circuits(soul(Strengths::Equal, false));
+
+        assert_eq!(grid_domain, grid_equal);
+        assert_eq!(answers(&grid_archive), answers(&grid_equal_archive));
+        assert_eq!(circuit_domain, circuit_equal);
+        assert_eq!(answers(&circuit_archive), answers(&circuit_equal_archive));
+
+        // The vote is the path that carries them: with it the tallies differ.
+        let tallies = |archive: Vec<Member>| -> Vec<Option<VoteTally>> {
+            archive.into_iter().map(|m| m.votes).collect()
+        };
+        let by_domain = tallies(grid(soul(Strengths::Domain, true)).1);
+        let by_equal = tallies(grid(soul(Strengths::Equal, true)).1);
+
+        assert!(by_domain.iter().flatten().any(|t| t.complex > 0));
+        assert_ne!(by_domain, by_equal);
+    }
+
+    /// Answers `Doubling` prompts by words of the system prompt, the same on every task:
+    /// "say K" answers K and "silent" nothing usable; as a judge, "high" picks the larger
+    /// number and any other judge the smaller.
+    struct Fixed;
+
+    impl ModelBackend for Fixed {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+
+        fn generate(&self, req: &GenRequest) -> Result<GenResponse> {
+            let text = if req.prompt.starts_with("WHICH") {
+                let numbers: Vec<u64> = req
+                    .prompt
+                    .split_whitespace()
+                    .filter_map(|t| t.parse().ok())
+                    .collect();
+                let (a, b) = (numbers[1], numbers[2]);
+                let first = if req.system.contains("high") {
+                    a >= b
+                } else {
+                    a <= b
+                };
+
+                if first { "VERDICT A" } else { "VERDICT B" }.to_string()
+            } else if req.system.contains("silent") {
+                "I do not know.".to_string()
+            } else {
+                let said = req
+                    .system
+                    .split("say ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                    .unwrap_or("0");
+
+                format!("ANSWER {said}")
+            };
+
+            Ok(GenResponse {
+                text,
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                stop_reason: StopReason::Stop,
+                backend: "fixed".to_string(),
+            })
+        }
+    }
+
+    /// A Worker that says `answer`, or nothing, and judges `high` or `low`.
+    fn fixed_worker(answer: Option<u64>, judge: &str) -> Worker {
+        let section = |name: &str, text: String| Section {
+            name: name.to_string(),
+            text,
+        };
+        let say = match answer {
+            Some(k) => format!("say {k}"),
+            None => "stay silent".to_string(),
+        };
+
+        Worker {
+            model: "sim:small".to_string(),
+            sections: vec![
+                section("role", "You answer with a number.".to_string()),
+                section(
+                    "strategy",
+                    format!("Always {say}; as a judge prefer the {judge} number."),
+                ),
+                section(
+                    "format",
+                    "Answer with the line ANSWER and the number.".to_string(),
+                ),
+            ],
+            traits: Traits::default(),
+        }
+    }
+
+    /// Three Stages with fixed answers and verdicts: one answer of two Workers; a vote both
+    /// judges give to 20; a vote that the count gives to 30.
+    fn three_votes() -> Cascade {
+        let stage = |workers: Vec<Worker>| Stage { workers };
+
+        Cascade {
+            stages: vec![
+                stage(vec![
+                    fixed_worker(Some(50), "high"),
+                    fixed_worker(Some(50), "low"),
+                ]),
+                stage(vec![
+                    fixed_worker(Some(10), "high"),
+                    fixed_worker(Some(20), "high"),
+                ]),
+                stage(vec![
+                    fixed_worker(Some(10), "high"),
+                    fixed_worker(Some(20), "low"),
+                    fixed_worker(Some(30), "high"),
+                ]),
+            ],
+        }
+    }
+
+    /// A Stage of one answer of two Workers, then a Stage that gives nothing usable.
+    fn silent_end() -> Cascade {
+        Cascade {
+            stages: vec![
+                Stage {
+                    workers: vec![
+                        fixed_worker(Some(50), "high"),
+                        fixed_worker(Some(50), "low"),
+                    ],
+                },
+                Stage {
+                    workers: vec![fixed_worker(None, "high")],
+                },
+            ],
+        }
+    }
+
+    /// `Doubling` with two hypothesis families, of which the first fits every task.
+    struct TwoFamilies;
+
+    impl Domain for TwoFamilies {
+        type Task = Number;
+        type Answer = u64;
+
+        fn from_config(_cfg: &BreedConfig) -> Result<TwoFamilies> {
+            Ok(TwoFamilies)
+        }
+
+        fn panel(&self, seed: u64, n: usize) -> Vec<Number> {
+            Doubling.panel(seed, n)
+        }
+
+        fn task_id<'t>(&self, task: &'t Number) -> &'t str {
+            &task.id
+        }
+
+        fn solve_prompt(&self, task: &Number, previous: &[u64]) -> String {
+            Doubling.solve_prompt(task, previous)
+        }
+
+        fn judge_prompt(&self, task: &Number, a: &u64, b: &u64) -> String {
+            Doubling.judge_prompt(task, a, b)
+        }
+
+        fn parse_answer(&self, task: &Number, text: &str) -> Option<u64> {
+            Doubling.parse_answer(task, text)
+        }
+
+        fn grade(&self, task: &Number, answer: &u64) -> Result<Grade> {
+            Doubling.grade(task, answer)
+        }
+
+        fn prefer(&self, task: &Number, a: &u64, b: &u64) -> Option<bool> {
+            Doubling.prefer(task, a, b)
+        }
+
+        fn graded(&self) -> bool {
+            true
+        }
+
+        fn artefact(&self, answer: &u64) -> Option<String> {
+            Doubling.artefact(answer)
+        }
+
+        fn self_check_text(&self) -> &'static str {
+            Doubling.self_check_text()
+        }
+
+        fn families(&self) -> Vec<&'static str> {
+            vec!["first", "second"]
+        }
+
+        fn strengths(&self, _task: &Number) -> Vec<f64> {
+            vec![1.0, 0.0]
+        }
+    }
+
+    #[test]
+    fn authors_and_tallies_are_recorded() {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Fixed));
+        pool.insert("sim:large", Box::new(Fixed));
+
+        let limits = CascadeLimits::default();
+        let task = Doubling.panel(3, 1).remove(0);
+        let c = three_votes();
+        let strengths = [1.0, 0.0];
+        // The phases on the fitting family: Stage 1 cancels, Stage 2 lies at 0, 90 and 180
+        // degrees.
+        let souls: Vec<PhaseState> = [0u16, 0, 0, 32768, 0, 16384, 32768]
+            .map(|p| PhaseState(vec![p, 777]))
+            .to_vec();
+        let run = |vote: bool, readout: Readout| {
+            let with = RunSouls {
+                souls: &souls,
+                strengths: &strengths,
+                readout,
+                vote,
+            };
+
+            run_cascade_with(&Doubling, &pool, &limits, &c, &task, 9, Some(&with))
+        };
+
+        for readout in [Readout::Complex, Readout::Real] {
+            // Stage 1 ties at Π = 0 and goes to 20 by the count; in Stage 2 the count says 30,
+            // the amplitudes 10, the answer of Worker 4 alone.
+            let voted = run(true, readout);
+
+            assert_eq!(voted.answer, Some(10), "{readout:?}");
+            assert_eq!(voted.authors, [4]);
+            assert_eq!(
+                voted.votes,
+                VoteTally {
+                    complex: 2,
+                    flipped: 1,
+                    tied: 1,
+                    coherence_sum: 1.0 / 3.0,
+                }
+            );
+            // 2 answers in Stage 0, which agrees; 2 and 2 judgments; 3 and 9 judgments.
+            assert_eq!(voted.usage.calls, 18);
+            assert!(voted.usage.calls < cascade_call_bound(&c));
+
+            // Without the complex vote the count decides, as without Souls.
+            let counted = run(false, readout);
+            let plain = run_cascade_in(&Doubling, &pool, &limits, &c, &task, 9);
+
+            assert_eq!(counted, plain);
+            assert_eq!(
+                (counted.answer, counted.authors.as_slice()),
+                (Some(30), &[6][..])
+            );
+            assert_eq!(counted.votes, VoteTally::default());
+        }
+
+        // The authors of an answer kept from an earlier Stage are that Stage's.
+        let kept = run_cascade_in(&Doubling, &pool, &limits, &silent_end(), &task, 9);
+
+        assert_eq!(
+            (kept.answer, kept.authors.as_slice()),
+            (Some(50), &[0, 1][..])
+        );
+
+        // In a Run, each member keeps the authors per search task and the sum of its
+        // tallies, as its Born event does: what its own run gives on each task.
+        fn fixed_seeds() -> Vec<(String, Cascade)> {
+            vec![
+                ("votes".to_string(), three_votes()),
+                ("silent".to_string(), silent_end()),
+            ]
+        }
+
+        let genes = GenePool {
+            seeds: fixed_seeds,
+            ..doubling_genes()
+        };
+        let cfg = with_souls(small_config(211), SoulConfig::arm_s());
+        let (_, events, snap) =
+            breed_to_end_in::<TwoFamilies>(cfg.clone(), genes, &pool, None).expect("run");
+        let panel = TwoFamilies.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+        let mut complex = 0;
+
+        for m in &snap.archive {
+            let souls = birth_souls(&m.cascade);
+            let mut tally = VoteTally::default();
+            let mut authors = Vec::new();
+
+            for t in &panel {
+                let with = RunSouls {
+                    souls: &souls,
+                    strengths: &strengths,
+                    readout: Readout::Complex,
+                    vote: true,
+                };
+                let seed = derive_seed(
+                    cfg.seed,
+                    &format!("search/{}/{}", m.cascade.gene_id(), t.id),
+                );
+                let r = run_cascade_with(
+                    &TwoFamilies,
+                    &pool,
+                    &cfg.limits,
+                    &m.cascade,
+                    t,
+                    seed,
+                    Some(&with),
+                );
+
+                tally.add(&r.votes);
+                authors.push(r.authors);
+            }
+
+            assert_eq!(m.authors.as_ref(), Some(&authors), "{}", m.id);
+            assert_eq!(m.votes, Some(tally), "{}", m.id);
+            complex += tally.complex;
+
+            if m.cascade == silent_end().genes() {
+                assert_eq!(authors, vec![vec![0, 1]; panel.len()]);
+            }
+        }
+
+        assert!(complex > 0);
+
+        for e in &events {
+            if let Event::Born {
+                id, authors, votes, ..
+            } = e
+            {
+                let m = member(&snap.archive, id);
+
+                assert_eq!((authors, votes), (&m.authors, &m.votes));
+            }
+        }
+    }
+
+    #[test]
+    fn the_select_phase_votes_with_the_current_souls() {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Fixed));
+        pool.insert("sim:large", Box::new(Fixed));
+
+        fn one_seed() -> Vec<(String, Cascade)> {
+            vec![("votes".to_string(), three_votes())]
+        }
+
+        let genes = GenePool {
+            seeds: one_seed,
+            ..doubling_genes()
+        };
+        let cfg = with_souls(
+            BreedConfig {
+                generations: 0,
+                ..small_config(223)
+            },
+            SoulConfig::arm_s(),
+        );
+        let never = || false;
+        let snap = {
+            let mut b: Breeder<'_, TwoFamilies> =
+                Breeder::start(cfg.clone(), genes, &pool, None).expect("breeder");
+
+            assert_eq!(b.step(&never).expect("gen 0").0, Status::Continue);
+
+            b.snapshot()
+        };
+        let id = snap.archive[0].id.clone();
+
+        // The select answers of the seed when its current Souls are `phases` on the fitting
+        // family, whatever its birth Souls.
+        let select = |phases: [u16; 7]| -> BTreeSet<Option<u64>> {
+            let mut s = snap.clone();
+
+            s.archive[0].soul_now = Some(phases.map(|p| PhaseState(vec![p, 777])).to_vec());
+
+            let mut b: Breeder<'_, TwoFamilies> =
+                Breeder::resume_from(cfg.clone(), genes, &pool, None, s).expect("resume");
+
+            b.finish(&never, "all generations done")
+                .expect("finish")
+                .expect("not stopped");
+            b.snapshot().select_answers[&id].values().cloned().collect()
+        };
+
+        // Stage 2 goes to 10 by the amplitudes, or to 30 when every phasor points alike.
+        assert_eq!(
+            select([0, 0, 0, 32768, 0, 16384, 32768]),
+            BTreeSet::from([Some(10)])
+        );
+        assert_eq!(select([0; 7]), BTreeSet::from([Some(30)]));
     }
 }

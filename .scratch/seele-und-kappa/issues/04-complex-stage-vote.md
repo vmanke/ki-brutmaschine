@@ -1,6 +1,6 @@
 # 04 The complex Stage vote and the Array pattern
 
-Status: needs-triage (waits for the owner's approval of the design; Q68 is decided)
+Status: resolved
 Blocked by: 02, 03
 Spec: `../spec.md`, section 7
 
@@ -42,3 +42,20 @@ Spec: `../spec.md`, section 7
   at 1 and 4 threads.
 
 ## Comments
+
+- 2026-10-31, build. `soul.rs`: `array_vote` gives the Array pattern, the decision of spec
+  7.4, whether the tie rule decided, and the coherence; `count_winner` is today's count.
+  `arena.rs`: `run_cascade_with` takes `RunSouls` (current Souls, strengths, readout and
+  `vote`), and `run_cascade_in` calls it without. `stage_vote` makes the same calls and
+  counts the verdicts per judge; with phasors it tallies amplitudes. `CascadeRun` returns
+  `authors` and a `VoteTally` (`complex`, `flipped`, `tied`, `coherence_sum`). Members and
+  `born` events keep the authors per search task and the tally of the birth votes. A newborn
+  votes with its birth Souls, the select phase with `soul_now`. The peer round, `refresh`,
+  judging skill and the ratings are unchanged. `check_archive` compares the new `born`
+  fields too. Tests: `equal_phasors_give_the_count`, `a_unanimous_vote_is_never_lost` and
+  `interference_cases` in `soul.rs`; `without_souls_the_vote_is_todays` (digests recorded on
+  the code of ticket 03, and longer Runs that hold votes compared with the same Runs without
+  Souls), `strengths_never_reach_a_request`, `authors_and_tallies_are_recorded` and
+  `the_select_phase_votes_with_the_current_souls` in `arena.rs`;
+  `a_souled_run_does_not_depend_on_threads` in `tests/soul.rs`. Votes are rare in short
+  Runs: of 16 circuit seeds run for 20 generations, four hold any, and none flipped one.

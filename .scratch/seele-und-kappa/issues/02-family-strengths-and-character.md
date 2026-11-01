@@ -1,6 +1,6 @@
 # 02 Family strengths, readouts and the Character
 
-Status: needs-triage (waits for the owner's approval of the design; Q67 and Q70 are decided)
+Status: resolved
 Blocked by: 01
 Spec: `../spec.md`, sections 5, 6 and 12.1
 
@@ -50,3 +50,21 @@ Spec: `../spec.md`, sections 5, 6 and 12.1
   is k², k times its mean k over independent Souls; the normalised Character is k.
 
 ## Comments
+
+- 2026-10-31, build. `Domain` has `families()` and `strengths(task)`, both empty by default,
+  and the breeder refuses a Run with Souls on a domain without families. Grids:
+  `sim::family_names` and `sim::rule_strengths`. Circuits: each `LIBRARY` entry has `fits`
+  (the table of spec 5.2) and `routes` (the pinned routes it comes from), and
+  `LibraryTarget::strengths`; a dressed task looks up its target, so it keeps the strengths.
+  `soul.rs` has `Phasor`, `phasor` (the one unit phasor of the crate, exact at quarter turns),
+  `readout`, `vote_phasor`, `character`, `character_norm`, `mean_character`,
+  `contrast_complex`, `contrast_real`, `independent_contrast` and `Strengths::of` (equal
+  strengths). Nothing stores a Character. Tests: in `circuit.rs`
+  `the_circuit_families_are_the_designers` and `every_target_states_its_strengths`; in
+  `domain.rs` `the_grid_families_are_the_grid_models` and `grid_strengths_follow_the_rule`;
+  in `tests/soul.rs` `strengths_never_reach_a_prompt` (digests recorded before the change);
+  in `soul.rs` `the_real_readout_splits_at_quarter_turns`,
+  `the_character_of_fresh_souls_meets_the_formulas` (2^20 Souls per Domain; every value came
+  within 0.002 of its formula), `one_family_gives_no_pattern`,
+  `a_coherent_soul_is_k_times_brighter` and four more; in `arena.rs`
+  `a_run_with_souls_needs_a_domain_that_names_its_families`.

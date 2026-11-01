@@ -181,7 +181,17 @@ impl CandidateAdapter for CascadeAdapter {
         serde_json::from_str(text).map_err(|e| BrutError::Invalid(format!("cascade json: {e}")))
     }
 
+    /// The Cascade's check, and no Soul or Coupling strength: a Soul belongs to the Run it
+    /// was bred in, and promoting Cascades with Souls is not part of step 2 (spec 4.6 of
+    /// `.scratch/seele-und-kappa/spec.md`).
     fn validate(&self, c: &Cascade) -> Result<()> {
+        if c.carries_soul() {
+            return Err(BrutError::Invalid(
+                "cascade: a Worker carries a Soul or a Coupling strength; a Soul belongs to the Run it was bred in"
+                    .to_string(),
+            ));
+        }
+
         c.check(&self.limits)
     }
 
@@ -442,6 +452,7 @@ pub fn ingest_one<A: CandidateAdapter>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cascade::genome::PhaseState;
 
     #[test]
     fn scope_fence_allows_only_candidate_files() {
@@ -572,6 +583,34 @@ mod tests {
 
         assert!(!rec.accepted);
         assert!(rec.reason.contains("credential"), "{}", rec.reason);
+    }
+
+    #[test]
+    fn the_cascade_pool_refuses_a_soul() {
+        let adapter = CascadeAdapter::new();
+        let mut c = seed_cascades()[0].1.clone();
+
+        c.stages[0].workers[0].traits.think_tokens = 1024;
+
+        for (what, phases, coupling) in [("soul", Some(vec![1, 2, 3]), 0), ("coupling", None, 200)]
+        {
+            let mut souled = c.clone();
+
+            souled.stages[0].workers[0].traits.phase_state = phases.map(PhaseState);
+            souled.stages[0].workers[0].traits.coupling = coupling;
+
+            let id = adapter.fingerprint(&souled);
+            let rec = ingest_one(
+                &adapter,
+                &format!("{CASCADE_DIR}{id}.json"),
+                &adapter.to_json(&souled).expect("json"),
+                &id,
+                &cascade_seed_ids(),
+            );
+
+            assert!(!rec.accepted, "{what}");
+            assert!(rec.reason.contains("Soul"), "{what}: {}", rec.reason);
+        }
     }
 
     #[test]

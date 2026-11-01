@@ -31,6 +31,9 @@ pub const MAX_SECTION_NAME_CHARS: usize = 32;
 pub const TEMPERATURE_MIN: f32 = 0.0;
 pub const TEMPERATURE_MAX: f32 = 1.5;
 
+/// Largest Coupling strength a Worker may carry, in thousandths: κ = 1 (step 2, spec 8.1).
+pub const COUPLING_MAX: u16 = 1000;
+
 /// Smallest answer budget a Worker may carry. In whitespace-separated tokens
 /// (`approx_tokens`) it holds the ANSWER line and a grid of up to 63 cells: a 7x7 grid is
 /// 50 tokens. That is enough for every generated puzzle (at most 6x6, 37 tokens). A 10x10
@@ -237,6 +240,22 @@ pub fn pool_limits() -> CascadeLimits {
     }
 }
 
+/// A Worker's Soul (step 2, Q42, Q43, Q52): one phase per hypothesis family of the Run's
+/// Domain, in the Domain's family order. A phase p in 0..=65535 stands for the angle
+/// 2πp / 65536. Integers keep the genome's JSON, its id and every update of a Soul exact.
+/// It is written as a plain JSON array.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PhaseState(pub Vec<u16>);
+
+impl std::ops::Deref for PhaseState {
+    type Target = [u16];
+
+    fn deref(&self) -> &[u16] {
+        &self.0
+    }
+}
+
 /// Traits: inheritable settings that shape *how* a Worker thinks, not *what* it thinks.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +267,16 @@ pub struct Traits {
     pub answer_tokens: u32,
     /// When true, the Worker checks its answer against the worked examples once.
     pub self_check: bool,
+    /// The Worker's birth Soul (step 2). No prompt and no request shows it. A Run without
+    /// Souls never sets it, and then it is left out of the JSON, so a Traits object written
+    /// before step 2 writes back byte for byte the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_state: Option<PhaseState>,
+    /// The Coupling strength κ in thousandths, 0..=COUPLING_MAX (step 2, Q44, Q60). It is
+    /// inherited with the Soul, but it is not part of the Soul and it is no gene. A Run
+    /// without Souls keeps it at 0, and then it is left out of the JSON.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub coupling: u16,
 }
 
 impl Default for Traits {
@@ -257,8 +286,22 @@ impl Default for Traits {
             temperature: 0.2,
             answer_tokens: 512,
             self_check: false,
+            phase_state: None,
+            coupling: 0,
         }
     }
+}
+
+impl Traits {
+    /// True when the Worker carries a Soul or a non-zero Coupling strength.
+    pub fn carries_soul(&self) -> bool {
+        self.phase_state.is_some() || self.coupling != 0
+    }
+}
+
+/// True for 0: a Coupling strength that is left out of the JSON.
+fn is_zero(v: &u16) -> bool {
+    *v == 0
 }
 
 /// One named part of a system prompt, for example "role", "strategy" or "format".
@@ -318,6 +361,32 @@ impl Cascade {
         let json = serde_json::to_string(self).unwrap_or_default();
 
         sha256_hex(json.as_bytes())[..16].to_string()
+    }
+
+    /// The genes alone: a copy with the Soul and the Coupling strength removed from every
+    /// Worker. The Mutator sees only these (step 2, spec 4.5).
+    pub fn genes(&self) -> Cascade {
+        let mut genes = self.clone();
+
+        for w in genes.stages.iter_mut().flat_map(|s| &mut s.workers) {
+            w.traits.phase_state = None;
+            w.traits.coupling = 0;
+        }
+
+        genes
+    }
+
+    /// The id of `genes()`. Without Souls it equals `id()` (step 2, spec 4.4).
+    pub fn gene_id(&self) -> String {
+        self.genes().id()
+    }
+
+    /// True when some Worker carries a Soul or a non-zero Coupling strength.
+    pub fn carries_soul(&self) -> bool {
+        self.stages
+            .iter()
+            .flat_map(|s| &s.workers)
+            .any(|w| w.traits.carries_soul())
     }
 
     /// Number of Workers over all stages.
@@ -401,6 +470,13 @@ fn check_worker(
         ));
     }
 
+    if t.coupling > COUPLING_MAX {
+        return Err(format!(
+            "coupling {} above {COUPLING_MAX} thousandths",
+            t.coupling
+        ));
+    }
+
     Ok(())
 }
 
@@ -464,7 +540,11 @@ fn credential_marker(text: &str) -> Option<&'static str> {
                     let unquoted = rest.trim_start_matches(['"', '\'']);
                     // A quoted key ("password": ...) is a key in JSON, YAML or a dict,
                     // so ':' counts for every keyword then.
-                    let seps = if unquoted.len() < rest.len() { ":=" } else { separators };
+                    let seps = if unquoted.len() < rest.len() {
+                        ":="
+                    } else {
+                        separators
+                    };
 
                     unquoted
                         .trim_start_matches([' ', '\t'])
@@ -472,7 +552,9 @@ fn credential_marker(text: &str) -> Option<&'static str> {
                 };
 
                 if anywhere {
-                    lower.match_indices(k).any(|(i, _)| separated(&lower[i + k.len()..]))
+                    lower
+                        .match_indices(k)
+                        .any(|(i, _)| separated(&lower[i + k.len()..]))
                 } else {
                     after_token_start(&lower, k).any(separated)
                 }
@@ -554,6 +636,7 @@ pub fn seed_cascades() -> Vec<(String, Cascade)> {
                 temperature: 0.2,
                 answer_tokens: 512,
                 self_check: check,
+                ..Traits::default()
             },
         }
     };
@@ -773,8 +856,20 @@ mod tests {
 
         // One character from each kind of invisible range, splitting a key prefix.
         for c in [
-            '\u{034F}', '\u{0890}', '\u{115F}', '\u{17B4}', '\u{180B}', '\u{2065}', '\u{3164}',
-            '\u{FFA0}', '\u{FFF0}', '\u{110BD}', '\u{13430}', '\u{1BCA0}', '\u{1D173}', '\u{E0FFF}',
+            '\u{034F}',
+            '\u{0890}',
+            '\u{115F}',
+            '\u{17B4}',
+            '\u{180B}',
+            '\u{2065}',
+            '\u{3164}',
+            '\u{FFA0}',
+            '\u{FFF0}',
+            '\u{110BD}',
+            '\u{13430}',
+            '\u{1BCA0}',
+            '\u{1D173}',
+            '\u{E0FFF}',
         ] {
             let text = format!("s{c}k-ant-api03-abcdef");
             let err = check_text("text", &text, MAX_SECTION_CHARS).expect_err(&text);
@@ -841,5 +936,96 @@ mod tests {
         let back: Cascade = serde_json::from_str(&json).expect("decode");
 
         assert_eq!(c.id(), back.id());
+    }
+
+    #[test]
+    fn a_soul_changes_the_id_but_not_the_gene_id() {
+        for (name, plain) in seed_cascades() {
+            // Without Souls the two ids agree, and the genes are the whole Cascade.
+            assert_eq!(plain.gene_id(), plain.id(), "{name}");
+            assert_eq!(plain.genes(), plain, "{name}");
+            assert!(!plain.carries_soul(), "{name}");
+
+            // A second Stage, so that a Worker after the first one carries the Soul too.
+            let mut two = plain.clone();
+
+            two.stages.push(plain.stages[0].clone());
+
+            let mut souled = two.clone();
+
+            souled.stages[1].workers[0].traits.phase_state =
+                Some(PhaseState(vec![0, 16384, 32768, 65535]));
+
+            let mut coupled = two.clone();
+
+            coupled.stages[1].workers[0].traits.coupling = 200;
+
+            let mut both = souled.clone();
+
+            both.stages[0].workers[0].traits.coupling = COUPLING_MAX;
+
+            for (what, c) in [("soul", &souled), ("coupling", &coupled), ("both", &both)] {
+                assert!(c.carries_soul(), "{name}: {what}");
+                assert_ne!(c.id(), two.id(), "{name}: {what} changes the id");
+                assert_eq!(c.genes(), two, "{name}: {what}");
+                assert_eq!(c.gene_id(), two.id(), "{name}: {what}");
+                assert_eq!(c.gene_id(), c.genes().id(), "{name}: {what}");
+            }
+
+            assert_ne!(souled.id(), coupled.id(), "{name}");
+            assert_ne!(souled.id(), both.id(), "{name}");
+        }
+    }
+
+    #[test]
+    fn check_refuses_a_coupling_above_1000() {
+        let limits = CascadeLimits::default();
+        let (_, mut c) = seed_cascades().remove(0);
+
+        c.stages[0].workers[0].traits.coupling = COUPLING_MAX;
+        assert!(c.check(&limits).is_ok(), "{:?}", c.check(&limits));
+
+        c.stages[0].workers[0].traits.coupling = COUPLING_MAX + 1;
+
+        let err = c.check(&limits).expect_err("above 1000");
+
+        assert!(err.to_string().contains("coupling 1001"), "{err}");
+    }
+
+    #[test]
+    fn traits_written_before_step_2_read_without_a_soul() {
+        let old =
+            r#"{"think_tokens":256,"temperature":0.2,"answer_tokens":512,"self_check":false}"#;
+        let t: Traits = serde_json::from_str(old).expect("old traits");
+
+        assert_eq!(t, Traits::default());
+        assert_eq!((t.phase_state.as_ref(), t.coupling), (None, 0));
+        assert_eq!(serde_json::to_string(&t).expect("json"), old);
+
+        // With a Soul both fields are written, the phases as a plain JSON array.
+        let souled = Traits {
+            phase_state: Some(PhaseState(vec![0, 32768, 65535])),
+            coupling: 200,
+            ..Traits::default()
+        };
+        let json = serde_json::to_string(&souled).expect("json");
+
+        assert_eq!(
+            json,
+            r#"{"think_tokens":256,"temperature":0.2,"answer_tokens":512,"self_check":false,"phase_state":[0,32768,65535],"coupling":200}"#
+        );
+        assert_eq!(serde_json::from_str::<Traits>(&json).expect("back"), souled);
+        assert_eq!(souled.phase_state.as_deref(), Some(&[0, 32768, 65535][..]));
+
+        // Unknown fields stay refused, and a phase is an integer in 0..=65535.
+        for bad in [
+            r#","soul":[1]}"#,
+            r#","phase_state":[65536]}"#,
+            r#","coupling":-1}"#,
+        ] {
+            let text = old.replace('}', bad);
+
+            assert!(serde_json::from_str::<Traits>(&text).is_err(), "{text}");
+        }
     }
 }

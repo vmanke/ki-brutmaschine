@@ -1,6 +1,6 @@
 # 03 Souletics at birth
 
-Status: needs-triage (waits for the owner's approval of the design; Q71 is decided)
+Status: resolved
 Blocked by: 02
 Spec: `../spec.md`, sections 9 and 15
 
@@ -75,3 +75,27 @@ line under Comments records its commit. Part A does not wait for Q71.
   `mix` off a crossover child copies its first source.
 
 ## Comments
+
+- 2026-10-31, part A. Built and tested before part B started. It is not committed: this
+  build makes no commits, so no commit is recorded here. `variation.rs`: each operator has a
+  `_sourced` variant that also returns the source of every child Worker (`Source`,
+  `Sources`), and `partner_sources` gives the sources of a Mutator child by the partner
+  rule. The operators work on the `genes()` of their parents, so a child carries no Soul and
+  every draw stays as today. The breeder keeps the sources in each draft. Tests:
+  `drafting_without_souls_is_unchanged` in `arena.rs` (digests recorded before the change);
+  `every_operator_names_its_sources`, `operators_see_no_souls` and
+  `cross_worker_never_crosses_a_soul` in `variation.rs`.
+- 2026-10-31, part B. `Breeder::souletics` runs after drafting and before the evaluation;
+  the maths is in `soul.rs` (`SoulDraws`, `souletics`, `uniform_step`, `turn`,
+  `new_soul_chance`). Each draft draws from its own stream, `soul/seed/{i}` or
+  `soul/{g}/{i}`, in the order of spec 9.7, and each draw takes a fixed part of the stream.
+  A member records `soul_sources` (sources, new, origin) and `soul_now`, which starts as the
+  birth Soul; the `born` event records `soul_sources`. Novelty, the call seeds
+  (`search/{gene_id}`, `select/{gene_id}`) and the last tie-break of the ranking go by gene
+  ids, which `Breeder::gene_ids` keeps. A Run with Souls starts on both Domains. A resumed
+  member must hold a Soul of n phases per Worker and its records. Tests in `arena.rs`: the
+  ten of part B above, and `a_souled_run_records_its_souls_and_resumes_like_a_straight_one`
+  and `the_ranking_breaks_ties_by_genes`; in `soul.rs` six unit tests of the maths; in
+  `tests/soul.rs` `a_run_with_souls_starts_on_both_domains` and
+  `promote_refuses_a_run_with_souls`, now on a real Run. Without Souls the goldens of
+  `tests/universe.rs` and `tests/mlp_golden.rs` and the pilot head `e93ed521…` hold.

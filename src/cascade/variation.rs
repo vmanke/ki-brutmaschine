@@ -8,6 +8,13 @@
 //! The LLM mutator (Claude) is reached only through the `GenRequest`s built here; its answers
 //! are recorded and replayed (ADR 0002), and `parse_llm_cascade` turns one answer back into a
 //! checked Cascade without repairing it.
+//!
+//! The operators work on genes (step 2, spec 9.1): each removes its parents' Souls and
+//! Coupling strengths first, so a child never carries either, it must differ from its
+//! parents' genes, and the draws are those of a Run without Souls. The `_sourced` variants
+//! also name the source of every child Worker: the parent Worker it was built from, or one
+//! Worker of each parent where the operator pairs Workers. Souletics in the breeder writes
+//! the child's Souls from these sources.
 #![forbid(unsafe_code)]
 
 use rand::Rng;
@@ -66,6 +73,24 @@ pub enum Op {
     /// A child proposed by the LLM mutator by merging two parents.
     LlmCrossover,
 }
+
+/// The source of a child Worker (step 2, spec 9.1): the Worker of a parent that the child
+/// Worker was built from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Source {
+    /// The parent, in the order the operator takes them: 0 for the first or only parent,
+    /// 1 for the second.
+    pub parent: usize,
+    /// The Worker's index in that parent, counted over its Stages in order.
+    pub worker: usize,
+}
+
+/// The sources of a child's Workers: one entry per Worker, in Stage order, with one source,
+/// or two in parent order where the operator pairs Workers.
+pub type Sources = Vec<Vec<Source>>;
+
+/// The sources of every Worker, stage by stage, while an operator edits the child.
+type SourceMap = Vec<Vec<Vec<Source>>>;
 
 /// Prompt-text gene pool: (section name, text). Mutation draws section texts from here.
 ///
@@ -421,19 +446,35 @@ pub fn mutate_with(
     phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op)> {
+    mutate_sourced(parent, limits, phrases, rng).map(|(child, op, _)| (child, op))
+}
+
+/// `mutate_with` that also names the source of every child Worker (spec 9.1): each Worker's
+/// source is the parent Worker at its position. The clone of WorkerAdd has the cloned
+/// Worker as its source, the new Worker of StageAdd the Worker it was copied from, and
+/// WorkerDrop and StageDrop shift the positions.
+pub fn mutate_sourced(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources)> {
+    let parent = parent.genes();
     let parents = [parent.id()];
 
     for _ in 0..MUTATE_ATTEMPTS {
         let op = draw_op(rng);
 
-        let Some(mut child) = apply_with(parent, op, limits, phrases, rng) else {
+        let Some((mut child, map)) = apply_sourced(&parent, op, limits, phrases, rng) else {
             continue;
         };
 
         clamp_to_limits(&mut child, limits);
 
         if acceptable(&child, limits, &parents) {
-            return Some((child, op));
+            let sources = flatten_sources(map, &child);
+
+            return Some((child, op, sources));
         }
     }
 
@@ -453,6 +494,20 @@ pub fn stage_crossover(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    stage_crossover_sourced(a, b, limits, rng).map(|(child, _)| child)
+}
+
+/// `stage_crossover` that also names the source of every child Worker (spec 9.1): the
+/// Workers of the prefix come from `a`, those of the suffix from `b`, each from its own
+/// position.
+pub fn stage_crossover_sourced(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources)> {
+    let (a, b) = (&a.genes(), &b.genes());
+
     if a.stages.is_empty() || b.stages.is_empty() {
         return None;
     }
@@ -472,11 +527,17 @@ pub fn stage_crossover(
         let mut child = Cascade {
             stages: head.iter().chain(tail).cloned().collect(),
         };
+        let map: SourceMap = (0..prefix)
+            .map(|s| stage_sources(a, 0, s))
+            .chain((b.stages.len() - suffix..b.stages.len()).map(|s| stage_sources(b, 1, s)))
+            .collect();
 
         clamp_to_limits(&mut child, limits);
 
         if acceptable(&child, limits, &parents) {
-            return Some(child);
+            let sources = flatten_sources(map, &child);
+
+            return Some((child, sources));
         }
     }
 
@@ -497,6 +558,19 @@ pub fn section_crossover(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    section_crossover_sourced(a, b, limits, rng).map(|(child, _)| child)
+}
+
+/// `section_crossover` that also names the sources of every child Worker (spec 9.1): Worker
+/// (s, w) has two, `a`'s Worker (s, w) and the partner Worker of `b`.
+pub fn section_crossover_sourced(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources)> {
+    let (a, b) = (&a.genes(), &b.genes());
+
     if a.stages.is_empty() || b.stages.is_empty() {
         return None;
     }
@@ -514,14 +588,108 @@ pub fn section_crossover(
             }
         }
 
+        let map: SourceMap = a
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(s, stage)| {
+                (0..stage.workers.len())
+                    .map(|w| {
+                        let own = Source {
+                            parent: 0,
+                            worker: worker_index(a, s, w),
+                        };
+
+                        std::iter::once(own)
+                            .chain(partner_source(b, 1, s, w))
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+
         clamp_to_limits(&mut child, limits);
 
         if acceptable(&child, limits, &parents) {
-            return Some(child);
+            let sources = flatten_sources(map, &child);
+
+            return Some((child, sources));
         }
     }
 
     None
+}
+
+/// The sources of a child the Mutator wrote from `parents` (spec 9.1): Worker (s, w) has the
+/// source `partner(parent, s, w)` of every parent, in parent order. The Mutator sees no
+/// Souls and writes none, so only the shapes count.
+pub fn partner_sources(child: &Cascade, parents: &[&Cascade]) -> Sources {
+    child
+        .stages
+        .iter()
+        .enumerate()
+        .flat_map(|(s, stage)| {
+            (0..stage.workers.len()).map(move |w| {
+                parents
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(p, parent)| partner_source(parent, p, s, w))
+                    .collect()
+            })
+        })
+        .collect()
+}
+
+/// The index of Worker (stage `s`, position `w`) of `c`, counted over its Stages in order.
+pub fn worker_index(c: &Cascade, s: usize, w: usize) -> usize {
+    c.stages
+        .iter()
+        .take(s)
+        .map(|st| st.workers.len())
+        .sum::<usize>()
+        + w
+}
+
+/// Every Worker of Stage `s` of `c`, each its own source as Worker of parent `parent`.
+fn stage_sources(c: &Cascade, parent: usize, s: usize) -> Vec<Vec<Source>> {
+    let first = worker_index(c, s, 0);
+    let width = c.stages.get(s).map_or(0, |st| st.workers.len());
+
+    (first..first + width)
+        .map(|worker| vec![Source { parent, worker }])
+        .collect()
+}
+
+/// The source that `partner(c, s, w)` picks, as Worker of parent `parent`.
+fn partner_source(c: &Cascade, parent: usize, s: usize, w: usize) -> Option<Source> {
+    let (ps, pw) = partner_at(c, s, w)?;
+
+    Some(Source {
+        parent,
+        worker: worker_index(c, ps, pw),
+    })
+}
+
+/// The sources in Stage order, cut to the shape `child` kept after `clamp_to_limits`, which
+/// drops trailing Stages and Workers only.
+fn flatten_sources(mut map: SourceMap, child: &Cascade) -> Sources {
+    map.truncate(child.stages.len());
+
+    for (stage, sources) in child.stages.iter().zip(&mut map) {
+        sources.truncate(stage.workers.len());
+    }
+
+    debug_assert_eq!(
+        map.iter().map(Vec::len).collect::<Vec<_>>(),
+        child
+            .stages
+            .iter()
+            .map(|s| s.workers.len())
+            .collect::<Vec<_>>(),
+        "the source map follows the child's shape"
+    );
+
+    map.into_iter().flatten().collect()
 }
 
 /// Request to an LLM mutator (Claude) to improve one parent, given its public search
@@ -593,23 +761,34 @@ pub fn llm_crossover_request_with(
 /// are ignored), deserialize a Cascade (unknown fields are rejected by the struct), clamp
 /// nothing, and run `check(limits)`. Errors are `BrutError::Invalid` with a short reason.
 pub fn parse_llm_cascade(text: &str, limits: &CascadeLimits) -> Result<Cascade> {
-    let invalid = |reason: &str| BrutError::Invalid(format!("llm answer: {reason}"));
-
-    let start = text.find('{').ok_or_else(|| invalid("no JSON object"))?;
-    let end = closing_brace(text, start).ok_or_else(|| invalid("the JSON object is not closed"))?;
-    let json = text
-        .get(start..=end)
-        .ok_or_else(|| invalid("the JSON object is not closed"))?;
-
-    let cascade: Cascade =
-        serde_json::from_str(json).map_err(|e| invalid(&format!("not a Cascade: {e}")))?;
+    let cascade = read_llm_cascade(text)?;
 
     cascade.check(limits).map_err(|e| match e {
-        BrutError::Invalid(reason) => invalid(&reason),
+        BrutError::Invalid(reason) => llm_invalid(&reason),
         other => other,
     })?;
 
     Ok(cascade)
+}
+
+/// The Cascade in an LLM answer as `parse_llm_cascade` finds it, but unchecked. The breeder
+/// reads it to refuse an answer that writes a Soul before any other rule (step 2, spec 4.5).
+pub fn read_llm_cascade(text: &str) -> Result<Cascade> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| llm_invalid("no JSON object"))?;
+    let end =
+        closing_brace(text, start).ok_or_else(|| llm_invalid("the JSON object is not closed"))?;
+    let json = text
+        .get(start..=end)
+        .ok_or_else(|| llm_invalid("the JSON object is not closed"))?;
+
+    serde_json::from_str(json).map_err(|e| llm_invalid(&format!("not a Cascade: {e}")))
+}
+
+/// An error about an LLM answer.
+fn llm_invalid(reason: &str) -> BrutError {
+    BrutError::Invalid(format!("llm answer: {reason}"))
 }
 
 /// Draw one mutation operator by `MUTATION_WEIGHTS`.
@@ -630,6 +809,7 @@ fn draw_op(rng: &mut ChaCha8Rng) -> Op {
 
 /// Apply one mutation operator to a copy of `parent`, or None when the operator cannot
 /// change this parent. Section texts come from `phrases`. The result is not clamped yet.
+#[cfg(test)]
 fn apply_with(
     parent: &Cascade,
     op: Op,
@@ -637,7 +817,23 @@ fn apply_with(
     phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    apply_sourced(parent, op, limits, phrases, rng).map(|(child, _)| child)
+}
+
+/// `apply_with` with the source of every child Worker, stage by stage. A Worker that keeps
+/// its position keeps its source; the operators that add, remove or move Workers or
+/// Stages edit the map as they edit the child.
+fn apply_sourced(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, SourceMap)> {
     let mut child = parent.clone();
+    let mut map: SourceMap = (0..parent.stages.len())
+        .map(|s| stage_sources(parent, 0, s))
+        .collect();
 
     match op {
         Op::ThinkUp => {
@@ -773,6 +969,10 @@ fn apply_with(
             clone.traits.temperature =
                 shifted_temperature(clone.traits.temperature, WORKER_ADD_WARMTH);
             stage.workers.push(clone);
+
+            let cloned = map.get(k)?.get(w)?.clone();
+
+            map.get_mut(k)?.push(cloned);
         }
 
         Op::WorkerDrop => {
@@ -781,6 +981,7 @@ fn apply_with(
             let w = rng.random_range(0..stage.workers.len());
 
             stage.workers.remove(w);
+            map.get_mut(k)?.remove(w);
         }
 
         Op::StageAdd => {
@@ -805,6 +1006,10 @@ fn apply_with(
             set_section(&mut worker.sections, RESIDUAL, text);
 
             let at = rng.random_range(1..=parent.stages.len());
+            let copied = Source {
+                parent: 0,
+                worker: worker_index(parent, s, w),
+            };
 
             child.stages.insert(
                 at,
@@ -812,6 +1017,7 @@ fn apply_with(
                     workers: vec![worker],
                 },
             );
+            map.insert(at, vec![vec![copied]]);
         }
 
         Op::StageDrop => {
@@ -822,6 +1028,7 @@ fn apply_with(
             let k = rng.random_range(0..parent.stages.len());
 
             child.stages.remove(k);
+            map.remove(k);
         }
 
         Op::Seed | Op::StageCrossover | Op::SectionCrossover | Op::LlmMutate | Op::LlmCrossover => {
@@ -829,7 +1036,7 @@ fn apply_with(
         }
     }
 
-    Some(child)
+    Some((child, map))
 }
 
 /// True when `child` passes `check(limits)` and its id differs from every id in `parents`.
@@ -998,15 +1205,23 @@ fn droppable(s: &Section) -> bool {
 /// `b`'s Worker paired with Worker (s, w) of the other parent: the same position, or the
 /// last stage or Worker that `b` has.
 fn partner(b: &Cascade, s: usize, w: usize) -> Option<&Worker> {
-    let stage = b.stages.get(s.min(b.stages.len().checked_sub(1)?))?;
+    let (ps, pw) = partner_at(b, s, w)?;
 
-    stage
-        .workers
-        .get(w.min(stage.workers.len().checked_sub(1)?))
+    b.stages.get(ps)?.workers.get(pw)
+}
+
+/// The position (stage, Worker) of `partner(b, s, w)`, or None when `b` has no Worker there.
+fn partner_at(b: &Cascade, s: usize, w: usize) -> Option<(usize, usize)> {
+    let ps = s.min(b.stages.len().checked_sub(1)?);
+    let pw = w.min(b.stages.get(ps)?.workers.len().checked_sub(1)?);
+
+    Some((ps, pw))
 }
 
 /// Uniform crossover of one Worker with its partner, in place: every section whose name the
 /// partner also has, the model and each Trait field come from the partner with p = 0.5.
+/// The Soul and the Coupling strength are no genes and are never crossed (spec 9.1): the
+/// operators see genes only, and Souletics gives the child its Souls.
 fn cross_worker(child: &mut Worker, other: &Worker, rng: &mut ChaCha8Rng) {
     for section in &mut child.sections {
         if let Some(theirs) = other.sections.iter().find(|s| s.name == section.name)
@@ -1052,7 +1267,9 @@ fn llm_request(brief: &MutatorBrief, prompt: String, seed: u64) -> GenRequest {
 }
 
 /// The user prompt: context, format, limits, each parent as pretty JSON with its public
-/// search fitness, then the task and the rules.
+/// search fitness, then the task and the rules. A parent shows its genes only: the Mutator
+/// never sees a Soul or a Coupling strength (step 2, spec 4.5), so the format keeps its
+/// four Traits, and a parent with a Soul gives the request of the same parent without.
 fn llm_prompt(
     brief: &MutatorBrief,
     parents: &[(&str, &Cascade, f64)],
@@ -1067,7 +1284,7 @@ fn llm_prompt(
     p.push('\n');
 
     for (label, cascade, fitness) in parents {
-        let json = serde_json::to_string_pretty(cascade).unwrap_or_default();
+        let json = serde_json::to_string_pretty(&cascade.genes()).unwrap_or_default();
 
         p.push_str(&format!("{label}:\n{json}\n{}\n\n", fitness_line(*fitness)));
     }
@@ -1171,7 +1388,9 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::cascade::genome::{ModelSpec, THINK_TOKENS_CEILING, seed_cascades};
+    use crate::cascade::genome::{
+        COUPLING_MAX, ModelSpec, PhaseState, THINK_TOKENS_CEILING, seed_cascades,
+    };
 
     /// Every Op, in declaration order.
     const ALL_OPS: [Op; 19] = [
@@ -1727,6 +1946,7 @@ mod tests {
             temperature: 9.0,
             answer_tokens: 1,
             self_check: true,
+            ..Traits::default()
         };
 
         let mut odd = hot.clone();
@@ -1785,6 +2005,7 @@ mod tests {
             temperature: f32::NAN,
             answer_tokens: u32::MAX,
             self_check: false,
+            ..Traits::default()
         };
 
         for seed in 0..100 {
@@ -2279,6 +2500,417 @@ mod tests {
             let back: Op = serde_json::from_str(&encode(op)).expect("decode");
 
             assert_eq!(back, op);
+        }
+    }
+
+    /// A Cascade with Stages of these widths whose Workers differ in every gene: a note
+    /// section that names `tag` and the Worker, the model by parity, and each Trait.
+    fn distinct(tag: &str, widths: &[usize]) -> Cascade {
+        let base = seeds().remove(0).stages[0].workers[0].clone();
+        let mut k = 0u32;
+        let mut stages = Vec::new();
+
+        for &width in widths {
+            let mut workers = Vec::new();
+
+            for _ in 0..width {
+                let mut w = base.clone();
+
+                w.sections.push(Section {
+                    name: "note".to_string(),
+                    text: format!("Worker {tag}{k}."),
+                });
+                w.model = if k.is_multiple_of(2) {
+                    "sim:small"
+                } else {
+                    "sim:large"
+                }
+                .to_string();
+                w.traits = Traits {
+                    think_tokens: 128 * (k + 1),
+                    temperature: 0.1 * (k as f32 + 1.0),
+                    answer_tokens: 128 + 64 * k,
+                    self_check: !k.is_multiple_of(2),
+                    ..Traits::default()
+                };
+                workers.push(w);
+                k += 1;
+            }
+
+            stages.push(Stage { workers });
+        }
+
+        Cascade { stages }
+    }
+
+    /// Every Worker of `c`, in Stage order.
+    fn workers_of(c: &Cascade) -> Vec<&Worker> {
+        c.stages.iter().flat_map(|s| &s.workers).collect()
+    }
+
+    /// The genes of `w` that the mutation `op` leaves as they are: a child Worker shares
+    /// them with its source Worker.
+    fn kept(op: Op, w: &Worker) -> (Option<String>, Option<Vec<Section>>, Option<Traits>) {
+        let model = Some(w.model.clone());
+        let sections = Some(w.sections.clone());
+        let traits = Some(w.traits.clone());
+
+        match op {
+            Op::ThinkUp
+            | Op::ThinkDown
+            | Op::TemperatureShift
+            | Op::SelfCheckFlip
+            | Op::AnswerTokensShift => (model, sections, None),
+            Op::ModelSwitch => (None, sections, traits),
+            Op::SectionReplace
+            | Op::SectionAdd
+            | Op::SectionDrop
+            | Op::SectionSwap
+            | Op::StageAdd => (model, None, traits),
+            Op::WorkerAdd => {
+                let warm = Traits {
+                    temperature: 0.0,
+                    ..w.traits.clone()
+                };
+
+                (model, sections, Some(warm))
+            }
+            _ => (model, sections, traits),
+        }
+    }
+
+    /// The flat index of the Worker that `partner` picks in a parent of these widths,
+    /// computed by the rule itself: the same position, or the last Stage or Worker there is.
+    fn partner_by_rule(widths: &[usize], s: usize, w: usize) -> usize {
+        let ps = s.min(widths.len() - 1);
+        let pw = w.min(widths[ps] - 1);
+
+        widths[..ps].iter().sum::<usize>() + pw
+    }
+
+    #[test]
+    fn every_operator_names_its_sources() {
+        let limits = CascadeLimits::default();
+        let parent = distinct("P", &[2, 1, 2]);
+        let mutations: Vec<Op> = MUTATION_WEIGHTS.iter().map(|&(op, _)| op).collect();
+
+        assert!(parent.check(&limits).is_ok(), "{:?}", parent.check(&limits));
+
+        // Each mutation operator: every child Worker has one source, the parent Worker it
+        // was built from, which shares every gene the operator leaves alone.
+        for &op in &mutations {
+            let mut applied = 0;
+
+            for seed in 0..60 {
+                let Some((mut child, map)) =
+                    apply_sourced(&parent, op, &limits, PHRASES, &mut rng(seed))
+                else {
+                    continue;
+                };
+
+                clamp_to_limits(&mut child, &limits);
+
+                let sources = flatten_sources(map, &child);
+                let from = workers_of(&parent);
+
+                assert_eq!(sources.len(), child.worker_count(), "{op:?}");
+
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    assert_eq!(src.len(), 1, "{op:?}");
+                    assert_eq!(src[0].parent, 0, "{op:?}");
+                    assert_eq!(
+                        kept(op, w),
+                        kept(op, from[src[0].worker]),
+                        "{op:?} seed {seed}"
+                    );
+                }
+
+                applied += 1;
+            }
+
+            assert!(applied > 0, "{op:?} never applied");
+        }
+
+        // The structural operators move the map as they move the Workers.
+        let structural = |op: Op, seed: u64| {
+            let (child, map) =
+                apply_sourced(&parent, op, &limits, PHRASES, &mut rng(seed)).expect("applies");
+
+            flatten_sources(map, &child)
+                .iter()
+                .map(|s| s[0].worker)
+                .collect::<Vec<usize>>()
+        };
+        let shapes: BTreeSet<Vec<usize>> = (0..40)
+            .flat_map(|seed| {
+                [Op::WorkerAdd, Op::WorkerDrop, Op::StageAdd, Op::StageDrop]
+                    .map(|op| structural(op, seed))
+            })
+            .collect();
+
+        assert!(
+            shapes.contains(&vec![0, 1, 2, 3, 4, 0]),
+            "a clone of Worker 0"
+        );
+        assert!(shapes.contains(&vec![0, 2, 3, 4]), "Worker 1 dropped");
+        assert!(
+            shapes.contains(&vec![0, 1, 2, 3, 4, 2]),
+            "a new last Stage copied from 2"
+        );
+        assert!(
+            shapes.contains(&vec![0, 1, 3, 4]),
+            "the middle Stage dropped"
+        );
+
+        // The public operator names the same sources as the operator it drew.
+        for seed in 0..200 {
+            if let Some((child, op, sources)) =
+                mutate_sourced(&parent, &limits, PHRASES, &mut rng(seed))
+            {
+                let from = workers_of(&parent);
+
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    assert_eq!(kept(op, w), kept(op, from[src[0].worker]), "{op:?}");
+                }
+            }
+        }
+
+        // Both crossovers.
+        let (a, b) = (distinct("A", &[2, 1, 2]), distinct("B", &[1, 3]));
+        let (from_a, from_b) = (workers_of(&a), workers_of(&b));
+        let mut by_stage = 0;
+        let mut by_section = 0;
+
+        for seed in 0..100 {
+            // StageCrossover: the prefix from A, the suffix from B, each Worker as it was.
+            if let Some((child, sources)) = stage_crossover_sourced(&a, &b, &limits, &mut rng(seed))
+            {
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    let from = if src[0].parent == 0 { &from_a } else { &from_b };
+
+                    assert_eq!(src.len(), 1);
+                    assert_eq!(w, from[src[0].worker], "seed {seed}");
+                }
+
+                by_stage += 1;
+            }
+
+            // SectionCrossover: A's Worker at the same position and B's partner Worker;
+            // every gene of the child comes from one of them.
+            if let Some((child, sources)) =
+                section_crossover_sourced(&a, &b, &limits, &mut rng(seed))
+            {
+                let mut k = 0;
+
+                for (s, stage) in child.stages.iter().enumerate() {
+                    for (w, worker) in stage.workers.iter().enumerate() {
+                        let expected = [
+                            Source {
+                                parent: 0,
+                                worker: worker_index(&a, s, w),
+                            },
+                            Source {
+                                parent: 1,
+                                worker: partner_by_rule(&[1, 3], s, w),
+                            },
+                        ];
+
+                        assert_eq!(sources[k], expected, "seed {seed}");
+
+                        let (x, y) = (from_a[expected[0].worker], from_b[expected[1].worker]);
+
+                        assert!([&x.model, &y.model].contains(&&worker.model));
+                        assert!(
+                            [x.traits.think_tokens, y.traits.think_tokens]
+                                .contains(&worker.traits.think_tokens)
+                        );
+                        assert!(
+                            [x.traits.answer_tokens, y.traits.answer_tokens]
+                                .contains(&worker.traits.answer_tokens)
+                        );
+
+                        for (mine, own) in worker.sections.iter().zip(&x.sections) {
+                            let theirs = y.sections.iter().find(|t| t.name == own.name);
+
+                            assert_eq!(mine.name, own.name);
+                            assert!(
+                                mine.text == own.text
+                                    || theirs.is_some_and(|t| t.text == mine.text)
+                            );
+                        }
+
+                        k += 1;
+                    }
+                }
+
+                assert_eq!(k, sources.len());
+                by_section += 1;
+            }
+        }
+
+        assert!(by_stage > 0 && by_section > 0, "{by_stage} {by_section}");
+
+        // Mutator children: the partner rule on each parent, whatever shape the Mutator
+        // wrote.
+        let written = distinct("C", &[3, 1, 2, 2]);
+        let mutated = partner_sources(&written, &[&b]);
+        let crossed = partner_sources(&written, &[&a, &b]);
+        let mut k = 0;
+
+        for (s, stage) in written.stages.iter().enumerate() {
+            for w in 0..stage.workers.len() {
+                let of_a = Source {
+                    parent: 0,
+                    worker: partner_by_rule(&[2, 1, 2], s, w),
+                };
+                let of_b = Source {
+                    parent: 0,
+                    worker: partner_by_rule(&[1, 3], s, w),
+                };
+
+                assert_eq!(mutated[k], vec![of_b]);
+                assert_eq!(crossed[k], vec![of_a, Source { parent: 1, ..of_b }]);
+
+                // The source is the Worker that `partner` pairs with this position.
+                assert!(std::ptr::eq(
+                    from_b[of_b.worker],
+                    partner(&b, s, w).expect("a partner")
+                ));
+
+                k += 1;
+            }
+        }
+
+        assert_eq!((mutated.len(), crossed.len()), (8, 8));
+    }
+
+    /// `c` with a random Soul of `n` phases and a random Coupling strength on every Worker.
+    fn with_random_souls(c: &Cascade, n: usize, rng: &mut ChaCha8Rng) -> Cascade {
+        let mut c = c.clone();
+
+        for w in c.stages.iter_mut().flat_map(|s| &mut s.workers) {
+            w.traits.phase_state = Some(PhaseState((0..n).map(|_| rng.random()).collect()));
+            w.traits.coupling = rng.random_range(0..=COUPLING_MAX);
+        }
+
+        c
+    }
+
+    /// What one operator gives, and where the stream stands afterwards.
+    type Outcome = (Option<(Cascade, Option<Op>, Sources)>, u128);
+
+    /// Each operator on `(a, b)` from the stream `seed`, as the breeder calls it.
+    fn outcomes(a: &Cascade, b: &Cascade, limits: &CascadeLimits, seed: u64) -> [Outcome; 3] {
+        let mut r = rng(seed);
+        let mutated = mutate_sourced(a, limits, PHRASES, &mut r).map(|(c, op, s)| (c, Some(op), s));
+        let after_mutation = r.get_word_pos();
+        let mut r = rng(seed);
+        let by_stage = stage_crossover_sourced(a, b, limits, &mut r).map(|(c, s)| (c, None, s));
+        let after_stage = r.get_word_pos();
+        let mut r = rng(seed);
+        let by_section = section_crossover_sourced(a, b, limits, &mut r).map(|(c, s)| (c, None, s));
+
+        [
+            (mutated, after_mutation),
+            (by_stage, after_stage),
+            (by_section, r.get_word_pos()),
+        ]
+    }
+
+    #[test]
+    fn operators_see_no_souls() {
+        let limits = staged_limits();
+        let mut walk = rng(5);
+        let mut souls = rng(6);
+
+        for k in 0..1000 {
+            let a = evolved(k, 1 + k % 5, &limits, &mut walk);
+            let b = evolved(k + 1 + k % 3, 1 + k % 4, &limits, &mut walk);
+            let (sa, sb) = (
+                with_random_souls(&a, 7, &mut souls),
+                with_random_souls(&b, 8, &mut souls),
+            );
+
+            for (plain, souled) in outcomes(&a, &b, &limits, k as u64)
+                .into_iter()
+                .zip(outcomes(&sa, &sb, &limits, k as u64))
+            {
+                assert_eq!(plain, souled, "pair {k}");
+
+                if let Some((child, _, _)) = &souled.0 {
+                    assert!(!child.carries_soul(), "pair {k}");
+                }
+            }
+        }
+
+        // A SectionCrossover child with the genes of one parent is refused and drawn again,
+        // as without Souls. Parents that differ in one gene give only such children, so the
+        // operator gives up; with two genes some draws are refused and some accepted.
+        let a = seeds().remove(1);
+        let mut one = a.clone();
+
+        one.stages[0].workers[0].traits.self_check ^= true;
+
+        let mut two = one.clone();
+
+        two.stages[0].workers[0].traits.answer_tokens *= 2;
+
+        // Every coin of one attempt draws one u64, two words of the stream.
+        let coins = a.stages[0].workers[0].sections.len() + 5;
+        let words = 2 * coins as u128 * CROSSOVER_ATTEMPTS as u128;
+        let mut redrawn = 0;
+
+        for seed in 0..64 {
+            let (sa, s1, s2) = (
+                with_random_souls(&a, 7, &mut souls),
+                with_random_souls(&one, 7, &mut souls),
+                with_random_souls(&two, 7, &mut souls),
+            );
+            let crossed = |x: &Cascade, y: &Cascade| {
+                let mut r = rng(seed);
+                let child = section_crossover_sourced(x, y, &limits, &mut r);
+
+                (child, r.get_word_pos())
+            };
+
+            let (plain, pos) = crossed(&a, &one);
+
+            assert_eq!(plain, None, "a copy of a parent every time");
+            assert_eq!(pos, words, "all attempts drawn");
+            assert_eq!(crossed(&sa, &s1), (None, pos), "seed {seed}");
+
+            let (plain, pos) = crossed(&a, &two);
+            let attempts = pos * CROSSOVER_ATTEMPTS as u128 / words;
+
+            assert_eq!(crossed(&sa, &s2), (plain.clone(), pos), "seed {seed}");
+
+            if plain.is_some() && attempts > 1 {
+                redrawn += 1;
+            }
+        }
+
+        assert!(redrawn > 0, "some children were drawn again");
+    }
+
+    #[test]
+    fn cross_worker_never_crosses_a_soul() {
+        let (mut mine, mut theirs) = (
+            seeds()[0].stages[0].workers[0].clone(),
+            seeds()[1].stages[0].workers[0].clone(),
+        );
+
+        mine.traits.phase_state = Some(PhaseState(vec![1, 2, 3]));
+        mine.traits.coupling = 100;
+        theirs.traits.phase_state = Some(PhaseState(vec![4, 5, 6]));
+        theirs.traits.coupling = 900;
+
+        for seed in 0..50 {
+            let mut child = mine.clone();
+
+            cross_worker(&mut child, &theirs, &mut rng(seed));
+
+            assert_eq!(child.traits.phase_state, mine.traits.phase_state);
+            assert_eq!(child.traits.coupling, 100);
         }
     }
 }

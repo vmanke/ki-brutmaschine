@@ -35,6 +35,7 @@ use crate::cascade::circuit_text::{
     CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_judge_prompt,
     render_circuit_solve_prompt,
 };
+use crate::cascade::designer::FAMILY_STEMS;
 use crate::cascade::domain::{CircuitConfig, Domain, DomainConfig, Grade};
 use crate::cascade::qubit::{Circuit, Column, Cost, Dressing, MAX_GATES, QError, Target, check};
 use crate::util::{BrutError, Result, derive_seed};
@@ -106,6 +107,29 @@ pub struct LibraryTarget {
     pub sources: &'static str,
     /// One plain line about the numbers.
     pub note: &'static str,
+    /// The method families that fit this target (step 2, spec 5.2, Q67), by their names in
+    /// `FAMILY_STEMS`: every family that a route reaching the reference names, among the
+    /// routes that the step 1 calibration tests in `designer.rs` pin on the plain target.
+    /// Each has the Family strength 1, every other family 0. Empty for an unverified
+    /// entry, which never enters a panel.
+    pub fits: &'static [&'static str],
+    /// The pinned routes that `fits` comes from: the fewest thinking tokens of
+    /// `one_step_short_misses_and_enough_thinking_hits` and the routes at 4096 tokens of
+    /// `each_route_reaches_its_cost_on_plain_and_dressed_targets`, both in `designer.rs`
+    /// (docs/STEP1_CIRCUITS.md, section 5). Empty for an unverified entry.
+    pub routes: &'static str,
+}
+
+impl LibraryTarget {
+    /// The Family strengths of every task of this target, in the order of `FAMILY_STEMS`:
+    /// 1 for the families of `fits`, 0 for the others. A dressing keeps them, as it keeps
+    /// the reference.
+    pub fn strengths(&self) -> Vec<f64> {
+        FAMILY_STEMS
+            .iter()
+            .map(|(name, _)| if self.fits.contains(name) { 1.0 } else { 0.0 })
+            .collect()
+    }
 }
 
 /// What a target builder returns.
@@ -132,6 +156,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
         reference: counts(0, Bound::Proven, 1, Bound::Proven),
         sources: "Amy, Maslov, Mosca, Roetteler, IEEE TCAD 32(6):818-830 (2013), Fig. 4(c)",
         note: "A Clifford gate needs no T gate, and an entangling gate needs at least one CNOT.",
+        fits: &["Linear", "Hadamard", "Search"],
+        routes: "Search with self-check on sim:large from 104 thinking tokens; Hadamard and \
+                 Linear with self-check at 4096",
     },
     LibraryTarget {
         name: "swap",
@@ -142,6 +169,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Shende, Bullock, Markov, Phys. Rev. A 70, 012310 (2004)",
         note: "A Clifford gate needs no T gate, and SWAP needs three CNOTs by its entangling \
                power.",
+        fits: &["Linear"],
+        routes: "Linear on sim:small at 0 thinking tokens",
     },
     LibraryTarget {
         name: "cs",
@@ -151,6 +180,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
         sources: "Amy, Maslov, Mosca, Roetteler, IEEE TCAD 32(6) (2013), Fig. 5(b) and Thm 1; \
                   Gheorghiu, Mosca, Mukhopadhyay, npj Quantum Inf. 8, 141 (2022), Table 2",
         note: "T 3 is proven; CNOT 2 is derived from the Shende-Bullock-Markov test.",
+        fits: &["Phase"],
+        routes: "Phase on sim:small at 0 thinking tokens",
     },
     LibraryTarget {
         name: "ch",
@@ -161,6 +192,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   and Thm 1",
         note: "One CNOT is trivially optimal; T 2 is derived, and an exhaustive check found \
                no circuit with one T gate.",
+        fits: &["Search", "Meet"],
+        routes: "Search and Meet with self-check on sim:large from 3124 thinking tokens; Meet \
+                 alone with self-check at 4096",
     },
     LibraryTarget {
         name: "qft2",
@@ -170,6 +204,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
         sources: "Gheorghiu, Mosca, Mukhopadhyay, npj Quantum Inf. 8, 141 (2022), Table 3; \
                   Shende, Bullock, Markov, Phys. Rev. A 70, 012310 (2004), Example IV.3",
         note: "Both numbers are proven; the research found one circuit that reaches both.",
+        fits: &["Linear", "Phase", "Hadamard"],
+        routes: "Hadamard, Phase and Linear with self-check on sim:large at 4096 thinking tokens",
     },
     LibraryTarget {
         name: "w_gate",
@@ -179,6 +215,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
         sources: "Amy, Maslov, Mosca, Roetteler, IEEE TCAD 32(6) (2013), Fig. 6; CNOT bound \
                   from the criterion of Shende, Bullock, Markov, Phys. Rev. A 70, 012310 (2004)",
         note: "Unverified: T 2 was read in a source, CNOT 3 is derived; never on a panel.",
+        fits: &[],
+        routes: "",
     },
     LibraryTarget {
         name: "sqrt_swap",
@@ -189,6 +227,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Shende, Bullock, Markov, Phys. Rev. A 70, 012310 (2004) (CNOT criterion)",
         note: "Unverified: T 3 and CNOT 3 are both derived, and no published T count was \
                found; never on a panel.",
+        fits: &[],
+        routes: "",
     },
     LibraryTarget {
         name: "ccz",
@@ -201,6 +241,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Mosca, IEEE Trans. Inf. Theory 65(8) (2019), Ex. 3.1",
         note: "Both numbers are proven; the T count carries over from the Toffoli, which is \
                CCZ between two H gates on the target.",
+        fits: &["Linear", "Phase"],
+        routes: "Phase and Linear on sim:small from 196 thinking tokens",
     },
     LibraryTarget {
         name: "toffoli",
@@ -211,6 +253,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Shende, Markov, Quantum Inf. Comput. 9 (2009), Thm 1; Maslov, Phys. Rev. A \
                   93, 022311 (2016), eq. 3",
         note: "Both numbers are proven, and the Nielsen-Chuang circuit reaches them together.",
+        fits: &["Linear", "Phase", "Hadamard"],
+        routes: "Hadamard, Phase and Linear with self-check on sim:large from 158 thinking \
+                 tokens",
     },
     LibraryTarget {
         name: "peres",
@@ -222,6 +267,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Mosca, Quantum Sci. Technol. 1, 015003 (2016), Table 1",
         note: "Both numbers are proven; T 7 holds because the Peres gate is \
                Clifford-equivalent to the Toffoli.",
+        fits: &["Linear", "Phase", "Hadamard"],
+        routes: "Hadamard, Phase and Linear with self-check on sim:large from 124 thinking \
+                 tokens",
     },
     LibraryTarget {
         name: "fredkin",
@@ -233,6 +281,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Quantum 1, 016105 (2024)",
         note: "BestKnown CNOT: an exact answer below it is an invention candidate (Q38), \
                never an automatic claim.",
+        fits: &["Linear", "Phase", "Hadamard", "Compose", "Simplify"],
+        routes: "Compose, Hadamard, Phase, Linear and Simplify with self-check on sim:large \
+                 from 1566 thinking tokens",
     },
     LibraryTarget {
         name: "quantum_or",
@@ -244,6 +295,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Mosca, Roetteler, IEEE TCAD 32(6) (2013), Fig. 7(c)",
         note: "Unverified: T 7 was read in a source, CNOT 6 is derived from local equivalence \
                to the Toffoli; never on a panel.",
+        fits: &[],
+        routes: "",
     },
     LibraryTarget {
         name: "rtof",
@@ -253,6 +306,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
         sources: "Maslov, Phys. Rev. A 93, 022311 (2016), Fig. 3 and Sec. IV",
         note: "CNOT 3 is optimal per Maslov; T 4 is derived, because the Toffoli is this gate \
                times a diagonal gate of T count 3.",
+        fits: &["Linear", "Phase", "Hadamard"],
+        routes: "Hadamard, Phase and Linear with self-check on sim:large from 78 thinking \
+                 tokens",
     },
     LibraryTarget {
         name: "ccix",
@@ -263,6 +319,9 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   93, 022311 (2016), Fig. 3",
         note: "BestKnown CNOT: an exact answer below it is an invention candidate (Q38), \
                never an automatic claim.",
+        fits: &["Linear", "Phase", "Hadamard"],
+        routes: "Hadamard, Phase and Linear with self-check on sim:large from 92 thinking \
+                 tokens",
     },
     LibraryTarget {
         name: "full_adder",
@@ -274,6 +333,8 @@ pub static LIBRARY: [LibraryTarget; 15] = [
                   Mosca, Roetteler, IEEE TCAD 32(6) (2013), Fig. 11",
         note: "Unverified: T 7 was read in a source, but no source gives the CNOT count of a \
                7-T circuit; never on a panel.",
+        fits: &[],
+        routes: "",
     },
 ];
 
@@ -722,6 +783,17 @@ impl Domain for CircuitDomain {
 
     fn self_check_text(&self) -> &'static str {
         CIRCUIT_SELF_CHECK_TEXT
+    }
+
+    /// The families of the simulated designer, in the order of `FAMILY_STEMS` (spec 5.2).
+    fn families(&self) -> Vec<&'static str> {
+        FAMILY_STEMS.iter().map(|&(name, _)| name).collect()
+    }
+
+    /// The strengths of the task's library target; its dressing keeps them (spec 5.1).
+    fn strengths(&self, task: &CircuitTask) -> Vec<f64> {
+        library_target(task.name)
+            .map_or_else(|| vec![0.0; FAMILY_STEMS.len()], LibraryTarget::strengths)
     }
 }
 
@@ -2259,5 +2331,109 @@ mod tests {
             r#""best_known""#
         );
         assert!(serde_json::from_str::<Bound>(r#""guess""#).is_err());
+    }
+
+    /// The families of the simulated designer, in the order of `FAMILY_STEMS` (spec 5.2).
+    const DESIGNER_FAMILIES: [&str; 8] = [
+        "Linear", "Phase", "Hadamard", "Compose", "Search", "Meet", "Simplify", "Previous",
+    ];
+
+    #[test]
+    fn the_circuit_families_are_the_designers() {
+        let stems: Vec<&str> = FAMILY_STEMS.iter().map(|&(name, _)| name).collect();
+
+        assert_eq!(domain(&[]).families(), stems);
+        assert_eq!(domain(&[]).families(), DESIGNER_FAMILIES);
+    }
+
+    #[test]
+    fn every_target_states_its_strengths() {
+        // The table of spec 5.2: the families that a pinned route to the reference names.
+        let table: [(&str, &[&str]); 11] = [
+            ("cz", &["Linear", "Hadamard", "Search"]),
+            ("swap", &["Linear"]),
+            ("cs", &["Phase"]),
+            ("ch", &["Search", "Meet"]),
+            ("qft2", &["Linear", "Phase", "Hadamard"]),
+            ("ccz", &["Linear", "Phase"]),
+            ("toffoli", &["Linear", "Phase", "Hadamard"]),
+            ("peres", &["Linear", "Phase", "Hadamard"]),
+            (
+                "fredkin",
+                &["Linear", "Phase", "Hadamard", "Compose", "Simplify"],
+            ),
+            ("rtof", &["Linear", "Phase", "Hadamard"]),
+            ("ccix", &["Linear", "Phase", "Hadamard"]),
+        ];
+        let expected = |fits: &[&str]| -> Vec<f64> {
+            DESIGNER_FAMILIES
+                .iter()
+                .map(|f| if fits.contains(f) { 1.0 } else { 0.0 })
+                .collect()
+        };
+        let verified_names: Vec<&str> = verified().iter().map(|t| t.name).collect();
+        let table_names: Vec<&str> = table.iter().map(|&(name, _)| name).collect();
+
+        assert_eq!(table_names, verified_names);
+
+        // Every task of a dressed panel, three per target, has its target's strengths, and
+        // so does the plain target.
+        let dressed = domain(&[]);
+        let plain = CircuitDomain::new(&CircuitConfig {
+            dress: false,
+            ..CircuitConfig::default()
+        })
+        .expect("plain domain");
+        let tasks: Vec<CircuitTask> = dressed
+            .panel(7, 33)
+            .into_iter()
+            .chain(plain.panel(7, 11))
+            .collect();
+
+        for (name, fits) in table {
+            let entry = library_target(name).expect(name);
+            let strengths = entry.strengths();
+            let mine: Vec<&CircuitTask> = tasks.iter().filter(|t| t.name == name).collect();
+
+            assert_eq!(entry.fits, fits, "{name}");
+            assert_eq!(strengths, expected(fits), "{name}");
+            assert!(
+                strengths.iter().any(|&s| s > 0.0),
+                "{name}: one family fits"
+            );
+            assert_eq!(strengths[7], 0.0, "{name}: Previous fits no target");
+            assert!(
+                !entry.routes.trim().is_empty() && !entry.routes.contains('\n'),
+                "{name}"
+            );
+            assert_eq!(
+                mine.len(),
+                4,
+                "{name}: three dressings and the plain target"
+            );
+
+            for task in mine {
+                assert_eq!(dressed.strengths(task), strengths, "{name} {}", task.id);
+            }
+        }
+
+        // An unverified entry never enters a panel and states no strengths.
+        for name in UNVERIFIED {
+            let entry = library_target(name).expect(name);
+
+            assert!(entry.fits.is_empty() && entry.routes.is_empty(), "{name}");
+        }
+
+        // Every fitting family is a family of the designer, named once.
+        for entry in &LIBRARY {
+            let named: BTreeSet<&str> = entry.fits.iter().copied().collect();
+
+            assert_eq!(named.len(), entry.fits.len(), "{}", entry.name);
+            assert!(
+                named.iter().all(|f| DESIGNER_FAMILIES.contains(f)),
+                "{}",
+                entry.name
+            );
+        }
     }
 }

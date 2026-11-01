@@ -18,4 +18,5 @@ pub mod observe;
 pub mod puzzle;
 pub mod qubit;
 pub mod sim;
+pub mod soul;
 pub mod variation;

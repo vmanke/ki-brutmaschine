@@ -79,6 +79,50 @@ impl Family {
             Family::Colour | Family::Compose | Family::Previous => &[],
         }
     }
+
+    /// The family's name, as `family_names` lists it.
+    fn name(self) -> &'static str {
+        match self {
+            Family::Mirror => "Mirror",
+            Family::Rotate => "Rotate",
+            Family::Transpose => "Transpose",
+            Family::Gravity => "Gravity",
+            Family::Colour => "Colour",
+            Family::Compose => "Compose",
+            Family::Previous => "Previous",
+        }
+    }
+}
+
+/// The names of the families a system prompt can name, in the order of `FAMILIES`: the
+/// hypothesis families of a Soul on grid puzzles (step 2, spec 5.3).
+pub fn family_names() -> Vec<&'static str> {
+    FAMILIES.iter().map(|&(family, _)| family.name()).collect()
+}
+
+/// The Family strengths of a puzzle with the hidden rule `rule`, in the order of
+/// `family_names` (step 2, spec 5.3): 1 for the family that knows the rule's geometric step
+/// (none for the identity), 1 for Colour when the rule carries a colour map, 1 for Compose
+/// when it carries both, and 0 for every other family, Previous included.
+pub fn rule_strengths(rule: &Rule) -> Vec<f64> {
+    let moves = rule.geo != Geo::Identity;
+    let colours = rule.colours.is_some();
+
+    FAMILIES
+        .iter()
+        .map(|&(family, _)| {
+            let fits = match family {
+                Family::Colour => colours,
+                Family::Compose => moves && colours,
+                Family::Previous => false,
+                Family::Mirror | Family::Rotate | Family::Transpose | Family::Gravity => {
+                    family.geos().contains(&rule.geo)
+                }
+            };
+
+            if fits { 1.0 } else { 0.0 }
+        })
+        .collect()
 }
 
 /// The families a system prompt names, in the order of their first keyword.
@@ -614,6 +658,13 @@ mod tests {
                 vec![Gravity, Colour]
             ]
         );
+    }
+
+    #[test]
+    fn the_family_names_follow_the_keyword_table() {
+        let named: Vec<String> = FAMILIES.iter().map(|(f, _)| format!("{f:?}")).collect();
+
+        assert_eq!(family_names(), named);
     }
 
     #[test]

@@ -329,6 +329,7 @@ pub fn circuit_seed_cascades() -> Vec<(String, Cascade)> {
             temperature: 0.2,
             answer_tokens: 512,
             self_check: false,
+            ..Traits::default()
         },
     };
 
@@ -756,6 +757,7 @@ mod tests {
                 temperature: 0.0,
                 answer_tokens: 512,
                 self_check,
+                ..Traits::default()
             },
         }
     }
@@ -1254,6 +1256,7 @@ mod tests {
                     temperature: 0.2,
                     answer_tokens: 512,
                     self_check: false,
+                    ..Traits::default()
                 },
                 "{name}"
             );

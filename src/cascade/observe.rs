@@ -475,6 +475,10 @@ mod tests {
             judge_wrong: 0,
             fitness: 0.0,
             rating: 0.0,
+            soul_sources: None,
+            soul_now: None,
+            authors: None,
+            votes: None,
         }
     }
 

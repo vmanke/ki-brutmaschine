@@ -36,8 +36,11 @@
 //! recomputes the report, it also checks that the checkpoint's archive holds one member
 //! per Born event of the log, in its order, and that each member, written as a Born event,
 //! is the logged one (the same id, Cascade, parents, generation, operator, solved count,
-//! graded value, usage and answers). Then it recomputes the count from that archive.
-//! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1.
+//! graded value, usage and answers, and in a run with Souls where each Soul came from, the
+//! authors of each answer and the tally of votes). Then it recomputes the count from that
+//! archive.
+//! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1. It
+//! also refuses runs with Souls (step 2): a Soul belongs to its run.
 //!
 //! Exit codes: 0 done or cleanly stopped, 1 error, 2 wrong usage (also: another process
 //! holds the run directory), 3 waiting for LLM answers (see <dir>/llm/requests/).
@@ -63,6 +66,7 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use brutmaschine::backend::ModelBackend;
 use brutmaschine::cascade::arena::{
     AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, ParentSelection, Report,
     Snapshot, Status, request_key,
@@ -71,9 +75,8 @@ use brutmaschine::cascade::circuit::{Answered, CircuitDomain, Rediscovery, redis
 use brutmaschine::cascade::circuit_genes::circuit_pool;
 use brutmaschine::cascade::designer::SimDesigner;
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
-use brutmaschine::cascade::puzzle::Grid;
-use brutmaschine::backend::ModelBackend;
 use brutmaschine::cascade::genome::CascadeLimits;
+use brutmaschine::cascade::puzzle::Grid;
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::cascade::variation::Op;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
@@ -91,7 +94,14 @@ const GENESIS: &str = "000000000000000000000000000000000000000000000000000000000
 
 /// Options each mode accepts. A resume may change only what `BreedConfig::fixed_hash`
 /// leaves out, plus the per-process wall-clock limit and the answers directory.
-const RESUME_KEYS: [&str; 6] = ["out", "resume", "generations", "max-calls", "max-seconds", "llm-answers"];
+const RESUME_KEYS: [&str; 6] = [
+    "out",
+    "resume",
+    "generations",
+    "max-calls",
+    "max-seconds",
+    "llm-answers",
+];
 const READ_KEYS: [&str; 3] = ["out", "promote", "verify"];
 
 /// Exit code: the run waits for LLM answers.
@@ -208,10 +218,15 @@ impl Log {
                 break;
             };
             let bad = |what: &str| {
-                BrutError::Integrity(format!("{}: entry {} {what}", path.display(), log.lines.len()))
+                BrutError::Integrity(format!(
+                    "{}: entry {} {what}",
+                    path.display(),
+                    log.lines.len()
+                ))
             };
             let line = std::str::from_utf8(raw).map_err(|_| bad("is not UTF-8"))?;
-            let entry: LogLine = serde_json::from_str(line).map_err(|_| bad("is not a log entry"))?;
+            let entry: LogLine =
+                serde_json::from_str(line).map_err(|_| bad("is not a log entry"))?;
             let event_json = serde_json::to_string(&entry.event)?;
             let head = log.head().to_string();
 
@@ -221,7 +236,10 @@ impl Log {
                 return Err(bad("is not in canonical form"));
             }
 
-            if entry.seq != log.len || entry.prev != head || entry.hash != entry_hash(&head, &event_json) {
+            if entry.seq != log.len
+                || entry.prev != head
+                || entry.hash != entry_hash(&head, &event_json)
+            {
                 return Err(bad("breaks the hash chain"));
             }
 
@@ -357,7 +375,10 @@ impl Settle<'_> {
         }
 
         log.flush()?;
-        write_atomic(&self.out.join(CONFIG), serde_json::to_string_pretty(self.cfg)?.as_bytes())?;
+        write_atomic(
+            &self.out.join(CONFIG),
+            serde_json::to_string_pretty(self.cfg)?.as_bytes(),
+        )?;
 
         // The report goes first, so a run that still has one has the rest too.
         for name in [REPORT, REDISCOVERY] {
@@ -382,7 +403,10 @@ fn run() -> Result<i32> {
         args.get("out")
             .ok_or_else(|| usage("--out <dir> is required"))?,
     );
-    let modes = ["resume", "promote", "verify"].iter().filter(|m| args.contains_key(**m)).count();
+    let modes = ["resume", "promote", "verify"]
+        .iter()
+        .filter(|m| args.contains_key(**m))
+        .count();
 
     if modes > 1 {
         return Err(usage("use at most one of --resume, --promote and --verify"));
@@ -412,7 +436,10 @@ fn run() -> Result<i32> {
 
     if read_only || resume {
         if !out.join(SNAPSHOT).exists() {
-            return Err(usage(&format!("{} is not a run directory (no {SNAPSHOT})", out.display())));
+            return Err(usage(&format!(
+                "{} is not a run directory (no {SNAPSHOT})",
+                out.display()
+            )));
         }
     } else {
         std::fs::create_dir_all(&out)?;
@@ -470,7 +497,10 @@ fn drive<D: Domain>(
     out: &Path,
     resume: bool,
 ) -> Result<i32> {
-    let max_seconds: Option<u64> = args.get("max-seconds").map(|v| num(v, "--max-seconds")).transpose()?;
+    let max_seconds: Option<u64> = args
+        .get("max-seconds")
+        .map(|v| num(v, "--max-seconds"))
+        .transpose()?;
     let answers_dir = args
         .get("llm-answers")
         .map(PathBuf::from)
@@ -524,7 +554,10 @@ fn drive<D: Domain>(
     if !resume {
         // Settings first, then the checkpoint before generation 0, so every checkpoint
         // on disk has its settings next to it.
-        write_atomic(&out.join(CONFIG), serde_json::to_string_pretty(&cfg)?.as_bytes())?;
+        write_atomic(
+            &out.join(CONFIG),
+            serde_json::to_string_pretty(&cfg)?.as_bytes(),
+        )?;
         checkpoint(out, breeder.snapshot(), &log)?;
     }
 
@@ -539,7 +572,9 @@ fn drive<D: Domain>(
     let resume_cmd = format!(
         "brut-breed --out {} --resume{}",
         out.display(),
-        args.get("llm-answers").map(|d| format!(" --llm-answers {d}")).unwrap_or_default()
+        args.get("llm-answers")
+            .map(|d| format!(" --llm-answers {d}"))
+            .unwrap_or_default()
     );
     let stopped = |phase: &str| {
         if stop_file.exists() {
@@ -603,7 +638,10 @@ fn drive<D: Domain>(
         // Nothing of the interrupted generation is kept except the calls it spent.
         settle.now(&mut log)?;
         checkpoint(out, breeder.snapshot(), &log)?;
-        stopped(&format!("before generation {} completed", breeder.next_generation()));
+        stopped(&format!(
+            "before generation {} completed",
+            breeder.next_generation()
+        ));
 
         return Ok(0);
     }
@@ -630,7 +668,10 @@ fn drive<D: Domain>(
     log.append(&events)?;
     checkpoint(out, breeder.snapshot(), &log)?;
     (family.after_finish)(out, &breeder)?;
-    write_atomic(&out.join(REPORT), serde_json::to_string_pretty(&report)?.as_bytes())?;
+    write_atomic(
+        &out.join(REPORT),
+        serde_json::to_string_pretty(&report)?.as_bytes(),
+    )?;
     print_report(&report);
 
     Ok(0)
@@ -705,9 +746,7 @@ fn lock_run(out: &Path, write: bool) -> Result<Option<File>> {
             "another brut-breed process is using {}",
             out.display()
         ))),
-        Err(TryLockError::Error(e)) => {
-            Err(BrutError::Invalid(format!("{}: {e}", path.display())))
-        }
+        Err(TryLockError::Error(e)) => Err(BrutError::Invalid(format!("{}: {e}", path.display()))),
     }
 }
 
@@ -1074,7 +1113,8 @@ fn check_rediscovery(
 /// Error unless the archive of `breeder`, rebuilt from the checkpoint, holds one member per
 /// Born event among `events`, in their order, and each member, written as a Born event,
 /// is the logged one: the same id, Cascade, parents, generation, operator, solved count,
-/// graded value, usage and answers. `rediscovery` counts by the id, generation, operator
+/// graded value, usage and answers, and in a run with Souls where each Soul came from, the
+/// authors of each answer and the tally of votes (step 2). `rediscovery` counts by the id, generation, operator
 /// and answers; the rest shapes what a resume to more generations breeds. No hash covers
 /// the checkpoint, so only this ties the archive to the hash-chained log: an answer edited
 /// in the checkpoint would otherwise enter the count with the next resume. What a member
@@ -1122,6 +1162,9 @@ fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Eve
             usage: m.usage,
             quality: m.quality,
             answers: answers.iter().any(Option::is_some).then_some(answers),
+            soul_sources: m.soul_sources.clone(),
+            authors: m.authors.clone(),
+            votes: m.votes,
         };
 
         if written != *logged {
@@ -1226,12 +1269,20 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
 
 /// Write the two best non-seed finalists (by select panel, then search panel) as
 /// candidate files plus a provenance manifest, ready for `scripts/propose-pr.sh`. Only
-/// a finished grid run whose report matches its verified log is promoted; `cfg` holds the
-/// run's recorded settings.
+/// a finished grid run without Souls whose report matches its verified log is promoted;
+/// `cfg` holds the run's recorded settings.
 fn promote(out: &Path, cfg: &BreedConfig) -> Result<i32> {
     if !cfg.domain.is_grid() {
         return Err(BrutError::Invalid(
             "promotion of circuit Cascades is not part of step 1 (ADR 0006)".to_string(),
+        ));
+    }
+
+    // A Soul belongs to its universe (step 2, spec 4.6).
+    if cfg.soul.is_some() {
+        return Err(BrutError::Invalid(
+            "promotion of Cascades with Souls is not part of step 2: a Soul belongs to its Run"
+                .to_string(),
         ));
     }
 
