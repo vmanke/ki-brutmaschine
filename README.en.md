@@ -1,13 +1,15 @@
 # Brutmaschine (English)
 
-This page is the English version of the Stage 2c and step 1 parts of the German
+This page is the English version of the CNN, Stage 2c and step 1 parts of the German
 [README.md](README.md), with the status, the roadmap and the setup of a GPU VM. The rest
 of the project documentation is in German; the code, its comments, `CONTEXT.md` and the
 ADRs are in English.
 
-CNNs (convolutional neural networks) are coming as a second model kind to the MLP mode,
-which the German README describes. Part 1 and an interim state of part 2 are merged. We
-are now building the mutations and the promotion of winners.
+CNNs (convolutional neural networks) are the second model kind of the MLP mode, which the
+German README describes; a run can breed them from 16 known families. Parts 1 and 2 are
+built: the CNN genome, the families with their base models, the mutations and the
+promotion of winners (see "CNN models in the MLP mode"). Part 3, ARC grids as tasks
+(ticket 06), comes next.
 
 **Step 2** will give every Worker a hidden, inherited **Soul**, which shows itself only in
 the Worker's Character. A judgment then becomes an Observation: it pulls the Souls of both
@@ -29,8 +31,12 @@ Status on 2026-10-31.
 - **CNNs, part 1 (PR #24).** The library candle, the CNN genome and image tasks (tickets 01
   and 02; [spec](.scratch/cnn-basismodelle/spec.md),
   [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
-- **CNNs, part 2, interim state (PR #27 and #32).** Ticket 03 is built, ticket 04 is begun.
-  PR #32 brought the CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt.
+- **CNNs, part 2 (PR #27, #32 and this PR).** Tickets 03, 04, 05 and 07: the 16 families
+  with one base model each, the mutation operators and the crossover, the base models in
+  generation 0 of a run, the command line and the promotion of winners
+  ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
+  see "CNN models in the MLP mode". PR #27 merged an interim state, and PR #32 brought the
+  CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt.
 - **Design of step 2 (PR #28 and #29).** It describes the Soul and the Coupling strength κ
   ([spec](.scratch/seele-und-kappa/spec.md)). PR #28 was the first draft, PR #29 is the
   final version. The questions Q67 to Q74 were decided by their recommended answers on
@@ -46,13 +52,11 @@ Status on 2026-10-31.
 
 **Being built**
 
-- **CNNs, part 2.** Ticket 05 (mutations, base models in the population, command line,
-  README, ADR 0008) and ticket 07 (promotion of winners).
 - **Step 2.** Tickets 01 to 09 and 12, started on 2026-10-31.
 
 **Planned**
 
-- **CNNs, part 3.** Ticket 06, ARC grids as tasks.
+- **CNNs, part 3.** Ticket 06, ARC grids as tasks; it comes next.
 - **Step 2, comparison.** Pre-registration (ticket 10), pilot (ticket 11) and counted Runs
   (ticket 13).
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
@@ -66,6 +70,257 @@ Status on 2026-10-31.
 
 - **Quantum neural networks.** The idea waits until real quantum hardware is in reach
   ([idea 12](.scratch/universum-erfinden/issues/12-quantum-neural-networks-later.md)).
+
+## CNN models in the MLP mode
+
+Status: tickets 01 to 05 and 07 of `.scratch/cnn-basismodelle/` are built, the promotion
+of winners included. The ARC grids (ticket 06) follow.
+[ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md) records the
+library, and
+[ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md)
+the families, their mutations and the promotion.
+
+The MLP mode breeds convolutional networks (CNNs) next to MLPs. A CNN genome is a kit: a
+stem, one to twelve stages and a head. Each stage holds the block of one of 16 published
+families, such as the residual block of ResNet or the Inception block of GoogLeNet. The
+families are special cases of the kit. A network whose stages come from several families
+is a mixed form. Before each training, the shape check tests whether the shapes fit the
+task, and whether the parameters, the training FLOPs and the estimated training time fit
+the limits that MLPs and CNNs share. CNNs train on the CPU through the library candle.
+
+### Starting a CNN run
+
+```sh
+cargo build --release
+
+# A run with CNNs; without --task, brut init takes the shapes task for it
+./target/release/brut init runs/cnn --models cnn --seed 1
+./target/release/brut run runs/cnn
+./target/release/brut status runs/cnn
+./target/release/brut lineage runs/cnn <candidate-id>
+```
+
+`--models` chooses the kinds of model of a run: `mlp` (the default) breeds MLPs only, as
+before; `cnn` CNNs only; `both` the two side by side. CNNs need a task with images or
+sequences:
+
+| Task | Input | Output |
+|---|---|---|
+| `shapes` | 16x16 image of a shape: square, circle, triangle or cross | 4 classes |
+| `bars-and-stripes` | 16x16 image of rows or of columns | 2 classes |
+| `blob-count` | 16x16 image with 1 to 4 blobs | 4 classes |
+| `mirror-symmetry` | 16x16 image, mirror symmetric or not | 2 classes |
+| `motif-1d` | sequence of 64 symbols out of 4, one channel per symbol | 2 classes: motif present or not |
+| `mirror-grid` | 8x8 grid | its mirror image, 64 values, scored by R² |
+
+An MLP reads the same data as a flat vector. For a run with CNNs, `brut init` writes a
+smaller run: 8 random genomes, 8 children per generation, 5 generations and at most one
+hour of run time. A CNN trains for seconds where an MLP trains for milliseconds. An MLP
+run stays byte for byte what it was before CNNs; `tests/mlp_golden.rs` checks this with
+unchanged fixtures.
+
+### Families and base models
+
+The 16 families are LeNet-5, AlexNet, VGG, GoogLeNet, ResNet, DenseNet, Xception,
+MobileNet, MobileNetV2, ShuffleNet, SqueezeNet, SENet, ConvNeXt, U-Net, the dilated CNN
+and TCN; the spec `.scratch/cnn-basismodelle/spec.md` names their sources. Each family has
+a scaled-down base model that fits the default limits (at most 20 000 parameters and
+2e10 training FLOPs). It keeps the block of its family, not the size of the published
+network.
+
+Generation 0 of a run with CNNs holds each base model that passes the shape check on the
+run's task, before the random genomes. On a sequence task, a 2-D base model enters as its
+1-D twin: the same genes, with each kernel along the sequence. A base model that does not
+fit stays out, with a line in the archive.
+
+| Tasks | Base models in generation 0, default limits |
+|---|---|
+| the four image tasks | 14: all but TCN (needs a sequence) and U-Net (needs a grid output) |
+| `motif-1d` | 15: TCN and the 14 twins of the 2-D base models |
+| `mirror-grid` | 3: U-Net, ResNet and SqueezeNet |
+
+### Mutation and crossover
+
+A child of one CNN gets exactly one operator, drawn uniformly at random, as in Real et
+al. 2017 (ICML):
+
+| Operator | Change |
+|---|---|
+| `family` | the family (block kind) of one stage |
+| `insert-stage`, `remove-stage` | one stage more or less |
+| `width`, `kernel`, `stride`, `dilation`, `groups` | width, kernel or stride of one stage or of the stem; dilation or groups of one stage |
+| `se`, `residual` | squeeze-and-excitation or the skip connection of one stage, on or off |
+| `norm`, `downsampling`, `activation` | the normalization, the way to downsample, or the activation |
+| `head`, `head-layers` | the head and its dense layers |
+| `training` | the training genes, such as learning rate and epochs, as for an MLP |
+
+The last two rows, `head`, `head-layers` and `training`, go beyond the list of the spec,
+so that every gene can change. A child that fails the shape check, or keeps the
+architecture of its parent, is drawn again, up to 16 times; then the next operator comes.
+We measure 10 000 draws per operator: every child was valid, and 74 to 100 % of the draws
+gave one (`every_operator_keeps_the_genome_valid_on_10_000_draws`).
+
+Two CNN parents exchange whole stages where their resolutions match. The child keeps the
+stem and the outer stages of one parent and puts a run of the other parent's stages in
+between, a run that starts and ends at the same resolutions. A child that ends with the
+other parent's tail takes its head as well. We measure the 182 ordered pairs of base
+models of different families on `shapes`: 172 of them exchange stages. The other 10 pair
+MobileNetV2, whose stem shrinks to 4x4 at once, with five families: their children exceed
+the time budget, or they share no resolution with it. Such a pair gives a child with the
+architecture of one parent and the training genes of both.
+
+The archive names how each child came about: `base-model/resnet` for a base model,
+`cnn-mutator-v1/insert-stage` for an operator, `cnn-mutator-v1/crossover` for exchanged
+stages. A child trains from scratch, with the weights its own seed draws; it inherits no
+weights.
+
+### A demo run with CNNs
+
+We measured a run with the values of `brut init runs/cnn --models cnn --seed 1` (the
+shapes task, release build, `RAYON_NUM_THREADS=2` on 4 cores, with the hidden evaluation):
+
+| Quantity | Value |
+|---|---|
+| Candidates | 62: 14 base models, 8 random CNNs, 40 children in 5 generations |
+| Status | all 62 trained to their end, none stopped by the clock |
+| Validation score of the base models | 0.670 (LeNet-5) to 0.939 (DenseNet); chance 0.25 |
+| Best validation score of the random CNNs | 0.573 |
+| Median per generation | 0.728 in generation 0, 0.791 to 0.828 in generations 1 to 5 |
+| Mixed forms | 16 of the 40 children and 4 of the 8 random CNNs have stages from several families; the shared `plain` stage of LeNet-5, AlexNet, VGG and the dilated CNN counts as one |
+| Run time | 68.6 s; at one thread and without the hidden evaluation 2 min 9 s |
+| Estimated compute | 3.8e11 FLOPs |
+
+The three best by fitness, which the hidden evaluation scored (rounded down to 0.01):
+
+| Candidate | Origin | Valid | Hidden | Gap |
+|---|---|---|---|---|
+| `784227392e754f63` | base model of DenseNet | 0.939 | 0.93 | +0.009 |
+| `4ea1fec7699a4627` | generation 5, operator `head` | 0.934 | 0.94 | -0.006 |
+| `bebb51cdbc9bcf2c` | generation 4, crossover | 0.929 | 0.92 | +0.009 |
+
+The second is a mixed form: the stem and the two Inception blocks of GoogLeNet, then a 3x3
+stage of VGG with max pooling, global average pooling and a dense layer of 32. It came from
+a crossover of the GoogLeNet base model with a descendant of a crossover of VGG and
+ShuffleNet; then the operator `head` replaced flattening by average pooling. Of the 40
+children, 10 came from crossovers, 5 from `downsampling`, 4 from `kernel`, 3 each from
+`groups`, `head`, `se` and `width`, 2 each from `head-layers`, `norm` and `residual`, and 1
+each from `activation`, `family` and `remove-stage`.
+
+No child beat the best base model on the validation data in this short run. On the hidden
+data the best child lies 0.01 above it, which is one rounding step. So the run shows that
+base models, operators and crossover together breed valid and good networks; it does not
+show a gain from breeding. A second run at one thread and without the hidden evaluation gave
+the same 62 candidates and the same 62 model files, byte for byte. Your hidden scores may
+differ, since `brut init` draws their seed at random.
+
+### Promoting the winners
+
+A finished run feeds its winners upward, as base models of later runs (ticket 07,
+ADR 0008). It promotes at most two models, MLPs or CNNs: the two best by their score on the
+hidden split, which the run never saw while it bred. Only the candidates of the hidden
+evaluation have that score, the `hidden_eval_top_k` best by fitness (3 by default). Each of the
+two goes only if it beats the best base model of the same run on that split. The base
+models of a run are the known designs of its generation 0: the base models of the families,
+the promoted models, and the base genomes of the config. Only a run that breeds CNNs
+(`--models cnn` or `both`) or starts from promoted models (`--promoted`) can promote. Such a
+run also scores the best of its base models, by fitness, on the hidden split. Any other run,
+such as an MLP run as before CNNs, keeps its hidden evaluation as it was, base genomes or not,
+and promotes nothing. A run without a base model has nothing to beat and promotes nothing
+either.
+
+```sh
+# 1. Prepare the winners of a finished run with the hidden evaluation
+./target/release/brut promote runs/cnn --commit "$(git rev-parse HEAD)"
+
+# 2. Open the draft pull request; a human reviews and merges it
+scripts/propose-pr.sh runs/cnn/promote
+
+# 3. After the merge, a new run starts with the promoted models
+./target/release/brut init runs/cnn2 --models cnn --seed 2 --promoted candidates/models
+./target/release/brut run runs/cnn2
+```
+
+`--commit` names the git commit of the code that ran the run. `brut promote` checks only its
+form: 7 to 64 lower-case hex digits. Call it from the root of the repository, since it reads
+`candidates/models/` as the pool; `--pool` names another. The files go to
+`runs/cnn/promote/candidates/models/<id>.json`. The id is the content: the first 16 hex
+digits of the SHA-256 of the genome's canonical JSON. Each file holds the genome and its
+provenance: the run (the hash of its first record), the task, the seed, the commit, the
+scores on the validation and hidden splits, the base model it beats, and the lineage back to
+generation 0.
+
+A model that the pool holds already, or that equals a base model of a family, adds nothing.
+The third best does not take its place, so a second promotion of the same run adds nothing
+new. The pull request only adds files under `candidates/models/`. CI checks each file with
+`brut-ingest --models`: it refuses unknown fields, runs the shape check and the current
+default limits on the task of the provenance, checks that the provenance is consistent, and
+requires the file name to be the id. It reads only regular files of up to 16 MiB. The
+script refuses a file that the base branch holds already. CI also refuses a pull request
+that changes or removes a file of the base branch. Only a human merges; the run never merges
+anything (ADR 0004).
+
+`brut init --promoted` copies the genomes of the pool into the config of the new run. In
+generation 0 they come after the base models of the families and before the random genomes,
+under the generator name `promoted`. A model of a kind the run does not breed, or one that
+fails the run's shape check or limits, stays out with a line in the archive. A promoted model
+draws nothing from the random stream, so the run stays reproducible byte for byte from its
+seed (`a_run_with_promoted_models_is_reproducible_byte_for_byte`). In the later run it is a
+base model itself: its descendants must beat it to be promoted in turn. Weights are not
+promoted; the new run trains the genome from its seed on its own data.
+
+We measure the path on three runs on the shapes task: the demo run above (release build; we
+promote from a copy of its directory) and two new runs of seed 2, built with `cargo build`
+(profile dev, `opt-level` 2). All run at `RAYON_NUM_THREADS=2` with the hidden evaluation.
+Another process kept the machine busy, so we compare no run times. None of the promotions is
+in the pool; they served the measurement only.
+
+| Run | Candidates | Best base model (valid, hidden) | Best candidate (valid, hidden) | Promoted |
+|---|---|---|---|---|
+| demo run above, seed 1 | 62 | DenseNet (0.939, 0.93) | DenseNet (0.939, 0.93) | `4ea1fec7699a4627` (0.934, 0.94) |
+| seed 2 with `--promoted` | 63 | the promoted `4ea1fec7699a4627` (0.951, 0.94) | `84d5076ce10aab99` (0.969, 0.97) | two children, 0.97 hidden each |
+| seed 2 without `--promoted` | 62 | DenseNet (0.940, 0.95) | `5ffbf573c5b4c630` (0.956, 0.96) | that child |
+
+- **Promotion from the demo run.** The mixed form of GoogLeNet and VGG from above is promoted.
+  Its lineage holds 7 candidates back to the base models of GoogLeNet, VGG and ShuffleNet. The
+  second best by hidden score, `bebb51cdbc9bcf2c` at 0.92, does not beat DenseNet and stays
+  out. `brut-ingest --models` accepts the file.
+- **A later run with the promoted model.** All 63 candidates trained to their end. On the data
+  of seed 2 the promoted model beats all 14 base models of the families, whose best is DenseNet
+  at 0.940. 15 of the 40 children descend from it, the best one among them: it came from the
+  operators `downsampling`, a crossover with a descendant of DenseNet and VGG, and `residual` in
+  generation 5.
+- **The same run without the promoted model.** Its best candidate comes in generation 1 from
+  the VGG base model, and no better one follows.
+
+This is a single pair of runs. It shows that the path works: a promoted model enters
+generation 0, becomes a parent, and the later run promotes its better descendants. It does not
+show whether promoted models improve later runs on average. The hidden scores of the two runs
+of seed 2 come from different secret seeds, since `brut init` draws one per run; only the
+validation scores compare.
+
+### Limits of the CNN models
+
+- **Small models.** The base models are scaled down; they are measured on 16x16 images, not
+  on ImageNet.
+- **A time model of one machine.** The estimate of the training time comes from one machine
+  at one thread. A slower or busier machine can reach the clock (`max_candidate_seconds`,
+  30 s); then the run marks the candidate, and its bits depend on the load.
+- **Equal bits on one machine only.** The same seed gives the same files at any thread
+  count; another CPU may give other bits (ADR 0007).
+- **Untuned twins.** The 1-D twins on `motif-1d` are not tuned, and no test asks them to
+  learn.
+- **A stand-in for ARC.** `mirror-grid` is a regression scored by R²; the ARC grids with a
+  colour class per cell follow in ticket 06.
+- **No inherited weights.** Each child learns from scratch. That costs compute, but keeps
+  runs simple to reproduce.
+- **Promotion after one run.** Whether a model is promoted depends on its hidden score in a
+  single run, rounded down to 0.01. A lead of one rounding step can be chance; only later runs
+  show whether the model holds up as a base model.
+- **A commit by hand.** `brut promote` checks only the form of the commit. A run made from a
+  working tree with uncommitted changes has no matching commit.
+- **The first promoted MLP.** A run of MLPs alone promotes only when it starts from promoted
+  models. So the first promoted MLP comes from a run of both kinds, on an image or sequence
+  task.
 
 ## Cascade breeding (Stage 2c)
 

@@ -1,14 +1,15 @@
 //! Human-in-the-loop pull-request mutation of candidates (ADR 0004).
 //!
 //! The AI drafts mutations as pull requests; a human reviews and merges before a
-//! mutated candidate enters a run. This module holds the genome adapter and the pure
-//! helpers both binaries use (`brut-propose`, `brut-ingest`). It is pure: no I/O, no
-//! network, no git. The binaries do the file and stdin I/O; the git and pull-request
-//! steps live in `scripts/`, so the core crate keeps no process or network dependency
-//! (ADR 0001).
+//! mutated candidate enters a run. This module holds the adapters and the pure helpers
+//! that the binaries use (`brut-propose`, `brut-ingest`, and `brut promote` and `brut init
+//! --promoted` for models). It is pure: no I/O, no network, no git. The binaries do the
+//! file and stdin I/O; the git and pull-request steps live in `scripts/`, so the core crate
+//! keeps no process or network dependency (ADR 0001).
 //!
-//! Two adapters are implemented: the genome adapter (DSL program, JSON) and the
-//! config-and-prompt adapter for Cascades (ADR 0005), both behind `CandidateAdapter`. The
+//! Three adapters are implemented, all behind `CandidateAdapter`: the genome adapter (DSL
+//! program, JSON), the config-and-prompt adapter for Cascades (ADR 0005), and the model
+//! adapter for the promoted models of the MLP mode, MLPs and CNNs (ADR 0008, ticket 07). The
 //! Rust adapter is future work (ADR 0004) and is deliberately absent, not stubbed.
 #![forbid(unsafe_code)]
 
@@ -19,6 +20,10 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::cascade::genome::{Cascade, CascadeLimits, pool_limits, seed_cascades};
+use crate::cnn::families::FAMILIES;
+use crate::config::Limits;
+use crate::evolve::is_base_model;
+use crate::genome::Genome;
 use crate::learner::dsl::reference_step_cost;
 use crate::learner::mutate::mutate;
 use crate::learner::seeds::seed_programs;
@@ -26,6 +31,7 @@ use crate::learner::{
     COST_CAP_RATIO, DslLimits, LearnerGenome, Mutation, PROTOCOL_VERSION, SUPPORTED_F,
     VariationMode,
 };
+use crate::task::TaskKind;
 use crate::util::{BrutError, Result, derive_seed};
 
 /// The only directory a mutation pull request may change. The scope fence (ADR 0004)
@@ -193,6 +199,273 @@ impl CandidateAdapter for CascadeAdapter {
 /// Content ids of the seed Cascades; a promoted Cascade equal to one adds nothing.
 pub fn cascade_seed_ids() -> HashSet<String> {
     seed_cascades().into_iter().map(|(_, c)| c.id()).collect()
+}
+
+/// Where promoted models of the MLP mode live inside the candidate pool (ADR 0008). It is
+/// under `candidates/`, so the same scope fence covers it.
+pub const MODEL_DIR: &str = "candidates/models/";
+
+/// Most bytes of one candidate file that the binaries read (`util::read_regular_file`). A
+/// genome, a Cascade or a promoted model with its lineage takes far less.
+pub const MAX_CANDIDATE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The best base model of a run (`evolve::best_base_model`), as the provenance of a promoted
+/// model names it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaseModelScore {
+    /// Its candidate id (`Genome::id`).
+    pub id: String,
+    /// How it entered generation 0 (`evolve::is_base_model`), e.g. "base-model/densenet".
+    pub generator: String,
+    /// Its primary score on the validation split.
+    pub valid_primary: f64,
+    /// Its primary score on the hidden split, as the hidden evaluator released it.
+    pub hidden_primary: f64,
+}
+
+/// One candidate on the way from a promoted model back to generation 0 of its run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageStep {
+    /// Its candidate id (`Genome::id`).
+    pub id: String,
+    pub generation: usize,
+    /// How it was made, e.g. "cnn-mutator-v1/crossover" or "base-model/resnet".
+    pub generator: String,
+    /// The ids of its parents; empty in generation 0 and for a restart.
+    pub parents: Vec<String>,
+}
+
+/// Where a promoted model comes from: its run, the run's task, seed and commit, its scores,
+/// the base model it beats, and its lineage.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelProvenance {
+    /// `Archive::run_id` of the run: the SHA-256 of its first record.
+    pub run_id: String,
+    pub task: TaskKind,
+    /// `Config::master_seed` of the run.
+    pub master_seed: u64,
+    /// The git commit of the code that ran the run.
+    pub commit: String,
+    /// The model's primary score on the validation split, on which the run selected.
+    pub valid_primary: f64,
+    /// The model's primary score on the hidden split, which the run never saw while it bred.
+    pub hidden_primary: f64,
+    /// The best base model of the run. The model beats its hidden score.
+    pub best_base_model: BaseModelScore,
+    /// The model and all its ancestors in the run, breadth-first (`Archive::lineage`). It
+    /// ends at candidates without parents: base models and random genomes of generation 0, or
+    /// random restarts.
+    pub lineage: Vec<LineageStep>,
+}
+
+impl ModelProvenance {
+    /// The generators of the candidates in the lineage without parents, in their order, each
+    /// once: the base models and random genomes the model descends from.
+    pub fn roots(&self) -> Vec<&str> {
+        let mut roots: Vec<&str> = Vec::new();
+
+        for step in self.lineage.iter().filter(|s| s.parents.is_empty()) {
+            if !roots.contains(&step.generator.as_str()) {
+                roots.push(&step.generator);
+            }
+        }
+
+        roots
+    }
+}
+
+/// A promoted model (ADR 0008): the genome of an MLP or a CNN with its provenance, stored as
+/// JSON at `candidates/models/<content-id>.json`. The content id is `Genome::id`. So the same
+/// genome from another run, with another provenance, is the same candidate.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromotedModel {
+    pub genome: Genome,
+    pub provenance: ModelProvenance,
+}
+
+/// Most characters of a generator name in a lineage. The names of the code have at most 32.
+const MAX_GENERATOR_CHARS: usize = 64;
+
+/// True if `s` has `min` to `max` characters, each a lower-case hex digit.
+fn is_lower_hex(s: &str, min: usize, max: usize) -> bool {
+    (min..=max).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// True for a git commit as a promotion records it: 7 to 64 lower-case hex digits.
+pub fn is_commit(s: &str) -> bool {
+    is_lower_hex(s, 7, 64)
+}
+
+/// True for a generator name as the code writes them: lower-case letters, digits, "-" and
+/// "/", at most `MAX_GENERATOR_CHARS`.
+fn is_generator_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_GENERATOR_CHARS
+        && s.bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'/'))
+}
+
+/// Adapter for the promoted models of the MLP mode (ADR 0008, ticket 07): a model genome with
+/// its provenance at `candidates/models/<content-id>.json`. A model is valid when its genome
+/// passes the shape check and `limits` on the task its provenance names (`Genome::validate`),
+/// and its provenance is consistent: it beats the best base model it names, and its lineage
+/// starts with the model and names every parent it refers to. The limits default to the
+/// current `Limits::default()`, which a run of `brut init` uses.
+#[derive(Default)]
+pub struct ModelAdapter {
+    pub limits: Limits,
+}
+
+impl ModelAdapter {
+    pub fn new() -> ModelAdapter {
+        ModelAdapter::default()
+    }
+
+    /// Pretty JSON for a candidate file.
+    pub fn to_json(&self, m: &PromotedModel) -> Result<String> {
+        serde_json::to_string_pretty(m).map_err(|e| BrutError::Invalid(format!("encode: {e}")))
+    }
+
+    /// A short, review-friendly summary: id, task, scores, roots of the lineage, genome.
+    pub fn summary(&self, m: &PromotedModel) -> String {
+        let p = &m.provenance;
+
+        format!(
+            "id {}  task {}  valid {:.4}  hidden {:.4} > {:.4} of the best base model {} ({})\n\
+             lineage of {} candidates back to {}\n{}",
+            m.genome.id(),
+            p.task.name(),
+            p.valid_primary,
+            p.hidden_primary,
+            p.best_base_model.hidden_primary,
+            p.best_base_model.id,
+            p.best_base_model.generator,
+            p.lineage.len(),
+            p.roots().join(", "),
+            m.genome.summary()
+        )
+    }
+
+    /// Consistency of the provenance of `m`; see the type doc.
+    fn check_provenance(m: &PromotedModel) -> Result<()> {
+        let p = &m.provenance;
+        let base = &p.best_base_model;
+        let fail = |message: String| Err(BrutError::Invalid(format!("model: {message}")));
+
+        if !is_lower_hex(&p.run_id, 64, 64) {
+            return fail("run_id must be 64 lower-case hex digits".to_string());
+        }
+
+        if !is_commit(&p.commit) {
+            return fail("commit must be 7 to 64 lower-case hex digits".to_string());
+        }
+
+        let scores = [
+            p.valid_primary,
+            p.hidden_primary,
+            base.valid_primary,
+            base.hidden_primary,
+        ];
+
+        if !scores.iter().all(|s| s.is_finite()) {
+            return fail("scores must be finite".to_string());
+        }
+
+        if !is_lower_hex(&base.id, 16, 16)
+            || !is_generator_name(&base.generator)
+            || !is_base_model(&base.generator)
+        {
+            return fail(format!(
+                "best_base_model must be a base model of the run, not {:?} ({:?})",
+                base.id, base.generator
+            ));
+        }
+
+        if p.hidden_primary <= base.hidden_primary {
+            return fail(format!(
+                "hidden score {} does not beat the {} of the best base model",
+                p.hidden_primary, base.hidden_primary
+            ));
+        }
+
+        let id = m.genome.id();
+
+        match p.lineage.first() {
+            Some(first) if first.id == id && !is_base_model(&first.generator) => {}
+            _ => {
+                return fail(format!(
+                    "lineage must start with the model {id}, which is no base model of its run"
+                ));
+            }
+        }
+
+        let ids: HashSet<&str> = p.lineage.iter().map(|s| s.id.as_str()).collect();
+
+        if ids.len() != p.lineage.len() {
+            return fail("lineage names a candidate twice".to_string());
+        }
+
+        for step in &p.lineage {
+            if !is_lower_hex(&step.id, 16, 16) || !is_generator_name(&step.generator) {
+                return fail(format!(
+                    "lineage step {:?} ({:?}) has no candidate id or no generator name",
+                    step.id, step.generator
+                ));
+            }
+
+            if let Some(parent) = step.parents.iter().find(|p| !ids.contains(p.as_str())) {
+                return fail(format!(
+                    "lineage names {parent:?} as a parent of {}, but not as a step",
+                    step.id
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl CandidateAdapter for ModelAdapter {
+    type Candidate = PromotedModel;
+
+    fn kind(&self) -> &'static str {
+        "model"
+    }
+
+    /// Unknown fields are rejected, in the genome too (`Genome`, `CnnGenome`).
+    fn parse(&self, text: &str) -> Result<PromotedModel> {
+        serde_json::from_str(text).map_err(|e| BrutError::Invalid(format!("model json: {e}")))
+    }
+
+    fn validate(&self, m: &PromotedModel) -> Result<()> {
+        m.genome.validate(&self.limits, &m.provenance.task.spec())?;
+
+        ModelAdapter::check_provenance(m)
+    }
+
+    fn fingerprint(&self, m: &PromotedModel) -> String {
+        m.genome.id()
+    }
+}
+
+/// Content ids of the base models of the CNN families, as built and as 1-D twins
+/// (`Family::base_model_for`). A promoted model equal to one adds nothing.
+pub fn model_seed_ids() -> HashSet<String> {
+    let sequence = TaskKind::Motif1d.spec();
+
+    FAMILIES
+        .into_iter()
+        .flat_map(|family| {
+            [
+                family.base_model().id(),
+                family.base_model_for(&sequence).id(),
+            ]
+        })
+        .collect()
 }
 
 /// step_cost and its cap at one width.
@@ -572,6 +845,287 @@ mod tests {
 
         assert!(!rec.accepted);
         assert!(rec.reason.contains("credential"), "{}", rec.reason);
+    }
+
+    /// A promoted model as `promote::choose` makes one: a child of the ResNet base model of
+    /// the shapes task, which beats it on the hidden split.
+    fn promoted_model() -> PromotedModel {
+        let base = crate::cnn::families::Family::ResNet.base_model();
+        let mut genome = base.clone();
+
+        genome.seed += 1;
+
+        PromotedModel {
+            provenance: ModelProvenance {
+                run_id: "ab".repeat(32),
+                task: TaskKind::Shapes,
+                master_seed: 1,
+                commit: "4613e2a".to_string(),
+                valid_primary: 0.81,
+                hidden_primary: 0.8,
+                best_base_model: BaseModelScore {
+                    id: base.id(),
+                    generator: "base-model/resnet".to_string(),
+                    valid_primary: 0.79,
+                    hidden_primary: 0.78,
+                },
+                lineage: vec![
+                    LineageStep {
+                        id: genome.id(),
+                        generation: 1,
+                        generator: "cnn-mutator-v1/training".to_string(),
+                        parents: vec![base.id()],
+                    },
+                    LineageStep {
+                        id: base.id(),
+                        generation: 0,
+                        generator: "base-model/resnet".to_string(),
+                        parents: Vec::new(),
+                    },
+                ],
+            },
+            genome,
+        }
+    }
+
+    #[test]
+    fn model_adapter_round_trips_a_model_and_names_it_by_its_genome() {
+        let adapter = ModelAdapter::new();
+        let m = promoted_model();
+        let json = adapter.to_json(&m).expect("json");
+        let parsed = adapter.parse(&json).expect("parse");
+        let id = adapter.fingerprint(&m);
+
+        assert_eq!(parsed, m);
+        assert_eq!(id, m.genome.id());
+        assert_eq!(adapter.kind(), "model");
+        assert!(adapter.validate(&m).is_ok());
+        assert!(path_in_scope(&format!("{MODEL_DIR}{id}.json")));
+        assert!(
+            adapter
+                .summary(&m)
+                .starts_with(&format!("id {id}  task shapes"))
+        );
+        assert!(adapter.summary(&m).contains("back to base-model/resnet"));
+
+        // Another provenance, the same genome: the same candidate.
+        let mut other = m.clone();
+
+        other.provenance.master_seed = 9;
+        other.provenance.hidden_primary = 0.9;
+
+        assert_eq!(adapter.fingerprint(&other), id);
+
+        let ok = ingest_one(
+            &adapter,
+            &format!("{MODEL_DIR}{id}.json"),
+            &json,
+            &id,
+            &model_seed_ids(),
+        );
+
+        assert!(ok.accepted, "{}", ok.reason);
+    }
+
+    #[test]
+    fn model_adapter_refuses_unknown_fields() {
+        let adapter = ModelAdapter::new();
+        let cnn = serde_json::to_value(promoted_model()).expect("value");
+        let mut with_mlp = promoted_model();
+
+        with_mlp.genome.arch = crate::genome::Arch::Mlp;
+        with_mlp.genome.hidden = vec![8];
+        with_mlp.provenance.lineage[0].id = with_mlp.genome.id();
+
+        let mlp = serde_json::to_value(&with_mlp).expect("value");
+
+        assert!(adapter.parse(&cnn.to_string()).is_ok());
+        assert!(adapter.parse(&mlp.to_string()).is_ok());
+
+        let places: [(&serde_json::Value, &str); 7] = [
+            (&cnn, ""),
+            (&cnn, "/provenance"),
+            (&cnn, "/provenance/best_base_model"),
+            (&cnn, "/provenance/lineage/1"),
+            (&cnn, "/genome"),
+            (&cnn, "/genome/arch/Cnn/stages/0"),
+            (&mlp, "/genome"),
+        ];
+
+        for (value, place) in places {
+            let mut value = value.clone();
+            let object = value
+                .pointer_mut(place)
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("an object");
+
+            object.insert("zz_extra".to_string(), serde_json::json!(1));
+
+            let message = adapter
+                .parse(&value.to_string())
+                .expect_err("refused")
+                .to_string();
+
+            assert!(
+                message.contains("unknown field `zz_extra`"),
+                "{place}: {message}"
+            );
+        }
+    }
+
+    /// A change that breaks a promoted model.
+    type Breaks = fn(&mut PromotedModel);
+
+    #[test]
+    fn model_adapter_checks_the_genome_on_its_task_and_the_provenance() {
+        let adapter = ModelAdapter::new();
+        let good = promoted_model();
+        let broken: Vec<(&str, Breaks)> = vec![
+            ("epochs", |m| {
+                m.genome.epochs = Limits::default().max_epochs + 1
+            }),
+            ("task with flat inputs", |m| {
+                m.provenance.task = TaskKind::TwoSpirals
+            }),
+            ("commit", |m| m.provenance.commit = "main".to_string()),
+            ("run id", |m| m.provenance.run_id = "ab".to_string()),
+            ("tie with the base model", |m| {
+                m.provenance.hidden_primary = 0.78
+            }),
+            ("below the base model", |m| {
+                m.provenance.hidden_primary = 0.5
+            }),
+            ("score", |m| m.provenance.valid_primary = f64::NAN),
+            ("base generator", |m| {
+                m.provenance.best_base_model.generator = "init".to_string()
+            }),
+            // "base-model/" names a family; the rest of the name must be a generator name too,
+            // so that no line break or other text reaches the log of the gate.
+            ("base generator text", |m| {
+                m.provenance.best_base_model.generator = "base-model/\nx".to_string()
+            }),
+            ("long base generator", |m| {
+                m.provenance.best_base_model.generator = format!("base-model/{}", "y".repeat(100))
+            }),
+            ("empty lineage", |m| m.provenance.lineage.clear()),
+            ("lineage of another model", |m| {
+                m.provenance.lineage.swap(0, 1)
+            }),
+            ("a base model of its own run", |m| {
+                m.provenance.lineage[0].generator = "base-model/resnet".to_string()
+            }),
+            ("missing parent", |m| m.provenance.lineage.truncate(1)),
+            ("repeated step", |m| {
+                let first = m.provenance.lineage[0].clone();
+
+                m.provenance.lineage.push(first)
+            }),
+            ("generator name", |m| {
+                m.provenance.lineage[1].generator = "Base Model".to_string()
+            }),
+        ];
+
+        assert!(adapter.validate(&good).is_ok());
+
+        for (what, breaks) in broken {
+            let mut m = good.clone();
+
+            breaks(&mut m);
+
+            assert!(adapter.validate(&m).is_err(), "{what}");
+        }
+
+        // The limits are the adapter's: the default ones, unless a caller sets others.
+        let tight = ModelAdapter {
+            limits: Limits {
+                max_params: 100,
+                ..Limits::default()
+            },
+        };
+
+        assert!(tight.validate(&good).is_err());
+    }
+
+    #[test]
+    fn model_ingest_refuses_base_models_of_the_families_and_renamed_files() {
+        let adapter = ModelAdapter::new();
+        let mut copy = promoted_model();
+
+        // A base model with a made-up lineage is still the base model.
+        copy.genome = crate::cnn::families::Family::ResNet.base_model();
+        copy.provenance.lineage[0].id = copy.genome.id();
+        copy.provenance.lineage[0].parents.clear();
+        copy.provenance.lineage.truncate(1);
+
+        let id = adapter.fingerprint(&copy);
+        let json = adapter.to_json(&copy).expect("json");
+        let dup = ingest_one(
+            &adapter,
+            "candidates/models/x.json",
+            &json,
+            &id,
+            &model_seed_ids(),
+        );
+
+        assert!(adapter.validate(&copy).is_ok());
+        assert!(!dup.accepted);
+        assert!(dup.reason.contains("duplicate"), "{}", dup.reason);
+
+        let m = promoted_model();
+        let json = adapter.to_json(&m).expect("json");
+        let renamed = ingest_one(
+            &adapter,
+            "candidates/models/deadbeef.json",
+            &json,
+            "deadbeef",
+            &model_seed_ids(),
+        );
+
+        assert!(!renamed.accepted);
+        assert!(
+            renamed.reason.contains("does not match"),
+            "{}",
+            renamed.reason
+        );
+    }
+
+    #[test]
+    fn every_generator_name_of_the_code_fits_a_lineage() {
+        use crate::cnn::variation::OPERATORS;
+        use crate::evolve::{
+            BASE_GENERATOR, BASE_MODEL_GENERATOR, INIT_GENERATOR, PROMOTED_GENERATOR,
+            RESTART_GENERATOR,
+        };
+        use crate::variation::{CNN_GENERATOR, MLP_GENERATOR};
+
+        let mut names: Vec<String> = [
+            BASE_GENERATOR,
+            INIT_GENERATOR,
+            PROMOTED_GENERATOR,
+            RESTART_GENERATOR,
+            MLP_GENERATOR,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        names.extend(
+            OPERATORS
+                .iter()
+                .map(|o| o.name())
+                .chain(["crossover", "crossover-genes", "random"])
+                .map(|how| format!("{CNN_GENERATOR}/{how}")),
+        );
+        names.extend(
+            FAMILIES
+                .iter()
+                .map(|f| format!("{BASE_MODEL_GENERATOR}/{}", f.name())),
+        );
+
+        for name in names {
+            assert!(is_generator_name(&name), "{name}");
+            assert!(name.len() <= 32, "{name}");
+        }
     }
 
     #[test]

@@ -28,7 +28,9 @@ use crate::util::{BrutError, Result};
 /// The stem has one norm of at most `MAX_CHANNELS` channels. A stage has the most in an
 /// inverted residual with a projection shortcut: two norms of `EXPANSION` times its input
 /// channels, one of its width and one of its shortcut, so `2 * EXPANSION + 2` times
-/// `MAX_CHANNELS` channels. A block with more norms (ticket 04) must raise this bound.
+/// `MAX_CHANNELS` channels. Every other block has at most 3 times `MAX_CHANNELS`: a basic
+/// block, a separable block, a TCN block or a decoder, each with a projection. A new block
+/// with more norms must raise this bound.
 pub const MAX_RUNNING_VALUES: usize =
     2 * (MAX_CHANNELS + MAX_STAGES * (2 * EXPANSION + 2) * MAX_CHANNELS);
 
@@ -586,6 +588,88 @@ mod tests {
             ..model
         })
         .expect("json")
+    }
+
+    #[test]
+    fn no_other_block_holds_more_norms_than_an_inverted_residual() {
+        // Every block kind as the one stage of a 1-D genome, at input channels and widths
+        // of 4, 64 and the most, with batch norm and a projection shortcut; it moves by 2
+        // where its rules allow. A decoder follows a plain stage that moves by 2, whose
+        // input it joins. The stem and that plain stage have no norm, so the batch norms
+        // counted are those of the block.
+        let length = 64;
+        let spec = TaskSpec {
+            n_in: 4 * length,
+            input: crate::task::InputShape::Sequence {
+                channels: 4,
+                length,
+            },
+            ..TaskKind::Motif1d.spec()
+        };
+        let widths = [4, 64, MAX_CHANNELS];
+        let relu = CnnActivation::Relu;
+
+        for block in crate::cnn::genome::BLOCKS {
+            let mut most = 0;
+
+            for inputs in widths {
+                for width in widths {
+                    let mut stages = vec![Stage {
+                        stride: if block == Block::Dense { 1 } else { 2 },
+                        residual: true,
+                        norm: Norm::Batch,
+                        ..testing::stage(block, width, 3, relu)
+                    }];
+
+                    if block == Block::Decoder {
+                        stages.insert(
+                            0,
+                            Stage {
+                                stride: 2,
+                                ..testing::plain(inputs, 1, relu)
+                            },
+                        );
+                    }
+
+                    let cnn = CnnGenome {
+                        dims: Dims::OneD,
+                        stem: Stem {
+                            width: inputs,
+                            kernel: 1,
+                            stride: 1,
+                            down: Downsample::Conv,
+                            norm: Norm::None,
+                            activation: relu,
+                        },
+                        stages,
+                        head: Head::GlobalAvgPool,
+                    };
+                    let genome = testing::genome(cnn, Vec::new(), Activation::Relu);
+
+                    // A dense layer of the most channels on more inputs is refused.
+                    let Ok(plan) = genome.cnn_plan(&spec) else {
+                        assert!(block == Block::Dense && inputs + width > MAX_CHANNELS);
+                        continue;
+                    };
+                    let channels: usize = net::batch_norm_channels(&plan).iter().sum();
+
+                    most = most.max(channels);
+                }
+            }
+
+            let bound = if block == Block::InvertedResidual {
+                (2 * EXPANSION + 2) * MAX_CHANNELS
+            } else {
+                3 * MAX_CHANNELS
+            };
+
+            assert!(most > 0, "{block:?}");
+            assert!(most <= bound, "{block:?}: {most} channels of batch norm");
+
+            if matches!(block, Block::InvertedResidual | Block::Tcn | Block::Decoder) {
+                assert_eq!(most, bound, "{block:?}");
+            }
+        }
     }
 
     #[test]

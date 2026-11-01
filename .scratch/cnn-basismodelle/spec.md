@@ -80,7 +80,10 @@ Elsken, Metzen and Hutter 2019, JMLR 20(55).
   backward pass is wrong in 17 of 60 checked cases, through 7 defects (D1 to D7); an eighth
   defect, D8, is that candle cannot seed its CPU generator. `src/cnn/ops.rs` is the only file
   that calls candle; it replaces each defective operation with one built from correct ones
-  (W1 to W8) and checks every operation it offers against finite differences. burn 0.22.1
+  (W1 to W8) and checks every operation it offers against finite differences. Ticket 04
+  found a ninth defect, D9: `conv_transpose1d` has no backward pass, and its forward pass is
+  wrong when the batch and the input channels both exceed 1. W9 runs `conv_transpose2d` on a
+  height of 1 instead (ADR 0007, addendum of 2026-10-31). burn 0.22.1
   (tracel-ai) has a larger layer zoo, but it needs Rust 1.95, brings 133 new crates against
   candle's 103, and its lockfile fails `cargo audit` as well. burn was rejected for these
   three reasons alone: it was not built, so its gradients, determinism and speed were not

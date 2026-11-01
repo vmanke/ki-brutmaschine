@@ -14,7 +14,8 @@
 //! `net` builds the network of a plan from `ops`, `train` trains it in the training loop
 //! of the MLP (`crate::train`), and `model` holds a trained CNN and its file. The
 //! `crate::model::Model` of a CNN is a `model::CnnModel`. `families` names the 16 families
-//! of the spec and holds a scaled-down base model of each.
+//! of the spec and holds a scaled-down base model of each. `variation` mutates CNN genomes
+//! by one operator, crosses two of them by whole stages, and draws random ones (ADR 0008).
 #![forbid(unsafe_code)]
 
 pub mod families;
@@ -24,3 +25,4 @@ pub(crate) mod net;
 pub mod ops;
 pub mod shape;
 pub(crate) mod train;
+pub mod variation;

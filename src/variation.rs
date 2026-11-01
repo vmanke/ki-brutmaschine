@@ -3,15 +3,17 @@
 //! The trait allows other generators later (for example an LLM-based one).
 //! Every generator must return a genome that passes `Genome::validate`.
 //!
-//! A CNN genome keeps its architecture for now: its stem, stages, head, and the dense
-//! layers and activation of its head. Mutation and crossover change only its training
-//! genes. Ticket 05 of the CNN spec adds the CNN mutations.
+//! An MLP child is made as before CNNs: random changes of its genes, or uniform crossover,
+//! with repair to valid ranges. A child of a CNN parent comes from `cnn::variation`: one
+//! operator per mutation, and the exchange of whole stages in a crossover of two CNNs
+//! (ticket 05 of the CNN spec, ADR 0008).
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
-use crate::config::Limits;
+use crate::cnn::variation as cnn_variation;
+use crate::config::{Limits, ModelKinds};
 use crate::genome::{
     ACTIVATIONS, Arch, BATCH_SIZES, Genome, INIT_SCALE_MAX, INIT_SCALE_MIN, L2_MAX, L2_MIN, LR_MAX,
     LR_MIN, MIN_EPOCHS, OPTIMIZERS,
@@ -23,11 +25,20 @@ use crate::util::{log_uniform_f32, normal_f32};
 const GENE_COUNT: usize = 8;
 
 /// The first training gene. Genes 0 and 1 (hidden layers and activation) shape the
-/// network, so a CNN, which keeps its architecture, mutates only the genes from here on.
+/// network; the genes from here on train it.
 const FIRST_TRAINING_GENE: usize = 2;
 
 /// Crossovers tried before a child of a CNN parent gives way to a random genome.
 const CNN_CROSSOVER_TRIES: usize = 4;
+
+/// The name of `RandomMutator` for the children of MLPs.
+pub const MLP_GENERATOR: &str = "random-mutator-v1";
+
+/// The start of the name of `RandomMutator` for a child with a CNN parent. Then come "/" and
+/// how it was made: an operator name of `cnn::variation`, "crossover" (stages exchanged),
+/// "crossover-genes" (the architecture of one parent and the training genes of both), or
+/// "random" (a random genome, when the parents give no valid child).
+pub const CNN_GENERATOR: &str = "cnn-mutator-v1";
 
 pub trait VariantGenerator: Send + Sync {
     /// Short name for the audit log.
@@ -42,24 +53,69 @@ pub trait VariantGenerator: Send + Sync {
         limits: &Limits,
         spec: &TaskSpec,
     ) -> Genome;
+
+    /// Make one child as `propose` does, and name how it was made, for the archive. The
+    /// default names the generator.
+    fn propose_named(
+        &self,
+        parents: &[&Genome],
+        rng: &mut ChaCha8Rng,
+        limits: &Limits,
+        spec: &TaskSpec,
+    ) -> (Genome, String) {
+        let child = self.propose(parents, rng, limits, spec);
+
+        (child, self.name().to_string())
+    }
 }
 
-/// Classic random mutation and uniform crossover, with repair to valid ranges.
+/// Classic random mutation and uniform crossover, with repair to valid ranges, and the CNN
+/// operators of `cnn::variation` for the children of CNNs.
 #[derive(Clone, Copy, Debug)]
 pub struct RandomMutator {
     /// Probability that each gene is mutated.
     pub gene_rate: f64,
+    /// The kinds of model of the run. A random genome that takes the place of a child the
+    /// parents cannot give is of these kinds.
+    pub models: ModelKinds,
 }
 
 impl Default for RandomMutator {
     fn default() -> Self {
-        RandomMutator { gene_rate: 0.3 }
+        RandomMutator {
+            gene_rate: 0.3,
+            models: ModelKinds::Mlp,
+        }
     }
+}
+
+impl RandomMutator {
+    /// A random genome of the kinds of the run, for a child that the parents cannot give and
+    /// for a restart: an MLP, a CNN, or either with equal chance. An MLP when no CNN fits the
+    /// task. For an MLP run this is `Genome::random`, with the same draws.
+    pub fn random(&self, rng: &mut ChaCha8Rng, limits: &Limits, spec: &TaskSpec) -> Genome {
+        let cnn = match self.models {
+            ModelKinds::Mlp => false,
+            ModelKinds::Cnn => true,
+            ModelKinds::Both => rng.random_bool(0.5),
+        };
+
+        if cnn && let Some(genome) = cnn_variation::random(rng, limits, spec) {
+            return genome;
+        }
+
+        Genome::random(rng, limits, spec)
+    }
+}
+
+/// The name of a child with a CNN parent: `CNN_GENERATOR`, "/" and how it was made.
+fn cnn_name(how: &str) -> String {
+    format!("{CNN_GENERATOR}/{how}")
 }
 
 impl VariantGenerator for RandomMutator {
     fn name(&self) -> &str {
-        "random-mutator-v1"
+        MLP_GENERATOR
     }
 
     fn propose(
@@ -69,43 +125,55 @@ impl VariantGenerator for RandomMutator {
         limits: &Limits,
         spec: &TaskSpec,
     ) -> Genome {
+        self.propose_named(parents, rng, limits, spec).0
+    }
+
+    fn propose_named(
+        &self,
+        parents: &[&Genome],
+        rng: &mut ChaCha8Rng,
+        limits: &Limits,
+        spec: &TaskSpec,
+    ) -> (Genome, String) {
         match parents {
-            [] => Genome::random(rng, limits, spec),
-            [one] => {
-                let child = mutate(one, self.gene_rate, rng, limits, spec);
+            [] => (self.random(rng, limits, spec), self.name().to_string()),
+            [one] if one.arch.is_mlp() => (
+                mutate(one, self.gene_rate, rng, limits, spec),
+                self.name().to_string(),
+            ),
+            // A valid CNN parent always gives a valid child (see `cnn::variation`). A parent
+            // that breaks a rule itself may give none; then a random genome takes its place.
+            [one] => match cnn_variation::mutate(one, self.gene_rate, rng, limits, spec) {
+                Some((child, operator)) => (child, cnn_name(operator.name())),
+                None => (self.random(rng, limits, spec), cnn_name("random")),
+            },
+            [a, b, ..] if a.arch.is_mlp() && b.arch.is_mlp() => {
+                let child = crossover(a, b, rng);
 
-                if one.arch.is_mlp() {
-                    return child;
-                }
-
-                // A valid CNN parent always gives a valid child (`repair` cuts its epochs).
-                // A parent that breaks the limits cannot be mutated into shape, so a random
-                // genome takes the child's place.
-                if child.validate(limits, spec).is_ok() {
-                    child
-                } else {
-                    Genome::random(rng, limits, spec)
-                }
+                (repair(child, limits, spec), self.name().to_string())
             }
             [a, b, ..] => {
-                if a.arch.is_mlp() && b.arch.is_mlp() {
-                    let child = crossover(a, b, rng);
-
-                    return repair(child, limits, spec);
+                // Two CNNs exchange whole stages where their resolutions match.
+                if !a.arch.is_mlp()
+                    && !b.arch.is_mlp()
+                    && let Some(child) = cnn_variation::crossover(a, b, rng, limits, spec)
+                {
+                    return (child, cnn_name("crossover"));
                 }
 
-                // The child takes the architecture of one parent, which may break the
-                // limits if that parent does. Then it is drawn again, and after
-                // `CNN_CROSSOVER_TRIES` failures a random genome takes its place.
+                // An MLP and a CNN, or two CNNs without a valid cut: the child takes the
+                // architecture of one parent, which may break the limits if that parent
+                // does. Then it is drawn again, and after `CNN_CROSSOVER_TRIES` failures a
+                // random genome takes its place.
                 for _ in 0..CNN_CROSSOVER_TRIES {
                     let child = repair(crossover(a, b, rng), limits, spec);
 
                     if child.validate(limits, spec).is_ok() {
-                        return child;
+                        return (child, cnn_name("crossover-genes"));
                     }
                 }
 
-                Genome::random(rng, limits, spec)
+                (self.random(rng, limits, spec), cnn_name("random"))
             }
         }
     }
@@ -113,8 +181,10 @@ impl VariantGenerator for RandomMutator {
 
 /// Mutate one genome. Always gets a fresh training seed.
 ///
-/// An MLP may change every gene. A CNN changes only its training genes (optimizer,
-/// learning rate, l2, batch size, epochs and init scale) and keeps its architecture.
+/// An MLP may change every gene. A CNN gets one operator of `cnn::variation`, which keeps it
+/// valid when it was valid. A CNN that breaks a rule itself may find no valid child; then it
+/// keeps its architecture, changes its training genes and stays invalid, and
+/// `RandomMutator::propose` draws a random genome instead.
 pub fn mutate(
     parent: &Genome,
     gene_rate: f64,
@@ -122,20 +192,24 @@ pub fn mutate(
     limits: &Limits,
     spec: &TaskSpec,
 ) -> Genome {
-    let rate = if gene_rate.is_finite() {
-        gene_rate.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    if !parent.arch.is_mlp() {
+        if let Some((child, _)) = cnn_variation::mutate(parent, gene_rate, rng, limits, spec) {
+            return child;
+        }
+
+        let mut g = parent.clone();
+
+        mutate_training_genes(&mut g, gene_rate, rng, limits);
+        g.seed = rng.random();
+
+        return repair(g, limits, spec);
+    }
+
+    let rate = clamp_rate(gene_rate);
     let mut g = parent.clone();
     let mut changed = false;
-    let first = if g.arch.is_mlp() {
-        0
-    } else {
-        FIRST_TRAINING_GENE
-    };
 
-    for gene in first..GENE_COUNT {
+    for gene in 0..GENE_COUNT {
         if rng.random_bool(rate) {
             mutate_gene(&mut g, gene, rng, limits);
             changed = true;
@@ -144,7 +218,7 @@ pub fn mutate(
 
     // A child that only differs by its seed would waste a training run.
     if !changed {
-        let gene = rng.random_range(first..GENE_COUNT);
+        let gene = rng.random_range(0..GENE_COUNT);
 
         mutate_gene(&mut g, gene, rng, limits);
     }
@@ -152,6 +226,47 @@ pub fn mutate(
     g.seed = rng.random();
 
     repair(g, limits, spec)
+}
+
+/// The gene rate as a probability: clamped to [0, 1], and 0 when it is not finite.
+fn clamp_rate(gene_rate: f64) -> f64 {
+    if gene_rate.is_finite() {
+        gene_rate.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Change the training genes of `g` (optimizer, learning rate, l2, batch size, epochs and
+/// init scale), each with probability `gene_rate`, and at least one. The seed stays. This is
+/// the CNN operator `Training`; before ticket 05 it was the whole mutation of a CNN.
+pub(crate) fn mutate_training_genes(
+    g: &mut Genome,
+    gene_rate: f64,
+    rng: &mut ChaCha8Rng,
+    limits: &Limits,
+) {
+    let rate = clamp_rate(gene_rate);
+    let mut changed = false;
+
+    for gene in FIRST_TRAINING_GENE..GENE_COUNT {
+        if rng.random_bool(rate) {
+            mutate_gene(g, gene, rng, limits);
+            changed = true;
+        }
+    }
+
+    if !changed {
+        let gene = rng.random_range(FIRST_TRAINING_GENE..GENE_COUNT);
+
+        mutate_gene(g, gene, rng, limits);
+    }
+}
+
+/// Add, remove or resize one dense layer of `g.hidden`, as the structural mutation of an
+/// MLP does. For a CNN these are the dense layers of its head: the operator `HeadLayers`.
+pub(crate) fn mutate_head_layers(g: &mut Genome, rng: &mut ChaCha8Rng, limits: &Limits) {
+    mutate_layers(g, rng, limits);
 }
 
 /// Change one gene by a small random step.
@@ -582,44 +697,72 @@ mod tests {
     }
 
     #[test]
-    fn mutating_a_cnn_changes_only_its_training_genes() {
+    fn a_cnn_child_gets_one_operator_and_stays_valid() {
         let spec = TaskKind::Shapes.spec();
         let limits = Limits::default();
+        let m = RandomMutator {
+            models: ModelKinds::Cnn,
+            ..RandomMutator::default()
+        };
         let mut rng = ChaCha8Rng::seed_from_u64(21);
+        let mut operators = std::collections::BTreeSet::new();
         let mut changed = [false; 6];
 
         for parent in valid_cnns(40, 22) {
             for _ in 0..25 {
-                let child = mutate(&parent, 0.3, &mut rng, &limits, &spec);
+                let (child, how) = m.propose_named(&[&parent], &mut rng, &limits, &spec);
+                let operator = how
+                    .strip_prefix(&format!("{CNN_GENERATOR}/"))
+                    .expect("the name of a CNN child");
 
                 assert!(
                     child.validate(&limits, &spec).is_ok(),
                     "{}",
                     child.summary()
                 );
-                assert_eq!(architecture(&child), architecture(&parent));
                 assert_ne!(child.seed, parent.seed);
 
-                let genes = [
-                    child.optimizer != parent.optimizer,
-                    child.learning_rate != parent.learning_rate,
-                    child.l2 != parent.l2,
-                    child.batch_size != parent.batch_size,
-                    child.epochs != parent.epochs,
-                    child.init_scale != parent.init_scale,
-                ];
+                // Only the operator `training` keeps the architecture. It changes the training
+                // genes, as the whole mutation of a CNN did before ticket 05.
+                assert_eq!(
+                    operator == "training",
+                    architecture(&child) == architecture(&parent),
+                    "{how}"
+                );
+                operators.insert(operator.to_string());
 
-                for (seen, now) in changed.iter_mut().zip(genes) {
-                    *seen |= now;
+                if operator == "training" {
+                    let genes = [
+                        child.optimizer != parent.optimizer,
+                        child.learning_rate != parent.learning_rate,
+                        child.l2 != parent.l2,
+                        child.batch_size != parent.batch_size,
+                        child.epochs != parent.epochs,
+                        child.init_scale != parent.init_scale,
+                    ];
+
+                    for (seen, now) in changed.iter_mut().zip(genes) {
+                        *seen |= now;
+                    }
                 }
+
+                // `mutate` makes the children of CNNs by the same operators.
+                let other = mutate(&parent, 0.3, &mut rng, &limits, &spec);
+
+                assert!(other.validate(&limits, &spec).is_ok());
             }
         }
 
+        assert_eq!(
+            operators.len(),
+            cnn_variation::OPERATORS.len(),
+            "{operators:?}"
+        );
         assert_eq!(changed, [true; 6]);
     }
 
     #[test]
-    fn crossover_with_a_cnn_takes_the_architecture_whole() {
+    fn crossover_with_a_cnn_takes_the_architecture_whole_or_exchanges_stages() {
         let spec = TaskKind::Shapes.spec();
         let limits = Limits::default();
         let m = RandomMutator::default();
@@ -627,6 +770,7 @@ mod tests {
         let mlp = sample();
         let cnns = valid_cnns(6, 24);
         let mut kinds = [0usize; 2];
+        let mut exchanged = 0;
 
         assert!(mlp.validate(&limits, &spec).is_ok());
 
@@ -635,11 +779,7 @@ mod tests {
 
             for parents in [[&mlp, cnn], [cnn, &mlp], [cnn, other]] {
                 for _ in 0..40 {
-                    let child = m.propose(&parents, &mut rng, &limits, &spec);
-                    let from = parents
-                        .iter()
-                        .find(|p| architecture(p) == architecture(&child))
-                        .expect("the architecture of one parent");
+                    let (child, how) = m.propose_named(&parents, &mut rng, &limits, &spec);
 
                     assert!(
                         child.validate(&limits, &spec).is_ok(),
@@ -647,6 +787,37 @@ mod tests {
                         child.summary()
                     );
                     kinds[usize::from(child.arch.is_mlp())] += 1;
+
+                    // Two CNNs exchange whole stages: the child has the stem of one parent,
+                    // every stage of one parent, and the architecture of neither.
+                    if how == format!("{CNN_GENERATOR}/crossover") {
+                        let (Arch::Cnn(c), [Arch::Cnn(a), Arch::Cnn(b)]) =
+                            (&child.arch, [&parents[0].arch, &parents[1].arch])
+                        else {
+                            panic!("a stage crossover of two CNNs");
+                        };
+
+                        assert!(c.stem == a.stem || c.stem == b.stem);
+                        assert!(
+                            c.stages
+                                .iter()
+                                .all(|s| a.stages.contains(s) || b.stages.contains(s))
+                        );
+                        assert!(
+                            parents
+                                .iter()
+                                .all(|p| architecture(p) != architecture(&child))
+                        );
+                        exchanged += 1;
+                    } else {
+                        assert_eq!(how, format!("{CNN_GENERATOR}/crossover-genes"));
+                    }
+
+                    let from = parents
+                        .iter()
+                        .find(|p| architecture(p) == architecture(&child))
+                        .copied()
+                        .unwrap_or(parents[0]);
 
                     // Training genes come from either parent; epochs may be cut to fit.
                     let either =
@@ -663,8 +834,10 @@ mod tests {
             }
         }
 
-        // Both kinds of parents pass on their architecture.
+        // Both kinds of parents pass on their architecture, and two CNNs mostly exchange
+        // stages.
         assert!(kinds[0] > 100 && kinds[1] > 50, "{kinds:?}");
+        assert!(exchanged > 120, "{exchanged} of 240");
     }
 
     #[test]

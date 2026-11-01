@@ -233,6 +233,12 @@ fn pad_spatial(x: &candle::Tensor, padding: usize) -> Result<candle::Tensor> {
 }
 
 /// Takes the positions `start, start + step, ...` (`len` of them) along `dim`.
+///
+/// candle's `index_select` refuses a tensor that is not contiguous
+/// (candle-core/src/cpu_backend/mod.rs:729), and a batch norm in training mode
+/// returns a transposed view (candle-nn/src/batch_norm.rs:252). So the input is
+/// made contiguous first. `contiguous` returns a contiguous tensor itself
+/// (candle-core/src/tensor.rs:2494-2497), so it changes no bit for one.
 fn take_strided(
     x: &candle::Tensor,
     dim: usize,
@@ -250,7 +256,7 @@ fn take_strided(
         .map_err(|_| BrutError::Invalid("window: a position does not fit into u32".into()))?;
     let index = candle::Tensor::from_vec(positions, len, x.device())?;
 
-    Ok(x.index_select(&index, dim)?)
+    Ok(x.contiguous()?.index_select(&index, dim)?)
 }
 
 /// 2-D convolution of `x` (n, c_in, h, w) with `kernel` (c_out, c_in / groups, k_h, k_w).
@@ -1597,7 +1603,78 @@ mod tests {
             },
         );
 
+        // A batch norm in training mode gives a transposed view, which candle's index_select
+        // refuses. A plan pools it directly after an inverted residual, which ends without
+        // an activation. Distinct inputs keep their order through the norm, since gamma > 0.
+        let inputs = vec![
+            c.distinct(&[2, 3, 4, 6]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "max_pool2d",
+            "2x2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| max_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 3, 5, 6]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "avg_pool2d",
+            "2x2, stride 2, of a batch norm in training mode, crop path",
+            inputs,
+            |t| avg_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 2, 7, 7]),
+            c.uniform(&[2], 0.5, 1.5),
+            c.plain(&[2]),
+        ];
+        c.add(
+            "avg_pool2d",
+            "3x3, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| avg_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 3, 2, 0),
+        );
+
+        let inputs = vec![
+            c.distinct(&[2, 3, 9]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "max_pool1d",
+            "window 2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| max_pool1d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 3, 9]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "avg_pool1d",
+            "window 2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| avg_pool1d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2),
+        );
+
         c.list
+    }
+
+    /// A batch norm in training mode of `x` with scale `gamma` and shift `beta`, from fresh
+    /// running statistics.
+    fn train_norm(x: &Tensor, gamma: &Tensor, beta: &Tensor) -> Result<Tensor> {
+        let (mean, var) = fresh_stats(gamma.dims()[0]);
+
+        BatchNorm::new(gamma, beta, &mean, &var, 1e-5)?.forward_train(x)
     }
 
     /// Batch, layer and group norm.
@@ -1812,18 +1889,18 @@ mod tests {
 
         // Ticket 04: a shuffle along a sequence, and the joins of DenseNet and U-Net.
         let inputs = vec![c.plain(&[2, 6, 5])];
-        c.add("channel_shuffle", "sequence, 6 channels in 2 groups", inputs, |t| {
-            channel_shuffle(&t[0], 2)
-        });
+        c.add(
+            "channel_shuffle",
+            "sequence, 6 channels in 2 groups",
+            inputs,
+            |t| channel_shuffle(&t[0], 2),
+        );
 
         // A dense layer: x and conv(x) side by side, so x feeds both parts of the join.
         let inputs = vec![c.plain(&[2, 3, 4, 4]), c.plain(&[2, 3, 3, 3])];
-        c.add(
-            "cat",
-            "x joined to conv2d(x), input shared",
-            inputs,
-            |t| cat(&[&conv2d(&t[0], &t[1], 1, 1, 1, 1)?, &t[0]], 1),
-        );
+        c.add("cat", "x joined to conv2d(x), input shared", inputs, |t| {
+            cat(&[&conv2d(&t[0], &t[1], 1, 1, 1, 1)?, &t[0]], 1)
+        });
 
         // A U-Net skip: x joined to the upsampled transposed convolution of its pooled
         // values, along a sequence.
@@ -2484,9 +2561,7 @@ mod tests {
             shape.extend_from_slice(&size);
 
             let cells: usize = size.iter().product();
-            let values: Vec<f32> = (0..6)
-                .flat_map(|ch| vec![ch as f32; cells])
-                .collect();
+            let values: Vec<f32> = (0..6).flat_map(|ch| vec![ch as f32; cells]).collect();
             let out = channel_shuffle(&Tensor::from_f32(values, &shape).unwrap(), 3)
                 .unwrap()
                 .to_vec_f32()
@@ -2508,8 +2583,7 @@ mod tests {
         let mut changed = x.values.clone();
         changed[9] += 1.0;
         changed[12 + 9] += 1.0;
-        let after =
-            causal_conv1d(&f64_tensor(changed, &[1, 2, 12]), &kernel, 1, 2, 1).unwrap();
+        let after = causal_conv1d(&f64_tensor(changed, &[1, 2, 12]), &kernel, 1, 2, 1).unwrap();
 
         assert_eq!(before.dims(), [1, 3, 12]);
         let (before, after) = (f64_values(&before), f64_values(&after));
@@ -2536,7 +2610,11 @@ mod tests {
         assert_eq!(before.len(), 3 * 6);
         for channel in 0..3 {
             let row = channel * 6;
-            assert_eq!(before[row..row + 5], after[row..row + 5], "channel {channel}");
+            assert_eq!(
+                before[row..row + 5],
+                after[row..row + 5],
+                "channel {channel}"
+            );
             assert_ne!(before[row + 5], after[row + 5], "channel {channel}");
         }
     }
@@ -2716,14 +2794,20 @@ mod tests {
         assert!(mse(&zeros(&[0, 3]), &zeros(&[0, 3])).is_err(), "no values");
         assert!(upsample_nearest2d(&x, 0).is_err());
         assert!(channel_shuffle(&x, 3).is_err());
-        assert!(channel_shuffle(&zeros(&[2, 4]), 2).is_err(), "no spatial axis");
+        assert!(
+            channel_shuffle(&zeros(&[2, 4]), 2).is_err(),
+            "no spatial axis"
+        );
         assert!(upsample_nearest1d(&zeros(&[2, 3, 4]), 0).is_err());
         assert!(upsample_nearest1d(&x, 2).is_err(), "a 4-D input");
         assert!(
             max_pool1d(&zeros(&[2, 3, 4]), 3, 1, 2).is_err(),
             "padding above half the kernel"
         );
-        assert!(conv_transpose1d(&x, &zeros(&[4, 2, 2]), 2).is_err(), "a 4-D input");
+        assert!(
+            conv_transpose1d(&x, &zeros(&[4, 2, 2]), 2).is_err(),
+            "a 4-D input"
+        );
         assert!(
             conv_transpose1d(&zeros(&[2, 3, 4]), &zeros(&[4, 2, 2]), 2).is_err(),
             "the kernel reads 4 channels"

@@ -1278,7 +1278,13 @@ mod tests {
         assert_eq!(spec.output, grid);
         assert_eq!(grid.size(), Some(64));
         assert_eq!(OutputShape::Flat.size(), None);
-        assert!(!TaskSpec { n_out: 63, ..spec.clone() }.output_fits());
+        assert!(
+            !TaskSpec {
+                n_out: 63,
+                ..spec.clone()
+            }
+            .output_fits()
+        );
         assert!(
             !TaskSpec {
                 n_out: 0,
@@ -1333,9 +1339,17 @@ mod tests {
                 cells += 64;
             }
 
-            // The noise stays within its bounds, as for the other grid tasks.
-            assert!(data.x.iter().all(|&v| v < PIXEL_NOISE || v >= 1.0 - PIXEL_NOISE));
-            assert!(data.x.iter().all(|&v| (-PIXEL_NOISE..=1.0 + PIXEL_NOISE).contains(&v)));
+            // The noise stays within its bounds, as for the image tasks.
+            assert!(
+                data.x
+                    .iter()
+                    .all(|&v| !(PIXEL_NOISE..1.0 - PIXEL_NOISE).contains(&v))
+            );
+            assert!(
+                data.x
+                    .iter()
+                    .all(|&v| (-PIXEL_NOISE..=1.0 + PIXEL_NOISE).contains(&v))
+            );
         }
 
         // About half the cells are on.
