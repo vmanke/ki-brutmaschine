@@ -21,9 +21,11 @@ vorwärts gerichtete Netze). Sie lösen künstliche Lernaufgaben, zum Beispiel
 zwei ineinander verschlungene Spiralen auseinanderhalten. Diesen Modus nennt
 dieses Dokument den **MLP-Modus**.
 
-Im MLP-Modus kommen **CNNs** als zweite Modellart hinzu, faltende neuronale Netze (englisch
-„convolutional neural networks“). Teil 1 und ein Zwischenstand von Teil 2 sind
-zusammengeführt. Jetzt bauen wir die Mutationen und die Beförderung der Gewinner.
+Im MLP-Modus sind **CNNs** die zweite Modellart, faltende neuronale Netze (englisch
+„convolutional neural networks“) aus 16 bekannten Familien. Teil 1 und Teil 2 sind gebaut:
+das CNN-Genom, die Familien mit ihren Basismodellen, die Mutationen und die Beförderung der
+Gewinner; das beschreibt der Abschnitt „CNN-Modelle im MLP-Modus“. Als Nächstes kommt
+Teil 3 mit den ARC-Rastern als Aufgaben (Ticket 06).
 
 Dazu kommt der **Lerner-Modus** (Stufe 1). Dort ist ein Kandidat kein Netz,
 sondern ein kleiner Lernalgorithmus: ein Programm, das selbst aus Beispielen
@@ -58,9 +60,13 @@ Stand: 2026-10-31.
 - **CNNs, Teil 1 (PR #24).** Die Bibliothek candle, das CNN-Genom und Bildaufgaben (Tickets
   01 und 02; [Spezifikation](.scratch/cnn-basismodelle/spec.md),
   [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
-- **CNNs, Teil 2, Zwischenstand (PR #27 und #32).** Ticket 03 ist gebaut, Ticket 04 ist
-  begonnen. PR #32 zog die CNN-Tests auf Ticket 04 nach und korrigierte GoogLeNet und
-  ConvNeXt.
+- **CNNs, Teil 2 (PR #27, #32 und #43).** Die Tickets 03, 04, 05 und 07: die 16
+  Familien mit je einem Basismodell, die Mutationsoperatoren und die Kreuzung, die
+  Basismodelle in Generation 0 eines Laufs, die Kommandozeile und die Beförderung der
+  Gewinner
+  ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
+  siehe „CNN-Modelle im MLP-Modus“. PR #27 führte einen Zwischenstand zusammen, PR #32 zog
+  die CNN-Tests auf Ticket 04 nach und korrigierte GoogLeNet und ConvNeXt.
 - **Entwurf von Schritt 2 (PR #28 und #29).** Er beschreibt Seele und Kopplungsstärke κ
   ([Spezifikation](.scratch/seele-und-kappa/spec.md)). PR #28 war der erste Entwurf, PR #29
   ist die Endfassung. Die Fragen Q67 bis Q74 wurden am 2026-10-31 mit der jeweils
@@ -76,13 +82,11 @@ Stand: 2026-10-31.
 
 **Im Bau**
 
-- **CNNs, Teil 2.** Ticket 05 (Mutationen, Basismodelle in der Population, Kommandozeile,
-  README, ADR 0008) und Ticket 07 (Beförderung der Gewinner).
 - **Schritt 2.** Die Tickets 01 bis 09 und 12, begonnen am 2026-10-31.
 
 **Geplant**
 
-- **CNNs, Teil 3.** Ticket 06, ARC-Raster als Aufgaben.
+- **CNNs, Teil 3.** Ticket 06, ARC-Raster als Aufgaben; er kommt als Nächstes.
 - **Schritt 2, Vergleich.** Vorab-Registrierung (Ticket 10), Pilot (Ticket 11) und gezählte
   Läufe (Ticket 13).
 - **Sprachmodelle nutzen CNNs (Entwurf geschrieben, Pull-Request folgt).** F1: ein CNN als
@@ -148,7 +152,8 @@ cargo build --release
 ./target/release/brut stop runs/spirals
 ```
 
-Aufgaben (`--task`): `spirals`, `checkerboard`, `parity`, `sine`.
+Aufgaben (`--task`): `spirals`, `checkerboard`, `parity`, `sine`; dazu
+die Bild- und Folgenaufgaben für CNNs (siehe „CNN-Modelle im MLP-Modus“).
 Mit `brut help` sehen Sie alle Befehle. Exit-Codes: 0 = in Ordnung,
 1 = Fehler bei der Ausführung, 2 = falsche Bedienung.
 
@@ -202,6 +207,279 @@ auf demselben Rechner 51 bis 66 Sekunden (jetzt 17 bis 26 Sekunden, jeweils
 drei Läufe abwechselnd gemessen). Die Zahlen der Kandidaten haben sich dabei
 etwas verschoben, weil Tanh und GELU jetzt eine Näherung nutzen und die
 Rückwärtsrechnung anders summiert.
+
+## CNN-Modelle im MLP-Modus
+
+Stand: Die Tickets 01 bis 05 und 07 von `.scratch/cnn-basismodelle/` sind gebaut,
+also auch die Beförderung der Gewinner. Die ARC-Raster (Ticket 06) folgen. Die
+Bibliothek beschreibt
+[ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md), die
+Familien und ihre Mutationen
+[ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md);
+dieselbe ADR beschreibt auch die Beförderung.
+
+Der MLP-Modus züchtet neben MLPs auch Faltungsnetze (CNNs). Ein CNN-Genom ist ein
+Baukasten aus einem Eingangsteil (Stem), einer bis zwölf Stufen und einem Kopf.
+Jede Stufe trägt den Baustein einer von 16 veröffentlichten Familien, etwa den
+Restblock von ResNet oder den Inception-Block von GoogLeNet. Die Familien sind
+Sonderfälle dieses Baukastens. Stammen die Stufen eines Netzes aus mehreren
+Familien, ist es eine Mischform. Vor jedem Training prüft die Formprüfung, ob die
+Formen zur Aufgabe passen und ob Parameter, Trainings-FLOPs und geschätzte
+Trainingszeit in die Grenzen passen, welche MLPs und CNNs teilen. Trainiert wird
+auf der CPU über die Bibliothek candle.
+
+### Einen CNN-Lauf starten
+
+```sh
+cargo build --release
+
+# Lauf mit CNNs; ohne --task nimmt brut init dafür die Formenbilder (shapes)
+./target/release/brut init runs/cnn --models cnn --seed 1
+./target/release/brut run runs/cnn
+./target/release/brut status runs/cnn
+./target/release/brut lineage runs/cnn <kandidaten-id>
+```
+
+`--models` wählt die Modellarten eines Laufs: `mlp` (Standard) züchtet nur MLPs
+wie bisher, `cnn` nur CNNs und `both` beide nebeneinander. CNNs brauchen eine
+Aufgabe mit Bildern oder Folgen:
+
+| Aufgabe | Eingabe | Ausgabe |
+|---|---|---|
+| `shapes` | 16x16 Bild einer Form: Quadrat, Kreis, Dreieck oder Kreuz | 4 Klassen |
+| `bars-and-stripes` | 16x16 Bild aus Zeilen oder aus Spalten | 2 Klassen |
+| `blob-count` | 16x16 Bild mit 1 bis 4 Flecken | 4 Klassen |
+| `mirror-symmetry` | 16x16 Bild, spiegelsymmetrisch oder nicht | 2 Klassen |
+| `motif-1d` | Folge von 64 Zeichen aus 4, je Zeichen ein Kanal | 2 Klassen: Motiv enthalten oder nicht |
+| `mirror-grid` | 8x8 Raster | sein Spiegelbild, 64 Werte, bewertet mit R² |
+
+Ein MLP liest dieselben Daten als flachen Vektor. Für einen Lauf mit CNNs schreibt
+`brut init` einen kleineren Lauf: 8 Zufallsgenome, 8 Kinder je Generation, 5
+Generationen und höchstens eine Stunde Laufzeit, da ein CNN Sekunden trainiert, wo
+ein MLP Millisekunden braucht. Ein MLP-Lauf bleibt Byte für Byte, wie er vor den
+CNNs war; das prüft `tests/mlp_golden.rs` mit unveränderten Fixtures.
+
+### Familien und Basismodelle
+
+Die 16 Familien sind LeNet-5, AlexNet, VGG, GoogLeNet, ResNet, DenseNet, Xception,
+MobileNet, MobileNetV2, ShuffleNet, SqueezeNet, SENet, ConvNeXt, U-Net, Dilated CNN
+und TCN; ihre Quellen nennt die Spezifikation `.scratch/cnn-basismodelle/spec.md`.
+Jede Familie hat ein verkleinertes Basismodell, welches in die Standardgrenzen
+passt (höchstens 20 000 Parameter und 2 · 10¹⁰ Trainings-FLOPs). Es behält den
+Baustein seiner Familie, nicht die Größe des veröffentlichten Netzes.
+
+Generation 0 eines Laufs mit CNNs enthält jedes Basismodell, welches die
+Formprüfung auf der Aufgabe des Laufs besteht, vor den Zufallsgenomen. Auf einer
+Folgenaufgabe tritt ein 2-D-Basismodell als 1-D-Zwilling an: gleiche Gene, jeder
+Kern entlang der Folge. Ein Basismodell, das nicht passt, bleibt mit einer Zeile im
+Archiv draußen.
+
+| Aufgaben | Basismodelle in Generation 0, Standardgrenzen |
+|---|---|
+| die vier Bildaufgaben | 14: alle außer TCN (braucht eine Folge) und U-Net (braucht eine Rasterausgabe) |
+| `motif-1d` | 15: TCN und die 14 Zwillinge der 2-D-Basismodelle |
+| `mirror-grid` | 3: U-Net, ResNet und SqueezeNet |
+
+### Mutation und Kreuzung
+
+Ein Kind eines CNN erhält genau einen Operator, gleichverteilt gezogen, wie bei
+Real et al. 2017 (ICML):
+
+| Operator | Änderung |
+|---|---|
+| `family` | die Familie (Bausteinart) einer Stufe |
+| `insert-stage`, `remove-stage` | eine Stufe mehr oder weniger |
+| `width`, `kernel`, `stride`, `dilation`, `groups` | Breite, Kern oder Schrittweite einer Stufe oder des Stems; Dilatation oder Gruppen einer Stufe |
+| `se`, `residual` | Squeeze-and-Excitation oder Abkürzung einer Stufe an oder aus |
+| `norm`, `downsampling`, `activation` | Normierung, Art der Verkleinerung oder Aktivierung |
+| `head`, `head-layers` | der Kopf und seine dichten Schichten |
+| `training` | die Trainingsgene wie Lernrate und Epochen, wie bei einem MLP |
+
+Die letzten zwei Zeilen, also `head`, `head-layers` und `training`, gehen über die
+Liste der Spezifikation hinaus, damit sich jedes Gen ändern kann. Ein Kind, welches die
+Formprüfung nicht besteht oder die Architektur seines Elters behält, wird neu gezogen,
+bis zu 16-mal; dann kommt der nächste Operator. Wir messen 10 000 Ziehungen je
+Operator: Jedes Kind war gültig, und 74 bis 100 % der Ziehungen ergaben eines
+(`every_operator_keeps_the_genome_valid_on_10_000_draws`).
+
+Zwei CNN-Eltern tauschen ganze Stufen dort, wo ihre Auflösungen übereinstimmen.
+Das Kind behält den Stem und die äußeren Stufen des einen Elters und setzt eine
+Folge von Stufen des anderen dazwischen, welche bei derselben Auflösung beginnt und
+endet. Endet das Kind mit dem Schluss des anderen Elters, übernimmt es auch dessen
+Kopf. Wir messen auf `shapes` die 182 geordneten Paare der Basismodelle verschiedener
+Familien: 172 davon tauschen Stufen. Die übrigen 10 paaren MobileNetV2, dessen Stem sofort
+auf 4x4 verkleinert, mit fünf Familien, deren Kinder das Zeitbudget überschreiten
+oder keine Auflösung mit ihm teilen. Ein solches Paar gibt ein Kind mit der
+Architektur eines Elters und den Trainingsgenen beider.
+
+Das Archiv nennt, wie jedes Kind entstand: `base-model/resnet` für ein
+Basismodell, `cnn-mutator-v1/insert-stage` für einen Operator,
+`cnn-mutator-v1/crossover` für getauschte Stufen. Ein Kind trainiert von vorn,
+mit den Gewichten seines eigenen Seeds; es erbt keine Gewichte.
+
+### Demolauf mit CNNs
+
+Wir messen einen Lauf mit den Werten von `brut init runs/cnn --models cnn --seed 1`
+(Formenbilder, Release-Build, `RAYON_NUM_THREADS=2` auf 4 Kernen, mit verdeckter
+Bewertung):
+
+| Größe | Wert |
+|---|---|
+| Kandidaten | 62: 14 Basismodelle, 8 Zufalls-CNNs, 40 Kinder in 5 Generationen |
+| Status | alle 62 bis zum Ende trainiert, keiner von der Uhr gestoppt |
+| Validierungswert der Basismodelle | 0.670 (LeNet-5) bis 0.939 (DenseNet); Zufall 0.25 |
+| bester Validierungswert der Zufalls-CNNs | 0.573 |
+| Median je Generation | 0.728 in Generation 0, 0.791 bis 0.828 in den Generationen 1 bis 5 |
+| Mischformen | 16 der 40 Kinder und 4 der 8 Zufalls-CNNs haben Stufen aus mehreren Familien; die gemeinsame Stufe `plain` von LeNet-5, AlexNet, VGG und Dilated CNN zählt als eine |
+| Laufzeit | 68.6 s; mit einem Thread und ohne verdeckte Bewertung 2 min 9 s |
+| Geschätzte Rechenarbeit | 3.8 · 10¹¹ FLOPs |
+
+Die drei besten nach Fitness, welche die verdeckte Bewertung erhielt (auf 0.01
+abgerundet):
+
+| Kandidat | Herkunft | Valid | Verdeckt | Abstand |
+|---|---|---|---|---|
+| `784227392e754f63` | Basismodell DenseNet | 0.939 | 0.93 | +0.009 |
+| `4ea1fec7699a4627` | Generation 5, Operator `head` | 0.934 | 0.94 | −0.006 |
+| `bebb51cdbc9bcf2c` | Generation 4, Kreuzung | 0.929 | 0.92 | +0.009 |
+
+Das zweite ist eine Mischform: der Stem und die zwei Inception-Blöcke von GoogLeNet,
+dann eine 3x3-Stufe von VGG mit Max-Pooling, globales Mittel-Pooling und eine
+dichte Schicht von 32. Es entstand aus einer Kreuzung des GoogLeNet-Basismodells mit
+einem Nachfahren einer Kreuzung von VGG und ShuffleNet; danach tauschte der
+Operator `head` das Flachlegen gegen das Mittel-Pooling. Unter den 40 Kindern kamen
+10 aus Kreuzungen, 5 aus `downsampling`, 4 aus `kernel`, je 3 aus `groups`, `head`,
+`se` und `width`, je 2 aus `head-layers`, `norm` und `residual` und je 1 aus
+`activation`, `family` und `remove-stage`.
+
+Kein Kind übertraf in diesem kurzen Lauf das beste Basismodell auf den
+Validierungsdaten. Auf den verdeckten Daten liegt das beste Kind 0.01 darüber, was
+genau eine Rundungsstufe ist. Der Lauf zeigt also, dass Basismodelle, Operatoren und
+Kreuzung zusammen gültige und gute Netze züchten; einen Gewinn durch die Zucht zeigt
+er nicht. Ein zweiter Lauf mit einem Thread und ohne verdeckte Bewertung ergab
+dieselben 62 Kandidaten und dieselben 62 Modelldateien, Byte für Byte. Die
+verdeckten Werte können bei Ihnen anders ausfallen, da `brut init` deren Seed
+zufällig zieht.
+
+### Gewinner befördern
+
+Ein fertiger Lauf gibt seine Gewinner nach oben, als Basismodelle späterer Läufe
+(Ticket 07, ADR 0008). Befördert werden höchstens zwei Modelle, MLPs oder CNNs: die
+zwei besten nach ihrem Wert auf den verdeckten Daten, welche der Lauf beim Züchten nie
+sah. Einen solchen Wert haben nur die Kandidaten der verdeckten Bewertung, also die
+`hidden_eval_top_k` besten nach Fitness (Standard 3). Jedes der zwei geht nur, wenn es
+das beste Basismodell desselben Laufs auf diesen Daten schlägt. Basismodelle eines
+Laufs sind die bekannten Entwürfe seiner Generation 0: die Basismodelle der Familien,
+die beförderten Modelle und die Basisgenome der Konfiguration. Befördern kann nur ein
+Lauf, welcher CNNs züchtet (`--models cnn` oder `both`) oder mit beförderten Modellen
+beginnt (`--promoted`). Ein solcher Lauf bewertet das beste seiner Basismodelle nach
+Fitness zusätzlich verdeckt. Jeder andere Lauf, etwa ein MLP-Lauf wie vor den CNNs,
+behält seine verdeckte Bewertung wie bisher, auch mit Basisgenomen, und befördert nichts.
+Ein Lauf ohne Basismodell hat nichts zu schlagen und befördert ebenfalls nichts.
+
+```sh
+# 1. Die Gewinner eines fertigen Laufs mit verdeckter Bewertung vorbereiten
+./target/release/brut promote runs/cnn --commit "$(git rev-parse HEAD)"
+
+# 2. Den Entwurfs-PR öffnen; ein Mensch prüft und führt ihn zusammen
+scripts/propose-pr.sh runs/cnn/promote
+
+# 3. Nach dem Zusammenführen startet ein neuer Lauf mit den beförderten Modellen
+./target/release/brut init runs/cnn2 --models cnn --seed 2 --promoted candidates/models
+./target/release/brut run runs/cnn2
+```
+
+`--commit` nennt den Git-Commit des Codes, welcher den Lauf rechnete. `brut promote`
+prüft nur seine Form: 7 bis 64 Hex-Zeichen in Kleinbuchstaben. Rufen Sie es im
+Wurzelverzeichnis des Repositorys auf, da es `candidates/models/` als Pool liest;
+`--pool` nennt einen anderen. Die Dateien landen unter
+`runs/cnn/promote/candidates/models/<id>.json`. Die Kennung ist der Inhalt: die ersten
+16 Hex-Zeichen des SHA-256 über das kanonische JSON des Genoms. Jede Datei enthält das
+Genom und seine Herkunft: den Lauf (den Hash seines ersten Eintrags), die Aufgabe, den
+Seed, den Commit, die Werte auf den Validierungs- und den verdeckten Daten, das
+geschlagene Basismodell und die Abstammung bis Generation 0.
+
+Ein Modell, welches der Pool schon enthält oder welches einem Basismodell einer Familie
+gleicht, fügt nichts hinzu. Seinen Platz erhält nicht das drittbeste, sodass eine zweite
+Beförderung desselben Laufs nichts Neues bringt. Der PR fügt nur Dateien unter
+`candidates/models/` hinzu. Die CI prüft jede Datei mit `brut-ingest --models`: Sie lehnt
+unbekannte Felder ab, wendet Formprüfung und die aktuellen Standardgrenzen auf die
+Aufgabe der Herkunft an, prüft die Herkunft auf Stimmigkeit und verlangt, dass der
+Dateiname die Kennung ist. Sie liest nur gewöhnliche Dateien bis 16 MiB. Das Skript
+verweigert eine Datei, welche der Zielzweig schon hat. Auch die CI lehnt einen PR ab,
+welcher eine Datei des Zielzweigs ändert oder entfernt. Zusammenführen kann nur ein
+Mensch; der Lauf führt nie etwas zusammen (ADR 0004).
+
+`brut init --promoted` kopiert die Genome des Pools in die Konfiguration des neuen
+Laufs. In Generation 0 stehen sie nach den Basismodellen der Familien und vor den
+Zufallsgenomen, mit dem Erzeuger `promoted`. Ein Modell einer Art, welche der Lauf
+nicht züchtet, oder eines, welches an Formprüfung oder Grenzen des Laufs scheitert,
+bleibt mit einer Zeile im Archiv draußen. Ein befördertes Modell zieht nichts aus dem
+Zufallsstrom, sodass der Lauf aus seinem Seed Byte für Byte gleich bleibt
+(`a_run_with_promoted_models_is_reproducible_byte_for_byte`). Im späteren Lauf ist es
+selbst ein Basismodell: Seine Nachfahren müssen es schlagen, um ihrerseits befördert zu
+werden. Gewichte werden nicht befördert; der neue Lauf trainiert das Genom mit dessen
+Seed auf seinen eigenen Daten.
+
+Wir messen den Weg an drei Läufen auf den Formenbildern: am Demolauf oben
+(Release-Build; wir befördern aus einer Kopie seines Verzeichnisses) und an zwei neuen
+Läufen mit Seed 2, gebaut mit `cargo build` (Profil dev, `opt-level` 2). Alle laufen mit
+`RAYON_NUM_THREADS=2` und verdeckter Bewertung. Ein anderer Prozess lastete die Maschine
+aus, weshalb wir keine Laufzeiten vergleichen. Keine der Beförderungen liegt im Pool; sie
+dienten nur der Messung.
+
+| Lauf | Kandidaten | bestes Basismodell (Valid, verdeckt) | bester Kandidat (Valid, verdeckt) | befördert |
+|---|---|---|---|---|
+| Demolauf oben, Seed 1 | 62 | DenseNet (0.939, 0.93) | DenseNet (0.939, 0.93) | `4ea1fec7699a4627` (0.934, 0.94) |
+| Seed 2 mit `--promoted` | 63 | das beförderte `4ea1fec7699a4627` (0.951, 0.94) | `84d5076ce10aab99` (0.969, 0.97) | zwei Kinder mit je 0.97 verdeckt |
+| Seed 2 ohne `--promoted` | 62 | DenseNet (0.940, 0.95) | `5ffbf573c5b4c630` (0.956, 0.96) | dieses Kind |
+
+- **Beförderung aus dem Demolauf.** Befördert wird die Mischform aus GoogLeNet und VGG
+  von oben. Ihre Abstammung umfasst 7 Kandidaten bis zu den Basismodellen von
+  GoogLeNet, VGG und ShuffleNet. Das zweitbeste nach verdecktem Wert, `bebb51cdbc9bcf2c`
+  mit 0.92, schlägt DenseNet nicht und bleibt draußen. `brut-ingest --models` nimmt die
+  Datei an.
+- **Späterer Lauf mit dem beförderten Modell.** Alle 63 Kandidaten trainierten bis zum
+  Ende. Auf den Daten von Seed 2 übertrifft das beförderte Modell alle 14 Basismodelle
+  der Familien, deren bestes DenseNet mit 0.940 ist. 15 der 40 Kinder stammen von ihm
+  ab, darunter das beste: Es entstand über die Operatoren `downsampling`, eine Kreuzung
+  mit einem Nachfahren von DenseNet und VGG, und `residual` in Generation 5.
+- **Derselbe Lauf ohne das beförderte Modell.** Der beste Kandidat entsteht in
+  Generation 1 aus dem VGG-Basismodell, danach kein besserer mehr.
+
+Das ist ein einziges Paar von Läufen. Es zeigt, dass der Weg trägt: Ein befördertes
+Modell tritt in Generation 0 an, wird Elter, und der spätere Lauf befördert seine
+besseren Nachfahren. Ob beförderte Modelle spätere Läufe im Mittel verbessern, zeigt es
+nicht. Die verdeckten Werte der beiden Läufe mit Seed 2 stammen von verschiedenen
+geheimen Seeds, da `brut init` je Lauf einen zieht; vergleichbar sind nur die
+Validierungswerte.
+
+### Grenzen der CNN-Modelle
+
+- **Kleine Modelle.** Die Basismodelle sind verkleinert; sie messen sich an 16x16
+  Bildern, nicht an ImageNet.
+- **Zeitmodell eines Rechners.** Die Schätzung der Trainingszeit stammt von einem
+  Rechner bei einem Thread. Ein langsamerer oder ausgelasteter Rechner kann die Uhr
+  erreichen (`max_candidate_seconds`, 30 s); dann markiert der Lauf den Kandidaten,
+  und seine Bits hängen von der Last ab.
+- **Gleiche Bits nur auf einem Rechner.** Gleicher Seed, gleiche Dateien bei jeder
+  Thread-Zahl; ein anderer Prozessor kann andere Bits liefern (ADR 0007).
+- **Ungetunte Zwillinge.** Die 1-D-Zwillinge auf `motif-1d` sind nicht abgestimmt,
+  und kein Test verlangt, dass sie lernen.
+- **Platzhalter für ARC.** `mirror-grid` ist eine Regression mit R²; die ARC-Raster
+  mit einer Farbklasse je Zelle folgen in Ticket 06.
+- **Keine Gewichtsvererbung.** Jedes Kind lernt von vorn. Das kostet Rechenzeit,
+  hält aber die Läufe einfach reproduzierbar.
+- **Beförderung nach einem Lauf.** Ob ein Modell befördert wird, entscheidet sein
+  verdeckter Wert in einem einzigen Lauf, auf 0.01 abgerundet. Ein Vorsprung von einer
+  Rundungsstufe kann Zufall sein; erst spätere Läufe zeigen, ob das Modell als
+  Basismodell trägt.
+- **Commit von Hand.** `brut promote` prüft nur die Form des Commits. Wurde der Lauf
+  aus einem Arbeitsbaum mit ungesicherten Änderungen gerechnet, gibt es keinen
+  passenden Commit.
+- **Erstes befördertes MLP.** Ein Lauf nur mit MLPs befördert nur, wenn er mit
+  beförderten Modellen beginnt. Das erste beförderte MLP kommt daher aus einem Lauf
+  beider Arten, also von einer Bild- oder Folgenaufgabe.
 
 ## Lerner-Modus (Stufe 1)
 
@@ -808,15 +1086,16 @@ Fassung:
 
 | Komponente | Aufgabe | Dateien |
 |---|---|---|
-| 1. Variantengenerator | erzeugt neue Genome durch Mutation und Kreuzung | `src/genome.rs`, `src/variation.rs` |
+| 1. Variantengenerator | erzeugt neue Genome durch Mutation und Kreuzung | `src/genome.rs`, `src/variation.rs`, `src/cnn/variation.rs` |
 | 2. Aufgabenumgebung | erzeugt die künstlichen Datensätze (Train, Valid, Hidden) | `src/task.rs` |
 | 3. Bewertung | misst Genauigkeit oder R², berechnet die Fitness | `src/score.rs` |
-| 4. Training | trainiert ein Netz mit festen Grenzen | `src/nn.rs`, `src/train.rs` |
+| 4. Training | trainiert ein Netz mit festen Grenzen | `src/nn.rs`, `src/train.rs`, `src/cnn/` |
 | 5. Verdeckte Bewertung | testet die besten Modelle auf geheimen Daten | `src/hidden_eval.rs`, `src/bin/brut-eval.rs` |
 | 6. Abstammungsarchiv | speichert alles in einer Hash-Kette, mit Anker | `src/archive.rs` |
 
 Dazu kommen: `src/config.rs` (Einstellungen und Grenzen), `src/safety.rs`
-(Not-Aus, Budgets), `src/evolve.rs` (die Hauptschleife), `src/util.rs`
+(Not-Aus, Budgets), `src/evolve.rs` (die Hauptschleife), `src/promote.rs` und
+`src/hitl.rs` (Beförderung der Gewinner und Prüfung des Pools), `src/util.rs`
 (Hilfsfunktionen) und `src/main.rs` (Kommandozeile `brut`).
 
 Bausteine des Lerner-Modus:
@@ -915,7 +1194,7 @@ Mehr dazu, und welche Lücken es gibt, steht in
 
 ## Grenzen
 
-- Nur kleine MLPs, nur CPU, nur künstliche Aufgaben.
+- Nur kleine MLPs und CNNs, nur CPU, nur künstliche Aufgaben.
 - Die Prozesstrennung ist keine echte Sicherheitsgrenze. Wer unter demselben
   Benutzerkonto arbeitet, kann die geheime Datei lesen.
 - Die Aufgabe `parity` hat nur 256 verschiedene Eingaben. Trainings-,
@@ -951,6 +1230,8 @@ runs/spirals/
 ├── archive.jsonl        Abstammungsarchiv (eine JSON-Zeile je Eintrag, Hash-Kette)
 ├── archive.head         Anker: Zahl der Einträge und Hash des letzten Eintrags
 ├── models/<id>.json     trainierte Modelle mit Status Ok (oder später Quarantined)
+├── promote/             nur nach brut promote: die beförderten Modelle unter
+│                        candidates/models/ und proposal.json für den PR
 ├── STOP                 Not-Aus (nur wenn gesetzt)
 └── secret/              nur für brut-eval (Ordner 0700)
     ├── hidden.env       geheimer Seed der Testdaten (Datei 0600)

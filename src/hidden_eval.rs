@@ -1097,31 +1097,43 @@ mod tests {
             model_path: path.to_path_buf(),
             task: TaskKind::Shapes,
         };
-        let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
+        let mut ev = HiddenEvaluator::open(&secret, 20, 0.01).expect("open");
         let resp = ev.evaluate(&req(&good_path)).expect("a valid CNN file");
 
         assert!((0.0..=1.0).contains(&resp.hidden_primary));
         assert_eq!(resp.queries_used, 1);
 
-        // Base models of the blocks of ticket 03 score as well, each for one query: skip
-        // connections, a bottleneck, separable blocks, inverted residuals and
-        // squeeze-and-excitation.
+        // Base models of the blocks of tickets 03 and 04 score as well, each on its task for
+        // one query: skip connections, a bottleneck, separable blocks, inverted residuals,
+        // squeeze-and-excitation, the joins of Inception, DenseNet and SqueezeNet, the
+        // channel shuffle, ConvNeXt, causal convolutions along a sequence, and a decoder with
+        // the per-cell head on a grid.
         let families = [
             Family::ResNet,
             Family::Xception,
             Family::MobileNetV2,
             Family::SeNet,
+            Family::GoogLeNet,
+            Family::DenseNet,
+            Family::ShuffleNet,
+            Family::SqueezeNet,
+            Family::ConvNeXt,
+            Family::Tcn,
+            Family::UNet,
         ];
 
         for (i, family) in families.into_iter().enumerate() {
+            let task = family.task();
             let genome = family.base_model();
-            let model = crate::cnn::model::testing::untrained(&genome, &spec, 2);
+            let model = crate::cnn::model::testing::untrained(&genome, &task.spec(), 2);
             let path = models.join(format!("{}.json", family.name()));
 
             std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
                 .expect("write");
 
-            let resp = ev.evaluate(&req(&path)).expect("a base model file");
+            let resp = ev
+                .evaluate(&EvalRequest { task, ..req(&path) })
+                .expect("a base model file");
 
             assert!(
                 (0.0..=1.0).contains(&resp.hidden_primary),
@@ -1268,7 +1280,10 @@ mod tests {
         }
 
         // None of the refused files cost a query.
-        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 6);
+        assert_eq!(
+            ev.evaluate(&req(&good_path)).expect("eval").queries_used,
+            13
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

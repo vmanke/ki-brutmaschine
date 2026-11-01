@@ -11,7 +11,7 @@ A candidate learning algorithm: three small programs (Setup, Predict, Learn) wri
 _Avoid_: agent, model, candidate (in learner mode)
 
 **Candidate**:
-In MLP mode, one network description (layers and training settings) that gets trained and scored.
+In MLP mode, one network description (an MLP or a CNN, with its training settings) that gets trained and scored.
 _Avoid_: learner (in MLP mode), individual
 
 **DSL**:
@@ -21,6 +21,40 @@ _Avoid_: language, code
 **Seed program**:
 One of the hand-written Learners the search starts from.
 _Avoid_: seed (alone; means a random-number seed)
+
+### CNNs in MLP mode
+
+**Model kind**:
+Whether a Candidate's network is an MLP or a CNN. A Run breeds one kind or both, as `--models mlp`, `cnn` or `both` sets; MLP is the default, and MLP Runs behave as before CNNs.
+_Avoid_: model type, architecture (alone)
+
+**CNN**:
+A Candidate whose network is convolutional: a stem, one to twelve CNN stages and a head, trained through candle.
+_Avoid_: ConvNet, conv model
+
+**CNN stage**:
+One block of a CNN after its stem, with its block kind, width, kernel, stride, dilation, groups, options, normalization and activation.
+_Avoid_: Stage (alone; that is part of a Cascade), layer
+
+**CNN family**:
+One of the 16 published designs that the CNN genome covers, such as ResNet or U-Net; a CNN stage belongs to the family of its block kind, and a CNN whose stages come from several families is a mixed form.
+_Avoid_: family (alone; Task family means Learner tasks), architecture
+
+**Base model**:
+A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion.
+_Avoid_: seed, seed program (that is a Learner), template
+
+**Shape check**:
+The check every CNN passes before it trains: its shapes fit the task, and its parameters, training FLOPs and estimated training time fit the Limits. A child that fails it is drawn again.
+_Avoid_: validation (alone; Valid is a split), compile
+
+**Time model**:
+The estimate of a CNN's training time from its layers; the Shape check holds it to the time that `max_train_flops` buys at 1 GFLOP/s, so that the FLOP limit, not the clock, ends a training.
+_Avoid_: benchmark, timing
+
+**Operator**:
+One kind of change the random mutator makes to a CNN, such as switching the CNN family of a CNN stage or inserting one; each child of one CNN gets exactly one, named in the archive.
+_Avoid_: mutation operator, mutation (alone; a mutation applies one Operator)
 
 ### How Learners are made
 
@@ -147,7 +181,7 @@ Puzzles unseen during breeding, on which only finalists and seed Cascades are sc
 _Avoid_: test set, hidden panel
 
 **Promotion**:
-Moving the two best finalist Cascades of a Run into `candidates/cascades/` through a human-reviewed draft pull request.
+Moving the winners of a finished Run into the candidate pool through a human-reviewed draft pull request: the two best finalist Cascades into `candidates/cascades/`; or, in MLP mode and from a Run that breeds CNNs or holds promoted models, of the two best models (MLPs or CNNs) by hidden score those that beat the Run's best Base model on the hidden split, each with its provenance, into `candidates/models/`. A model equal by content to one in the pool adds nothing. Later Runs take the merged models into generation 0 as Base models.
 _Avoid_: deploy, release, merge (the human merges, not the Run)
 
 ### LLMs using CNNs (planned)

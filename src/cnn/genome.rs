@@ -659,7 +659,8 @@ pub(crate) mod testing {
     }
 
     /// Small genomes for every block kind and both options, each with the task it fits and
-    /// a name: first those of ticket 03, then those of ticket 04 (`family_b_genomes`). The
+    /// a name: first those of ticket 03, then those of ticket 04 (`family_b_genomes`), then
+    /// two that pool the output of a batch norm directly (`pooled_norm_genomes`). The
     /// 2-D ones on images start with a stem of 8 channels and batch norm that pools a 1 x 16
     /// x 16 image to 8x8, and end with global average pooling and a dense layer to the
     /// classes. Together they cover the identity and both projection shortcuts (by a strided
@@ -823,8 +824,63 @@ pub(crate) mod testing {
         ];
 
         genomes.extend(family_b_genomes());
+        genomes.extend(pooled_norm_genomes());
 
         genomes
+    }
+
+    /// Inverted residuals that downsample by pooling and have no option. Such a block ends
+    /// with a norm and no activation, so its pooling reads the output of the norm directly.
+    /// In training mode a batch norm gives a transposed view there, which the strided
+    /// pooling of `cnn::ops` must accept.
+    fn pooled_norm_genomes() -> Vec<(&'static str, TaskKind, Genome)> {
+        let relu6 = CnnActivation::Relu6;
+        let pooled = |down: Downsample| Stage {
+            stride: 2,
+            down,
+            norm: Norm::Batch,
+            ..stage(Block::InvertedResidual, 8, 3, relu6)
+        };
+        let stem = |kernel: usize, stride: usize| Stem {
+            width: 8,
+            kernel,
+            stride,
+            down: Downsample::MaxPool,
+            norm: Norm::Batch,
+            activation: CnnActivation::Relu,
+        };
+        let with_epochs = |cnn: CnnGenome| {
+            let mut g = genome(cnn, Vec::new(), Activation::Relu);
+
+            g.epochs = 5;
+
+            g
+        };
+
+        // At 8x8 the first was estimated at 26 s for 5 epochs, above the time budget of 20 s,
+        // so its stem pools to 4x4.
+        vec![
+            (
+                "an inverted residual that downsamples by max pooling, without options",
+                TaskKind::Shapes,
+                with_epochs(CnnGenome {
+                    dims: Dims::TwoD,
+                    stem: stem(3, 4),
+                    stages: vec![pooled(Downsample::MaxPool)],
+                    head: Head::GlobalAvgPool,
+                }),
+            ),
+            (
+                "1-D inverted residuals that downsample by max and by average pooling",
+                TaskKind::Motif1d,
+                with_epochs(CnnGenome {
+                    dims: Dims::OneD,
+                    stem: stem(5, 2),
+                    stages: vec![pooled(Downsample::MaxPool), pooled(Downsample::AvgPool)],
+                    head: Head::GlobalAvgPool,
+                }),
+            ),
+        ]
     }
 
     /// The block genomes of ticket 04, one or more per block kind of that ticket. The 2-D

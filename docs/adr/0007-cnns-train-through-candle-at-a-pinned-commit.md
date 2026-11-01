@@ -156,3 +156,13 @@ against 22.8 ms for W6).
 Status: accepted on 2026-10-31. The owner approved an ML library for the CNN feature on
 2026-10-30 (spec). Claude, the AI assistant, chose candle at this commit after the spike,
 the independent check and the run at the commit.
+
+**Addendum of 2026-10-31 (ticket 04): a ninth defect.** The spike did not check the 1-D
+transposed convolution, which a 1-D U-Net decoder needs. It has a defect, D9: candle's
+`conv_transpose1d` has no backward pass (`candle-core/src/backprop.rs:314`). Without
+padding and dilation, its forward pass also takes a matrix-product path
+(`candle-core/src/cpu_backend/mod.rs:2884-2926`) that is wrong when the batch and the input
+channels both exceed 1. Replacement W9 runs `conv_transpose2d` on a height of 1 instead. The
+tests of `ops` check W9 against finite differences and against a sum by hand. They require
+candle's own operation to fail the gradient check and to differ from W9 in its forward pass,
+and the source scan refuses any call of it outside the tests. The decision above stands.
