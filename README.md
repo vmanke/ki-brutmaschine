@@ -25,8 +25,9 @@ The German README covers the MLP mode in detail. A run there (`brut init`, then 
 with the default values:
 
 - **Population:** 16 random candidates in generation 0, then 16 new children per generation
-  for 30 generations. A child comes from crossover of two parents with 25 % probability,
-  otherwise from mutating one parent.
+  for 30 generations. With 25 % probability, a child attempts crossover: two parents are
+  sampled with replacement, and if the same parent is drawn twice, the attempt falls back to
+  mutation. Otherwise, a child mutates one parent.
 - **Representation:** A candidate is a genome, the description of a network (MLP or CNN)
   with its training settings. In learner mode it is a short learning program (`Setup`,
   `Predict`, `Learn`) instead.

@@ -130,8 +130,9 @@ Stand: 2026-10-31.
 Ein Lauf im MLP-Modus (`brut init` und `brut run`, siehe Schnellstart) mit den Standardwerten:
 
 - **Population:** 16 zufällige Kandidaten in Generation 0, danach 16 neue Kinder je
-  Generation, 30 Generationen. Ein Kind entsteht mit 25 % Wahrscheinlichkeit durch Kreuzung
-  zweier Eltern, sonst durch Mutation eines Elters.
+  Generation, 30 Generationen. Mit 25 % Wahrscheinlichkeit wird eine Kreuzung versucht:
+  Die Eltern werden mit Zurücklegen gezogen. Wird zweimal derselbe Elter gewählt, fällt der
+  Versuch auf Mutation zurück. Sonst entsteht das Kind durch Mutation eines Elters.
 - **Darstellung:** Ein Kandidat ist ein Genom, also die Beschreibung eines Netzes (MLP oder
   CNN) samt Trainingseinstellungen. Im Lerner-Modus ist er stattdessen ein kurzes
   Lernprogramm (`Setup`, `Predict`, `Learn`).
