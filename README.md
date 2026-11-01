@@ -60,7 +60,7 @@ Stand: 2026-10-31.
 - **CNNs, Teil 1 (PR #24).** Die Bibliothek candle, das CNN-Genom und Bildaufgaben (Tickets
   01 und 02; [Spezifikation](.scratch/cnn-basismodelle/spec.md),
   [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
-- **CNNs, Teil 2 (PR #27, #32 und dieser PR).** Die Tickets 03, 04, 05 und 07: die 16
+- **CNNs, Teil 2 (PR #27, #32 und #43).** Die Tickets 03, 04, 05 und 07: die 16
   Familien mit je einem Basismodell, die Mutationsoperatoren und die Kreuzung, die
   Basismodelle in Generation 0 eines Laufs, die Kommandozeile und die Beförderung der
   Gewinner

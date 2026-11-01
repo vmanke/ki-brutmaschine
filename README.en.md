@@ -31,7 +31,7 @@ Status on 2026-10-31.
 - **CNNs, part 1 (PR #24).** The library candle, the CNN genome and image tasks (tickets 01
   and 02; [spec](.scratch/cnn-basismodelle/spec.md),
   [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md)).
-- **CNNs, part 2 (PR #27, #32 and this PR).** Tickets 03, 04, 05 and 07: the 16 families
+- **CNNs, part 2 (PR #27, #32 and #43).** Tickets 03, 04, 05 and 07: the 16 families
   with one base model each, the mutation operators and the crossover, the base models in
   generation 0 of a run, the command line and the promotion of winners
   ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
