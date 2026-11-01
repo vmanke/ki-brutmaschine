@@ -786,8 +786,9 @@ Zusatz: Für jeden Tag `ollama:<modell>` in der Erlaubnisliste baut es einen Bac
 Dieser spricht nur mit einer Loopback-Adresse, kennt eine eigene Modellliste, eine
 Zeitgrenze und eine Bytegrenze. Jeder Worker-Aufruf landet samt voller Antwort in
 `<out>/llm/worker-calls.jsonl`, und ein Fortsetzen spielt ihn ab, statt das Modell neu
-zu fragen (Vertrag I7). Zugelassen sind vorerst nur Modelle ohne Denkmodus
-(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`).
+zu fragen (Vertrag I7). Über Ollama sind nur Modelle ohne Denkmodus zugelassen
+(`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`); das Denkmodell
+`qwen3.8-27b` läuft über vLLM (unten).
 
 ```sh
 ollama pull qwen2.5:7b
@@ -813,6 +814,52 @@ VLLM_USE_FLASHINFER_SAMPLER=0 vllm serve Qwen/Qwen2.5-32B-Instruct --host 127.0.
 stellen den Server und die Zeitgrenze ein. Der Live-Test:
 `cd backend-ollama && OLLAMA_LIVE=1 cargo test --release -- --ignored live`.
 
+**Denkmodell `vllm:qwen3.8-27b`.** Als einziges Modell mit Denkmodus steht Qwen3.8-27B
+auf der Erlaubnisliste von `vllm:`. Der Server muss es mit dem Reasoning-Parser
+anbieten, damit Denktext und sichtbare Antwort getrennt zurückkommen:
+
+```sh
+vllm serve Qwen/Qwen3.8-27B --host 127.0.0.1 --port 8000 --served-model-name qwen3.8-27b \
+  --reasoning-parser qwen3 --max-model-len 32768 --limit-mm-per-prompt '{"image": 0, "video": 0}'
+# in config.json: "models": [{"tag": "vllm:qwen3.8-27b", "cost_per_call": 0.002}]
+```
+
+Der Worker-Trait `think_tokens` wählt den Denkmodus nach Vertrag I5. Die Schwellen stehen
+nur im Adapter (`backend-ollama/src/vllm.rs`, `EFFORT_LOW_MAX` und `EFFORT_MEDIUM_MAX`):
+
+| think_tokens | Denkmodus | reasoning_effort | max_tokens an den Server |
+|---|---|---|---|
+| 0 | aus (`enable_thinking: false`) | keiner | answer_tokens |
+| 1 bis 2048 | an | low | answer_tokens + think_tokens |
+| 2049 bis 3072 | an | medium | answer_tokens + think_tokens |
+| 3073 bis 4096 | an | xhigh | answer_tokens + think_tokens |
+
+Die Schwellen beruhen auf einer Probe, welche wir am 31. Oktober 2026 ohne Kappung
+gemessen haben: sechs Aufrufe auf einem Rätsel mit 3x5-Gitter, zwei Worker-Prompts, je
+Stufe zwei Aufrufe. Das Modell dachte bei `low` 1921 und 2457 Token, bei `medium` 2079
+und 3391, bei `xhigh` 2901 und 4990. Unter etwa 1900 Token passt somit keine Stufe,
+weshalb `low` als kürzeste alle Budgets bis 2048 erhält. Darüber erhält jede Stufe das
+Band, dessen Obergrenze sie in einem der zwei Aufrufe einhielt. Auf den Zweierpotenzen,
+welche ThinkUp und ThinkDown durchlaufen, springt der Schritt von 2048 auf 4096 also von
+`low` direkt auf `xhigh`; `medium` erreichen nur Budgets dazwischen. Sechs Aufrufe sind
+ein erster Ansatz und keine Messung; wir passen die Schwellen an, sobald die ersten Läufe
+vorliegen. In derselben Probe schrieb das Modell bei `low` und `medium` 348 bis 613 Token
+sichtbare Antwort, bei `xhigh` 35 Token, was bei `answer_tokens` 512 zählt.
+
+`max_tokens` begrenzt nur die Summe. Jeden Teil prüft der Adapter einzeln: Eine sichtbare
+Antwort über `answer_tokens`, ein Denkteil über `think_tokens` oder ein `finish_reason`
+`length` ergeben `StopReason::Length`, sodass der Lauf die Antwort nicht wertet. Die
+Tokenzahlen meldet vLLM 0.32 selbst (`usage.completion_tokens_details.reasoning_tokens`).
+Fehlen sie, schätzt der Adapter beide Teile nach Leerzeichen-Wörtern und vermerkt die
+Schätzung; sie zählt zu wenig, in der Probe 0.36 bis 0.48 Wörter je Token. Der Worker
+erhält nur die sichtbare Antwort. Denktext, beide Tokenzahlen, Stufe und den Vermerk
+`estimated` legt der Adapter im Feld `thinking` von `<out>/llm/worker-calls.jsonl` neben
+jeden Aufruf. Die Sampling-Parameter folgen der Modellkarte: mit Denken top_p 0.95 und
+top_k 20, ohne Denken top_p 0.8, top_k 20 und presence_penalty 1.5; die Temperatur kommt
+stets vom Worker. Für die Modelle `qwen2.5-*` bleibt die Anfrage Byte für Byte wie
+bisher. Der Live-Test:
+`cd backend-ollama && VLLM_THINK_LIVE=1 cargo test --release -- --ignored live_think --nocapture`.
+
 Die ersten drei Läufe auf einer H200 (`qwen2.5:7b` und `qwen2.5:32b`, 2704
 Worker-Aufrufe) fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
 zusammen. Kurz: Die Maschine läuft mit echten Modellen, ein Zuchtgewinn ist bei
@@ -827,6 +874,37 @@ Liegen die Antworten mit `--llm-answers <ordner>` woanders, geben Sie die Option
 beim Fortsetzen an. Exit-Codes: 0 = fertig oder sauber angehalten, 1 = Fehler,
 2 = falsche Bedienung (auch: ein anderer Prozess hält das Lauf-Verzeichnis),
 3 = wartet auf LLM-Antworten.
+
+Statt einer Person kann ein lokales Modell die Anfragen beantworten. `brut-mutator`
+(ebenfalls in `backend-ollama`) schickt jede offene Anfrage unverändert an das Modell
+des Tags und schreibt dessen Antworttext als `<lauf>/llm/answers/<schlüssel>.txt`. Jeder
+Aufruf landet samt voller Antwort in `<lauf>/llm/mutator-calls.jsonl`, ein gescheiterter
+in `mutator-errors.jsonl`. Eine wiederholte Runde spielt die Aufzeichnung ab, statt das
+Modell neu zu fragen (ADR 0002). Eine vorhandene Antwort überschreibt das Programm nie,
+und es liest und schreibt nur innerhalb des Lauf-Verzeichnisses; ein `--llm-answers`
+außerhalb lehnt es ab. Ob eine Antwort eine gültige Kaskade ist, prüft wie bisher der
+Kern beim Fortsetzen. Das Skript `run-with-mutator.sh` wiederholt Zucht, Antworten und
+Fortsetzen, bis der Lauf fertig ist:
+
+```sh
+backend-ollama/run-with-mutator.sh --tag vllm:qwen2.5-32b --max-rounds 20 -- \
+  --out runs/m1 --config config.json --seed 1 --generations 8 --llm-every 2
+```
+
+Das Skript setzt mit `--resume` und denjenigen Optionen fort, welche ein Fortsetzen
+annimmt (`--generations`, `--max-calls`, `--max-seconds`, `--llm-answers`). Es hält an,
+sobald `brut-breed-ollama` mit einem anderen Code als 3 endet (es gibt diesen Code
+weiter), sobald `<lauf>/STOP` existiert (Exit-Code 0), wenn eine Mutator-Runde scheitert
+(1) und nach `--max-rounds` Runden (Vorgabe 20), falls der Lauf dann noch wartet (3).
+`brut-mutator` allein endet mit 0 (alles beantwortet oder sauber angehalten), 1 (ein
+Aufruf scheiterte; die übrigen Antworten bleiben), 2 (falsche Bedienung, Pfad außerhalb
+des Laufs, Sperre belegt) oder 4 (nichts zu beantworten). `--parallel P` (Vorgabe 4)
+schickt P Anfragen zugleich, `--max-requests N` (Vorgabe 64) begrenzt eine Runde. Eine
+Antwort, welche nicht sauber endete (etwa weil sie die Länge `max_tokens` erreichte),
+schreibt es als leere Datei und meldet sie. Der Kern liest jede Antwortdatei als sauber
+beendet; eine leere verwirft er als unbrauchbar und setzt ein zufälliges Kind an ihre
+Stelle, sodass er eine abgeschnittene Antwort nie auswertet. Den vollen Text und den
+tatsächlichen Abbruchgrund behält `mutator-calls.jsonl`.
 
 `--resume` darf nur `--generations`, `--max-calls`, `--max-seconds` und
 `--llm-answers` ändern; alles andere legt das Experiment fest. Vor jeder Generation
@@ -851,6 +929,66 @@ steht in `timings.jsonl`; diese Datei gehört nicht zum geprüften Protokoll.
 `--domain grid` ist die Voreinstellung; `--domain circuits` startet einen Schaltungslauf
 (Schritt 1, unten). `--verify` rechnet den Bericht eines fertigen Laufs ohne Modellaufruf
 aus dem Checkpoint nach, auch seinen Stoppgrund.
+
+### Kontrollarm Mehrheitsvotum bei gleichem Aufwand (`vote-control`)
+
+Ein Vorsprung des besten gezüchteten Finalisten mischt Zucht mit Rechenaufwand, da er
+oft mehr Worker-Aufrufe je Rätsel macht als die Startprogramme
+([docs/STUFE2C_KASKADEN_ZUCHT.md](docs/STUFE2C_KASKADEN_ZUCHT.md), „Nicht rechenmäßig
+abgeglichen“). Das Programm `vote-control` aus `backend-ollama` rechnet dafür den
+Kontrollarm mit gleich vielen Aufrufen: Self-Consistency nach Wang et al. (2022), also
+ein Startprogramm N-mal fragen und das häufigste Gitter nehmen, kostengleich wie in
+arXiv 2606.13003 (Vorabdruck).
+
+- **Startprogramm.** Vorgabe ist der Start-Finalist mit der besten Such-Fitness. Die
+  Wahl liest kein Ergebnis des Auswahl-Panels.
+- **N.** Die mittleren Worker-Aufrufe je Such-Rätsel des Champions (des gezüchteten
+  Finalisten mit der besten Such-Fitness), geteilt durch die des Startprogramms,
+  gerundet, mindestens 1. Bei einem Champion mit 3.18 Aufrufen je Rätsel ist N = 3.
+- **Panel.** Das Programm erzeugt das Auswahl-Panel genau wie die Arena neu und prüft
+  es gegen den Checkpoint und die erste Zeile des Protokolls.
+- **Stimmen.** Jede Stichprobe läuft mit eigenem Seed durch `run_cascade` des Kerns, also
+  mit denselben Prompts und demselben Parser wie im Lauf. Das häufigste Gitter gewinnt,
+  bei Gleichstand das zuerst gesehene. Bewertet wird exakt gegen die verdeckte
+  Testausgabe.
+
+```sh
+# Plan ansehen, ohne Modellaufruf (geht auch bei einem unfertigen Lauf)
+backend-ollama/target/release/vote-control --run runs/q1 --dry-run
+# Kontrollarm rechnen; Ergebnis auf stdout und in runs/q1/vote-control.json
+backend-ollama/target/release/vote-control --run runs/q1
+```
+
+Das Ergebnis nennt je Rätsel die Stimmen, ob das Mehrheitsgitter stimmt und ob
+irgendeine Stichprobe stimmte. Zum Vergleich stehen daneben die Antworten von Champion und
+Startprogramm aus der Auswahlphase des Laufs. Die Summen enthalten die diskordanten Paare
+gegen den Champion mit exaktem Vorzeichentest sowie Aufrufe und Tokens. `--samples N`
+setzt N fest, `--cascade ID` wählt ein anderes Archivmitglied, `--temperature T` setzt
+die Temperatur aller Worker (eine andere Kaskade mit eigener Id), `--puzzles K` rechnet
+als Rauchtest nur die ersten K Rätsel und schreibt keine Datei, `--jobs J` (Vorgabe 16)
+legt die gleichzeitigen Stichproben fest. Echte Modelle laufen über `Recorded` in
+`<run>/vote-control/worker-calls.jsonl`, getrennt vom Protokoll des Laufs. Eine
+Wiederholung spielt sie ab, und ein größeres N nutzt die Stichproben eines kleineren mit.
+Exit-Code 2 heißt falsche Bedienung, auch bei einem unfertigen Lauf.
+
+- **Gescheiterte Aufrufe.** Ein gescheiterter Aufruf zählt als Enthaltung, steht in
+  `worker-errors.jsonl` daneben und setzt den Exit-Code 1; ein erneuter Aufruf holt ihn
+  nach. Das gilt auch für eine Antwort, welche sich nicht ablegen lässt, etwa bei voller
+  Platte. Ein solches Ergebnis ist unvollständig (`complete` ist false) und landet nicht
+  in `vote-control.json`, sondern auf stdout und in `<run>/vote-control/incomplete.json`.
+  Ein früheres vollständiges Ergebnis bleibt so stehen.
+- **Nur gesunde Läufe als Vergleich.** Die Auswahl-Antworten des Laufs sind die
+  Vergleichsbasis, die Stichproben laufen dagegen mit 63-Bit-Seeds und scheitern daran
+  nie. Läufe von vor d79c93f (Seed auf 63 Bit, #40) taugen deshalb nicht als Vergleich,
+  da vLLM dort jeden Aufruf mit einem Seed über i64::MAX ablehnte, also etwa die Hälfte,
+  ohne Eintrag. In `v-dgm-11` messen wir 3475 abgelegte Aufrufe von 6966, und keiner der
+  3475 Seeds liegt über i64::MAX. `vote-control` weist einen solchen Lauf mit Exit-Code 2
+  ab, auch beim `--dry-run`, ebenso einen Lauf mit Einträgen in seinem eigenen
+  `llm/worker-errors.jsonl`. Als alter Lauf gilt, wer ein `vllm:`-Modell erlaubt und in
+  `llm/worker-calls.jsonl` mindestens 32 vLLM-Aufrufe hält, keinen mit Seed über
+  i64::MAX; ein neuer Lauf sieht mit Wahrscheinlichkeit 2^-32 so aus.
+  `--allow-degraded-run` rechnet trotzdem, und Plan und Ergebnis nennen das in
+  `run_failed_calls` und `predates_seed_fix`.
 
 ## Universen, die erfinden (Schritt 1)
 
