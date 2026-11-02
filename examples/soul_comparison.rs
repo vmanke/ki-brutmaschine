@@ -25,7 +25,7 @@
 //! triple at which both claims are decided, and at the latest after N_max triples. A claim
 //! still open then is undecided. Every decision is made in integers.
 //!
-//! It makes a claim only for the counted seeds 1001, 1002, ... in this order and without gaps,
+//! It makes a claim only for the counted seeds 1002, 1003, ... in this order and without gaps,
 //! at most N_max of them, all run with G generations and the call cap M, none ended at the cap.
 //! On the pilot seeds 901 to 923 it gives every number and makes no claim. It refuses a seed
 //! that is neither, a gap in the list, a mixture of pilot and counted seeds, a seed without a
@@ -99,8 +99,9 @@ const PROOF: u32 = 200;
 const FAILURE: u32 = 20;
 
 /// The first counted seed. The counted seeds are FIRST_SEED, FIRST_SEED + 1, ... in this
-/// order, MAX_TRIPLES of them.
-const FIRST_SEED: u64 = 1001;
+/// order, MAX_TRIPLES of them. Seed 1001 is not on the list: a check of the tools in counted
+/// mode ran three short Runs on it before the freeze (ticket 10).
+const FIRST_SEED: u64 = 1002;
 
 /// The pilot seeds of step 2 (ticket 11), which never count.
 const PILOT_SEEDS: RangeInclusive<u64> = 901..=923;
@@ -1302,7 +1303,11 @@ fn load(dir: &Path, arm: Arm, base: &SoulConfig) -> Result<Loaded, String> {
         || !dir.join("rediscovery.json").exists()
     {
         return Err(bad(
-            "the run is not finished; resume it, then run brut-breed --verify on it".to_string(),
+            "the run is not finished; wait until it ends, or, if it was stopped or interrupted, \
+             run it again from scratch on the same seed into a fresh directory (section 7, step \
+             3 of docs/PREREG_STEP2_SOUL.md: a resumed run would differ from a straight one); \
+             then run brut-breed --verify on it"
+                .to_string(),
         ));
     }
 
@@ -2275,7 +2280,7 @@ mod tests {
         assert_eq!(first(None, None), First::Tie);
         assert_eq!(show_first(First::Control, Arm::K), "K first");
 
-        let row = &rows_of(&triples(&[1001], &[[Some(30), None, Some(12)]]))[0];
+        let row = &rows_of(&triples(&[FIRST_SEED], &[[Some(30), None, Some(12)]]))[0];
 
         assert_eq!((row.y_v(), row.y_k()), (First::S, First::Control));
     }
@@ -2321,7 +2326,10 @@ mod tests {
 
         let refused = rows(&all).expect_err("R_seed differs");
 
-        assert!(refused.contains("seed 1002"), "{refused}");
+        assert!(
+            refused.contains(&format!("seed {}", FIRST_SEED + 1)),
+            "{refused}"
+        );
     }
 
     #[test]
@@ -2439,11 +2447,17 @@ mod tests {
         let text = render_rule(&Context::default(), SeedSet::Counted, &all, p34()).expect("render");
 
         assert!(
-            text.contains(" 1015  after the stop, not counted\n"),
+            text.contains(&format!(
+                " {}  after the stop, not counted\n",
+                FIRST_SEED + 14
+            )),
             "{text}"
         );
         assert!(
-            text.contains(" 1016  after the stop, not counted\n"),
+            text.contains(&format!(
+                " {}  after the stop, not counted\n",
+                FIRST_SEED + 15
+            )),
             "{text}"
         );
         assert!(text.contains("The rule stops after triple 14.\n"), "{text}");
@@ -2465,7 +2479,10 @@ mod tests {
         );
         let text = render_rule(&Context::default(), SeedSet::Counted, &all, p34()).expect("render");
 
-        assert!(text.contains("OPEN: run seed 1004 next.\n"), "{text}");
+        assert!(
+            text.contains(&format!("OPEN: run seed {} next.\n", FIRST_SEED + 3)),
+            "{text}"
+        );
         assert!(
             text.contains("The rule goes on after triple 3.\n"),
             "{text}"
@@ -2477,25 +2494,27 @@ mod tests {
     }
 
     #[test]
-    fn the_counted_seeds_run_from_1001_without_gaps() {
-        assert_eq!(check_seeds(&[1001]), Ok(SeedSet::Counted));
+    fn the_counted_seeds_run_from_1002_without_gaps() {
+        assert_eq!(check_seeds(&[1002]), Ok(SeedSet::Counted));
         assert_eq!(check_seeds(&counted(MAX_TRIPLES)), Ok(SeedSet::Counted));
 
         // Pilot seeds alone are accepted, with gaps and in any part of their range.
         assert_eq!(check_seeds(&[901, 902, 912]), Ok(SeedSet::Pilot));
         assert_eq!(check_seeds(&[921, 922, 923]), Ok(SeedSet::Pilot));
 
-        // Refused: a gap, a list that does not start at 1001, a seed off the list, a mixture of
-        // pilot and counted seeds, more than N_max seeds, and no seed.
+        // Refused: a gap, a list that does not start at 1002, a seed off the list (1001 among
+        // them, the seed of the tool check), a mixture of pilot and counted seeds, more than
+        // N_max seeds, and no seed.
         let more: Vec<u64> = (FIRST_SEED..).take(MAX_TRIPLES + 1).collect();
 
         for (seeds, why) in [
-            (vec![1001, 1003], "without gaps"),
-            (vec![1002], "without gaps"),
-            (vec![77, 1001], "not on the list"),
-            (vec![1001, 5000], "not on the list"),
+            (vec![1002, 1004], "without gaps"),
+            (vec![1003], "without gaps"),
+            (vec![1001], "not on the list"),
+            (vec![77, 1002], "not on the list"),
+            (vec![1002, 5000], "not on the list"),
             (vec![924], "not on the list"),
-            (vec![901, 1001], "pilot seeds"),
+            (vec![901, 1002], "pilot seeds"),
             (more, "more than"),
             (vec![], "no seed"),
         ] {
@@ -2538,7 +2557,7 @@ mod tests {
         let ys = vec![('s', 's'); 14];
         let mut all = triples(&counted(14), &outcomes(&ys));
 
-        // Seed 1003: the seed Cascades also solve cz (too many); seed 1005: only swap.
+        // The third seed: the seed Cascades also solve cz (too many); the fifth: only swap.
         for run in &mut all[2].runs {
             *run = found(
                 &["swap", "cs", "cz"],
@@ -2556,7 +2575,7 @@ mod tests {
         assert!(!rows[2].g1() && !rows[4].g1() && rows[0].g1());
         assert_eq!(
             claim(&Context::default(), SeedSet::Counted, &rows, &rule),
-            Claim::Void(vec![1003, 1005])
+            Claim::Void(vec![FIRST_SEED + 2, FIRST_SEED + 4])
         );
 
         let text = render_rule(&Context::default(), SeedSet::Counted, &all, p34()).expect("render");
@@ -2589,7 +2608,7 @@ mod tests {
                 ..Context::default()
             },
             Context {
-                capped: vec![(1001, Arm::K, 500)],
+                capped: vec![(FIRST_SEED, Arm::K, 500)],
                 ..Context::default()
             },
             Context {
@@ -3091,14 +3110,14 @@ mod tests {
             dir
         };
         let (s1, v1, k1) = (
-            run_dir(Arm::S, 1001),
-            run_dir(Arm::V, 1001),
-            run_dir(Arm::K, 1001),
+            run_dir(Arm::S, 1002),
+            run_dir(Arm::V, 1002),
+            run_dir(Arm::K, 1002),
         );
-        let (s2, v2) = (run_dir(Arm::S, 1002), run_dir(Arm::V, 1002));
-        let e3 = run_dir(Arm::E, 1003);
+        let (s2, v2) = (run_dir(Arm::S, 1003), run_dir(Arm::V, 1003));
+        let e3 = run_dir(Arm::E, 1004);
 
-        // Arm K misses seed 1002.
+        // Arm K misses seed 1003.
         let refused = run(arm_args(&[
             (Arm::S, &[&s1, &s2]),
             (Arm::V, &[&v1, &v2]),
@@ -3107,7 +3126,7 @@ mod tests {
         .expect_err("a missing arm");
 
         assert!(
-            refused.contains("seed 1002 has no run in arm K"),
+            refused.contains("seed 1003 has no run in arm K"),
             "{refused}"
         );
 
@@ -3121,7 +3140,7 @@ mod tests {
         .expect_err("an extra seed");
 
         assert!(
-            refused.contains("seed 1003 has no run in arm S"),
+            refused.contains("seed 1004 has no run in arm S"),
             "{refused}"
         );
 
@@ -3134,11 +3153,11 @@ mod tests {
         .expect_err("two runs");
 
         assert!(
-            refused.contains("seed 1001 has two runs in arm S"),
+            refused.contains("seed 1002 has two runs in arm S"),
             "{refused}"
         );
 
-        // The counted seed 1001 alone: the rule goes on, at 2 generations no claim.
+        // The counted seed 1002 alone: the rule goes on, at 2 generations no claim.
         let text = run(arm_args(&[
             (Arm::S, &[&s1]),
             (Arm::V, &[&v1]),

@@ -7,7 +7,11 @@ set -u
 root=$1
 shift
 mkdir -p "$root"
+# Absolute paths, so that the links below also work for relative arguments (a fix after
+# review; the pilot passed absolute paths).
+root=$(cd "$root" && pwd) || exit 1
 for dir in "$@"; do
+  dir=$(cd "$dir" && pwd) || exit 1
   name=$(basename "$dir")
   v=$root/$name
   rm -rf "$v"

@@ -7,7 +7,7 @@ No counted seed has run. The document is frozen only after the owner's approval,
 merge of its pull request, as pull request #19 froze step 1. The frozen commit is the one commit
 that this merge creates on the main branch. A commit cannot hold its own hash, so we record the
 hash with the results. From that commit on nothing below changes, and nothing changes after seed
-1001 has started: a change then makes a new experiment on seeds not used before. Every deviation
+1002 has started: a change then makes a new experiment on seeds not used before. Every deviation
 is reported with the results, with its reason.
 
 **The pilot's finding comes first.** The pilot of ticket 11 finds that this comparison has no
@@ -111,7 +111,7 @@ cap. Teaching is off in all three arms [Q73 d].
 - **G3.** At the frozen commit, Runs without Souls reproduce step 1: the head hash of pilot seed
   101 in `docs/pilot-step1/pilot.json` (the release test `souls_off_reproduces_the_step1_pilot`)
   and the five hashes of A-1 in `docs/step1-counted/hashes.txt`.
-- **G4.** After the first triple, seed 1001 runs again in each arm at 1 and at 4 threads, and the
+- **G4.** After the first triple, seed 1002 runs again in each arm at 1 and at 4 threads, and the
   five files of each Run (`config.json`, `events.jsonl`, `snapshot.json`, `report.json`,
   `rediscovery.json`) are byte-equal to the counted Run's.
 
@@ -128,10 +128,12 @@ every generation). Y_K(s) is the same with T_K. Every comparison is between inte
 ## 6. Seeds
 
 The pilot seeds 901 to 923 of ticket 11 never count, because they chose the design. The counted
-seeds are the fixed list 1001, 1002, ..., in this order, at most N_max of them, with N_max = 120
+seeds are the fixed list 1002, 1003, ..., in this order, at most N_max of them, with N_max = 120
 (proposal). Triple i runs the i-th seed of the list. None of them has been used before: step 1
 used 1 to 130 and its pilot seeds 101 to 110, 201 to 210, 301 to 310, 401 and 402, and step 2
-used 901 to 912 in its pilot. A triple counts once its three Runs are finished.
+used 901 to 912 in its pilot. Seed 1001 is not on the list: a check of the tools in counted mode
+ran three short Runs on it (3 generations) before the freeze (ticket 10). A triple counts once
+its three Runs are finished.
 
 ## 7. Procedure
 
@@ -141,7 +143,7 @@ used 901 to 912 in its pilot. A triple counts once its three Runs are finished.
    (`cargo test --release --test soul -- --ignored souls_off_reproduces_the_step1_pilot`), and
    `cargo test --example soul_comparison`, which holds the tests of the analysis. All must pass.
    Then run A-1 of step 1 again and check its five hashes (gate G3).
-2. Acceptance check, before seed 1001 and not counted, on three triples of the frozen program.
+2. Acceptance check, before seed 1002 and not counted, on three triples of the frozen program.
    If no number of a preset changed after the pilot, these are the pilot triples 901 to 903,
    run again at the frozen commit; their five files must be byte-equal to the pilot's, whose
    hashes `docs/pilot-step2/pilot.json` records. If a number of a preset changed, the frozen
@@ -160,7 +162,7 @@ used 901 to 912 in its pilot. A triple counts once its three Runs are finished.
 
    ```sh
    cargo run --release --example soul_comparison -- \
-     --s runs/S-1001 ... runs/S-s --v runs/V-1001 ... runs/V-s --k runs/K-1001 ... runs/K-s
+     --s runs/S-1002 ... runs/S-s --v runs/V-1002 ... runs/V-s --k runs/K-1002 ... runs/K-s
    ```
 
    It updates the evidence values of section 8 in the order of the list and then names the next
@@ -174,7 +176,7 @@ used 901 to 912 in its pilot. A triple counts once its three Runs are finished.
    python3 -I .scratch/seele-und-kappa/rule/reference_rule.py --runs runs
    ```
 
-   It reads S-1001, V-1001, K-1001, S-1002, ... in the order of the list, counts a triple once
+   It reads S-1002, V-1002, K-1002, S-1003, ... in the order of the list, counts a triple once
    its three Runs are finished, checks every setting of each Run against the arm's table, and
    refuses a seed off the list and a gap. Its pass times, outcomes, evidence values, stop triple,
    verdicts and divergence generations must equal those of the analysis; we report the recount

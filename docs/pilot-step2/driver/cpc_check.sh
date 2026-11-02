@@ -6,11 +6,14 @@
 # config that adds "selection": "uniform". Only the column T_A is compared.
 # Usage: cpc_check.sh CPC_BIN VIEWROOT SEEDS BATCHDIR
 set -u
-ROOT=/path/to/pilot   # the local base folder; the only line that differs from the script that ran
+ROOT=/path/to/pilot   # the local base folder (the script that ran named its own)
 bin=$1
 view=$2
 seeds=$3
 batch=$4
+# An absolute path, so that the links below also work for a relative BATCHDIR (a fix after
+# review; the pilot passed an absolute path).
+batch=$(cd "$batch" && pwd) || exit 1
 rm -rf "$view"
 mkdir -p "$view"
 a=()

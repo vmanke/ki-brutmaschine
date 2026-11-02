@@ -32,7 +32,7 @@ This folder holds:
 | `pilot.json` | Per Run: the pass time, D, calls, wall time, the vote tallies, the `soul` group of every 10th generation, the `--verify` result and the SHA-256 of the five record files. Per seed: Y_V, Y_K (and the outcomes against E and N) and the divergence generation of each pair of arms. Per arm: pass rates, the shares of flipped and of tied votes, `sim_decided`, minutes and calls. The reruns of seed 901. Its `notes` explain the fields. |
 | `analysis.txt` | The output of `examples/soul_comparison.rs` on the 60 Runs. |
 | `recount.txt` | The output of `.scratch/seele-und-kappa/rule/reference_rule.py --pilot 901-912`. |
-| `driver/` | The scripts that ran the pilot, and `config-E.json`, the settings of arm E. Only the line `ROOT=` differs from the scripts that ran. |
+| `driver/` | The scripts that ran the pilot, and `config-E.json`, the settings of arm E. They differ from the scripts that ran in the line `ROOT=` and, since the review, in one more point: `view.sh` and `cpc_check.sh` make their path arguments absolute. The pilot passed absolute paths, so this changes nothing that ran. |
 | `driver.log` | The driver's log: the start, end, `--verify` line and compression of every Run, and the reruns. |
 | `rerun.log` | The comparison of the five record files of each rerun with the pilot's hashes. |
 

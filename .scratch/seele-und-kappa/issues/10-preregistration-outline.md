@@ -210,3 +210,10 @@ control of the breeder, not about real models, not about inventions, and not abo
     the power is 0.0038 for claim V and 0.0034 for claim K (0.1485 and 0.1528 averaged over
     their uncertainty). Ticket 11 therefore proposes not to run the counted experiment as
     designed; the owner decides before this ticket is frozen.
+- 2026-11-02, after the review of PR #50. Seed 1001 is no longer on the counted list: the check
+  of the counted mode above ran three short real Runs on it, so it is not unused. The counted
+  seeds are now 1002, 1003, ... (`FIRST_SEED` in `examples/soul_comparison.rs` and in
+  `reference_rule.py`, section 6 of the draft). The test is now
+  `the_counted_seeds_run_from_1002_without_gaps`, and it also refuses seed 1001. The analysis no
+  longer tells the operator to resume an unfinished run: a stopped or interrupted counted run is
+  run again from scratch, as section 7 of the draft says.

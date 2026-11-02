@@ -27,9 +27,10 @@ Definitions, as in section 5 of the draft:
 Two modes:
 
   python3 -I reference_rule.py --runs <dir>
-      The counted experiment. <dir> holds S-1001, V-1001, K-1001, S-1002, ... The counted
-      seeds are 1001, 1002, ... in this order, at most N_MAX. A triple counts once its three
-      runs are finished. A seed off the list or a gap is an error.
+      The counted experiment. <dir> holds S-1002, V-1002, K-1002, S-1003, ... The counted
+      seeds are 1002, 1003, ... in this order, at most N_MAX; seed 1001 served a check of the
+      tools and is not on the list. A triple counts once its three runs are finished. A seed
+      off the list or a gap is an error.
 
   python3 -I reference_rule.py --pilot <first>-<last> <dir>...
       Pilot triples on the seeds first to last (pilot seeds 901 to 923), read from S-<seed>,
@@ -51,7 +52,7 @@ N_MAX = 120
 P1 = F(3, 4)
 PROOF = F(200)
 LOWER = F(1, 20)
-FIRST_SEED = 1001
+FIRST_SEED = 1002  # 1001 served a check of the tools before the freeze (ticket 10)
 PILOT = range(901, 924)
 SEED_TARGETS = {"swap", "cs"}
 ALL_GENERATIONS = "all generations done"
