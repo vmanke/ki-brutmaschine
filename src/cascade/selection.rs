@@ -66,9 +66,19 @@ impl SelectionParams {
             return Err("tournament_size must be at least 1".to_string());
         }
 
+        if self.tournament_size > MAX_TOURNAMENT_SIZE {
+            return Err(format!(
+                "tournament_size must be at most {MAX_TOURNAMENT_SIZE}"
+            ));
+        }
+
         Ok(())
     }
 }
+
+/// The largest tournament. Every pick draws this many members, so the bound keeps a pick
+/// cheap; with 1024 draws a tournament already picks the best member almost always.
+pub const MAX_TOURNAMENT_SIZE: usize = 1024;
 
 fn clean(x: f64) -> f64 {
     if x.is_nan() { 0.0 } else { x }
@@ -125,17 +135,20 @@ pub fn tournament_pick(rank_of: &[usize], size: usize, rng: &mut ChaCha8Rng) -> 
 }
 
 /// The exact chance that a tournament of `size` picks each member: with the member at
-/// position r of n, ((n - r)^size - (n - r - 1)^size) / n^size.
+/// position r of n, ((n - r) / n)^size - ((n - r - 1) / n)^size. The shares are taken
+/// before the power, so large tournaments do not overflow; far down the ranking a weight
+/// can underflow to 0.
 pub fn tournament_weights(rank_of: &[usize], size: usize) -> Vec<f64> {
     let n = rank_of.len() as f64;
-    let k = size.max(1) as i32;
+    let k = size.max(1) as f64;
 
     rank_of
         .iter()
         .map(|&r| {
-            let above = n - r as f64;
+            let above = (n - r as f64) / n;
+            let below = (n - r as f64 - 1.0) / n;
 
-            (above.powi(k) - (above - 1.0).powi(k)) / n.powi(k)
+            above.powf(k) - below.powf(k)
         })
         .collect()
 }
@@ -168,6 +181,21 @@ mod tests {
 
     fn rng(seed: u64) -> ChaCha8Rng {
         ChaCha8Rng::seed_from_u64(seed)
+    }
+
+    #[test]
+    fn tournament_size_is_bounded_so_a_pick_stays_cheap() {
+        let at = SelectionParams {
+            tournament_size: MAX_TOURNAMENT_SIZE,
+            ..SelectionParams::default()
+        };
+        let above = SelectionParams {
+            tournament_size: MAX_TOURNAMENT_SIZE + 1,
+            ..SelectionParams::default()
+        };
+
+        assert!(at.check().is_ok());
+        assert!(above.check().unwrap_err().contains("at most"));
     }
 
     /// A is better on average, B is the only one that solves task 2.
@@ -284,6 +312,28 @@ mod tests {
 
         assert!(uniform.iter().all(|w| (w - 0.2).abs() < 1e-12));
         assert_eq!(tournament_pick(&[], 3, &mut r), None);
+    }
+
+    #[test]
+    fn tournament_weights_stay_finite_for_large_tournaments() {
+        // 100 members, tournaments of 200: 100^200 alone is beyond the range of f64.
+        let ranks: Vec<usize> = (0..100).collect();
+        let weights = tournament_weights(&ranks, 200);
+
+        assert!(weights.iter().all(|w| w.is_finite()), "{weights:?}");
+        assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        // The weights fall with rank; far down the ranking they reach 0 and stay there.
+        assert!(
+            weights
+                .windows(2)
+                .all(|w| w[0] > w[1] || (w[0] == 0.0 && w[1] == 0.0))
+        );
+        assert!(weights[0] > weights[99]);
+
+        // A size beyond i32 is taken as it is: the best member wins every tournament.
+        let huge = tournament_weights(&ranks[..5], usize::MAX);
+
+        assert_eq!(huge, [1.0, 0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]

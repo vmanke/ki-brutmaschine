@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cascade::arena::{
     BreedConfig, Breeder, Event, Finalist, Member, ModelPool, Report, Snapshot, Status,
-    run_cascade_in,
+    checked_grade, run_cascade_in,
 };
 use crate::cascade::domain::{Domain, GenePool};
 use crate::cascade::genome::Cascade;
@@ -485,26 +485,33 @@ pub struct RunRecord {
     pub finalists: Vec<Finalist>,
 }
 
-fn values<D: Domain>(domain: &D, tasks: &[D::Task], answers: &[Option<D::Answer>]) -> Vec<f64> {
+/// The graded value of each answer on its task, 0 where there is no answer. An integrity
+/// alarm of the domain, or a value outside [0, 1], is an error, as in the breeder: a fresh
+/// answer that only the study grades must not turn a broken grader into a 0.
+fn values<D: Domain>(
+    domain: &D,
+    tasks: &[D::Task],
+    answers: &[Option<D::Answer>],
+) -> Result<Vec<f64>> {
     tasks
         .iter()
         .zip(answers)
-        .map(|(t, a)| {
-            a.as_ref()
-                .and_then(|a| domain.grade(t, a).ok())
-                .map_or(0.0, |g| g.value)
+        .map(|(t, a)| match a {
+            Some(a) => checked_grade(domain, t, a).map(|g| g.value),
+            None => Ok(0.0),
         })
         .collect()
 }
 
 /// Score `cascade` on the select panel exactly as the select phase does (same seeds, so a
-/// finalist's answers equal these), returning per-task values and the calls made.
+/// finalist's answers equal these), returning per-task values and the calls made. A
+/// grading error is returned (see `values`).
 fn heldout_values<D: Domain>(
     b: &Breeder<'_, D>,
     pool: &ModelPool,
     id: &str,
     cascade: &Cascade,
-) -> (Vec<f64>, u64) {
+) -> Result<(Vec<f64>, u64)> {
     let mut calls = 0;
     let answers: Vec<Option<D::Answer>> = b
         .select_panel()
@@ -520,7 +527,7 @@ fn heldout_values<D: Domain>(
         })
         .collect();
 
-    (values(b.domain(), b.select_panel(), &answers), calls)
+    Ok((values(b.domain(), b.select_panel(), &answers)?, calls))
 }
 
 /// Re-run `cascade` on the search panel under the conditions of its birth: the same
@@ -588,11 +595,10 @@ pub fn run_study<D: Domain>(
 
         let g = b.next_generation() - 1;
         let archive = b.archive();
-        let n_search = b.search_panel().len();
         let train: Vec<Vec<f64>> = archive
             .iter()
             .map(|m| values(b.domain(), b.search_panel(), &m.answers))
-            .collect();
+            .collect::<Result<_>>()?;
         let rate = |i: usize| mean(&train[i]);
         let sigs: Vec<String> = archive
             .iter()
@@ -605,7 +611,8 @@ pub fn run_study<D: Domain>(
         })?;
         let inc_id = archive[inc].id.clone();
 
-        evaluations += (archive.len() - first_new) * n_search;
+        // Every newborn was evaluated once, on every search task.
+        evaluations += archive.len() - first_new;
 
         // Rediscovery: a newborn that behaves like an earlier member with another Cascade.
         let mut redisc = 0;
@@ -650,7 +657,7 @@ pub fn run_study<D: Domain>(
 
         if track_heldout {
             if !held.contains_key(&inc_id) {
-                let (v, calls) = heldout_values(&b, pool, &inc_id, &archive[inc].cascade);
+                let (v, calls) = heldout_values(&b, pool, &inc_id, &archive[inc].cascade)?;
 
                 observer_calls += calls;
                 held.insert(inc_id.clone(), v);
@@ -821,10 +828,13 @@ pub struct Reevaluated {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Reevaluation {
     pub finalists: Vec<Reevaluated>,
-    /// The finalist the subset ranking would have reported (best by the run's fitness).
+    /// The finalist with the best rate on the evaluation subset: what the shortcut would
+    /// have reported. Ties go to the earlier finalist (the better one by the run's
+    /// fitness).
     pub approx_pick: String,
-    /// The finalist with the best full-panel rate (ties: the better subset rank).
+    /// The finalist with the best full-panel rate, ties as for `approx_pick`.
     pub full_pick: String,
+    /// True when the full panel picks another finalist than the subset.
     pub pick_changed: bool,
     pub approx_pick_heldout: f64,
     pub full_pick_heldout: f64,
@@ -883,23 +893,20 @@ pub fn reevaluate_finalists<D: Domain>(
                 full.domain(),
                 &full.search_panel()[..m.answers.len()],
                 &m.answers,
-            )),
-            full_rate: mean(&values(full.domain(), full.search_panel(), &answers)),
+            )?),
+            full_rate: mean(&values(full.domain(), full.search_panel(), &answers)?),
             heldout_rate: f.select_solved as f64 / f.select_puzzles.max(1) as f64,
         });
     }
 
-    let Some(first) = out.first() else {
+    // Both picks follow one rule, each on its own panel, so a full panel that reproduces
+    // every subset rate cannot change the pick.
+    let (Some(approx), Some(best)) = (
+        first_best(&out, |r| r.subset_rate),
+        first_best(&out, |r| r.full_rate),
+    ) else {
         return Ok(None);
     };
-    // The finalists come best first by the run's fitness, so index order is the subset rank.
-    let approx = first.clone();
-    let best = out
-        .iter()
-        .enumerate()
-        .max_by(|(i, a), (j, b)| a.full_rate.total_cmp(&b.full_rate).then(j.cmp(i)))
-        .map(|(_, r)| r.clone())
-        .unwrap_or_else(|| approx.clone());
     let tau = kendall_tau(
         &out.iter().map(|r| r.subset_rate).collect::<Vec<_>>(),
         &out.iter().map(|r| r.full_rate).collect::<Vec<_>>(),
@@ -917,9 +924,17 @@ pub fn reevaluate_finalists<D: Domain>(
     }))
 }
 
+/// The finalist with the highest `rate`, None when there is none. The finalists come best
+/// first by the run's fitness; ties (within the float slack) go to the earlier one.
+fn first_best(out: &[Reevaluated], rate: impl Fn(&Reevaluated) -> f64) -> Option<Reevaluated> {
+    let top = out.iter().map(&rate).fold(f64::NEG_INFINITY, f64::max);
+
+    out.iter().find(|r| rate(r) >= top - TIE_SLACK).cloned()
+}
+
 /// Per-task values of every archive member on the search panel, rows in archive order: the
-/// input of `subset_rank_quality`.
-pub fn search_score_matrix<D: Domain>(b: &Breeder<'_, D>) -> Vec<Vec<f64>> {
+/// input of `subset_rank_quality`. A grading error is returned (see `values`).
+pub fn search_score_matrix<D: Domain>(b: &Breeder<'_, D>) -> Result<Vec<Vec<f64>>> {
     b.archive()
         .iter()
         .map(|m| values(b.domain(), b.search_panel(), &m.answers))
@@ -944,7 +959,8 @@ pub fn by_arm<F: Fn(&RunRecord) -> f64>(
 mod tests {
     use super::*;
     use crate::cascade::arena::ParentSelection;
-    use crate::cascade::domain::GridDomain;
+    use crate::cascade::domain::{Grade, GridDomain};
+    use crate::cascade::puzzle::{Grid, Puzzle};
     use crate::cascade::sim::SimModel;
 
     fn sim_pool() -> ModelPool {
@@ -1069,7 +1085,7 @@ mod tests {
                     let (st, _) = b.step(&never).unwrap();
 
                     if heldout && let Some(m) = b.archive().first() {
-                        heldout_values(&b, &pool, &m.id, &m.cascade);
+                        heldout_values(&b, &pool, &m.id, &m.cascade).unwrap();
                     }
 
                     states.push(serde_json::to_string(&b.snapshot()).unwrap());
@@ -1150,7 +1166,7 @@ mod tests {
 
         let inc = b.ranking()[0];
         let m = b.archive()[inc].clone();
-        let train = search_score_matrix(&b)[inc].clone();
+        let train = search_score_matrix(&b).unwrap()[inc].clone();
         let mut vault = ChampionVault::new();
 
         vault.freeze(
@@ -1227,6 +1243,209 @@ mod tests {
             .sum();
 
         assert!(pairs > 0);
+    }
+
+    #[test]
+    fn cascade_evaluations_count_cascades_not_task_runs() {
+        // A run on a smaller panel evaluates each Cascade on fewer tasks; the count of
+        // Cascades must not depend on the panel size.
+        for search_puzzles in [4, 10] {
+            let c = BreedConfig {
+                search_puzzles,
+                ..cfg(3, ParentSelection::Dgm)
+            };
+            let rec = study(c, false);
+            let born: usize = rec.generations.iter().map(|g| g.born).sum();
+
+            assert_eq!(rec.cascade_evaluations, born, "{search_puzzles} tasks");
+            assert_eq!(rec.cascade_evaluations, rec.final_archive_size);
+        }
+    }
+
+    #[test]
+    fn a_subset_that_is_the_whole_panel_never_changes_the_pick() {
+        // The full panel reproduces every subset rate, so the two picks must agree. Judging
+        // skill weighs much in fitness here, so the best finalist by fitness is often not
+        // the one with the best rate.
+        let pool = sim_pool();
+
+        for seed in 1..=4 {
+            let c = BreedConfig {
+                finalists: 3,
+                judge_weight: 0.6,
+                ..cfg(seed, ParentSelection::Dgm)
+            };
+            let (_, report, snap) =
+                run_study::<GridDomain>("t", c.clone(), GenePool::grid(), &pool, false, 0.0)
+                    .unwrap();
+            let re = reevaluate_finalists::<GridDomain>(c, GenePool::grid(), &pool, &snap, &report)
+                .unwrap()
+                .expect("bred finalists");
+
+            assert!(
+                re.finalists.iter().all(|f| f.subset_rate == f.full_rate),
+                "seed {seed}"
+            );
+            assert!(!re.pick_changed, "seed {seed}: {re:?}");
+            assert_eq!(re.approx_pick, re.full_pick, "seed {seed}");
+            assert_eq!(re.approx_pick_heldout, re.full_pick_heldout, "seed {seed}");
+        }
+    }
+
+    /// The search tasks of a full panel, and how many of them a down-sampled run uses.
+    const FULL: usize = 10;
+    const SMALL: usize = 4;
+
+    /// Grid puzzles with a broken grader on the full search panel's tasks from `SMALL` on:
+    /// with `ALARM` an integrity alarm, else a value of 2, outside [0, 1]. A run on the
+    /// first `SMALL` tasks never grades them; only the re-evaluation on the full panel
+    /// does.
+    struct Broken<const ALARM: bool> {
+        bad: BTreeSet<String>,
+    }
+
+    impl<const ALARM: bool> Domain for Broken<ALARM> {
+        type Task = Puzzle;
+        type Answer = Grid;
+
+        fn from_config(cfg: &BreedConfig) -> Result<Self> {
+            let full = GridDomain.panel(derive_seed(cfg.seed, "panel/search"), FULL);
+
+            Ok(Broken {
+                bad: full[SMALL..].iter().map(|t| t.id.clone()).collect(),
+            })
+        }
+
+        fn panel(&self, seed: u64, n: usize) -> Vec<Puzzle> {
+            GridDomain.panel(seed, n)
+        }
+
+        fn task_id<'t>(&self, task: &'t Puzzle) -> &'t str {
+            GridDomain.task_id(task)
+        }
+
+        fn solve_prompt(&self, task: &Puzzle, previous: &[Grid]) -> String {
+            GridDomain.solve_prompt(task, previous)
+        }
+
+        fn judge_prompt(&self, task: &Puzzle, a: &Grid, b: &Grid) -> String {
+            GridDomain.judge_prompt(task, a, b)
+        }
+
+        fn parse_answer(&self, task: &Puzzle, text: &str) -> Option<Grid> {
+            GridDomain.parse_answer(task, text)
+        }
+
+        fn grade(&self, task: &Puzzle, answer: &Grid) -> Result<Grade> {
+            if !self.bad.contains(&task.id) {
+                return GridDomain.grade(task, answer);
+            }
+
+            if ALARM {
+                return Err(BrutError::Integrity(format!(
+                    "task {} beats a proven bound",
+                    task.id
+                )));
+            }
+
+            Ok(Grade {
+                correct: true,
+                solved: true,
+                value: 2.0,
+            })
+        }
+
+        fn prefer(&self, task: &Puzzle, a: &Grid, b: &Grid) -> Option<bool> {
+            GridDomain.prefer(task, a, b)
+        }
+
+        fn graded(&self) -> bool {
+            GridDomain.graded()
+        }
+
+        fn artefact(&self, answer: &Grid) -> Option<String> {
+            GridDomain.artefact(answer)
+        }
+
+        fn self_check_text(&self) -> &'static str {
+            GridDomain.self_check_text()
+        }
+    }
+
+    #[test]
+    fn values_grade_like_the_breeder() {
+        let c = cfg(12, ParentSelection::Dgm);
+        let tasks = GridDomain.panel(derive_seed(c.seed, "panel/search"), FULL);
+        let right: Vec<Option<Grid>> = tasks.iter().map(|t| Some(t.test_output.clone())).collect();
+        let mut gaps = right.clone();
+
+        gaps[0] = None;
+
+        // A missing answer is worth 0, a right one 1.
+        assert_eq!(values(&GridDomain, &tasks, &gaps).unwrap()[..2], [0.0, 1.0]);
+
+        // A broken grader is an error, not a 0: an alarm, or a value outside [0, 1].
+        let alarm = Broken::<true>::from_config(&c).unwrap();
+        let outside = Broken::<false>::from_config(&c).unwrap();
+
+        assert_eq!(
+            values(&alarm, &tasks[..SMALL], &right).unwrap(),
+            [1.0; SMALL]
+        );
+        assert!(matches!(
+            values(&alarm, &tasks, &right),
+            Err(BrutError::Integrity(e)) if e.contains("proven bound")
+        ));
+        assert!(matches!(
+            values(&outside, &tasks, &right),
+            Err(BrutError::Integrity(e)) if e.contains("outside [0, 1]")
+        ));
+
+        // Only answers are graded: no answer on a broken task is still a 0.
+        for a in &mut gaps[SMALL..] {
+            *a = None;
+        }
+
+        assert_eq!(
+            values(&alarm, &tasks, &gaps).unwrap()[SMALL..],
+            [0.0; FULL - SMALL]
+        );
+    }
+
+    /// Breed on the first `SMALL` tasks, then score the finalists again on all `FULL`.
+    fn reevaluate_with<D: Domain>() -> Result<Option<Reevaluation>> {
+        let pool = sim_pool();
+        let small = BreedConfig {
+            search_puzzles: SMALL,
+            finalists: 3,
+            ..cfg(12, ParentSelection::Dgm)
+        };
+        let full = BreedConfig {
+            search_puzzles: FULL,
+            ..small.clone()
+        };
+        let (_, report, snap) = run_study::<D>("t", small, GenePool::grid(), &pool, true, 0.0)?;
+
+        reevaluate_finalists::<D>(full, GenePool::grid(), &pool, &snap, &report)
+    }
+
+    #[test]
+    fn a_broken_grader_on_fresh_answers_stops_the_re_evaluation() {
+        // The run itself never grades the broken tasks, so it ends normally; the answers
+        // the re-evaluation obtains are graded for the first time and must not become 0.
+        let alarm = reevaluate_with::<Broken<true>>();
+
+        assert!(
+            matches!(&alarm, Err(BrutError::Integrity(e)) if e.contains("proven bound")),
+            "{alarm:?}"
+        );
+
+        let outside = reevaluate_with::<Broken<false>>();
+
+        assert!(
+            matches!(&outside, Err(BrutError::Integrity(e)) if e.contains("outside [0, 1]")),
+            "{outside:?}"
+        );
     }
 
     #[test]

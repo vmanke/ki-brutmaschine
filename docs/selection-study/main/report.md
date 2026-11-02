@@ -107,10 +107,10 @@ Seeds 1..30 (30 per arm). Per run: up to 1000 generations, 8 children per genera
 
 | arm | median [p25, p75] (min..max) |
 |---|---|
-| dgm | 11680.000 [11360.000, 12320.000] (9440.000..13600.000) |
-| lexicase | 9760.000 [9760.000, 10080.000] (8480.000..10720.000) |
-| tournament | 11680.000 [11360.000, 12320.000] (8800.000..15520.000) |
-| uniform | 14880.000 [13920.000, 15840.000] (12640.000..17440.000) |
+| dgm | 292.000 [284.000, 308.000] (236.000..340.000) |
+| lexicase | 244.000 [244.000, 252.000] (212.000..268.000) |
+| tournament | 292.000 [284.000, 308.000] (220.000..388.000) |
+| uniform | 372.000 [348.000, 396.000] (316.000..436.000) |
 
 **Worker calls (budgeted)**
 
@@ -257,11 +257,11 @@ Seeds 1..30 (30 per arm). Per run: up to 1000 generations, 8 children per genera
 
 | arm | median [p25, p75] (min..max) |
 |---|---|
-| dgm | 11680.000 [11360.000, 12320.000] (9440.000..13600.000) |
-| dgm-subset-10 | 9400.000 [8440.000, 9720.000] (4520.000..10840.000) |
-| dgm-subset-20 | 10320.000 [10000.000, 10640.000] (9360.000..11920.000) |
+| dgm | 292.000 [284.000, 308.000] (236.000..340.000) |
+| dgm-subset-10 | 940.000 [844.000, 972.000] (452.000..1084.000) |
+| dgm-subset-20 | 516.000 [500.000, 532.000] (468.000..596.000) |
 
-| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) |
-|---|---|---|---|---|---|
-| dgm-subset-10 | 30 | 8 | 0.625 | 0.675 | 0.000 |
-| dgm-subset-20 | 30 | 10 | 0.650 | 0.675 | 0.000 |
+| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) | re-evaluation calls (median, min..max) |
+|---|---|---|---|---|---|---|
+| dgm-subset-10 | 30 | 8 | 0.625 | 0.675 | 0.000 | 480 (280..960) |
+| dgm-subset-20 | 30 | 10 | 0.650 | 0.675 | 0.000 | 480 (320..686) |

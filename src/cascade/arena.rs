@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
-use crate::cascade::domain::{Domain, DomainConfig, GenePool, GridDomain};
+use crate::cascade::domain::{Domain, DomainConfig, GenePool, Grade, GridDomain};
 use crate::cascade::genome::{Cascade, CascadeLimits, Worker, adapt_seeds};
 use crate::cascade::observe::{ObserveInput, UniverseState, observe};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
@@ -2044,6 +2044,26 @@ impl Kinship {
     }
 }
 
+/// The grade of `answer` on `task`. An error is the domain's integrity alarm, or a value
+/// outside [0, 1]: a broken grader must not reach fitness, the log or a measurement.
+pub(crate) fn checked_grade<D: Domain>(
+    domain: &D,
+    task: &D::Task,
+    answer: &D::Answer,
+) -> Result<Grade> {
+    let grade = domain.grade(task, answer)?;
+
+    if !(0.0..=1.0).contains(&grade.value) {
+        return Err(BrutError::Integrity(format!(
+            "task {} was graded {}, outside [0, 1]",
+            domain.task_id(task),
+            grade.value
+        )));
+    }
+
+    Ok(grade)
+}
+
 /// The number of tasks of `panel` that `answers` solve and, for a graded domain, their
 /// summed value. An error is the domain's integrity alarm, or a value outside [0, 1]: a
 /// broken grader must not reach fitness or the log.
@@ -2059,15 +2079,7 @@ fn tally<D: Domain>(
         let Some(a) = answer else {
             continue;
         };
-        let grade = domain.grade(task, a)?;
-
-        if !(0.0..=1.0).contains(&grade.value) {
-            return Err(BrutError::Integrity(format!(
-                "task {} was graded {}, outside [0, 1]",
-                domain.task_id(task),
-                grade.value
-            )));
-        }
+        let grade = checked_grade(domain, task, a)?;
 
         if grade.solved {
             solved += 1;

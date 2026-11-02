@@ -15,13 +15,17 @@
 //!   cargo run --release --example selection_study -- [--seeds N] [--first-seed S]
 //!       [--generations G] [--children C] [--search P] [--select S] [--max-calls M]
 //!       [--epsilon E] [--tournament-size K] [--out <dir>]
-//! Writes `<dir>/runs.json` (every run record) and `<dir>/report.md` (the tables).
+//! Writes `<dir>/report.md` (the tables) and `<dir>/runs.json`: `runs` (the run records of
+//! part A), `quality` (ranking quality on subsets), `cheap` (the run records of the subset
+//! runs) and `reeval` (their finalists scored again on the full panel).
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
+
+use serde::Serialize;
 
 use brutmaschine::cascade::arena::Breeder;
 use brutmaschine::cascade::arena::{BreedConfig, ModelPool, ParentSelection, Snapshot};
@@ -210,11 +214,33 @@ fn paired(out: &mut String, title: &str, runs: &[RunRecord], f: impl Fn(&RunReco
     out.push('\n');
 }
 
-#[derive(Debug)]
+/// The ranking quality on subsets of one seed's final dgm archive (part B, offline).
+#[derive(Debug, Serialize)]
+struct SubsetQuality {
+    seed: u64,
+    #[serde(flatten)]
+    quality: RankQuality,
+}
+
+/// The finalists of one subset run scored again on the full panel (part B, end to end).
+#[derive(Debug, Serialize)]
+struct SubsetReevaluation {
+    arm: String,
+    seed: u64,
+    #[serde(flatten)]
+    reevaluation: Reevaluation,
+}
+
+/// Everything the experiment measured.
+#[derive(Debug, Serialize)]
 struct Study {
+    /// Part A: every arm on every seed.
     runs: Vec<RunRecord>,
-    quality: Vec<(u64, RankQuality)>,
-    reeval: Vec<(String, u64, Reevaluation)>,
+    /// Part B, offline.
+    quality: Vec<SubsetQuality>,
+    /// Part B, end to end: the finalists of each subset run on the full panel.
+    reeval: Vec<SubsetReevaluation>,
+    /// Part B, end to end: the subset runs.
     cheap: Vec<RunRecord>,
 }
 
@@ -242,12 +268,12 @@ fn study(args: &Args) -> Study {
         let snap = dgm_snap.expect("dgm arm ran");
         let b: Breeder<'_, GridDomain> =
             Breeder::resume_from(cfg, GenePool::grid(), &pool, None, snap).expect("resume");
-        let scores = search_score_matrix(&b);
+        let scores = search_score_matrix(&b).expect("scores");
         let p = args.base.search_puzzles;
 
         for k in [p / 8, p / 4, p / 2].into_iter().filter(|&k| k >= 2) {
             if let Some(q) = subset_rank_quality(&scores, k, 200, 3, seed) {
-                quality.push((seed, q));
+                quality.push(SubsetQuality { seed, quality: q });
             }
         }
     }
@@ -281,7 +307,11 @@ fn study(args: &Args) -> Study {
                 reevaluate_finalists::<GridDomain>(full, GenePool::grid(), &pool, &snap, &report)
                     .expect("reeval")
             {
-                reeval.push((arm.clone(), seed, re));
+                reeval.push(SubsetReevaluation {
+                    arm: arm.clone(),
+                    seed,
+                    reevaluation: re,
+                });
             }
 
             cheap.push(rec);
@@ -444,7 +474,7 @@ fn report(args: &Args, s: &Study) -> String {
         "| subset | cost share | Kendall tau (median over seeds) | top-1 hit rate | top-1 regret | top-3 overlap |\n|---|---|---|---|---|---|"
     );
 
-    let mut ks: Vec<usize> = s.quality.iter().map(|(_, q)| q.subset).collect();
+    let mut ks: Vec<usize> = s.quality.iter().map(|q| q.quality.subset).collect();
 
     ks.sort_unstable();
     ks.dedup();
@@ -453,8 +483,8 @@ fn report(args: &Args, s: &Study) -> String {
         let qs: Vec<&RankQuality> = s
             .quality
             .iter()
-            .filter(|(_, q)| q.subset == k)
-            .map(|(_, q)| q)
+            .map(|q| &q.quality)
+            .filter(|q| q.subset == k)
             .collect();
         let med = |f: &dyn Fn(&RankQuality) -> f64| {
             dist(&qs.iter().map(|q| f(q)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median)
@@ -505,10 +535,10 @@ fn report(args: &Args, s: &Study) -> String {
 
     let _ = writeln!(
         out,
-        "| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) |\n|---|---|---|---|---|---|"
+        "| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) | re-evaluation calls (median, min..max) |\n|---|---|---|---|---|---|---|"
     );
 
-    let mut arms: Vec<&str> = s.reeval.iter().map(|(a, _, _)| a.as_str()).collect();
+    let mut arms: Vec<&str> = s.reeval.iter().map(|r| r.arm.as_str()).collect();
 
     arms.sort_unstable();
     arms.dedup();
@@ -517,16 +547,21 @@ fn report(args: &Args, s: &Study) -> String {
         let rs: Vec<&Reevaluation> = s
             .reeval
             .iter()
-            .filter(|(a, _, _)| a == arm)
-            .map(|(_, _, r)| r)
+            .filter(|r| r.arm == arm)
+            .map(|r| &r.reevaluation)
             .collect();
         let med = |f: &dyn Fn(&Reevaluation) -> f64| {
             dist(&rs.iter().map(|r| f(r)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median)
         };
+        // Outside the run's budget, so reported here and not among the worker calls.
+        let calls = dist(&rs.iter().map(|r| r.calls as f64).collect::<Vec<_>>())
+            .map_or("-".to_string(), |d| {
+                format!("{:.0} ({:.0}..{:.0})", d.median, d.min, d.max)
+            });
 
         let _ = writeln!(
             out,
-            "| {arm} | {} | {} | {:.3} | {:.3} | {:.3} |",
+            "| {arm} | {} | {} | {:.3} | {:.3} | {:.3} | {calls} |",
             rs.len(),
             rs.iter().filter(|r| r.pick_changed).count(),
             med(&|r| r.approx_pick_heldout),
@@ -536,6 +571,11 @@ fn report(args: &Args, s: &Study) -> String {
     }
 
     out
+}
+
+/// The machine-readable output (`runs.json`): everything the study measured.
+fn runs_json(s: &Study) -> String {
+    serde_json::to_string_pretty(s).expect("json")
 }
 
 fn main() {
@@ -552,9 +592,7 @@ fn main() {
 
     std::fs::create_dir_all(&args.out).expect("out dir");
 
-    let json = serde_json::to_string_pretty(&(&s.runs, &s.cheap)).expect("json");
-
-    std::fs::write(args.out.join("runs.json"), json).expect("write runs.json");
+    std::fs::write(args.out.join("runs.json"), runs_json(&s)).expect("write runs.json");
     std::fs::write(args.out.join("report.md"), &text).expect("write report.md");
     print!("{text}");
 }
@@ -618,6 +656,52 @@ mod tests {
                 && first.contains("| tournament |")
                 && first.contains("| dgm |")
         );
+    }
+
+    #[test]
+    fn runs_json_holds_the_down_sampling_results() {
+        let s = study(&tiny());
+        let json: serde_json::Value = serde_json::from_str(&runs_json(&s)).expect("json");
+        let len = |key: &str| json[key].as_array().map(Vec::len);
+
+        assert!(!s.quality.is_empty() && !s.reeval.is_empty());
+        assert_eq!(len("runs"), Some(s.runs.len()));
+        assert_eq!(len("cheap"), Some(s.cheap.len()));
+        assert_eq!(len("quality"), Some(s.quality.len()));
+        assert_eq!(len("reeval"), Some(s.reeval.len()));
+
+        let first = &s.reeval[0];
+
+        assert_eq!(json["reeval"][0]["arm"], first.arm.as_str());
+        assert_eq!(json["reeval"][0]["seed"], first.seed);
+        assert_eq!(json["reeval"][0]["calls"], first.reevaluation.calls);
+        assert_eq!(json["quality"][0]["subset"], s.quality[0].quality.subset);
+    }
+
+    #[test]
+    fn the_report_shows_the_re_evaluation_calls() {
+        let a = tiny();
+        let s = study(&a);
+        let text = report(&a, &s);
+
+        assert!(text.contains("| re-evaluation calls (median, min..max) |"));
+
+        for arm in ["dgm-subset-2", "dgm-subset-4"] {
+            let calls: Vec<f64> = s
+                .reeval
+                .iter()
+                .filter(|r| r.arm == arm)
+                .map(|r| r.reevaluation.calls as f64)
+                .collect();
+            let d = dist(&calls).expect("re-evaluated seeds");
+            let cell = format!("| {:.0} ({:.0}..{:.0}) |", d.median, d.min, d.max);
+            let row = text
+                .lines()
+                .find(|l| l.starts_with(&format!("| {arm} | {} |", calls.len())))
+                .expect("a row per subset arm");
+
+            assert!(d.max > 0.0 && row.ends_with(&cell), "{row}");
+        }
     }
 
     #[test]
