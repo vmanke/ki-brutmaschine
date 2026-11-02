@@ -1438,7 +1438,9 @@ fn a_run_whose_soul_steers_variation_reproduces() {
 #[test]
 fn variation_needs_circuits() {
     // The grid gene pool names no families of a text, so a grid Run whose Soul steers
-    // variation is refused before it writes anything.
+    // variation is refused before it writes a record. As with every other refusal of a
+    // fresh Run's settings, only the empty run directory and its LOCK file are left; a
+    // later Run can use that directory.
     for variation in ["prefer", "fixed"] {
         let dir = fresh(&format!("variation-grid-{variation}"));
         let config = varied_config_file(&dir, variation);
@@ -1459,6 +1461,17 @@ fn variation_needs_circuits() {
             stderr(&refused)
         );
         assert!(!run.join("config.json").exists());
+
+        let left: Vec<String> = std::fs::read_dir(&run)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        assert!(left.iter().all(|name| name == "LOCK"), "{left:?}");
     }
 
     // Arm WF on circuits starts and records its setting.

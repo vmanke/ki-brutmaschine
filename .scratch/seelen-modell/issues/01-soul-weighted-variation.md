@@ -67,7 +67,8 @@ so that ticket 02 can screen it. It changes `src/`, so it waits for the owner's 
   chosen Worker's. Each factor of a SectionAdd weight and their product are at least ε. The hook
   is `designer::named_families`: the families of `designer::knowledge`, in family order. The
   grid gene pool has none, so a grid Run with `variation` exits with code 1 before it writes
-  anything.
+  a record. Like every other refusal of a fresh Run's settings, it leaves only the empty run
+  directory and its LOCK file (found in the review of PR #52).
 - Tests. `soul.rs`: `variation_is_off_by_default_and_left_out` (the pilot's soul object of
   `config-E.json` reads and writes back byte for byte), `the_preference_has_mean_one_per_family`
   (2^20 fresh Souls per Domain, both readouts) and
