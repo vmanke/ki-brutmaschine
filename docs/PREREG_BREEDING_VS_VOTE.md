@@ -47,8 +47,10 @@ time.
   designer, breeding found most circuit targets that its seeds missed. That is a positive
   control of the breeder. It says nothing about real models.
 - **Selection study, simulated** (PR #45, open, `docs/SELECTION_STUDY.md` there): with
-  simulated models, the best finalist of lexicase selection scored higher on the held-out
-  panel than that of DGM in 18 of 30 seeds, lower in 5. That result is exploratory and simulated. It motivates arm L, nothing more.
+  simulated models, the final incumbent of lexicase selection, chosen on training fitness
+  alone, scored higher on the held-out panel than that of DGM in 17 of 30 seeds and lower
+  in 5 (p about 0.05 after a correction for three arms); at a smaller call budget, 23 and 3.
+  That result is exploratory and simulated. It motivates arm L, nothing more.
 - **The control exists.** `vote-control` in `backend-ollama/` (PR #42) measures the
   compute-equal majority vote on a finished run's select panel. It picks the champion and
   the voted seed by their search results alone, never by a select result.
