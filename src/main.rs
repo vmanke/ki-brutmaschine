@@ -110,8 +110,8 @@ brut learner secret-init); run, status, lineage, verify and approve detect the r
 arc grids: brut arc-grid trains a fresh CNN of each genome (default: the base models u-net
 and fcn) on each ARC-AGI-1 training task with its re-arc generations, one colour class per
 cell on a canvas of 30x30 (--canvas), and scores whole grids (exact match) and cells on the
-held-out pairs; --tasks takes the first N tasks by id, --limits a JSON file of the limits
-of a run's config (default: those of brut init), --out writes the JSON report
+held-out pairs; --tasks takes the first N tasks by id, --limits a JSON file in the form
+of the limits of a run's config (default: the default limits), --out writes the JSON report
 
 exit codes: 0 ok, 1 runtime error, 2 usage error";
 

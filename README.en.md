@@ -21,7 +21,7 @@ with diagrams, a speckle simulator and the result of step 1. Open the file in a 
 
 ## Status and roadmap
 
-Status on 2026-10-31.
+Status on 2026-11-02.
 
 **Built**
 
@@ -37,6 +37,11 @@ Status on 2026-10-31.
   ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
   see "CNN models in the MLP mode". PR #27 merged an interim state, and PR #32 brought the
   CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt.
+- **CNNs, part 3.** Ticket 06: ARC grids as tasks of the CNNs, with one colour class per
+  cell, the ARC-AGI-1 training tasks and their re-arc pairs, two base models of their own (a
+  U-Net and a fully convolutional network) and the command `brut arc-grid`
+  ([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md));
+  see "ARC grids as tasks".
 - **Design of step 2 (PR #28 and #29).** It describes the Soul and the Coupling strength κ
   ([spec](.scratch/seele-und-kappa/spec.md)). PR #28 was the first draft, PR #29 is the
   final version. The questions Q67 to Q74 were decided by their recommended answers on
@@ -56,7 +61,8 @@ Status on 2026-10-31.
 
 **Planned**
 
-- **CNNs, part 3.** Ticket 06, ARC grids as tasks; it comes next.
+- **Breeding on ARC grids.** A run (`brut run`) that breeds CNNs on the ARC grid tasks;
+  today `brut arc-grid` trains and scores given genomes.
 - **Step 2, comparison.** Pre-registration (ticket 10), pilot (ticket 11) and counted Runs
   (ticket 13).
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
@@ -73,8 +79,10 @@ Status on 2026-10-31.
 
 ## CNN models in the MLP mode
 
-Status: tickets 01 to 05 and 07 of `.scratch/cnn-basismodelle/` are built, the promotion
-of winners included. The ARC grids (ticket 06) follow.
+Status: tickets 01 to 07 of `.scratch/cnn-basismodelle/` are built, the promotion of
+winners and the ARC grids (ticket 06,
+[ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md))
+included.
 [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md) records the
 library, and
 [ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md)
@@ -351,7 +359,37 @@ scores of each task. A genome trains for its own epochs, but at most for as many
 check allows on the task; if it does not fit even at 5 epochs, it is refused on that task,
 which counts 0.
 
-ARC-BASE-MODELS-PLACEHOLDER
+The two base models of the ARC grid tasks fit the default limits, on the largest task too,
+at their own epochs:
+
+| Base model | Design | Training |
+|---|---|---|
+| `u-net` (Ronneberger, Fischer and Brox 2015) | a 3x3 stem of 8 channels, an encoder to half the size with 16 channels, two residual blocks, a decoder with a transposed convolution that joins the map of the stem, the per-cell head | learning rate 0.03, 8 epochs |
+| `fcn` (Long, Shelhamer and Darrell 2015) | a 1x1 stem of 16 channels, two 3x3 convolutions of 16 channels at full size, the per-cell head | learning rate 0.01, 9 epochs |
+
+The U-Net base model of the families reads one channel of 8x8 cells; its stem of 4 channels
+would squeeze 10 colours, so the ARC grids have a U-Net of their own. We chose both designs
+by a few runs on the first 8 tasks (ticket 06, Comments). Under the default limits the time
+model sets the epochs: on 30x30 cells the budget buys 32 steps of the U-Net and 36 of the FCN
+per task, fewer on two tasks with few re-arc pairs.
+
+We measure both base models on all 259 tasks (built with `cargo build`, dev profile,
+`--threads 3`, 59 min). Another build shared the 4 cores, so we set `max_candidate_seconds`
+to 120 s instead of 30 s; 22 trainings of the FCN took longer than 30 s. All other limits are
+the defaults, and the FLOP limit and the time model set the epochs, not the clock.
+
+| Model | exact valid | exact test | cells valid | cells test |
+|---|---|---|---|---|
+| copy of the input | 0.000 | 0.000 | 0.766 | 0.752 |
+| `u-net` | 0.002 | 0.000 | 0.571 | 0.628 |
+| `fcn` | 0.003 | 0.004 | 0.673 | 0.713 |
+
+The FCN gets 10 of the 3 095 valid grids and 1 of the 264 test grids right (task 6f8cd79b),
+the U-Net 6 valid grids and no test grid, the copy none. In cell accuracy both stay below the
+copy on average; they beat the copy on 29 to 54 of the 259 tasks. No training was refused,
+none diverged. On the first 4 tasks, two earlier designs with ten times the FLOPs (about 90
+epochs per task) came near the copy's cell accuracy or above it, without getting a whole grid
+right.
 
 ### Limits of the CNN models
 
@@ -364,8 +402,13 @@ ARC-BASE-MODELS-PLACEHOLDER
   count; another CPU may give other bits (ADR 0007).
 - **Untuned twins.** The 1-D twins on `motif-1d` are not tuned, and no test asks them to
   learn.
-- **A stand-in for ARC.** `mirror-grid` is a regression scored by R²; the ARC grids with a
-  colour class per cell follow in ticket 06.
+- **Short training on ARC.** The default limits were made for images of 16x16. On the
+  30x30 canvas they buy 32 to 36 steps per task. With them both base models stay below the
+  copy's cell accuracy on average and get almost no grid right. `--limits` takes other
+  limits.
+- **No breeding on ARC.** `brut run` does not breed on the ARC grid tasks; `brut arc-grid`
+  scores given genomes. Tasks that change the grid size stay out. `mirror-grid` stays a
+  regression scored by R².
 - **No inherited weights.** Each child learns from scratch. That costs compute, but keeps
   runs simple to reproduce.
 - **Promotion after one run.** Whether a model is promoted depends on its hidden score in a
@@ -806,6 +849,12 @@ access; `tests/cascade.rs` checks that.
 
 ## Tests
 
+- `tests/arc_grid.rs` checks the converter `tools/rearc_to_jsonl.py` on a hand-made zip (it
+  needs `python3`), runs `brut arc-grid` with both base models on hand-made tasks, requires
+  equal reports at 1 and 2 threads, and refuses a changed training file and broken genome
+  and limits files. Two tests run on request with the real data: the contamination audit
+  against the three evaluation sets, and a training of both base models on four tasks
+  (`BRUT_ARC_TEST_ROOT=<data> cargo test --test arc_grid -- --ignored real_`).
 - `tests/cascade.rs` checks the purity of `src/cascade/` and makes small real Runs with
   `brut-breed`: equal results across processes, `--verify` against tampered logs and
   reports, kill switch and resume, hard kills, the lock and LLM rounds.

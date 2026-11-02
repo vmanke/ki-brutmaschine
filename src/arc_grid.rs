@@ -1059,11 +1059,7 @@ mod tests {
     /// A small fully convolutional network for a canvas of 6 x 6: a stem and one 3 x 3
     /// convolution of 8 channels. A colour swap needs only each cell's own colour.
     fn small_fcn() -> Genome {
-        Genome {
-            epochs: 30,
-            learning_rate: 0.03,
-            ..base_model(3, 8, vec![unit(Block::Plain, 8, 1, false)], 0.03, 30, 5)
-        }
+        base_model(3, 8, vec![unit(Block::Plain, 8, 1, false)], 0.03, 30, 5)
     }
 
     /// Two swap tasks and one whose outputs are random: no rule to learn.

@@ -760,7 +760,8 @@ fn real_arc_grid_tasks_touch_no_evaluation_pair() {
 
 /// The two base models train on the first four ARC grid tasks of the real data and are
 /// scored on their held-out pairs, without refusal, divergence or a stop by the clock. Run
-/// as `real_arc_grid_tasks_touch_no_evaluation_pair`; it takes about two minutes.
+/// as `real_arc_grid_tasks_touch_no_evaluation_pair`, alone on an idle machine: a busy one
+/// can reach the clock (`max_candidate_seconds`). It takes about a minute.
 #[test]
 #[ignore = "needs the real ARC data (BRUT_ARC_TEST_ROOT, manifest at <root>/manifest.json)"]
 fn real_arc_grid_base_models_train_and_score_on_four_tasks() {

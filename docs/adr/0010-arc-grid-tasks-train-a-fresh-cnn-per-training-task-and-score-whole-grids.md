@@ -10,7 +10,8 @@ that a CNN genome trains on a set of ARC task families and is scored on held-out
 The ticket and the spec fix these points. This record decides the rest. The code is in
 `src/arc_grid.rs`, `src/arc_data.rs`, `src/task.rs`, `src/score.rs`, `src/cnn/ops.rs`,
 `src/cnn/train.rs` and `tools/rearc_to_jsonl.py`; the ticket's Comments hold the
-measurements. ADR 0009 is taken by step 2 (`.scratch/seele-und-kappa/issues/12-docs-adr-and-glossary.md`).
+measurements. The number 0009 is taken by step 2
+(`.scratch/seele-und-kappa/issues/12-docs-adr-and-glossary.md`).
 
 **One ARC grid task per training task, and a fresh CNN for each.** A plain CNN maps one
 input grid to one output grid. Pooled over many tasks, the same input could need different
@@ -108,17 +109,35 @@ outside its tmpfs, and no downloaded file is copied anywhere.
 manifest of hashes, the converter and hand-made fixtures. A NOTICE file follows when data are
 passed on (docs/SICHERHEIT_UND_RECHT.md).
 
-**The base models.** BASE-MODELS-PLACEHOLDER
+**The base models, and how short their training is.** The U-Net (`arc_grid::base_models`) has
+a 3 x 3 stem of 8 channels, an encoder that halves the size to 16 channels, two residual basic
+blocks there, a decoder with a transposed convolution that joins the map of the stem, and the
+per-cell head; it trains at a learning rate of 0.03 for 8 epochs. The fully convolutional
+network has a 1 x 1 stem of 16 channels, which keeps the colour of each cell apart, two 3 x 3
+convolutions of 16 channels and the per-cell head; it trains at 0.01 for 9 epochs. Each trains
+for the most epochs that fit the largest task under the default limits; there the time model,
+not the FLOP count, binds. Batches of 16, the smallest allowed, give 32 steps of the U-Net and
+36 of the FCN per task, fewer on the two tasks with few re-arc pairs.
+The U-Net base model of the families was built for one channel of 8 x 8 cells; its stem of 4
+channels would squeeze 10 colours, so the ARC grid tasks have a U-Net of their own. We chose
+both designs by a few runs on the first 8 tasks, listed in the ticket's Comments: on the
+default limits no design reached the cell accuracy of the copy, and none an exact match. With
+ten times the FLOP limit (and 300 s of clock) on the first 4 tasks, two earlier designs, an FCN
+with a 3 x 3 stem and the U-Net at a rate of 0.01, trained about 90 epochs per task and came
+near the copy's cell accuracy or above it, still without an exact match. So the default
+limits, made for images of 16 x 16, are short for grids of 30 x 30; `--limits` takes others.
+On all 259 tasks the FCN got 10 of the 3 095 held-out re-arc grids and 1 of the 264 test
+grids right, the U-Net 6 and none; both stay below the copy's mean cell accuracy.
 
 Rejected: one CNN pooled over all tasks (it cannot know which task a grid belongs to); a canvas
 per task (little saved, and a genome could fit one task and not another); an eleventh input
-channel for the inside (the colour channels already say it); a new `Objective` variant (it
-would change matches that tests of the MLP rely on); the U-Net base model of the CNN families
-(its stem of 4 channels squeezes 10 colours; it was built for one channel); a loss for MLPs
-(none fits the limits on this canvas); reading the evaluation sets in the grid path to audit
-the pairs (the audit runs as a test on the real data instead, so the grid path never opens an
-evaluation file).
+channel for the inside (the colour channels already say it); a new `Objective` variant (the
+exhaustive matches over `Objective` in the tests of the MLP and of the tasks would need a new
+arm); the U-Net base model of the CNN families (its stem of 4 channels squeezes 10 colours; it
+was built for one channel); a loss for MLPs (none fits the limits on this canvas); reading the
+evaluation sets in the grid path to audit the pairs (the audit runs as a test on the real data
+instead, so the grid path never opens an evaluation file).
 
-Status: accepted on 2026-11-01. The owner approved ARC grids as the second kind of task on
+Status: accepted on 2026-11-02. The owner approved ARC grids as the second kind of task on
 2026-10-30 (spec), and the ticket fixes the data, the score and the two base models. Claude,
 the AI assistant, chose the details above while building ticket 06.
