@@ -303,7 +303,7 @@ How well a hypothesis family fits a Task, as the Domain states it; the same for 
 _Avoid_: prior, weight (alone)
 
 **Character**:
-The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it. The logs use the normalised Character: the Character divided by the sum of the squared Family strengths, whose mean over independent Souls is 1 on every Task.
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it. The logs use the normalised Character: the Character divided by the sum of the squared Family strengths, whose mean is 1 on every Task over Souls with independent, uniformly distributed phases; shared ancestry, Imprinting and Observations can move it away from 1.
 _Avoid_: personality, temperament, profile
 
 **Array pattern**:
@@ -319,7 +319,7 @@ The inherited number κ between 0 and 1 with which an observer pulls the phases 
 _Avoid_: feeling, measurement strength, gain
 
 **Upbringing**:
-What a child receives from its parents' lives besides genes and Soul. In imprinting, after the child's first answer each of its Workers is shifted toward the current Soul of the parent Worker it came from, without a model call and without changing the parent. In teaching, a prompt section is written fresh at birth from its parents' best solved examples; it is never inherited as a gene. Lessons written by a language model come in a later step.
+What a child receives from its parents' lives besides genes and Soul. In imprinting, after the child's first answer each of its Workers is shifted toward the current Soul of each parent Worker it came from (one, or two after a crossover, taken in parent order), each time by that parent Worker's Coupling strength, without a model call and without changing the parents. In teaching, a prompt section is written fresh at birth from its parents' best solved examples; it is never inherited as a gene. Lessons written by a language model come in a later step.
 _Avoid_: training, education (alone)
 
 **Souletics**:
