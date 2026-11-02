@@ -946,6 +946,56 @@ pub fn cross_entropy(logits: &Tensor, labels: &[u32]) -> Result<Tensor> {
     Ok(Tensor(candle_nn::loss::cross_entropy(&logits.0, &targets)?))
 }
 
+/// Mean softmax cross-entropy over some cells of grids of logits, one label per cell.
+///
+/// Row i of `logits` (n, classes * cells) holds the outputs of one sample of a task with one
+/// class per cell, channel by channel: the logit of class c at cell k is at c * cells + k
+/// (`task::OutputShape::Grid`). `picked` names the cells that carry a label, cell k of row i
+/// as i * cells + k, in increasing order, and `labels` their classes. The mean runs over the
+/// picked cells only, so the other cells carry no loss and get no gradient: the cells outside
+/// the grid of an ARC sample (ticket 06).
+///
+/// This is candle_nn's `cross_entropy` on the picked cells, which `index_select` gathers
+/// from the logits laid out as one row per cell.
+pub fn cell_cross_entropy(
+    logits: &Tensor,
+    classes: usize,
+    picked: &[u32],
+    labels: &[u32],
+) -> Result<Tensor> {
+    let (n, values) = logits.0.dims2()?;
+    let cells = values.checked_div(classes).unwrap_or(0);
+    let total = n.saturating_mul(cells);
+    let fits = cells > 0
+        && cells * classes == values
+        && !picked.is_empty()
+        && picked.len() == labels.len()
+        && picked.windows(2).all(|pair| pair[0] < pair[1])
+        && picked.iter().all(|&cell| (cell as usize) < total)
+        && labels.iter().all(|&label| (label as usize) < classes);
+    if !fits {
+        return Err(BrutError::Invalid(format!(
+            "cell_cross_entropy: {} picked cells and {} labels do not fit {n} rows of {values} \
+             logits in {classes} classes",
+            picked.len(),
+            labels.len()
+        )));
+    }
+
+    let per_cell = logits
+        .0
+        .reshape((n, classes, cells))?
+        .transpose(1, 2)?
+        .contiguous()?
+        .reshape((total, classes))?;
+    let device = logits.0.device();
+    let index = candle::Tensor::from_vec(picked.to_vec(), picked.len(), device)?;
+    let targets = candle::Tensor::from_vec(labels.to_vec(), labels.len(), device)?;
+    let chosen = per_cell.index_select(&index, 0)?;
+
+    Ok(Tensor(candle_nn::loss::cross_entropy(&chosen, &targets)?))
+}
+
 /// Mean squared error: the mean of `(prediction - target)^2` over all values.
 ///
 /// Both tensors have the same shape. This is the loss of the MLP for regression
@@ -1915,6 +1965,29 @@ mod tests {
             },
         );
 
+        // Ticket 06: one class per cell, some cells outside the grids. Their logits get no
+        // gradient, which the check compares as well.
+        let inputs = vec![c.uniform(&[2, 3 * 4], -2.0, 2.0)];
+        c.add(
+            "cell_cross_entropy",
+            "2 grids of 4 cells, 3 classes, 5 cells inside",
+            inputs,
+            |t| cell_cross_entropy(&t[0], 3, &[0, 2, 3, 5, 6], &[1, 0, 2, 2, 1]),
+        );
+
+        // The per-cell head of an ARC grid task: a 1x1 convolution to the classes, flattened
+        // channel by channel, and the loss over the cells inside the grids.
+        let inputs = vec![c.plain(&[2, 2, 2, 3]), c.plain(&[3, 2, 1, 1])];
+        c.add(
+            "cell_cross_entropy",
+            "a 1x1 convolution to 3 classes on 2 x 3 cells",
+            inputs,
+            |t| {
+                let logits = flatten(&conv2d(&t[0], &t[1], 0, 1, 1, 1)?)?;
+                cell_cross_entropy(&logits, 3, &[0, 1, 4, 6, 9, 10, 11], &[2, 0, 1, 1, 0, 2, 2])
+            },
+        );
+
         c.list
     }
 
@@ -2097,6 +2170,82 @@ mod tests {
             .fold(0.0, f64::max);
 
         assert!(off <= FORWARD_LIMIT, "W9 is off the sum by hand by {off:e}");
+    }
+
+    #[test]
+    fn cell_cross_entropy_is_the_mean_over_the_picked_cells() {
+        // 2 rows, 2 classes, 3 cells: logits[i][c * 3 + k].
+        let values = vec![
+            0.5, -1.0, 2.0, 1.5, 0.0, -2.0, -0.5, 3.0, 1.0, 0.25, -1.5, 0.75,
+        ];
+        let logits = f64_tensor(values.clone(), &[2, 6]);
+        let picked = [0, 2, 4, 5];
+        let labels = [1, 0, 0, 1];
+        let loss = f64_values(&cell_cross_entropy(&logits, 2, &picked, &labels).unwrap())[0];
+        let expected: f64 = picked
+            .iter()
+            .zip(&labels)
+            .map(|(&cell, &label)| {
+                let (row, k) = (cell as usize / 3, cell as usize % 3);
+                let logit = |c: usize| values[row * 6 + c * 3 + k];
+                let max = logit(0).max(logit(1));
+                let sum = (logit(0) - max).exp() + (logit(1) - max).exp();
+
+                max + sum.ln() - logit(label as usize)
+            })
+            .sum::<f64>()
+            / 4.0;
+
+        assert!((loss - expected).abs() < 1e-12, "{loss} {expected}");
+
+        // The logits of cells that are not picked change neither the loss nor the gradient.
+        let mut moved = values.clone();
+
+        moved[1] = 40.0;
+        moved[3 + 1] = -40.0;
+
+        let again = f64_values(
+            &cell_cross_entropy(&f64_tensor(moved, &[2, 6]), 2, &picked, &labels).unwrap(),
+        )[0];
+
+        assert_eq!(again, loss);
+
+        let zeros = |shape: &[usize]| f64_tensor(vec![0.0; shape.iter().product()], shape);
+        let x = zeros(&[2, 6]);
+
+        assert!(cell_cross_entropy(&x, 0, &[0], &[0]).is_err(), "no class");
+        assert!(
+            cell_cross_entropy(&x, 4, &[0], &[0]).is_err(),
+            "6 logits in 4 classes"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[], &[]).is_err(),
+            "no cell picked"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[0, 1], &[0]).is_err(),
+            "one label for two cells"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[6], &[0]).is_err(),
+            "cell 6 of 6"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[1], &[2]).is_err(),
+            "class 2 of 2"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[2, 1], &[0, 0]).is_err(),
+            "not increasing"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[1, 1], &[0, 0]).is_err(),
+            "picked twice"
+        );
+        assert!(
+            cell_cross_entropy(&zeros(&[2, 3, 2]), 2, &[0], &[0]).is_err(),
+            "3-D"
+        );
     }
 
     /// Public functions of this file that are not differentiable operations.

@@ -5,7 +5,9 @@
 //! divergence rules. Only the forward and backward pass differ. A step builds the batch
 //! as a tensor, runs the network in training mode, takes the loss (mean softmax
 //! cross-entropy, or the mean squared error for regression) and its gradients from candle,
-//! and then updates the values with the MLP's optimizer (`nn::OptimizerState`).
+//! and then updates the values with the MLP's optimizer (`nn::OptimizerState`). A task with
+//! one class per cell (`TaskSpec::cell_classes`, ticket 06) takes the mean cross-entropy over
+//! the cells inside the grids (`ops::cell_cross_entropy`); a cell outside carries no loss.
 //!
 //! Reproducibility. Training is deterministic: the same genome and data give the same bits
 //! at any thread count of the same machine, also inside rayon pools of other sizes
@@ -25,7 +27,7 @@ use crate::cnn::net::{self, Net, ParamSpec, Values};
 use crate::cnn::ops::{self, Grads, Param, Tensor};
 use crate::genome::{Activation, Genome};
 use crate::nn::OptimizerState;
-use crate::task::{Dataset, Objective, Targets, TaskSpec};
+use crate::task::{Dataset, NO_CELL, Objective, Targets, TaskSpec};
 use crate::train::Learner;
 use crate::util::{BrutError, Result, derive_seed};
 
@@ -45,6 +47,8 @@ pub(crate) struct CnnLearner<'a> {
     flops_per_sample: u64,
     data: &'a Dataset,
     objective: Objective,
+    /// The classes and the cells of a task with one class per cell.
+    cell_classes: Option<(usize, usize)>,
 }
 
 impl<'a> CnnLearner<'a> {
@@ -80,6 +84,7 @@ impl<'a> CnnLearner<'a> {
             flops_per_sample: plan.train_flops_per_sample(),
             data,
             objective: spec.objective,
+            cell_classes: spec.cell_classes(),
         })
     }
 
@@ -114,6 +119,24 @@ impl<'a> CnnLearner<'a> {
 
     /// The mean loss of the outputs `out` of the rows `rows` against their targets.
     fn loss(&self, out: &Tensor, rows: &[usize]) -> Result<Tensor> {
+        if let (Targets::Labels(labels), Some((classes, cells))) =
+            (&self.data.targets, self.cell_classes)
+        {
+            let mut picked = Vec::new();
+            let mut batch = Vec::new();
+
+            for (row, &i) in rows.iter().enumerate() {
+                for (k, &label) in labels[i * cells..(i + 1) * cells].iter().enumerate() {
+                    if label != NO_CELL {
+                        picked.push(cell_index(row * cells + k)?);
+                        batch.push(label);
+                    }
+                }
+            }
+
+            return ops::cell_cross_entropy(out, classes, &picked, &batch);
+        }
+
         match (&self.data.targets, self.objective) {
             (Targets::Labels(labels), Objective::Classification { .. }) => {
                 let batch: Vec<u32> = rows.iter().map(|&i| labels[i]).collect();
@@ -135,6 +158,12 @@ impl<'a> CnnLearner<'a> {
             )),
         }
     }
+}
+
+/// The index of a cell of a batch as `ops::cell_cross_entropy` takes it.
+fn cell_index(index: usize) -> Result<u32> {
+    u32::try_from(index)
+        .map_err(|_| BrutError::Invalid(format!("cnn: cell {index} of a batch is too far")))
 }
 
 /// Copy the gradient of each of `params` into `into`; 0 where the loss does not use one.
@@ -2161,6 +2190,105 @@ mod tests {
             model.is_finite(),
             "no step was taken with a non-finite loss"
         );
+    }
+
+    #[test]
+    fn a_cell_class_task_takes_the_loss_over_the_cells_inside_the_grids() {
+        use crate::task::NO_CELL;
+
+        // Three samples on a canvas of 4 x 4, one class per cell; the grids cover 2 x 3, 4 x 4
+        // and 1 x 1 cells. The genome has no batch norm, so its training forward pass is
+        // its evaluation forward pass.
+        let spec = crate::arc_grid::spec(4, 3, 1, 1);
+        let mut x = vec![0.0f32; 3 * spec.n_in];
+        let mut labels = vec![NO_CELL; 3 * 16];
+
+        for (i, (h, w)) in [(2, 3), (4, 4), (1, 1)].into_iter().enumerate() {
+            for y in 0..h {
+                for col in 0..w {
+                    let colour = (y * 7 + col * 3 + i) % 10;
+
+                    x[i * spec.n_in + colour * 16 + y * 4 + col] = 1.0;
+                    labels[i * 16 + y * 4 + col] = ((colour + 1) % 10) as u32;
+                }
+            }
+        }
+
+        let data = Dataset {
+            x,
+            targets: Targets::Labels(labels.clone()),
+            n: 3,
+            n_in: spec.n_in,
+            n_out: spec.n_out,
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 6,
+                kernel: 3,
+                stride: 1,
+                down: Downsample::Conv,
+                norm: Norm::None,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![genomes::plain(6, 3, CnnActivation::Tanh)],
+            head: Head::PerCell,
+        };
+        let genome = genomes::genome(cnn.clone(), Vec::new(), Activation::Tanh);
+        let rows = [2, 0, 1];
+        let mut learner = CnnLearner::new(&genome, &cnn, &spec, &data).expect("learner");
+        let loss = learner.loss_and_grad(&rows).expect("loss");
+        let outputs = learner
+            .into_model()
+            .and_then(|model| model.evaluator(&spec))
+            .and_then(|eval| eval.outputs(&data.x, data.n))
+            .expect("outputs");
+        let mut total = 0.0f64;
+        let mut inside = 0;
+
+        for i in 0..3 {
+            for k in 0..16 {
+                let label = labels[i * 16 + k];
+
+                if label == NO_CELL {
+                    continue;
+                }
+
+                let logit = |c: usize| outputs[i * spec.n_out + c * 16 + k] as f64;
+                let max = (0..10).map(logit).fold(f64::NEG_INFINITY, f64::max);
+                let sum: f64 = (0..10).map(|c| (logit(c) - max).exp()).sum();
+
+                total += max + sum.ln() - logit(label as usize);
+                inside += 1;
+            }
+        }
+
+        assert_eq!(inside, 6 + 16 + 1);
+        assert!(
+            (loss as f64 - total / inside as f64).abs() < 1e-5,
+            "{loss} {}",
+            total / inside as f64
+        );
+
+        // Training lowers the loss and scores whole grids and cells. Here the last loss was
+        // 0.10 of the first (40 steps).
+        let trained = Genome {
+            epochs: 40,
+            batch_size: 16,
+            learning_rate: 0.03,
+            ..genome
+        };
+        let (model, stats, losses) =
+            train_logged(&trained, &spec, &data, &Limits::default()).expect("train");
+        let metrics = score::evaluate(&model, &spec, &data);
+
+        assert!(!stats.diverged);
+        assert!(losses[losses.len() - 1] < 0.2 * losses[0], "{losses:?}");
+        assert!(
+            metrics.accuracy.is_some_and(|cells| cells > 0.9),
+            "{metrics:?}"
+        );
+        assert!((0.0..=1.0).contains(&metrics.primary), "{metrics:?}");
     }
 
     #[test]

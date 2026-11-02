@@ -68,6 +68,12 @@ Stand: 2026-11-02.
   ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
   siehe „CNN-Modelle im MLP-Modus“. PR #27 führte einen Zwischenstand zusammen, PR #32 zog
   die CNN-Tests auf Ticket 04 nach und korrigierte GoogLeNet und ConvNeXt.
+- **CNNs, Teil 3.** Ticket 06: ARC-Raster als Aufgaben der CNNs, mit einer Farbklasse je
+  Zelle, den Trainingsaufgaben von ARC-AGI-1 und ihren re-arc-Paaren, zwei eigenen
+  Basismodellen (U-Net und ein vollständig faltendes Netz, FCN) und dem Befehl
+  `brut arc-grid`
+  ([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md));
+  siehe „ARC-Raster als Aufgaben“.
 - **Entwurf von Schritt 2 (PR #28 und #29).** Er beschreibt Seele und Kopplungsstärke κ
   ([Spezifikation](.scratch/seele-und-kappa/spec.md)). PR #28 war der erste Entwurf, PR #29
   ist die Endfassung. Die Fragen Q67 bis Q74 wurden am 2026-10-31 mit der jeweils
@@ -95,7 +101,8 @@ Stand: 2026-11-02.
 
 **Geplant**
 
-- **CNNs, Teil 3.** Ticket 06, ARC-Raster als Aufgaben; er kommt als Nächstes.
+- **Zucht auf ARC-Rastern.** Ein Lauf (`brut run`), welcher CNNs auf den ARC-Rasteraufgaben
+  züchtet; heute trainiert und bewertet `brut arc-grid` gegebene Genome.
 - **Schritt 2, Vergleich.** Pilot (Ticket 11), Vorab-Registrierung (Ticket 10) und gezählte
   Läufe (Ticket 13). Der Pilot kommt zuerst: Er legt die offenen Zahlen der
   Vorab-Registrierung fest.
@@ -240,9 +247,10 @@ Rückwärtsrechnung anders summiert.
 
 ## CNN-Modelle im MLP-Modus
 
-Stand: Die Tickets 01 bis 05 und 07 von `.scratch/cnn-basismodelle/` sind gebaut,
-also auch die Beförderung der Gewinner. Die ARC-Raster (Ticket 06) folgen. Die
-Bibliothek beschreibt
+Stand: Die Tickets 01 bis 07 von `.scratch/cnn-basismodelle/` sind gebaut, also auch
+die Beförderung der Gewinner und die ARC-Raster (Ticket 06,
+[ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md)).
+Die Bibliothek beschreibt
 [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md), die
 Familien und ihre Mutationen
 [ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md);
@@ -484,6 +492,91 @@ nicht. Die verdeckten Werte der beiden Läufe mit Seed 2 stammen von verschieden
 geheimen Seeds, da `brut init` je Lauf einen zieht; vergleichbar sind nur die
 Validierungswerte.
 
+### ARC-Raster als Aufgaben
+
+Ticket 06 bringt ARC-Raster als Aufgaben der CNNs
+([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md)).
+Jede Trainingsaufgabe von ARC-AGI-1 wird zu einer **ARC-Rasteraufgabe**: ihre eigenen
+Paare und ihre Paare aus re-arc (Hodel 2024, arXiv:2404.07353, Vorabdruck), da eine
+Aufgabendatei nur 3 bis 9 Paare hält, meist 4. Jedes Raster liegt oben links auf einer
+**Leinwand** von 30x30 Zellen. Die Eingabe hat je Farbe einen Kanal, die Ausgabe je Zelle
+eine von 10 Farbklassen. Zellen außerhalb des Rasters zählen weder im Verlust noch in der
+Bewertung.
+
+Ein Genom trainiert auf jeder Aufgabe ein frisches CNN aus seinem eigenen Seed. Bewertet
+wird auf zurückgehaltenen Paaren: auf dem letzten Fünftel der re-arc-Paare (valid) und auf
+den Testpaaren der Aufgabendatei (test), also den Paaren, welche ARC stellt. Der Wert ist
+der **exakte Treffer**, der Anteil der Raster, deren Zellen alle stimmen. Der Anteil
+richtiger Zellen ist nur beschreibend: Schon die Kopie der Eingabe trifft viele Zellen,
+weshalb sie in jedem Bericht als Vergleich vorn steht.
+
+| Schritt | Aufgaben |
+|---|---|
+| Trainingsaufgaben von ARC-AGI-1 | 400 |
+| ein Paar der Aufgabendatei ändert die Rastergröße | 138 bleiben draußen |
+| wiederholt Paare einer Bewertungsaufgabe (40853293, caa06a1f) | 2 bleiben draußen |
+| kein re-arc-Paar gleicher Größe | 1 bleibt draußen |
+| ARC-Rasteraufgaben | 259, mit 13 185 Trainings-, 3 095 Valid- und 264 Testpaaren |
+
+Die beiden Bewertungssätze bleiben zurückgehalten. `brut arc-grid` liest nur die
+Trainingsdateien von ARC-AGI-1 und die umgewandelte re-arc-Datei, jede gegen ihren SHA-256
+aus der Manifest-Datei geprüft. Wir messen auf den echten Daten: Kein Paar der 259
+Aufgaben gleicht normiert (alle 8 Drehungen und Spiegelungen, Farben neu nummeriert) einem
+Paar der Bewertung von ARC-AGI-1 oder ARC-AGI-2 oder von ConceptARC.
+
+```sh
+# 1. Daten unter data/external/ ablegen, siehe "ARC-Daten einrichten (freiwillig)".
+# 2. re-arc einmalig im Sandkasten umwandeln (als root, für setpriv); das Skript nutzt nur
+#    die Python-Standardbibliothek und führt keinen Code von re-arc aus.
+sudo tools/rearc_sandbox.sh data/external/re-arc/re_arc.zip data/external/re-arc/grids.jsonl
+# 3. Die Manifest-Datei nennt jede Datei mit SHA-256, Lizenz, Quelle und Commit.
+cp data/manifest.example.json data/external/manifest.json
+# 4. Die zwei Basismodelle auf den ersten 10 Aufgaben trainieren und bewerten
+./target/release/brut arc-grid --arc-root data/external \
+    --manifest data/external/manifest.json --tasks 10 --out arc-grid.json
+```
+
+`--genome <datei>` bewertet ein anderes Genom (das JSON eines Genoms), `--limits <datei>`
+nimmt andere Grenzen (das JSON der `limits` einer Konfiguration), `--canvas` eine kleinere
+Leinwand und `--threads` eine feste Zahl von Threads. Der Bericht nennt je Aufgabe die
+Epochen, das Training und die Werte. Ein Genom trainiert so viele Epochen, wie es selbst
+nennt, höchstens aber so viele, wie die Formprüfung auf der Aufgabe zulässt; passt es nicht
+einmal mit 5 Epochen, wird es auf der Aufgabe abgelehnt und zählt 0.
+
+Die zwei Basismodelle der ARC-Rasteraufgaben passen in die Standardgrenzen, auch auf der
+größten Aufgabe mit ihren eigenen Epochen:
+
+| Basismodell | Aufbau | Training |
+|---|---|---|
+| `u-net` (Ronneberger, Fischer und Brox 2015) | 3x3-Stem mit 8 Kanälen, ein Kodierer auf die halbe Größe mit 16 Kanälen, zwei Restblöcke, ein Dekodierer mit transponierter Faltung und der Verbindung zum Stem, der Kopf je Zelle | Lernrate 0.03, 8 Epochen |
+| `fcn` (Long, Shelhamer und Darrell 2015) | 1x1-Stem mit 16 Kanälen, zwei 3x3-Faltungen mit 16 Kanälen in voller Größe, der Kopf je Zelle | Lernrate 0.01, 9 Epochen |
+
+Das U-Net-Basismodell der Familien liest einen Kanal von 8x8 Zellen; sein Stem mit 4
+Kanälen würde 10 Farben zusammendrücken, weshalb die ARC-Raster ein eigenes U-Net haben.
+Wir wählen beide Entwürfe nach einigen Läufen auf den ersten 8 Aufgaben (Ticket 06,
+Kommentare). Bei den Standardgrenzen bestimmt das Zeitmodell die Epochen: Auf 30x30 Zellen
+reicht das Budget für 32 Schritte des U-Net und 36 des FCN je Aufgabe, auf zwei Aufgaben mit
+wenigen re-arc-Paaren für weniger.
+
+Wir messen beide Basismodelle auf allen 259 Aufgaben (Build mit `cargo build`, Profil dev,
+`--threads 3`, 59 min). Ein anderer Build teilte die 4 Kerne, weshalb wir
+`max_candidate_seconds` auf 120 s statt 30 s setzen; 22 Trainings des FCN dauerten länger
+als 30 s. Alle anderen Grenzen sind die Standardgrenzen, und die Epochen bestimmen
+FLOP-Grenze und Zeitmodell, nicht die Uhr.
+
+| Modell | exakt valid | exakt test | Zellen valid | Zellen test |
+|---|---|---|---|---|
+| Kopie der Eingabe | 0.000 | 0.000 | 0.766 | 0.752 |
+| `u-net` | 0.002 | 0.000 | 0.571 | 0.628 |
+| `fcn` | 0.003 | 0.004 | 0.673 | 0.713 |
+
+Das FCN trifft 10 der 3 095 Valid-Raster und 1 der 264 Testraster ganz (Aufgabe 6f8cd79b),
+das U-Net 6 Valid-Raster und kein Testraster, die Kopie keines. In der Zellgenauigkeit
+liegen beide im Mittel unter der Kopie; sie schlagen die Kopie auf 29 bis 54 der 259
+Aufgaben. Kein Training wurde abgelehnt, keines divergierte. Auf den ersten 4 Aufgaben
+kamen zwei frühere Entwürfe mit zehnmal so vielen FLOPs (etwa 90 Epochen je Aufgabe) an die
+Zellgenauigkeit der Kopie heran oder darüber, ohne ein Raster ganz zu treffen.
+
 ### Grenzen der CNN-Modelle
 
 - **Kleine Modelle.** Die Basismodelle sind verkleinert; sie messen sich an 16x16
@@ -496,8 +589,13 @@ Validierungswerte.
   Thread-Zahl; ein anderer Prozessor kann andere Bits liefern (ADR 0007).
 - **Ungetunte Zwillinge.** Die 1-D-Zwillinge auf `motif-1d` sind nicht abgestimmt,
   und kein Test verlangt, dass sie lernen.
-- **Platzhalter für ARC.** `mirror-grid` ist eine Regression mit R²; die ARC-Raster
-  mit einer Farbklasse je Zelle folgen in Ticket 06.
+- **Kurzes Training auf ARC.** Die Standardgrenzen sind für Bilder von 16x16 gemacht. Auf
+  der Leinwand von 30x30 reichen sie für 32 bis 36 Schritte je Aufgabe. Damit bleiben beide
+  Basismodelle im Mittel unter der Zellgenauigkeit der Kopie und treffen fast kein Raster
+  ganz. `--limits` nimmt andere Grenzen.
+- **Keine Zucht auf ARC.** `brut run` züchtet nicht auf den ARC-Rasteraufgaben; `brut
+  arc-grid` bewertet gegebene Genome. Aufgaben, welche die Rastergröße ändern, bleiben
+  draußen. `mirror-grid` bleibt eine Regression mit R².
 - **Keine Gewichtsvererbung.** Jedes Kind lernt von vorn. Das kostet Rechenzeit,
   hält aber die Läufe einfach reproduzierbar.
 - **Beförderung nach einem Lauf.** Ob ein Modell befördert wird, entscheidet sein
@@ -710,16 +808,22 @@ Bewertungssatz, genau das erlaubte Budget.
 
 ### ARC-Daten einrichten (freiwillig)
 
-1. Laden Sie die Daten selbst herunter. Legen Sie sie unter
-   `data/external/` ab. Der Ordner `data/` steht in `.gitignore`;
-   ARC-Daten kommen nie ins Git.
-   - ARC-AGI-1: github.com/fchollet/ARC-AGI (Lizenz Apache-2.0)
-   - ARC-AGI-2: github.com/arcprize/ARC-AGI-2 (Lizenz Apache-2.0)
-   - ConceptARC: github.com/victorvikram/ConceptARC (Lizenz MIT)
-2. Schreiben Sie eine **Manifest-Datei** `data/external/manifest.json`. Sie
-   nennt jede Datei mit ihrem SHA-256-Hash, ihrer Lizenz, ihrer Quelle und
-   ihrer Rolle. Das Format zeigt `data/manifest.example.json`. `brut-eval`
-   prüft die Hashes vor jeder ARC-Prüfung.
+1. Laden Sie die Daten selbst herunter, an den Commits, welche
+   `data/manifest.example.json` nennt. Legen Sie sie unter `data/external/`
+   ab, in den Ordnern `arc-agi-1`, `arc-agi-2`, `ConceptARC` und `re-arc`.
+   Der Ordner `data/` steht in `.gitignore`; ARC-Daten kommen nie ins Git.
+   - ARC-AGI-1: github.com/fchollet/ARC-AGI, Commit 39903044 (Lizenz Apache-2.0)
+   - ARC-AGI-2: github.com/arcprize/ARC-AGI-2, Commit f3283f72 (Lizenz Apache-2.0)
+   - ConceptARC: github.com/victorvikram/ConceptARC, Commit 0e67da6a (Lizenz MIT)
+   - re-arc: github.com/michaelhodel/re-arc, Commit e5b7f1d0 (Lizenz MIT), nur für
+     die ARC-Rasteraufgaben der CNNs; `tools/rearc_sandbox.sh` wandelt seine Zip-Datei
+     einmalig im Sandkasten um (siehe „ARC-Raster als Aufgaben“)
+2. Kopieren Sie die **Manifest-Datei** `data/manifest.example.json` nach
+   `data/external/manifest.json`. Sie nennt jede Datei mit ihrem SHA-256-Hash,
+   ihrer Lizenz, ihrer Quelle, ihrem Commit und ihrer Rolle: die 680 Dateien der
+   drei Bewertungssätze, die 400 Trainingsdateien von ARC-AGI-1 und die
+   umgewandelte re-arc-Datei. `brut-eval` prüft die Hashes vor jeder ARC-Prüfung,
+   `brut arc-grid` die der Dateien, welche es liest.
 3. Geben Sie beide Pfade beim Anlegen der geheimen Datei an:
 
    ```sh
@@ -1454,6 +1558,16 @@ Die Tests des Lerner-Modus:
   mindestens 3 000 ganze Aufgaben je Sekunde auf 4 Threads.
 - Ein Test zu den ARC-Obergrenzen läuft nur, wenn die Umgebungsvariable
   `BRUT_ARC_TEST_ROOT` auf die ARC-Daten zeigt.
+
+Die Tests der ARC-Rasteraufgaben:
+
+- `tests/arc_grid.rs` prüft den Umwandler `tools/rearc_to_jsonl.py` an einer handgemachten
+  Zip-Datei (braucht `python3`), lässt `brut arc-grid` mit beiden Basismodellen auf
+  handgemachten Aufgaben laufen, verlangt gleiche Berichte bei 1 und 2 Threads und lehnt
+  eine veränderte Trainingsdatei sowie kaputte Genom- und Grenzdateien ab.
+- Zwei Tests laufen nur auf Wunsch mit den echten Daten: die Kontaminationsprüfung gegen
+  die drei Bewertungssätze und ein Training beider Basismodelle auf vier Aufgaben
+  (`BRUT_ARC_TEST_ROOT=<daten> cargo test --test arc_grid -- --ignored real_`).
 
 Die Tests der Kaskaden-Zucht:
 

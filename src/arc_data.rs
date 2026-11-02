@@ -8,8 +8,12 @@
 //! - `arc-agi-1/data/{training,evaluation}/<id>.json` (fchollet/ARC-AGI)
 //! - `arc-agi-2/data/{training,evaluation}/<id>.json` (arcprize/ARC-AGI-2)
 //! - `ConceptARC/corpus/<concept>/<id>.json` (victorvikram/ConceptARC)
+//! - `re-arc/grids.jsonl` (michaelhodel/re-arc, converted by `tools/rearc_to_jsonl.py`)
 //!
-//! `data/manifest.example.json` pins the commits and the SHA-256 of every evaluation file.
+//! `data/manifest.example.json` pins the commits and the SHA-256 of every evaluation file, of
+//! every ARC-AGI-1 training file and of the converted re-arc file. The training files and
+//! the re-arc file are the data of the ARC grid tasks of the CNN models (`arc_grid`, ticket
+//! 06), which read them through `load_training_set` and `load_rearc_grids`.
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeSet;
@@ -32,6 +36,16 @@ pub const A1_A2_SHARED: [&str; 6] = [
     "0934a4d8", "136b0064", "16b78196", "981571dc", "aa4ec2a5", "da515329",
 ];
 
+/// ARC-AGI-1 training tasks that repeat pairs of the ARC-AGI-1 evaluation tasks 070dd51e
+/// and 50a16a69 at the pinned commits (see `training_pair_hashes`). The ARC grid tasks
+/// (`arc_grid`) leave them and their re-arc generations out, so that their training data
+/// touch no evaluation task.
+pub const A1_TRAIN_REPEATS_EVAL: [&str; 2] = ["40853293", "caa06a1f"];
+
+/// The converted re-arc file of the ARC grid tasks, relative to the data root: the output of
+/// `tools/rearc_to_jsonl.py` with its default options, grids of up to 30 x 30 cells.
+pub const REARC_GRIDS: &str = "re-arc/grids.jsonl";
+
 /// Manifest format version this loader reads.
 const MANIFEST_VERSION: u32 = 1;
 
@@ -45,16 +59,19 @@ const MAX_REL_PATH: usize = 256;
 const MAX_ID: usize = 64;
 
 /// Grid sides are 1..=MAX_SIDE; colours 0..=MAX_COLOUR.
-const MAX_SIDE: usize = 30;
+pub(crate) const MAX_SIDE: usize = 30;
 const MAX_COLOUR: u8 = 9;
 
 /// Pair counts of one task file.
-const MAX_TRAIN_PAIRS: usize = 10;
-const MAX_TEST_PAIRS: usize = 4;
+pub(crate) const MAX_TRAIN_PAIRS: usize = 10;
+pub(crate) const MAX_TEST_PAIRS: usize = 4;
 
-/// Limits of one re-arc family line (as written by tools/rearc_to_jsonl.py).
-const MAX_REARC_PAIRS: usize = 60;
+/// Limits of one re-arc family line (as written by tools/rearc_to_jsonl.py). The cell
+/// families of E2 keep grids of at most `MAX_REARC_AREA` cells; the ARC grid tasks take grids
+/// of up to 30 x 30 (`MAX_REARC_GRID_AREA`).
+pub(crate) const MAX_REARC_PAIRS: usize = 60;
 const MAX_REARC_AREA: usize = 225;
+const MAX_REARC_GRID_AREA: usize = MAX_SIDE * MAX_SIDE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -305,7 +322,76 @@ pub fn load_rearc_jsonl(path: &Path, m: &Manifest) -> Result<Vec<(String, Vec<Ar
         ));
     }
 
-    parse_rearc(&bytes)
+    parse_rearc(&bytes, MAX_REARC_AREA)
+}
+
+/// The ARC-AGI-1 training tasks listed in the manifest (source ArcAgi1Training), sorted by
+/// id: the training data of the ARC grid tasks (`arc_grid`).
+///
+/// Each lies in `.../data/training/<id>.json` and is hashed as it is read; a missing or
+/// changed file is an Integrity error. No other entry is read, so no evaluation file. A
+/// manifest without a training file is an error.
+pub fn load_training_set(root: &Path, m: &Manifest) -> Result<Vec<ArcTask>> {
+    check_manifest(m)?;
+
+    let mut tasks = Vec::new();
+
+    for e in m
+        .entries
+        .iter()
+        .filter(|e| e.source == SourceId::ArcAgi1Training)
+    {
+        if !in_training_layout(&e.rel_path) {
+            return Err(BrutError::Invalid(format!(
+                "manifest path {} lies outside the ARC-AGI-1 training layout",
+                e.rel_path
+            )));
+        }
+
+        let bytes = read_listed(root, e)?;
+
+        tasks.push(parse_task(stem_of(&e.rel_path), &bytes)?);
+    }
+
+    if tasks.is_empty() {
+        return Err(BrutError::Invalid(
+            "the manifest lists no ARC-AGI-1 training task".into(),
+        ));
+    }
+
+    tasks.sort_by(|a, b| a.id.cmp(&b.id));
+
+    if let Some(w) = tasks.windows(2).find(|w| w[0].id == w[1].id) {
+        return Err(BrutError::Invalid(format!(
+            "training task id {} appears twice",
+            w[0].id
+        )));
+    }
+
+    Ok(tasks)
+}
+
+/// The re-arc examples of the ARC grid tasks (`arc_grid`): the manifest entry at
+/// `REARC_GRIDS` (source ReArc), hashed as it is read.
+///
+/// The lines are those of `load_rearc_jsonl`, with grids of up to 30 x 30 cells: an id of 8
+/// hex digits and 1 to 60 pairs that keep their size. A manifest without that entry is
+/// Invalid; a missing or changed file is an Integrity error.
+pub fn load_rearc_grids(root: &Path, m: &Manifest) -> Result<Vec<(String, Vec<ArcPair>)>> {
+    check_manifest(m)?;
+
+    let e = m
+        .entries
+        .iter()
+        .find(|e| e.source == SourceId::ReArc && e.rel_path == REARC_GRIDS)
+        .ok_or_else(|| {
+            BrutError::Invalid(format!(
+                "the manifest lists no re-arc file at {REARC_GRIDS}"
+            ))
+        })?;
+    let bytes = read_listed(root, e)?;
+
+    parse_rearc(&bytes, MAX_REARC_GRID_AREA)
 }
 
 /// Read a regular file of at most `cap` bytes; `label` names it in errors.
@@ -363,10 +449,11 @@ fn read_listed(root: &Path, e: &ManifestEntry) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// All pairs of one listed file.
+/// All pairs of one listed file. A re-arc file is read with the limits of the ARC grid
+/// tasks, which hold those of the E2 cell families, so the audit covers both.
 fn entry_pairs(e: &ManifestEntry, bytes: &[u8]) -> Result<Vec<ArcPair>> {
     if e.source == SourceId::ReArc {
-        let families = parse_rearc(bytes)?;
+        let families = parse_rearc(bytes, MAX_REARC_GRID_AREA)?;
 
         return Ok(families.into_iter().flat_map(|(_, pairs)| pairs).collect());
     }
@@ -414,8 +501,9 @@ fn parse_task(id: &str, bytes: &[u8]) -> Result<ArcTask> {
     })
 }
 
-/// Parse and check a converted re-arc file (format in `load_rearc_jsonl`).
-fn parse_rearc(bytes: &[u8]) -> Result<Vec<(String, Vec<ArcPair>)>> {
+/// Parse and check a converted re-arc file (format in `load_rearc_jsonl`), whose grids have
+/// at most `max_area` cells.
+fn parse_rearc(bytes: &[u8], max_area: usize) -> Result<Vec<(String, Vec<ArcPair>)>> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| BrutError::Invalid("re-arc file is not UTF-8".into()))?;
     let mut out = Vec::new();
@@ -452,8 +540,8 @@ fn parse_rearc(bytes: &[u8]) -> Result<Vec<(String, Vec<ArcPair>)>> {
                 return Err(bad("every pair must keep its shape"));
             }
 
-            if pair.input.cells.len() > MAX_REARC_AREA {
-                return Err(bad("grid area must be at most 225"));
+            if pair.input.cells.len() > max_area {
+                return Err(bad(&format!("grid area must be at most {max_area}")));
             }
 
             pairs.push(pair);
@@ -555,6 +643,14 @@ fn in_set_layout(rel: &str, set: EvalSet) -> bool {
         EvalSet::A1Eval | EvalSet::A2Eval => parts[n - 3] == "data" && parts[n - 2] == "evaluation",
         EvalSet::ConceptArc => parts[n - 3] == "corpus",
     }
+}
+
+/// ARC-AGI-1 training files live in `.../data/training/<id>.json`.
+fn in_training_layout(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let n = parts.len();
+
+    n >= 3 && rel.ends_with(".json") && parts[n - 3] == "data" && parts[n - 2] == "training"
 }
 
 fn is_lower_hex(s: &str) -> bool {
@@ -1255,6 +1351,155 @@ mod tests {
                 "{what}"
             );
         }
+    }
+
+    #[test]
+    fn the_training_set_reads_only_listed_training_files() {
+        let (root, mut m) = small_root("training-set");
+        let d = put(
+            &root,
+            "arc-agi-1/data/training/dddddddd.json",
+            &task_json(6),
+        );
+
+        // An unlisted training file stays unread; a listed evaluation file is never read,
+        // even when it is missing.
+        put(
+            &root,
+            "arc-agi-1/data/training/unlisted.json",
+            &task_json(7),
+        );
+        m.entries.push(entry(
+            "arc-agi-1/data/training/dddddddd.json",
+            &d,
+            SourceId::ArcAgi1Training,
+            None,
+        ));
+        std::fs::remove_file(root.join("arc-agi-1/data/evaluation/aaaaaaaa.json")).expect("rm");
+
+        let tasks = load_training_set(&root, &m).expect("training set");
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+
+        assert_eq!(ids, vec!["cccccccc", "dddddddd"]);
+        assert_eq!(
+            tasks[1],
+            parse_task("dddddddd", task_json(6).as_bytes()).expect("parse")
+        );
+
+        // A changed file is an integrity error.
+        put(
+            &root,
+            "arc-agi-1/data/training/dddddddd.json",
+            &task_json(8),
+        );
+
+        assert!(matches!(
+            load_training_set(&root, &m),
+            Err(BrutError::Integrity(_))
+        ));
+
+        // A training entry outside data/training is refused, and so is a manifest without one.
+        let (root, mut m) = small_root("training-layout");
+
+        m.entries[2].rel_path = "arc-agi-1/data/other/cccccccc.json".into();
+        put(&root, "arc-agi-1/data/other/cccccccc.json", &task_json(3));
+
+        assert!(matches!(
+            load_training_set(&root, &m),
+            Err(BrutError::Invalid(_))
+        ));
+
+        m.entries.pop();
+
+        assert!(load_training_set(&root, &m).is_err());
+    }
+
+    #[test]
+    fn the_rearc_grid_file_holds_grids_up_to_30_by_30() {
+        let root = tmp_dir("rearc-grids");
+        let text = format!(
+            "{}\n{}\n",
+            rearc_line("007bbfb7", 60, 30),
+            rearc_line("00d62c1b", 3, 16)
+        );
+        let sha = put(&root, REARC_GRIDS, &text);
+        let m = manifest(vec![entry(REARC_GRIDS, &sha, SourceId::ReArc, None)]);
+        let families = load_rearc_grids(&root, &m).expect("grids");
+
+        assert_eq!(families.len(), 2);
+        assert_eq!(families[0].1.len(), 60);
+        assert_eq!(families[0].1[0].input.cells.len(), 900);
+
+        // The cell families of E2 keep their smaller grids: the same file is refused there.
+        assert!(matches!(
+            load_rearc_jsonl(&root.join(REARC_GRIDS), &m),
+            Err(BrutError::Invalid(_))
+        ));
+
+        // The audit reads the file as well (two distinct pairs: 30 x 30 and 16 x 16 ones).
+        assert_eq!(
+            training_pair_hashes(&root, &m, &[SourceId::ReArc])
+                .expect("audit")
+                .len(),
+            2
+        );
+
+        // A grid of 31 sides, a changed size, or more than 60 pairs are refused.
+        for (what, line) in [
+            ("31 x 31", rearc_line("007bbfb7", 1, 31)),
+            ("61 pairs", rearc_line("007bbfb7", 61, 3)),
+            (
+                "shape change",
+                r#"{"id":"007bbfb7","pairs":[{"input":[[1]],"output":[[1,1]]}]}"#.into(),
+            ),
+        ] {
+            let sha = put(&root, REARC_GRIDS, &line);
+            let m = manifest(vec![entry(REARC_GRIDS, &sha, SourceId::ReArc, None)]);
+
+            assert!(
+                matches!(load_rearc_grids(&root, &m), Err(BrutError::Invalid(_))),
+                "{what}"
+            );
+        }
+
+        // Only the entry at REARC_GRIDS counts, and its hash must match.
+        let sha = put(&root, "re-arc/other.jsonl", &text);
+        let other = manifest(vec![entry(
+            "re-arc/other.jsonl",
+            &sha,
+            SourceId::ReArc,
+            None,
+        )]);
+
+        assert!(matches!(
+            load_rearc_grids(&root, &other),
+            Err(BrutError::Invalid(_))
+        ));
+
+        put(&root, REARC_GRIDS, &rearc_line("007bbfb7", 2, 3));
+
+        let m = manifest(vec![entry(REARC_GRIDS, &sha, SourceId::ReArc, None)]);
+
+        assert!(matches!(
+            load_rearc_grids(&root, &m),
+            Err(BrutError::Integrity(_))
+        ));
+    }
+
+    #[test]
+    fn the_training_sources_of_the_grid_tasks_touch_no_evaluation_set() {
+        for set in [EvalSet::A1Eval, EvalSet::A2Eval, EvalSet::ConceptArc] {
+            assert!(
+                check_contamination(&[SourceId::ArcAgi1Training, SourceId::ReArc], set).is_ok(),
+                "{set:?}"
+            );
+        }
+
+        assert!(
+            A1_TRAIN_REPEATS_EVAL
+                .iter()
+                .all(|id| id.len() == 8 && is_lower_hex(id))
+        );
     }
 
     /// Where the real data lives: BRUT_ARC_TEST_ROOT, else `data/external` in the crate.
