@@ -1,11 +1,11 @@
 # Pre-registration draft: does breeding with a real model beat a majority vote?
 
 Status: **draft, not frozen.** Claude, the AI assistant, wrote it on 2026-11-02 at the
-owner's request. Six decisions are open (section 10). Each has a recommendation. The
-owner decides them in the pull request of this file. A pilot then runs (section 9). After
-the pilot, this file gets its final numbers and is frozen at the squash-merge commit of
-its pull request, as in step 1 ([PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md),
-status paragraph). No counted run starts before that commit exists.
+owner's request. The owner decided the six decisions of section 10 on 2026-11-02, all as
+recommended. A pilot runs next (section 9). After the pilot, this file gets its final
+numbers and is frozen at the squash-merge commit of its pull request, as in step 1
+([PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md), status paragraph). No counted run
+starts before that commit exists.
 
 All runs made before the freeze are pilot data. They never count. This includes the
 first real runs of 2026-10-31 and the runs of DGM against uniform selection that a VM
@@ -28,8 +28,7 @@ from breeding only counts if it goes beyond this baseline.
 **Secondary questions** (section 7):
 
 - S1. Does the champion beat one plain run of the best seed Cascade?
-- S2. Does Darwin Gödel selection beat uniform parent choice, if arm U runs?
-- S3. Does lexicase selection beat Darwin Gödel selection, if arm L runs?
+- S2. Does lexicase selection beat Darwin Gödel selection (arm L against arm B)?
 
 **What this does not test.** The unseen puzzles come from the same generator as the
 search puzzles, with another seed. So the experiment tests generalisation within one task
@@ -99,9 +98,9 @@ For every counted seed s, in the order of the list:
   different answers, so a Cascade's calls per puzzle change from panel to panel. A
   sample's seed does not depend on N, so a larger N reuses the calls of a smaller one;
   finding N_up costs no calls beyond its own samples.
-- **Arm U (uniform selection), if D3 says so.** Like arm B with `--selection uniform`.
-- **Arm L (lexicase selection), if D3 says so.** Like arm B with `--selection lexicase`.
-  This needs PR #45 merged before the freeze.
+- **Arm L (lexicase selection, D3).** Like arm B with `--selection lexicase` and
+  `docs/prereg-breeding-vs-vote/config-L.json`. This needs PR #45 merged before the
+  freeze. Uniform parent choice does not run (D3).
 
 Generation 0 is the same in every arm of a seed, since parent choice starts in
 generation 1. The analysis refuses a seed where the seed Cascades' search answers differ
@@ -179,14 +178,15 @@ They are read at the pair where the primary rule stops. They never stop the expe
 
 - **S1.** Y1(s) compares C(s) with the select result of one plain run of the voted seed
   Cascade, from run B-s.
-- **S2.** Y2(s) compares C(s) with C_U(s), the same count for arm U.
-- **S3.** Y3(s) compares C_L(s) with C(s).
+- **S2.** Y2(s) compares C_L(s), the count of section 5 for the champion of run L-s, with
+  C(s).
 
 Each gets one evidence value, built as in section 6, in the direction named above: a win
-of the champion (S1, S2) or of lexicase (S3) multiplies it by 3/2. A secondary claim needs
-E >= 300 in that direction; the other direction gets no claim. By Ville's inequality each
-false claim has a chance of at most 1/300, so by the union bound the chance of any false
-secondary claim is at most 3/300 = 1/100 (Vovk and Wang 2021 on combining e-values).
+of the champion of run B-s (S1) or of lexicase (S2) multiplies it by 3/2. A secondary claim
+needs E >= 200 in that direction; the other direction gets no claim. By Ville's inequality
+each false claim has a chance of at most 1/200, so by the union bound the chance of any
+false secondary claim is at most 2/200 = 1/100 (Vovk and Wang 2021 on combining
+e-values).
 
 **Reported for every pair, without a claim:** C(s), V(s), N_up(s), N_down(s) and the
 outcome with N_down(s), K_c(s) and K_v(s, N_up(s)), the per-puzzle McNemar
@@ -235,16 +235,21 @@ rate of the four seeds with `qwen2.5:32b` on 2026-10-31 (15.6 %).
 With the measured minutes per pair, the owner confirms the cap of D6. Nothing here
 forecasts money.
 
-## 10. Decisions for the owner
+## 10. Decisions of the owner
 
-| # | Decision | Recommendation | Reason |
+The owner decided all six on 2026-11-02 as recommended ("alles wie empfohlen"). D3 was
+first drafted as "B and V; add U". After PR #45 measured a clear lexicase lead on the
+clean measure and no difference for uniform choice, the recommendation became B, V and L,
+and that version was decided.
+
+| # | Decision | Decided | Reason |
 |---|---|---|---|
 | D1 | Model | `Qwen2.5-32B-Instruct`, bf16, on vLLM | Measured on this H200: 40 times the throughput of Ollama. Its seeds left the floor (6 of 24 unseen). `qwen2.5:7b` stayed at the floor. Alternatives: `Qwen2.5-72B-Instruct` (stronger, slower) or the thinking model `qwen3.8-27b` (contract I5; more tokens per call). |
 | D2 | Mutator rounds | On: `--llm-every 2`, answered by `brut-mutator` with the same model | The machine's idea is that a model rewrites the prompts. Without the Mutator, breeding only recombines phrases. The pilot checks the pause and resume loop. |
-| D3 | Arms | B and V; add U | U answers whether the selection matters at all (S2), as in step 1. L only if PR #45 is merged; each arm adds one breeding run per seed. |
+| D3 | Arms | B, V and L | The simulation of PR #45 predicts a lexicase lead (S2); uniform choice showed no difference there. Each breeding arm adds one run per seed, so U does not run. L needs PR #45 merged before the freeze. |
 | D4 | Panels and length | 40 search, 100 select, 8 children, 30 generations; a call cap that cannot bind | 100 unseen puzzles make each pair's count finer and ties rarer. A fixed number of generations gives every arm the same number of children, as in step 1. The cap is set from the worst case per generation, as step 1 did (its section 6). |
 | D5 | Vote temperature | T = 0.7 | Wang et al. (2023) used T = 0.7 for PaLM and GPT-3 and found self-consistency robust between 0.3 and 0.7. A seed's own temperature (0.2) would make the samples near copies and weaken the control. |
-| D6 | Cap on pairs | 60, to be confirmed after the pilot | At a win rate of 3/4, the chance of a proof is 0.78 with cap 60 and 0.95 with cap 120 (section 6). |
+| D6 | Cap on pairs | 60, confirmed after the pilot | At a win rate of 3/4, the chance of a proof is 0.78 with cap 60 and 0.95 with cap 120 (section 6). |
 
 ## 11. Work before the freeze
 
@@ -255,8 +260,10 @@ forecasts money.
 - The overlap check of section 5, in the analysis.
 - The call matching of section 4: read K_c(s) from the run's call record, and find
   N_up(s) and N_down(s) from the vote's call record.
-- `config-B.json` (and `config-U.json`, `config-L.json`), the vLLM start command and the
-  model's weights revision, in `docs/prereg-breeding-vs-vote/`.
+- `config-B.json` and `config-L.json`, the vLLM start command and the model's weights
+  revision, in `docs/prereg-breeding-vs-vote/`.
+- A driver script for one seed: arm B and arm L with the Mutator loop of D2, `--verify`,
+  the call matching and `vote-control`, as the procedure of section 8 says.
 - The worst-case call bound per generation for D4, written down with its arithmetic.
 
 ## 12. Sources
