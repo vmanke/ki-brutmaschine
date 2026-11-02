@@ -13,7 +13,11 @@
 //!
 //! The mirror grid task maps a grid to a grid, for U-Net (ticket 04). Its outputs form a
 //! grid too (`OutputShape::Grid`): one value per cell, a regression of the clean values. It
-//! stands in for the ARC grids of ticket 06; an MLP reads and writes its grids flattened.
+//! stood in for the ARC grids of ticket 06; an MLP reads and writes its grids flattened.
+//!
+//! The ARC grid tasks of ticket 06 (`TaskKind::ArcGrid`) are not generated: `arc_grid`
+//! reads their examples from files. Their outputs are one colour class per cell
+//! (`TaskSpec::cell_classes`), and their score is the exact match of whole grids.
 
 use std::f32::consts::{PI, TAU};
 
@@ -65,6 +69,11 @@ pub const MOTIF: [usize; 8] = [0, 2, 1, 3, 3, 0, 2, 1];
 
 /// Height and width of the grids of `MirrorGrid`, in cells.
 pub const GRID_SIDE: usize = 8;
+
+/// The label of a cell that lies outside the grid of its sample, in a task with one class
+/// per cell (`TaskSpec::cell_classes`): a cell of the canvas that the grid does not cover.
+/// It carries no loss and no score.
+pub const NO_CELL: u32 = u32::MAX;
 
 // The bars and stripes draw their lines as the bits of one u32.
 const _: () = assert!(IMAGE_SIDE < 32);
@@ -158,6 +167,19 @@ pub enum TaskKind {
     ///
     /// Each grid has 2^64 clean pictures, so the splits share none in practice.
     MirrorGrid,
+    /// ARC grids (ticket 06): an ARC-AGI-1 training task with its re-arc generations as a
+    /// grid-to-grid task with one colour class per cell, read from files by `arc_grid`. Each
+    /// grid lies at the top left of a square canvas, with one input channel per colour; a
+    /// cell outside the grid has no channel on. Each output cell has the class of its colour
+    /// (`TaskSpec::cell_classes`), and a cell outside the output grid the label `NO_CELL`. The
+    /// score is the share of grids with every cell right (exact match); the share of right
+    /// cells is a descriptive measure.
+    ///
+    /// `spec` gives the largest such task (`arc_grid::largest_spec`), on a canvas of
+    /// `arc_grid::ARC_SIDE` cells, and `generate` no sample, since the examples come from
+    /// files. It is not in `ALL`. `brut run` cannot breed on it (`Config::validate`), and
+    /// `brut-eval` refuses it; `brut arc-grid` trains and scores genomes on it.
+    ArcGrid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -169,7 +191,8 @@ pub enum Split {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Objective {
-    /// Softmax cross-entropy; output size = classes.
+    /// Softmax cross-entropy; output size = classes. With a grid of outputs that has one
+    /// channel per class, each cell is classified on its own (`TaskSpec::cell_classes`).
     Classification { classes: usize },
     /// Mean squared error; output size = n_out.
     Regression,
@@ -289,6 +312,25 @@ impl TaskSpec {
     pub fn output_fits(&self) -> bool {
         self.output.is_flat() || (self.n_out > 0 && self.output.size() == Some(self.n_out))
     }
+
+    /// The classes and the cells of a task with one class per cell: a classification whose
+    /// outputs form a grid with one channel per class, as the ARC grid tasks (ticket 06).
+    /// The outputs of a sample are then the logits of each class, channel by channel, and its
+    /// targets one label per cell, `NO_CELL` for a cell outside its grid. None for every
+    /// other task, so for every task before ticket 06.
+    pub fn cell_classes(&self) -> Option<(usize, usize)> {
+        match (self.objective, self.output) {
+            (
+                Objective::Classification { classes },
+                OutputShape::Grid {
+                    channels,
+                    height,
+                    width,
+                },
+            ) if channels == classes => Some((classes, height.checked_mul(width)?)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -310,7 +352,8 @@ pub struct Dataset {
 }
 
 impl TaskKind {
-    /// Every task, in the order of the enum.
+    /// Every task that `generate` draws, in the order of the enum: all but `ArcGrid`, whose
+    /// examples come from files.
     pub const ALL: [TaskKind; 10] = [
         TaskKind::TwoSpirals,
         TaskKind::Checkerboard,
@@ -407,11 +450,13 @@ impl TaskKind {
                     ..image_spec(self, 2)
                 }
             }
+            TaskKind::ArcGrid => crate::arc_grid::largest_spec(),
         }
     }
 
     /// Parse a CLI name such as "spirals", "checkerboard", "parity", "sine", "shapes",
-    /// "bars-and-stripes", "blob-count", "mirror-symmetry", "motif-1d" or "mirror-grid".
+    /// "bars-and-stripes", "blob-count", "mirror-symmetry", "motif-1d", "mirror-grid" or
+    /// "arc-grid".
     pub fn from_name(name: &str) -> Option<TaskKind> {
         let lower = name.trim().to_ascii_lowercase();
 
@@ -426,6 +471,7 @@ impl TaskKind {
             "mirror" | "mirrorsymmetry" | "mirror-symmetry" => Some(TaskKind::MirrorSymmetry),
             "motif" | "motif1d" | "motif-1d" => Some(TaskKind::Motif1d),
             "mirrorgrid" | "mirror-grid" => Some(TaskKind::MirrorGrid),
+            "arcgrid" | "arc-grid" => Some(TaskKind::ArcGrid),
             _ => None,
         }
     }
@@ -443,6 +489,7 @@ impl TaskKind {
             TaskKind::MirrorSymmetry => "mirror-symmetry",
             TaskKind::Motif1d => "motif-1d",
             TaskKind::MirrorGrid => "mirror-grid",
+            TaskKind::ArcGrid => "arc-grid",
         }
     }
 }
@@ -482,6 +529,9 @@ impl Split {
 
 /// Generate one split. Deterministic in (spec, split, seed).
 /// The split tag is mixed into the seed, so splits never share samples by seed reuse.
+///
+/// An ARC grid task (`TaskKind::ArcGrid`) gives an empty split of its sizes: its examples
+/// come from files (`arc_grid`).
 pub fn generate(spec: &TaskSpec, split: Split, seed: u64) -> Dataset {
     let n = match split {
         Split::Train => spec.n_train,
@@ -507,6 +557,13 @@ pub fn generate(spec: &TaskSpec, split: Split, seed: u64) -> Dataset {
         TaskKind::MirrorSymmetry => mirror_symmetry(n, noise, &mut rng),
         TaskKind::Motif1d => motif_1d(n, noise, &mut rng),
         TaskKind::MirrorGrid => mirror_grid(n, noise, &mut rng),
+        TaskKind::ArcGrid => Dataset {
+            x: Vec::new(),
+            targets: Targets::Labels(Vec::new()),
+            n: 0,
+            n_in: spec.n_in,
+            n_out: spec.n_out,
+        },
     }
 }
 
@@ -1819,6 +1876,87 @@ mod tests {
 
         reversed.reverse();
         assert_ne!(reversed, MOTIF);
+    }
+
+    #[test]
+    fn the_arc_grid_kind_is_read_from_files_and_never_generated() {
+        let spec = TaskKind::ArcGrid.spec();
+        let side = crate::arc_grid::ARC_SIDE;
+        let cells = side * side;
+
+        assert_eq!(spec.kind, TaskKind::ArcGrid);
+        assert_eq!((spec.n_in, spec.n_out), (10 * cells, 10 * cells));
+        assert_eq!(
+            spec.input,
+            InputShape::Image {
+                channels: 10,
+                height: side,
+                width: side
+            }
+        );
+        assert_eq!(spec.cell_classes(), Some((10, cells)));
+        assert!(spec.input_fits() && spec.output_fits());
+        assert_eq!(spec, crate::arc_grid::largest_spec());
+
+        // It is not one of the generated tasks, and it generates no sample.
+        assert!(!TaskKind::ALL.contains(&TaskKind::ArcGrid));
+
+        for split in SPLITS {
+            let data = generate(&spec, split, 3);
+
+            assert_eq!((data.n, data.n_in, data.n_out), (0, spec.n_in, spec.n_out));
+            assert!(data.x.is_empty());
+            assert_eq!(data.targets, Targets::Labels(Vec::new()));
+        }
+
+        assert_eq!(TaskKind::from_name("arc-grid"), Some(TaskKind::ArcGrid));
+        assert_eq!(
+            TaskKind::from_name(TaskKind::ArcGrid.name()),
+            Some(TaskKind::ArcGrid)
+        );
+
+        let text = serde_json::to_string(&spec).expect("json");
+        let back: TaskSpec = serde_json::from_str(&text).expect("parse");
+
+        assert_eq!(back, spec);
+        assert!(text.starts_with(r#"{"kind":"ArcGrid","#), "{text}");
+    }
+
+    #[test]
+    fn only_a_classification_with_a_grid_of_classes_has_cell_classes() {
+        // Every task before ticket 06 has none: flat classes, a regression, or the mirror
+        // grid's regression of one value per cell.
+        for kind in TaskKind::ALL {
+            assert_eq!(kind.spec().cell_classes(), None, "{kind:?}");
+        }
+
+        let grid = |channels| OutputShape::Grid {
+            channels,
+            height: 2,
+            width: 3,
+        };
+        let cells = TaskSpec {
+            n_out: 24,
+            output: grid(4),
+            objective: Objective::Classification { classes: 4 },
+            ..TaskKind::MirrorGrid.spec()
+        };
+
+        assert_eq!(cells.cell_classes(), Some((4, 6)));
+
+        // The channels of the grid must be the classes.
+        let other = TaskSpec {
+            output: grid(3),
+            n_out: 18,
+            ..cells.clone()
+        };
+        let regression = TaskSpec {
+            objective: Objective::Regression,
+            ..cells.clone()
+        };
+
+        assert_eq!(other.cell_classes(), None);
+        assert_eq!(regression.cell_classes(), None);
     }
 
     #[test]

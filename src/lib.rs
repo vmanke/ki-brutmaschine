@@ -15,9 +15,12 @@
 //! CNN models (ADR 0007): `cnn`; its file `ops` is the only one that calls candle. Their
 //! families, base models and mutations (ADR 0008): `cnn::families`, `cnn::variation`. The
 //! winners of a run, MLPs and CNNs, are promoted into `candidates/models/` through a
-//! human-reviewed pull request (ADR 0008, ADR 0004): `promote`, `hitl::ModelAdapter`.
+//! human-reviewed pull request (ADR 0008, ADR 0004): `promote`, `hitl::ModelAdapter`. The ARC
+//! grid tasks of the CNNs, one colour class per cell, train and score genomes on ARC-AGI-1
+//! training tasks and their re-arc generations (ticket 06): `arc_grid`.
 
 pub mod arc_data;
+pub mod arc_grid;
 pub mod archive;
 pub mod backend;
 pub mod cascade;

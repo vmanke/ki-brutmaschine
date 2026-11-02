@@ -41,7 +41,7 @@ One of the 16 published designs that the CNN genome covers, such as ResNet or U-
 _Avoid_: family (alone; Task family means Learner tasks), architecture
 
 **Base model**:
-A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion.
+A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion. The ARC grid tasks have two base models of their own, a U-Net and a fully convolutional network, which `brut arc-grid` trains and scores.
 _Avoid_: seed, seed program (that is a Learner), template
 
 **Shape check**:
@@ -55,6 +55,18 @@ _Avoid_: benchmark, timing
 **Operator**:
 One kind of change the random mutator makes to a CNN, such as switching the CNN family of a CNN stage or inserting one; each child of one CNN gets exactly one, named in the archive.
 _Avoid_: mutation operator, mutation (alone; a mutation applies one Operator)
+
+**ARC grid task**:
+One ARC-AGI-1 training task as a grid-to-grid task for CNNs: the pairs of its task file and its re-arc generations, each grid on the Canvas, one colour class per cell. A genome trains a fresh CNN on each from its own seed, and the CNN is scored by Exact match on the task's held-out pairs: the last fifth of the generated pairs and the test pairs of the task file. A task whose pairs change the grid size is left out, and so are the two tasks that repeat pairs of evaluation tasks.
+_Avoid_: ARC family, task family (that is a Learner term), ARC task (alone; the ARC check of the Learner mode uses the evaluation sets)
+
+**Canvas**:
+The square of cells, 30 per side by default, at whose top left every grid of an ARC grid task lies. A cell outside its grid has no colour channel on, and its label carries no loss and no score.
+_Avoid_: padding (alone), board
+
+**Exact match**:
+The score of an ARC grid task: the share of held-out pairs whose whole output grid the CNN gets right. Cell accuracy, the share of right cells inside the grids, is only descriptive, since the copy of the input already gets many cells right.
+_Avoid_: accuracy (alone)
 
 ### How Learners are made
 

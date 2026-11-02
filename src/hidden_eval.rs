@@ -314,6 +314,15 @@ impl HiddenEvaluator {
     /// persisted before scoring (a crash during scoring still counts it); when the budget is
     /// spent, the request is refused.
     pub fn evaluate(&mut self, req: &EvalRequest) -> Result<EvalResponse> {
+        // The ARC grid tasks (ticket 06) read their examples from files; they have no
+        // hidden split here.
+        if req.task == TaskKind::ArcGrid {
+            return Err(BrutError::Invalid(format!(
+                "task {} has no hidden split: its examples come from files",
+                req.task.name()
+            )));
+        }
+
         let path = self.allowed_model_path(&req.model_path)?;
         let model = load_model(&path)?;
         let spec = req.task.spec();
@@ -1068,6 +1077,34 @@ mod tests {
         let mut ev = HiddenEvaluator::open(&secret, 2, 0.01).expect("open");
 
         assert!(matches!(ev.evaluate(&req(&good)), Err(BrutError::Eval(_))));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_arc_grid_request_is_refused_without_a_query() {
+        // The ARC grid tasks (ticket 06) read their examples from files: there is no hidden
+        // split to score, so the request is refused before any query is charged.
+        let (dir, secret, models) = layout("arc-grid");
+        let model = models.join("cnn.json");
+        let genome = crate::arc_grid::base_models().remove(1).1;
+        let cnn = crate::cnn::model::testing::untrained(&genome, &TaskKind::ArcGrid.spec(), 1);
+
+        create_secret(&secret).expect("secret");
+        std::fs::write(&model, serde_json::to_vec(&cnn).expect("json")).expect("write");
+
+        let mut ev = HiddenEvaluator::open(&secret, 2, 0.01).expect("open");
+        let req = EvalRequest {
+            task: TaskKind::ArcGrid,
+            ..request(&model)
+        };
+        let message = ev.evaluate(&req).expect_err("refused").to_string();
+
+        assert!(message.contains("arc-grid"), "{message}");
+        assert!(
+            !dir.join("secret").join(STATE_FILE).exists(),
+            "no query charged"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
