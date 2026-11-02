@@ -18,8 +18,9 @@ champion solve more unseen puzzles than a majority vote that spends the same num
 model calls per puzzle?
 
 The majority vote samples the best seed Cascade N times per puzzle. It keeps the most
-frequent answer. N is chosen so that the vote spends as many Worker calls per puzzle as
-the champion does. This is self-consistency (Wang et al. 2023). It is a strong and simple
+frequent answer. N is the smallest number of samples for which the vote spends at least
+as many Worker calls on the unseen puzzles as the champion did (section 4). This is
+self-consistency (Wang et al. 2023). It is a strong and simple
 baseline: in their study it beat a single greedy answer on nearly every model and task,
 by up to 17.9 points on GSM8K. A gain
 from breeding only counts if it goes beyond this baseline.
@@ -80,10 +81,22 @@ For every counted seed s, in the order of the list:
 - **Arm B (breeding, DGM selection).** `brut-breed-ollama --out runs/B-s --config
   docs/prereg-breeding-vs-vote/config-B.json --seed s` with the panel sizes and run length
   of D4. The model is the one of D1. Mutator rounds follow D2.
-- **Arm V (vote control).** `vote-control --run runs/B-s --temperature T` with T from D5.
-  It samples the seed finalist with the best search fitness. N is the default: the
-  champion's average Worker calls per search puzzle divided by the seed's own, rounded,
-  at least 1. Arm V runs only after arm B of the same seed has finished.
+- **Arm V (vote control).** `vote-control --run runs/B-s --temperature T --samples N`
+  with T from D5 and N from the call matching below. It samples the seed finalist with the
+  best search fitness. Arm V runs only after arm B of the same seed has finished.
+- **Call matching.** K_c(s) is the number of Worker calls the champion made in the select
+  phase of run B-s, read from the run's call record. K_v(s, N) is the number of Worker
+  calls the vote makes on the same puzzles with N samples. N_up(s) is the smallest N >= 1
+  with K_v(s, N) >= K_c(s). The primary outcome uses N_up(s), so the vote never has fewer
+  calls than the champion; this favours the vote. N_down(s) is the largest N >= 1 with
+  K_v(s, N) <= K_c(s); its outcome is reported as a sensitivity check. Only call counts set
+  N, never a right or wrong answer, and one N holds for every puzzle of a run.
+- **Why not the default N.** The default of `vote-control` divides the champion's average
+  calls per search puzzle by the seed's own and rounds. That does not match the calls on
+  the unseen puzzles: a Stage spends extra calls on its vote only when its Workers give
+  different answers, so a Cascade's calls per puzzle change from panel to panel. A
+  sample's seed does not depend on N, so a larger N reuses the calls of a smaller one;
+  finding N_up costs no calls beyond its own samples.
 - **Arm U (uniform selection), if D3 says so.** Like arm B with `--selection uniform`.
 - **Arm L (lexicase selection), if D3 says so.** Like arm B with `--selection lexicase`.
   This needs PR #45 merged before the freeze.
@@ -104,7 +117,8 @@ between arms.
   `vote.rs` (`champion`) defines it. No select result enters this choice.
 - **C(s).** The number of select puzzles that c(s) solves exactly in the select phase of
   run B-s.
-- **V(s).** The number of select puzzles that the majority vote of arm V solves exactly.
+- **V(s).** The number of select puzzles that the majority vote of arm V solves exactly,
+  with N_up(s) samples.
 - **Outcome Y(s).** "breeding first" when C(s) > V(s); "vote first" when C(s) < V(s);
   "tie" when they are equal.
 
@@ -117,12 +131,15 @@ sources are in `.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1
   seed list, never in the order in which runs finish. E_B is multiplied by 3/2 on
   "breeding first", by 1/2 on "vote first", and stays on a tie. After w wins and l losses,
   E_B = 3^w / 2^(w + l).
-- **Evidence for the vote, E_V.** The same with the roles swapped: 3/2 on "vote first",
-  1/2 on "breeding first".
 - **The factors.** 3/2 and 1/2 are the likelihood ratio of a win rate of 3/4 against 1/2
   among untied pairs.
-- **Stop with a claim.** The experiment stops at the first pair where E_B >= 100 (claim:
-  breeding beats the vote) or E_V >= 100 (claim: the vote beats breeding).
+- **Stop with a claim.** The experiment stops at the first pair where E_B >= 100. The
+  claim is: breeding beats the vote.
+- **One direction only.** The rule cannot claim that the vote beats breeding. The mirrored
+  value E_V (3/2 on "vote first", 1/2 on "breeding first") satisfies
+  E_B · E_V = (3/4)^(w + l), so the futility stop of E_B comes first: five straight losses
+  end the experiment, while E_V needs twelve to reach 100. E_V is reported at the stop pair,
+  without a claim.
 - **Stop for futility.** It stops when E_B <= 1/20. Then the claim is: no evidence that
   breeding wins in three of four untied seeds.
 - **Cap.** It stops at the cap of D6. Without a claim by then, the result is "open".
@@ -131,10 +148,10 @@ sources are in `.scratch/universum-erfinden/issues/09-sequential-rule-for-step-1
 
 **Error bound.** Under the null hypothesis (a win rate of at most 1/2 among untied pairs),
 E_B is a nonnegative supermartingale that starts at 1. By Ville's inequality, the chance
-that it ever reaches 100 is at most 1/100 (Shafer 2021; Ramdas et al. 2023). The same
-holds for E_V in the other direction. The bound holds at every stopping time, so looking
-after each pair costs nothing. Each factor has mean 1/2 + p <= 1 under the null, where p is
-the win rate among untied pairs; a tie has the factor 1.
+that it ever reaches 100 is at most 1/100 (Shafer 2021; Ramdas et al. 2023). The bound
+holds at every stopping time, so looking after each pair costs nothing. Each factor has
+mean 1/2 + p <= 1 under the null, where p is the win rate among untied pairs; a tie has the
+factor 1.
 
 **Operating characteristics** (`docs/prereg-breeding-vs-vote/oc.py`, exact dynamic
 programming; the tie rate 0.2 is an assumption that the pilot measures):
@@ -163,11 +180,14 @@ They are read at the pair where the primary rule stops. They never stop the expe
 - **S2.** Y2(s) compares C(s) with C_U(s), the same count for arm U.
 - **S3.** Y3(s) compares C_L(s) with C(s).
 
-Each gets its own pair of evidence values, built as in section 6. A secondary claim needs
-E >= 300. Three secondary hypotheses at 1/100 each, by the union bound, keep the chance of
-any false secondary claim at most 1/100 (Vovk and Wang 2021 on combining e-values).
+Each gets one evidence value, built as in section 6, in the direction named above: a win
+of the champion (S1, S2) or of lexicase (S3) multiplies it by 3/2. A secondary claim needs
+E >= 300 in that direction; the other direction gets no claim. By Ville's inequality each
+false claim has a chance of at most 1/300, so by the union bound the chance of any false
+secondary claim is at most 3/300 = 1/100 (Vovk and Wang 2021 on combining e-values).
 
-**Reported for every pair, without a claim:** C(s), V(s), N, the per-puzzle McNemar
+**Reported for every pair, without a claim:** C(s), V(s), N_up(s), N_down(s) and the
+outcome with N_down(s), K_c(s) and K_v(s, N_up(s)), the per-puzzle McNemar
 counts and the sign-test p-value of `vote-control`, calls and tokens of breeding and of
 the vote, the champion's Worker calls per puzzle, the overlap count, failed calls, and
 wall time.
@@ -184,7 +204,9 @@ wall time.
 5. A run that is killed or interrupted is not resumed. It is deleted and run again from
    scratch. A pause for Mutator answers (exit code 3), answered by `brut-mutator` and
    continued with `--resume`, is part of the design, not an interruption (D2).
-6. After each run: `brut-breed --out <dir> --verify` must pass. After each pair: run the
+6. After each run: `brut-breed-ollama --out <dir> --verify` must pass. The standalone
+   `brut-breed` knows only the simulated models, and its `--verify` refuses a run whose
+   allow-list names a `vllm:` model. After each pair: run the
    analysis on all finished pairs. It names the next seed or gives the verdict.
 7. Before the result is reported, the independent recount must give the same outcomes,
    evidence values, stop pair and verdicts.
@@ -229,6 +251,8 @@ forecasts money.
   Both read the run directories and `vote-control.json`, check the frozen settings,
   compute Y(s), the evidence values and the verdicts.
 - The overlap check of section 5, in the analysis.
+- The call matching of section 4: read K_c(s) from the run's call record, and find
+  N_up(s) and N_down(s) from the vote's call record.
 - `config-B.json` (and `config-U.json`, `config-L.json`), the vLLM start command and the
   model's weights revision, in `docs/prereg-breeding-vs-vote/`.
 - The worst-case call bound per generation for D4, written down with its arithmetic.
