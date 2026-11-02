@@ -585,6 +585,15 @@ pub fn observation(observer: &[u16], observed: &[u16], kappa: u16) -> (Vec<u16>,
     (o, t)
 }
 
+/// One step of imprinting (spec 10.1) [Q73 a]: the child Worker's Soul `soul` moves toward
+/// the current Soul `source` of one of its source Workers by round(κ · Δ / 1000) per family,
+/// where κ is the source Worker's Coupling strength in thousandths. This is the observed side
+/// of an Observation by the source (spec 8.3), so the step follows Q69; the source does not
+/// move. At κ = 0 nothing moves, and at κ = 1000 the child takes the source's phases.
+pub fn imprint(soul: &[u16], source: &[u16], kappa: u16) -> Vec<u16> {
+    observation(source, soul, kappa).1
+}
+
 /// The phases a request carries for the Soul `soul` (spec 11.1): with the complex readout
 /// the phases themselves; with the real readout each phase becomes 0 or half a turn, the
 /// angle of its sign. So a simulated model reads the same unit phasors as the vote.
@@ -1599,6 +1608,38 @@ mod tests {
         assert_eq!(coupling_step(200, -5, 2000), -1);
         assert_eq!(coupling_step(1000, -32768, 2000), -16384);
         assert_eq!(coupling_step(0, 27307, 1000), 0);
+    }
+
+    #[test]
+    fn imprinting_is_the_observed_side_of_an_observation() {
+        // The numbers of `one_observation_by_the_rule`: the child is the observed, its
+        // source the observer.
+        let child = [0u16, 60000, 27307, 0, 100, 105];
+        let source = [27307u16, 21771, 0, 32768, 105, 100];
+
+        assert_eq!(imprint(&child, &source, 1000), source);
+        assert_eq!(
+            imprint(&child, &source, 200),
+            [5461, 65461, 21846, 58982, 101, 104]
+        );
+        assert_eq!(imprint(&child, &source, 0), child);
+
+        for kappa in [0u16, 1, 200, 999, 1000] {
+            assert_eq!(
+                imprint(&child, &source, kappa),
+                observation(&source, &child, kappa).1
+            );
+        }
+
+        // Two sources in parent order: the second step starts where the first ended.
+        let other = [100u16; 6];
+        let once = imprint(&child, &source, 500);
+
+        assert_eq!(
+            imprint(&once, &other, 500),
+            observation(&other, &once, 500).1
+        );
+        assert_ne!(imprint(&once, &other, 500), once);
     }
 
     #[test]

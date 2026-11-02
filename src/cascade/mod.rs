@@ -19,4 +19,5 @@ pub mod puzzle;
 pub mod qubit;
 pub mod sim;
 pub mod soul;
+pub mod upbringing;
 pub mod variation;

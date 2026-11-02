@@ -12,14 +12,26 @@
 //! it. A value that is undefined because its set is empty is None, or 0 where the field is
 //! a count, a share or a best value. Sums run in a fixed order, so the bytes do not depend
 //! on thread count.
+//!
+//! A Run with Souls (step 2, `.scratch/seele-und-kappa/spec.md`, section 13.1) adds a
+//! seventh group, `soul`: the Soul population, its Character on the search panel, how alike
+//! the Souls are, what experience did to them, and this generation's Observations and
+//! votes. It is left out of the JSON in a Run without Souls, so those state lines stay as
+//! they were. It too is a pure function of committed state, with this commit's Observations
+//! as the generation's usage is for the cost group. A statistic of the Character is computed
+//! once per distinct strength vector of the search panel and weighted by the number of
+//! tasks that have it, so every task weighs alike.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cascade::arena::{Comparison, Member, Usage};
-use crate::cascade::genome::Cascade;
+use crate::cascade::arena::{Comparison, Member, SoulSource, Usage, VoteTally, WorkerRef};
+use crate::cascade::genome::{COUPLING_MAX, Cascade, PhaseState};
+use crate::cascade::soul::{
+    Phasor, Readout, character_norm, independent_contrast, phase_gap, readout,
+};
 use crate::cascade::variation::Op;
 use crate::util::sha256_hex;
 
@@ -33,6 +45,10 @@ pub struct UniverseState {
     pub honesty: Honesty,
     pub judging: Judging,
     pub cost: Costs,
+    /// The Souls (step 2); left out of the JSON in a Run without Souls. Boxed, so that a
+    /// state event stays near the size of the other events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul: Option<Box<SoulState>>,
 }
 
 /// How well the archive does on the search panel. A solved rate is solved / tasks, a
@@ -154,6 +170,86 @@ pub struct Costs {
     pub stages_mean: f64,
 }
 
+/// The Souls of the archive after a commit (step 2, spec 13.1). Means over tasks run over
+/// the search panel, each task once; a value without its set is absent, and a count of an
+/// empty set is 0 (spec 13.4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SoulState {
+    /// Workers in the archive: the Soul population (Q58). It never falls.
+    pub souls: usize,
+    /// Workers born in this generation, and those of them with an entirely new Soul (Q64).
+    pub souls_born: usize,
+    pub souls_new: usize,
+    /// Distinct origins of the archive's Souls, Hoppe's colours, and the entropy of their
+    /// frequencies over the Workers.
+    pub origins: usize,
+    pub origin_entropy_bits: f64,
+    /// The mean normalised Character over the archive's Workers and the search tasks, from
+    /// the current Souls (Q51).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_norm_mean: Option<f64>,
+    /// The mean over the search tasks of the Character's contrast over the archive's
+    /// Workers, its standard deviation divided by its mean, from the current Souls (Q57). A
+    /// task on which every Character is 0 has no spread and counts 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f64>,
+    /// The same mean of the formula of spec 6.3 for this readout: the contrast of
+    /// independent, uniform Souls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contrast_independent: Option<f64>,
+    /// Per family, the length of the mean readout phasor of the current Souls over all
+    /// Workers (1: all alike; near 0: spread out), and the mean over the families.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_mean: Option<f64>,
+    /// The mean circular distance between current and birth Soul over the Workers and their
+    /// families, in degrees: what experience did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_mean: Option<f64>,
+    /// The quantiles of κ over the archive's Workers, as fractions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kappa: Option<Quantiles>,
+    /// The Observations applied at this commit, of Stage votes and of the peer round (Q62).
+    pub observations_vote: u64,
+    pub observations_peer: u64,
+    /// The mean phase change of the Workers whose current Soul changed at this commit, over
+    /// them and their families, in degrees (Q56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shift_mean: Option<f64>,
+    /// The complex Stage votes of this generation's newborns on the search panel; those
+    /// whose winner differs from the count's; those in which two or more answers shared the
+    /// largest Π, so the tie rule decided.
+    pub votes: u64,
+    pub votes_flipped: u64,
+    pub votes_tied: u64,
+    /// The mean coherence of these votes (spec 7.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coherence_mean: Option<f64>,
+    /// Replies to this generation's newborns on the search panel in which the phases
+    /// decided a simulated model's choice (spec 11).
+    pub sim_decided: u64,
+}
+
+/// What the soul group reads besides the archive (step 2, spec 13.1).
+#[derive(Clone, Copy, Debug)]
+pub struct SoulInput<'a> {
+    /// How the Run reads its Souls.
+    pub readout: Readout,
+    /// The phases of a Soul: the Domain's families.
+    pub families: usize,
+    /// The Family strengths of the search panel's tasks under the Run's setting: each
+    /// distinct vector once, in the order of its first task, with the number of tasks that
+    /// have it (`strength_counts`).
+    pub strengths: &'a [(Vec<f64>, usize)],
+    /// The Observations applied at this commit, of Stage votes and of the peer round.
+    pub observations_vote: u64,
+    pub observations_peer: u64,
+    /// Each Worker whose current Soul changed at this commit: the Soul it had when the
+    /// commit began, and the Soul it has after it.
+    pub moved: &'a [(PhaseState, PhaseState)],
+}
+
 /// The committed state that one generation's observables are computed from.
 pub struct ObserveInput<'a, A> {
     /// The generation just committed.
@@ -170,6 +266,8 @@ pub struct ObserveInput<'a, A> {
     pub generation_usage: Usage,
     /// Tasks on the search panel.
     pub tasks: usize,
+    /// In a Run with Souls, what the soul group reads besides the archive (step 2).
+    pub soul: Option<SoulInput<'a>>,
 }
 
 /// The observables of one committed generation.
@@ -182,6 +280,194 @@ pub fn observe<A: Serialize>(input: &ObserveInput<'_, A>) -> UniverseState {
         honesty: Honesty::default(),
         judging: judging(input.archive, input.comparisons, input.generation),
         cost: costs(input.archive, &input.generation_usage),
+        soul: input
+            .soul
+            .as_ref()
+            .map(|s| Box::new(soul_state(input.archive, input.first_new, s))),
+    }
+}
+
+/// The distinct strength vectors of the tasks whose strengths are `tasks`, each once in the
+/// order of its first task, with the number of tasks that have it (spec 13.1).
+pub fn strength_counts(tasks: impl IntoIterator<Item = Vec<f64>>) -> Vec<(Vec<f64>, usize)> {
+    let mut counts: Vec<(Vec<f64>, usize)> = Vec::new();
+
+    for s in tasks {
+        match counts.iter_mut().find(|(v, _)| *v == s) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((s, 1)),
+        }
+    }
+
+    counts
+}
+
+/// Degrees per phase unit: a phase unit is 1/65536 of a turn. Exact in binary.
+const DEGREES_PER_UNIT: f64 = 360.0 / 65536.0;
+
+/// The circular distance of two Souls, in degrees, summed over their families, and the
+/// number of families compared.
+fn circular_distance(a: &[u16], b: &[u16]) -> (f64, usize) {
+    a.iter().zip(b).fold((0.0, 0), |(sum, n), (&p, &q)| {
+        (
+            sum + f64::from(phase_gap(p, q).unsigned_abs()) * DEGREES_PER_UNIT,
+            n + 1,
+        )
+    })
+}
+
+/// The mean and the contrast (standard deviation over the mean) of the normalised
+/// Characters of `souls` on a task with the strengths `s`, or None without a Soul. The
+/// contrast is 0 when every Character is 0: there is no spread.
+fn character_statistics(souls: &[&[u16]], s: &[f64], r: Readout) -> Option<(f64, f64)> {
+    if souls.is_empty() {
+        return None;
+    }
+
+    let n = souls.len() as f64;
+    let values: Vec<f64> = souls.iter().map(|p| character_norm(p, s, r)).collect();
+    let mean = values.iter().fold(0.0, |sum, &x| sum + x) / n;
+    let variance = values
+        .iter()
+        .fold(0.0, |sum, &x| sum + (x - mean) * (x - mean))
+        / n;
+    let contrast = if mean > 0.0 {
+        variance.sqrt() / mean
+    } else {
+        0.0
+    };
+
+    Some((mean, contrast))
+}
+
+/// The soul group of the archive after a commit (spec 13.1). The members from `first_new`
+/// on were born in this generation. Character statistics read the current Souls, once per
+/// distinct strength vector of `s.strengths`, weighted by its number of tasks.
+fn soul_state<A>(archive: &[Member<A>], first_new: usize, s: &SoulInput<'_>) -> SoulState {
+    let born = &archive[first_new.min(archive.len())..];
+    let workers = |m: &Member<A>| m.cascade.worker_count();
+    fn records<A>(members: &[Member<A>]) -> Vec<&SoulSource> {
+        members
+            .iter()
+            .flat_map(|m| m.soul_sources.iter().flatten())
+            .collect()
+    }
+
+    let mut origins: BTreeMap<&WorkerRef, usize> = BTreeMap::new();
+
+    for r in records(archive) {
+        *origins.entry(&r.origin).or_default() += 1;
+    }
+
+    // The current Soul of every Worker that has one, in archive and Stage order.
+    let now: Vec<&[u16]> = archive
+        .iter()
+        .flat_map(|m| m.soul_now.iter().flatten().map(|p| p.0.as_slice()))
+        .collect();
+    // How far each current Soul lies from its birth Soul.
+    let mut moved = (0.0, 0);
+
+    for m in archive {
+        let births = m.cascade.stages.iter().flat_map(|st| &st.workers);
+
+        for (w, current) in births.zip(m.soul_now.iter().flatten()) {
+            if let Some(birth) = &w.traits.phase_state {
+                let (sum, n) = circular_distance(birth, current);
+
+                moved = (moved.0 + sum, moved.1 + n);
+            }
+        }
+    }
+
+    // The Character, once per distinct strength vector, weighted by its tasks.
+    let tasks: usize = s.strengths.iter().map(|(_, n)| n).sum();
+    let mut sums = (0.0, 0.0, 0.0);
+    let mut defined = true;
+
+    for (strengths, count) in s.strengths {
+        let weight = *count as f64;
+
+        match character_statistics(&now, strengths, s.readout) {
+            Some((mean, contrast)) => {
+                sums.0 += weight * mean;
+                sums.1 += weight * contrast;
+            }
+            None => defined = false,
+        }
+
+        sums.2 += weight * independent_contrast(strengths, s.readout);
+    }
+
+    let per_task = |sum: f64| (tasks > 0).then(|| sum / tasks as f64);
+    let character = |sum: f64| per_task(sum).filter(|_| defined && !now.is_empty());
+
+    // How alike the Souls are, family by family: the length of the mean readout phasor.
+    let order: Option<Vec<f64>> = (!now.is_empty()).then(|| {
+        (0..s.families)
+            .map(|f| {
+                let (sum, n) = now
+                    .iter()
+                    .filter_map(|p| p.get(f))
+                    .fold((Phasor::default(), 0usize), |(z, n), &p| {
+                        (z + readout(p, s.readout), n + 1)
+                    });
+
+                if n > 0 { sum.norm() / n as f64 } else { 0.0 }
+            })
+            .collect()
+    });
+    let order_mean = order
+        .as_ref()
+        .filter(|o| !o.is_empty())
+        .map(|o| o.iter().fold(0.0, |sum, &x| sum + x) / o.len() as f64);
+
+    // What this commit's Observations moved.
+    let shift = s.moved.iter().fold((0.0, 0), |(sum, n), (before, after)| {
+        let (d, k) = circular_distance(before, after);
+
+        (sum + d, n + k)
+    });
+
+    let kappas: Vec<f64> = archive
+        .iter()
+        .flat_map(|m| m.cascade.stages.iter().flat_map(|st| &st.workers))
+        .map(|w| f64::from(w.traits.coupling) / f64::from(COUPLING_MAX))
+        .collect();
+    let mut votes = VoteTally::default();
+
+    for m in born {
+        if let Some(t) = &m.votes {
+            votes.complex += t.complex;
+            votes.flipped += t.flipped;
+            votes.tied += t.tied;
+            votes.coherence_sum += t.coherence_sum;
+            votes.sim_decided += t.sim_decided;
+        }
+    }
+
+    let mean_of = |(sum, n): (f64, usize)| (n > 0).then(|| sum / n as f64);
+
+    SoulState {
+        souls: archive.iter().map(workers).sum(),
+        souls_born: born.iter().map(workers).sum(),
+        souls_new: records(born).iter().filter(|r| r.new).count(),
+        origins: origins.len(),
+        origin_entropy_bits: entropy_bits(&origins),
+        character_norm_mean: character(sums.0),
+        contrast: character(sums.1),
+        contrast_independent: per_task(sums.2),
+        order,
+        order_mean,
+        moved_mean: mean_of(moved),
+        kappa: quantiles(&kappas),
+        observations_vote: s.observations_vote,
+        observations_peer: s.observations_peer,
+        shift_mean: mean_of(shift),
+        votes: votes.complex,
+        votes_flipped: votes.flipped,
+        votes_tied: votes.tied,
+        coherence_mean: (votes.complex > 0).then(|| votes.coherence_sum / votes.complex as f64),
+        sim_decided: votes.sim_decided,
     }
 }
 
@@ -451,7 +737,10 @@ mod tests {
 
     use super::*;
     use crate::cascade::arena::{BreedConfig, Event, dgm_weights};
+    use crate::cascade::circuit::CircuitDomain;
+    use crate::cascade::domain::{CircuitConfig, Domain};
     use crate::cascade::genome::{Section, seed_cascades};
+    use crate::util::derive_seed;
 
     /// A member on the first seed's Cascade with one answer, its solved count, and
     /// parents by id; a member without parents is a seed.
@@ -476,7 +765,9 @@ mod tests {
             fitness: 0.0,
             rating: 0.0,
             soul_sources: None,
+            imprinted: None,
             soul_now: None,
+            teaching: None,
             authors: None,
             votes: None,
         }
@@ -510,6 +801,7 @@ mod tests {
             selection_weights: weights,
             generation_usage: Usage::default(),
             tasks: 4,
+            soul: None,
         }
     }
 
@@ -810,6 +1102,7 @@ mod tests {
                 selection_weights: &[],
                 generation_usage: Usage::default(),
                 tasks: 0,
+                soul: None,
             }),
             observe(&ObserveInput {
                 first_new: 99,
@@ -897,5 +1190,278 @@ mod tests {
             json,
             r#"{"overseers":false,"fakes_planted":0,"fakes_caught":0,"false_alarms":0,"confirmed_collusion":0}"#
         );
+    }
+
+    /// A Worker of a hand-built archive with Souls of two phases: its birth Soul and κ,
+    /// whether its Soul is new, the origin of its Soul, its imprinted and its current Soul.
+    struct Souled {
+        birth: [u16; 2],
+        kappa: u16,
+        new: bool,
+        origin: (&'static str, usize),
+        imprinted: [u16; 2],
+        now: [u16; 2],
+    }
+
+    /// The member `id` of `generation` whose one Stage holds `workers`, with the tally
+    /// `votes` of its birth votes.
+    fn souled_member(
+        id: &str,
+        generation: usize,
+        workers: &[Souled],
+        votes: VoteTally,
+    ) -> Member<u32> {
+        let worker = seed_cascades()[0].1.stages[0].workers[0].clone();
+        let phases = |p: &[u16; 2]| PhaseState(p.to_vec());
+        let mut m = member(id, &[], 0);
+
+        m.generation = generation;
+        m.cascade.stages[0].workers = workers
+            .iter()
+            .map(|s| {
+                let mut w = worker.clone();
+
+                w.traits.phase_state = Some(phases(&s.birth));
+                w.traits.coupling = s.kappa;
+                w
+            })
+            .collect();
+        m.soul_sources = Some(
+            workers
+                .iter()
+                .map(|s| SoulSource {
+                    sources: Vec::new(),
+                    new: s.new,
+                    origin: WorkerRef {
+                        member: s.origin.0.to_string(),
+                        worker: s.origin.1,
+                    },
+                })
+                .collect(),
+        );
+        m.imprinted = Some(workers.iter().map(|s| phases(&s.imprinted)).collect());
+        m.soul_now = Some(workers.iter().map(|s| phases(&s.now)).collect());
+        m.votes = Some(votes);
+        m
+    }
+
+    /// Seeds A (two Workers) and B (one), and C, a child of A born in generation 1: five
+    /// Workers. A's second Worker and C's first moved at this commit by a quarter turn in
+    /// their second family; C's first Worker was imprinted by a quarter turn before that.
+    fn soul_archive() -> Vec<Member<u32>> {
+        let tally = |complex, flipped, tied, coherence_sum, sim_decided| VoteTally {
+            complex,
+            flipped,
+            tied,
+            coherence_sum,
+            sim_decided,
+        };
+        let w = |birth, kappa, new, origin, imprinted, now| Souled {
+            birth,
+            kappa,
+            new,
+            origin,
+            imprinted,
+            now,
+        };
+
+        vec![
+            souled_member(
+                "A",
+                0,
+                &[
+                    w([0, 0], 200, true, ("A", 0), [0, 0], [0, 0]),
+                    w(
+                        [16384, 16384],
+                        400,
+                        true,
+                        ("A", 1),
+                        [16384, 16384],
+                        [16384, 32768],
+                    ),
+                ],
+                tally(7, 7, 7, 7.0, 7),
+            ),
+            souled_member(
+                "B",
+                0,
+                &[w([32768, 0], 0, true, ("B", 0), [32768, 0], [32768, 0])],
+                VoteTally::default(),
+            ),
+            souled_member(
+                "C",
+                1,
+                &[
+                    w([0, 16384], 200, false, ("A", 0), [0, 32768], [0, 49152]),
+                    w([49152, 0], 1000, true, ("C", 1), [49152, 0], [49152, 0]),
+                ],
+                tally(4, 1, 2, 2.5, 3),
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_soul_group_counts_by_hand() {
+        let archive = soul_archive();
+        // Three tasks: two with both families fitting, one with the first alone.
+        let strengths = [(vec![1.0, 1.0], 2), (vec![1.0, 0.0], 1)];
+        let moved = [
+            (
+                PhaseState(vec![16384, 16384]),
+                PhaseState(vec![16384, 32768]),
+            ),
+            (PhaseState(vec![0, 32768]), PhaseState(vec![0, 49152])),
+        ];
+        let group = |readout: Readout| {
+            observe(&ObserveInput {
+                generation: 1,
+                archive: &archive,
+                first_new: 2,
+                comparisons: &[],
+                selection_weights: &[1.0; 3],
+                generation_usage: Usage::default(),
+                tasks: 3,
+                soul: Some(SoulInput {
+                    readout,
+                    families: 2,
+                    strengths: &strengths,
+                    observations_vote: 5,
+                    observations_peer: 3,
+                    moved: &moved,
+                }),
+            })
+            .soul
+            .expect("a soul group")
+        };
+        let near = |x: Option<f64>, y: f64| x.is_some_and(|x| (x - y).abs() < 1e-12);
+
+        for readout in [Readout::Complex, Readout::Real] {
+            let s = group(readout);
+
+            // Five Workers, two born now, one of them with a new Soul. Origins: A's first
+            // Worker twice (C copied it), A's second, B's, and C's new one.
+            assert_eq!((s.souls, s.souls_born, s.souls_new), (5, 2, 1));
+            assert_eq!(s.origins, 4);
+            assert!((s.origin_entropy_bits - by_definition(&[2.0, 1.0, 1.0, 1.0])).abs() < 1e-12);
+
+            // The circular distance from the birth Soul: A's second Worker 90 degrees in one
+            // family, C's first 180 (imprinted, then observed), over 10 phases.
+            assert_eq!(s.moved_mean, Some(27.0));
+
+            // κ 0.2, 0.4, 0, 0.2 and 1.
+            let k = s.kappa.expect("κ quantiles");
+
+            assert_eq!(
+                (k.min, k.p25, k.median, k.p75, k.max),
+                (0.0, 0.2, 0.2, 0.4, 1.0)
+            );
+
+            // This commit: 5 and 3 Observations; two Workers moved, by 90 degrees in one of
+            // their two families.
+            assert_eq!((s.observations_vote, s.observations_peer), (5, 3));
+            assert_eq!(s.shift_mean, Some(45.0));
+
+            // The votes of the newborn C alone.
+            assert_eq!(
+                (s.votes, s.votes_flipped, s.votes_tied, s.sim_decided),
+                (4, 1, 2, 3)
+            );
+            assert_eq!(s.coherence_mean, Some(0.625));
+        }
+
+        // The current phases read 1, i, -1, -i at the quarter turns. With both families,
+        // the normalised Characters are 2, 1, 0, 1, 1 (mean 1, contrast √0.4); with the
+        // first alone every one is 1. Order: |1 + i - 1 + 1 - i| / 5 and |2 - i| / 5.
+        let complex = group(Readout::Complex);
+        let order = complex.order.clone().expect("order");
+
+        assert!(near(complex.character_norm_mean, 1.0));
+        assert!(near(complex.contrast, 2.0 * 0.4f64.sqrt() / 3.0));
+        assert!(near(
+            complex.contrast_independent,
+            2.0 * 0.5f64.sqrt() / 3.0
+        ));
+        assert!((order[0] - 0.2).abs() < 1e-12 && (order[1] - 5f64.sqrt() / 5.0).abs() < 1e-12);
+        assert!(near(complex.order_mean, (0.2 + 5f64.sqrt() / 5.0) / 2.0));
+
+        // The signs: +1, -1, -1, +1, +1 and +1, -1, +1, +1, +1. The normalised Characters
+        // with both families are 2, 2, 0, 2, 2 (mean 1.6, contrast 0.5), and the formula is
+        // √2 times the complex one, 1 on these tasks.
+        let real = group(Readout::Real);
+
+        assert!(near(real.character_norm_mean, 1.4));
+        assert!(near(real.contrast, 1.0 / 3.0));
+        assert!(near(real.contrast_independent, 2.0 / 3.0));
+        assert_eq!(real.order, Some(vec![0.2, 0.6]));
+        assert!(near(real.order_mean, 0.4));
+
+        // Undefined values are absent and empty counts 0: no Worker, no task, no move, no
+        // vote.
+        let empty = soul_state::<u32>(
+            &[],
+            0,
+            &SoulInput {
+                readout: Readout::Complex,
+                families: 2,
+                strengths: &[],
+                observations_vote: 0,
+                observations_peer: 0,
+                moved: &[],
+            },
+        );
+        let json = serde_json::to_string(&empty).expect("json");
+
+        assert_eq!((empty.souls, empty.origins, empty.votes), (0, 0, 0));
+        assert_eq!(empty.origin_entropy_bits.to_bits(), 0.0f64.to_bits());
+        assert_eq!(
+            json,
+            r#"{"souls":0,"souls_born":0,"souls_new":0,"origins":0,"origin_entropy_bits":0.0,"observations_vote":0,"observations_peer":0,"votes":0,"votes_flipped":0,"votes_tied":0,"sim_decided":0}"#
+        );
+    }
+
+    #[test]
+    fn contrast_weights_tasks() {
+        let circuits = CircuitDomain::new(&CircuitConfig::default()).expect("circuit domain");
+        // The search panel of the step 1 pilot: three dressings of each of the 11 targets.
+        let panel = circuits.panel(derive_seed(101, "panel/search"), 33);
+        let mut per_target: BTreeMap<&str, usize> = BTreeMap::new();
+
+        for t in &panel {
+            *per_target.entry(t.name).or_default() += 1;
+        }
+
+        assert_eq!(per_target.len(), 11);
+        assert!(per_target.values().all(|&n| n == 3), "{per_target:?}");
+
+        let counts = strength_counts(panel.iter().map(|t| circuits.strengths(t)));
+
+        assert_eq!(counts.len(), 7, "seven distinct strength vectors");
+        assert_eq!(counts.iter().map(|(_, n)| n).sum::<usize>(), 33);
+
+        for (readout, by_target, by_vector) in [
+            (Readout::Complex, 0.655, 0.563),
+            (Readout::Real, 0.927, 0.796),
+        ] {
+            let input = SoulInput {
+                readout,
+                families: 8,
+                strengths: &counts,
+                observations_vote: 0,
+                observations_peer: 0,
+                moved: &[],
+            };
+            let k = soul_state(&soul_archive(), 2, &input)
+                .contrast_independent
+                .expect("a formula value");
+            let alike = counts
+                .iter()
+                .map(|(s, _)| independent_contrast(s, readout))
+                .sum::<f64>()
+                / counts.len() as f64;
+
+            assert!((k - by_target).abs() < 5e-4, "{readout:?}: {k}");
+            assert!((alike - by_vector).abs() < 5e-4, "{readout:?}: {alike}");
+            assert!((k - alike).abs() > 0.05);
+        }
     }
 }

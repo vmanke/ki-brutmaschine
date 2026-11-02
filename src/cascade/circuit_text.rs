@@ -64,6 +64,12 @@ fn push_target(out: &mut String, target: &Target, max_gates: usize) {
         "QUBITS {n}\n{GATES_LINE}\nMAX GATES {}\nTARGET\n",
         max_gates.min(MAX_GATES)
     ));
+    push_rows(out, target);
+}
+
+/// Append the target's rows, one per input basis state.
+fn push_rows(out: &mut String, target: &Target) {
+    let n = target.qubits();
 
     for (j, column) in (0u32..).zip(target.columns()) {
         out.push_str(&ket(j, n));
@@ -107,6 +113,22 @@ pub fn render_circuit_solve_prompt(
     }
 
     out.push_str("END");
+    out
+}
+
+/// A solved example for teaching (step 2, spec 10.2): the line TARGET and the target's rows,
+/// as a prompt shows them, then the line ANSWER and the answer's gates, one per line. No
+/// trailing newline.
+pub fn render_circuit_example(target: &Target, answer: &Circuit) -> String {
+    let mut out = "TARGET\n".to_string();
+
+    push_rows(&mut out, target);
+    push_circuit(&mut out, "ANSWER", answer);
+
+    while out.ends_with('\n') {
+        out.pop();
+    }
+
     out
 }
 
@@ -861,7 +883,10 @@ mod tests {
             ("ANSWER\nH 1\nCNOT 0 1\nH 1\nY(0)", None),
             ("ANSWER\nH 1\nCNOT 0 1\nH 1\nCZ(0,1)", None),
             ("ANSWER\nH 1\nCNOT 0 1\nH 1\n`X 0`", None),
-            ("ANSWER\nH 1\nCNOT 0 1\nH 1\n(Note: the answer is final.)", some("H 1; CNOT 0 1; H 1")),
+            (
+                "ANSWER\nH 1\nCNOT 0 1\nH 1\n(Note: the answer is final.)",
+                some("H 1; CNOT 0 1; H 1"),
+            ),
             ("ANSWER\nDone.", None),
             ("ANSWER", None),
             ("ANSWER\n\n\n", None),

@@ -451,6 +451,16 @@ pub fn render_answer(g: &Grid) -> String {
     }
 }
 
+/// A solved example for teaching (step 2, spec 10.2): the line INPUT and the input grid,
+/// then the line OUTPUT and the output grid, as the worked examples of a prompt show them.
+pub fn render_example(input: &Grid, output: &Grid) -> String {
+    format!(
+        "INPUT\n{}\nOUTPUT\n{}",
+        render_grid(input),
+        render_grid(output)
+    )
+}
+
 /// A judge's reply in protocol form.
 pub fn render_verdict(v: Verdict) -> &'static str {
     match v {

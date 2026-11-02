@@ -480,6 +480,14 @@ fn check_worker(
     Ok(())
 }
 
+/// The rules every section text of a genome meets: not empty, at most `MAX_SECTION_CHARS`
+/// characters, no control or invisible formatting character, and no credential format.
+/// Fixed code that writes a prompt section outside the genome, such as the teaching section
+/// of step 2 (spec 10.2), holds its text to them too.
+pub fn check_section_text(text: &str) -> std::result::Result<(), String> {
+    check_text("section text", text, MAX_SECTION_CHARS)
+}
+
 fn check_text(what: &str, text: &str, max_chars: usize) -> std::result::Result<(), String> {
     if text.trim().is_empty() {
         return Err(format!("{what} is empty"));

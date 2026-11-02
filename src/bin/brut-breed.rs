@@ -1,5 +1,5 @@
 //! brut-breed: breed Cascades of model Workers on grid puzzles (Stage 2c, ADR 0005) or on
-//! quantum circuits (step 1, ADR 0006).
+//! quantum circuits (step 1, ADR 0006), with or without Souls (step 2, ADR 0009).
 //!
 //! The library (`brutmaschine::cascade`) does all computation; this binary does the I/O:
 //! the run directory, the hash-chained event log, checkpoints after every generation,
@@ -16,6 +16,7 @@
 //!              [--children C] [--search P] [--select S] [--max-calls M]
 //!              [--max-seconds T] [--llm-every K] [--llm-children N] [--no-pause]
 //!              [--llm-answers <dir>] [--domain grid|circuits] [--selection dgm|uniform]
+//!              [--soul s|v|k]
 //!   brut-breed --out <dir> --resume [--generations G] [--max-calls M] [--max-seconds T]
 //!              [--llm-answers <dir>]
 //!   brut-breed --out <dir> --promote
@@ -28,6 +29,13 @@
 //! (the default) or uniform, the control arm. Both define the experiment, so a resume
 //! cannot change them.
 //!
+//! --soul gives every Worker a Soul with the settings of an arm of step 2
+//! (`.scratch/seele-und-kappa/spec.md`, section 12.2): s for arm S, the Soul with complex
+//! phases; v for arm V, the same Soul read as signs; k for arm K, the Soul with a Coupling
+//! strength fixed at 0. Without it a run has no Souls, as before step 2. Finer settings come
+//! as a `soul` object in --config; --soul next to a config that holds one is wrong usage.
+//! --soul defines the experiment too, so a resume refuses it.
+//!
 //! A finished circuit run also writes `<dir>/rediscovery.json`, the pre-registered count
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
@@ -36,10 +44,14 @@
 //! recomputes the report, it also checks that the checkpoint's archive holds one member
 //! per Born event of the log, in its order, and that each member, written as a Born event,
 //! is the logged one (the same id, Cascade, parents, generation, operator, solved count,
-//! graded value, usage and answers, and in a run with Souls where each Soul came from, the
-//! authors of each answer and the tally of votes). In a run with Souls it also checks every
-//! member's current Soul: its last entry in the `souls` events, or its birth Soul when no
-//! event moved it (step 2). Then it recomputes the count from that archive.
+//! graded value, usage and answers, and in a run with Souls each imprinted Soul, where each
+//! Soul came from, the teaching section, the authors of each answer and the tally of
+//! votes). In a run with Souls it also checks every member's current Soul: its last entry
+//! in the `souls` events, or its imprinted Soul when no event moved it (step 2). Then it
+//! recomputes the count from that archive. A finished grid run with Souls gets the same two
+//! checks of its archive and Souls; a grid run without Souls is checked as before step 2. A
+//! run with Souls keeps every select-panel answer, as a circuit run does, so on grids too a
+//! report that its checkpoint cannot recompute is an integrity error.
 //! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1. It
 //! also refuses runs with Souls (step 2): a Soul belongs to its run.
 //!
@@ -76,9 +88,10 @@ use brutmaschine::cascade::circuit::{Answered, CircuitDomain, Rediscovery, redis
 use brutmaschine::cascade::circuit_genes::circuit_pool;
 use brutmaschine::cascade::designer::SimDesigner;
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
-use brutmaschine::cascade::genome::{CascadeLimits, PhaseState, Worker};
+use brutmaschine::cascade::genome::{CascadeLimits, PhaseState};
 use brutmaschine::cascade::puzzle::Grid;
 use brutmaschine::cascade::sim::SimModel;
+use brutmaschine::cascade::soul::SoulConfig;
 use brutmaschine::cascade::variation::Op;
 use brutmaschine::util::{BrutError, Result, sha256_hex, write_atomic};
 
@@ -477,9 +490,9 @@ fn run() -> Result<i32> {
     let verifying = args.contains_key("verify");
 
     match cfg.domain {
-        DomainConfig::Grid if verifying => verify(&out, &cfg, &grid_family(&cfg.limits)),
+        DomainConfig::Grid if verifying => verify(&out, &cfg, &grid_family(&cfg)),
         DomainConfig::Grid => {
-            let family = grid_family(&cfg.limits);
+            let family = grid_family(&cfg);
 
             drive(cfg, &family, &args, &out, resume)
         }
@@ -904,10 +917,11 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
         ("", false)
     };
 
-    // Every circuit run keeps all its select-panel answers, so a circuit report that the
-    // checkpoint cannot recompute means the checkpoint was cut or edited. Grid runs from
-    // before the select answers were kept fall back to the finalist check.
-    if has_report && !recomputed && !cfg.domain.is_grid() {
+    // Every circuit run and every run with Souls keeps all its select-panel answers, so a
+    // report of such a run that the checkpoint cannot recompute means the checkpoint was
+    // cut or edited. Only grid runs without Souls can come from before the select answers
+    // were kept; they fall back to the finalist check.
+    if has_report && !recomputed && (!cfg.domain.is_grid() || cfg.soul.is_some()) {
         return Err(BrutError::Integrity(format!(
             "{} cannot be recomputed from the checkpoint, which is unfinished or lacks \
              select-panel answers; resume the run to finish it",
@@ -990,14 +1004,40 @@ fn sim_pool(limits: &CascadeLimits) -> ModelPool {
     pool
 }
 
-/// The grid puzzles of Stage 2c: the grid gene pool and the models of `limits`. A finished
-/// grid run writes nothing besides its report.
-fn grid_family(limits: &CascadeLimits) -> Family<GridDomain> {
+/// The grid puzzles of Stage 2c: the grid gene pool and the models of the run's limits. A
+/// finished grid run writes nothing besides its report. --verify checks a finished grid run
+/// without Souls as before step 2, and one with Souls as a circuit run's archive
+/// (`check_souled_grid`).
+fn grid_family(cfg: &BreedConfig) -> Family<GridDomain> {
     Family {
         genes: GenePool::grid(),
-        pool: sim_pool(limits),
+        pool: sim_pool(&cfg.limits),
         after_finish: |_, _| Ok(()),
-        check_finish: |_, _, _| Ok(String::new()),
+        check_finish: match cfg.soul {
+            Some(_) => check_souled_grid,
+            None => |_, _, _| Ok(String::new()),
+        },
+    }
+}
+
+/// --verify on a grid run with Souls (step 2, spec 16). For a finished run, rebuilt from its
+/// checkpoint: error unless the checkpoint's archive is the one the `events` it covers
+/// record, Born fields of step 2 included, and every current Soul is its last entry in the
+/// `souls` events or its imprinted Soul (`check_archive`). Otherwise the run has no report
+/// yet (`verify` refuses one it cannot recompute), the archive is not checked, and the line
+/// says why.
+fn check_souled_grid(
+    out: &Path,
+    events: &[Event],
+    finish: Finish<'_, '_, GridDomain>,
+) -> Result<String> {
+    match finish {
+        Finish::Rebuilt(breeder) => {
+            check_archive(out, breeder, events)?;
+
+            Ok("; archive and Souls match the log".to_string())
+        }
+        Finish::Unchecked(why) => Ok(format!("; archive and Souls not checked: {why}")),
     }
 }
 
@@ -1114,15 +1154,18 @@ fn check_rediscovery(
 /// Error unless the archive of `breeder`, rebuilt from the checkpoint, holds one member per
 /// Born event among `events`, in their order, and each member, written as a Born event,
 /// is the logged one: the same id, Cascade, parents, generation, operator, solved count,
-/// graded value, usage and answers, and in a run with Souls where each Soul came from, the
-/// authors of each answer and the tally of votes (step 2). `rediscovery` counts by the id, generation, operator
-/// and answers; the rest shapes what a resume to more generations breeds. No hash covers
-/// the checkpoint, so only this ties the archive to the hash-chained log: an answer edited
-/// in the checkpoint would otherwise enter the count with the next resume. What a member
-/// gains later (children, judgments, fitness, rating) is not in its Born event, and this
-/// does not check it. The current Souls, which Observations change after a member's birth,
-/// are checked against the `souls` events instead (`check_current_souls`).
-fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Event]) -> Result<()> {
+/// graded value, usage and answers, and in a run with Souls each imprinted Soul, where each
+/// Soul came from, the teaching section, the authors of each answer and the tally of votes
+/// (step 2). The Cascade holds each Worker's birth Soul and Coupling strength. `rediscovery`
+/// counts by the id, generation, operator and answers; the rest shapes what a resume to
+/// more generations breeds. No hash covers the checkpoint, so only this ties the archive to
+/// the hash-chained log: an answer edited in the checkpoint would otherwise enter the count
+/// with the next resume. What a member gains later (children, judgments, fitness, rating)
+/// is not in its Born event, and this does not check it. The current Souls, which
+/// Observations change after a member's birth, are checked against the `souls` events
+/// instead (`check_current_souls`). It runs for finished circuit runs and for finished grid
+/// runs with Souls; a grid answer has no text, so its Born event logs none.
+fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Event]) -> Result<()> {
     let tasks = breeder.search_panel().len();
     let born: Vec<&Event> = events
         .iter()
@@ -1164,7 +1207,9 @@ fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Eve
             usage: m.usage,
             quality: m.quality,
             answers: answers.iter().any(Option::is_some).then_some(answers),
+            imprinted: m.imprinted.clone(),
             soul_sources: m.soul_sources.clone(),
+            teaching: m.teaching.clone(),
             authors: m.authors.clone(),
             votes: m.votes,
         };
@@ -1178,8 +1223,8 @@ fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Eve
 }
 
 /// Error unless every Worker's current Soul in the archive is its last entry in the `souls`
-/// events among `events`, or its birth Soul when there is none (step 2, spec 16), and every
-/// Worker those events name is in the archive. A Run without Souls has neither.
+/// events among `events`, or its imprinted Soul when there is none (step 2, spec 16), and
+/// every Worker those events name is in the archive. A Run without Souls has neither.
 fn check_current_souls<A>(out: &Path, archive: &[Member<A>], events: &[Event]) -> Result<()> {
     let mut last: BTreeMap<(&str, usize), &PhaseState> = BTreeMap::new();
 
@@ -1201,21 +1246,21 @@ fn check_current_souls<A>(out: &Path, archive: &[Member<A>], events: &[Event]) -
 
     for m in archive {
         let now = m.soul_now.as_deref().unwrap_or_default();
-        let workers: Vec<&Worker> = m.cascade.stages.iter().flat_map(|s| &s.workers).collect();
+        let imprinted = m.imprinted.as_deref().unwrap_or_default();
+        let workers = m.cascade.worker_count();
 
-        if now.len() > workers.len() {
+        if now.len() > workers {
             return Err(broken(format!(
-                "archive member {} holds a current Soul for {} Workers but has {}",
+                "archive member {} holds a current Soul for {} Workers but has {workers}",
                 m.id,
-                now.len(),
-                workers.len()
+                now.len()
             )));
         }
 
-        for (k, w) in workers.iter().enumerate() {
+        for k in 0..workers {
             let (expected, from) = match last.remove(&(m.id.as_str(), k)) {
                 Some(p) => (Some(p), "its last entry in the souls events"),
-                None => (w.traits.phase_state.as_ref(), "its birth Soul"),
+                None => (imprinted.get(k), "its imprinted Soul"),
             };
 
             if now.get(k) != expected {
@@ -1323,6 +1368,24 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
         };
     }
 
+    // --soul gives the Run the Souls of arm S, V or K (step 2, spec 12.2 and 12.5). Finer
+    // settings come as a soul object in --config, and both together are refused, so one
+    // never silently replaces the other.
+    if let Some(v) = args.get("soul") {
+        if cfg.soul.is_some() {
+            return Err(usage(
+                "--soul cannot be given with a --config that holds soul settings; use one of them",
+            ));
+        }
+
+        cfg.soul = Some(match v.as_str() {
+            "s" => SoulConfig::arm_s(),
+            "v" => SoulConfig::arm_v(),
+            "k" => SoulConfig::arm_k(),
+            _ => return Err(usage(&format!("--soul must be s, v or k, got {v:?}"))),
+        });
+    }
+
     cfg.check()?;
 
     Ok(cfg)
@@ -1347,7 +1410,7 @@ fn promote(out: &Path, cfg: &BreedConfig) -> Result<i32> {
         ));
     }
 
-    let family = grid_family(&cfg.limits);
+    let family = grid_family(cfg);
     let (log, cp) = open_run::<GridDomain>(out, cfg)?;
 
     if !out.join(REPORT).exists() {
@@ -1500,7 +1563,7 @@ fn usage(m: &str) -> BrutError {
 /// `--key value` pairs; `--resume`, `--promote`, `--verify` and `--no-pause` take none.
 fn parse_args() -> Result<BTreeMap<String, String>> {
     const FLAGS: [&str; 4] = ["resume", "promote", "verify", "no-pause"];
-    const KEYS: [&str; 14] = [
+    const KEYS: [&str; 15] = [
         "out",
         "config",
         "seed",
@@ -1515,6 +1578,7 @@ fn parse_args() -> Result<BTreeMap<String, String>> {
         "llm-answers",
         "domain",
         "selection",
+        "soul",
     ];
 
     let mut map = BTreeMap::new();

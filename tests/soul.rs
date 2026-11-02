@@ -1,19 +1,24 @@
 //! Step 2 tests (Soul and Coupling strength, `.scratch/seele-und-kappa/`). With the default
-//! settings there is no Soul, and nothing a Run writes may change (spec section 14).
+//! settings there is no Soul, and nothing a Run writes may change (spec section 14). The
+//! end-to-end tests of ticket 09 run `brut-breed` with `--soul`, check `--verify` on Runs
+//! with Souls, and check `examples/soul_character.rs` against the Character of the record.
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use brutmaschine::cascade::arena::{BreedConfig, worker_request_with};
-use brutmaschine::cascade::circuit::CircuitDomain;
+use brutmaschine::cascade::circuit::{
+    Answered, CircuitDomain, CircuitTask, Rediscovery, rediscovery,
+};
 use brutmaschine::cascade::circuit_genes::circuit_pool;
-use brutmaschine::cascade::domain::{CircuitConfig, Domain, GenePool, GridDomain};
+use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
 use brutmaschine::cascade::genome::Cascade;
+use brutmaschine::cascade::puzzle::Rule;
 use brutmaschine::cascade::qubit::{Circuit, Gate};
-use brutmaschine::cascade::soul::SoulConfig;
+use brutmaschine::cascade::soul::{SoulConfig, Strengths, character, character_norm};
 use brutmaschine::util::{derive_seed, sha256_hex};
 
 fn fixture(name: &str) -> PathBuf {
@@ -358,18 +363,737 @@ fn a_run_with_souls_starts_on_both_domains() {
     }
 }
 
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn ok(out: &Output) {
+    assert!(
+        out.status.success(),
+        "exit {:?}\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        stdout(out),
+        stderr(out)
+    );
+}
+
+fn path(dir: &Path) -> &str {
+    dir.to_str().expect("utf-8 path")
+}
+
+/// A fresh Run into `dir` on the Domain `domain` with the preset `--soul arm` and the
+/// settings `settings`.
+fn arm_run(dir: &Path, domain: &str, arm: &str, settings: &[&str]) -> Output {
+    let mut args = vec!["--out", path(dir), "--domain", domain, "--soul", arm];
+
+    args.extend_from_slice(settings);
+
+    breed(&args)
+}
+
+/// A short Run: two generations of four children on 11 search and 11 select tasks.
+const SHORT: [&str; 8] = [
+    "--generations",
+    "2",
+    "--children",
+    "4",
+    "--search",
+    "11",
+    "--select",
+    "11",
+];
+
+/// The `soul` object of arm S, V or K, written out from the table of spec 12.2: arm V reads
+/// signs, arm K fixes κ at 0.
+fn spec_arm(arm: &str) -> serde_json::Value {
+    let (readout, kappa_seed, kappa_fixed) = match arm {
+        "s" => ("complex", 200, false),
+        "v" => ("real", 200, false),
+        "k" => ("complex", 0, true),
+        _ => panic!("no arm {arm}"),
+    };
+
+    serde_json::json!({
+        "readout": readout,
+        "strengths": "domain",
+        "vote": true,
+        "simulator": true,
+        "observe_vote": true,
+        "observe_peer": true,
+        "kappa_seed": kappa_seed,
+        "kappa_fixed": kappa_fixed,
+        "kappa_drift": 20,
+        "copy": true,
+        "mix": true,
+        "phase_drift": 512,
+        "new_soul_theta": 1.0,
+        "imprint": true,
+        "teach": false
+    })
+}
+
+fn config_json(dir: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).expect("config"))
+        .expect("json")
+}
+
 #[test]
-fn promote_refuses_a_run_with_souls() {
-    let (run, out) = souled_run(&fresh("promote-souled"), "grid");
+fn the_presets_are_the_arms() {
+    // A STOP file in place before the start ends the Run before its generation 0, after it
+    // wrote its settings.
+    let stopped = |name: &str, args: &[&str]| {
+        let dir = fresh(name);
 
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(run.join("report.json").exists(), "a finished Run");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("STOP"), "").expect("stop");
 
-    let refused = breed(&["--out", run.to_str().expect("utf-8 path"), "--promote"]);
+        let mut all = vec!["--out", path(&dir)];
 
-    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
-    assert!(stderr(&refused).contains("Souls"), "{}", stderr(&refused));
-    assert!(!run.join("promote").exists());
+        all.extend_from_slice(args);
+        ok(&breed(&all));
+
+        dir
+    };
+    let plain = config_json(&stopped("presets-none", &["--domain", "circuits"]));
+
+    assert!(plain.get("soul").is_none(), "{plain}");
+
+    for arm in ["s", "v", "k"] {
+        let dir = stopped(
+            &format!("presets-{arm}"),
+            &["--domain", "circuits", "--soul", arm],
+        );
+        let mut cfg = config_json(&dir);
+
+        assert_eq!(cfg["soul"], spec_arm(arm), "arm {arm}");
+
+        // --soul sets the soul field and nothing else.
+        cfg.as_object_mut().expect("object").remove("soul");
+        assert_eq!(cfg, plain, "arm {arm}");
+
+        // It defines the experiment: a resume refuses it and leaves the Run as it was.
+        let before = std::fs::read(dir.join("config.json")).expect("config");
+        let resumed = breed(&["--out", path(&dir), "--resume", "--soul", arm]);
+
+        assert_eq!(resumed.status.code(), Some(2), "{}", stderr(&resumed));
+        assert!(
+            stderr(&resumed).contains("a resume may change only"),
+            "{}",
+            stderr(&resumed)
+        );
+        assert_eq!(
+            std::fs::read(dir.join("config.json")).expect("config"),
+            before
+        );
+
+        // --verify and --promote take only --out.
+        for mode in ["--verify", "--promote"] {
+            let refused = breed(&["--out", path(&dir), mode, "--soul", arm]);
+
+            assert_eq!(
+                refused.status.code(),
+                Some(2),
+                "{mode}: {}",
+                stderr(&refused)
+            );
+        }
+    }
+
+    // A --config that holds soul settings next to --soul is wrong usage, and so is an
+    // unknown arm.
+    let files = fresh("presets-files");
+    let souled = souled_config_file(&files);
+
+    for (i, args) in [
+        vec![
+            "--config",
+            souled.to_str().expect("utf-8 path"),
+            "--soul",
+            "s",
+        ],
+        vec!["--soul", "r"],
+        vec!["--soul", "S"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = fresh(&format!("presets-refused-{i}"));
+        let mut all = vec!["--out", path(&dir)];
+
+        all.extend_from_slice(&args);
+
+        let refused = breed(&all);
+
+        assert_eq!(
+            refused.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            stderr(&refused)
+        );
+        assert!(stderr(&refused).contains("--soul"), "{}", stderr(&refused));
+        assert!(!dir.join("config.json").exists(), "{args:?}");
+    }
+
+    // A --config without soul settings brings the rest, and --soul the Souls.
+    let other = files.join("other.json");
+
+    std::fs::write(
+        &other,
+        serde_json::to_string_pretty(&BreedConfig {
+            seed: 7,
+            ..BreedConfig::default()
+        })
+        .expect("json"),
+    )
+    .expect("write config");
+
+    let dir = stopped(
+        "presets-config",
+        &[
+            "--config",
+            other.to_str().expect("utf-8 path"),
+            "--soul",
+            "k",
+        ],
+    );
+    let cfg = config_json(&dir);
+
+    assert_eq!(cfg["seed"], 7);
+    assert_eq!(cfg["soul"], spec_arm("k"));
+}
+
+/// A short circuit Run in which the newborns hold complex Stage votes (6 in each arm).
+const VOTING: [&str; 12] = [
+    "--seed",
+    "41",
+    "--generations",
+    "20",
+    "--children",
+    "6",
+    "--search",
+    "11",
+    "--select",
+    "11",
+    "--max-calls",
+    "200000",
+];
+
+/// The complex Stage votes of all newborns in a log.
+fn complex_votes(events: &[serde_json::Value]) -> u64 {
+    events
+        .iter()
+        .filter(|e| e["kind"] == "born")
+        .map(|e| e["votes"]["complex"].as_u64().expect("a vote tally"))
+        .sum()
+}
+
+#[test]
+fn a_souled_circuit_run_reproduces() {
+    for arm in ["s", "v", "k"] {
+        let at = |name: &str, threads: &str| {
+            let dir = fresh(&format!("reproduce-{arm}-{name}"));
+            let out = Command::new(BREED)
+                .args(["--out", path(&dir), "--domain", "circuits", "--soul", arm])
+                .args(VOTING)
+                .env("RAYON_NUM_THREADS", threads)
+                .output()
+                .expect("run brut-breed");
+
+            ok(&out);
+            ok(&breed(&["--out", path(&dir), "--verify"]));
+
+            (
+                RECORD.map(|name| {
+                    std::fs::read(dir.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+                }),
+                logged_events(&dir),
+            )
+        };
+        let (first, events) = at("first", "4");
+
+        // The Runs hold complex votes, so their amplitudes are in the bytes compared, and a
+        // `souls` event after each of the 21 generations.
+        assert!(complex_votes(&events) > 0, "arm {arm}: no complex vote");
+        assert_eq!(
+            events.iter().filter(|e| e["kind"] == "souls").count(),
+            21,
+            "arm {arm}"
+        );
+        assert_eq!(
+            first,
+            at("again", "4").0,
+            "arm {arm}: the same command twice"
+        );
+        assert_eq!(first, at("one-thread", "1").0, "arm {arm}: 1 and 4 threads");
+    }
+}
+
+/// A named change to a part of a checkpoint: an archive member, or the whole snapshot.
+type Tamper = (&'static str, fn(&mut serde_json::Value));
+
+/// One phase more, modulo a whole turn.
+fn turn_once(phase: &mut serde_json::Value) {
+    let p = phase.as_u64().expect("a phase");
+
+    *phase = serde_json::json!((p + 1) % 65536);
+}
+
+#[test]
+fn verify_refuses_tampered_souls() {
+    for domain in ["circuits", "grid"] {
+        let dir = fresh(&format!("tampered-{domain}"));
+
+        ok(&arm_run(&dir, domain, "s", &SHORT));
+        ok(&breed(&["--out", path(&dir), "--verify"]));
+
+        let file = dir.join("snapshot.json");
+        let original = std::fs::read_to_string(&file).expect("snapshot");
+        let checkpoint: serde_json::Value = serde_json::from_str(&original).expect("json");
+        let archive = checkpoint["snapshot"]["archive"]
+            .as_array()
+            .expect("archive");
+
+        // A child, whose first Worker has a source.
+        let i = archive
+            .iter()
+            .position(|m| {
+                m["soul_sources"][0]["sources"]
+                    .as_array()
+                    .is_some_and(|s| !s.is_empty())
+            })
+            .expect("a child");
+        let id = archive[i]["id"].as_str().expect("id").to_string();
+        let tampers: [Tamper; 4] = [
+            ("birth Soul", |m| {
+                turn_once(&mut m["cascade"]["stages"][0]["workers"][0]["traits"]["phase_state"][0])
+            }),
+            ("imprinted Soul", |m| turn_once(&mut m["imprinted"][0][0])),
+            ("source map", |m| {
+                let w = &mut m["soul_sources"][0]["sources"][0]["worker"];
+
+                *w = serde_json::json!(w.as_u64().expect("a Worker") + 1);
+            }),
+            ("current Soul", |m| turn_once(&mut m["soul_now"][0][0])),
+        ];
+
+        for (what, tamper) in tampers {
+            let mut changed = checkpoint.clone();
+
+            tamper(&mut changed["snapshot"]["archive"][i]);
+            assert_ne!(changed, checkpoint, "{domain}: {what}");
+            std::fs::write(&file, serde_json::to_string(&changed).expect("json")).expect("write");
+
+            let refused = breed(&["--out", path(&dir), "--verify"]);
+
+            assert_eq!(
+                refused.status.code(),
+                Some(1),
+                "{domain}: {what}: {}",
+                stdout(&refused)
+            );
+            assert!(
+                stderr(&refused).contains("integrity:") && stderr(&refused).contains(&id),
+                "{domain}: {what}: {}",
+                stderr(&refused)
+            );
+        }
+
+        // A changed current Soul cannot hide behind a checkpoint that says the Run is not
+        // finished, or that lost its select-panel answers. A Run with Souls keeps all of
+        // them, so a report its checkpoint cannot recompute is refused, on grids too.
+        let cuts: [Tamper; 2] = [
+            ("not finished", |s| s["finished"] = serde_json::json!(false)),
+            ("no select answers", |s| {
+                s["select_answers"] = serde_json::json!({})
+            }),
+        ];
+
+        for (what, cut) in cuts {
+            let mut changed = checkpoint.clone();
+
+            turn_once(&mut changed["snapshot"]["archive"][i]["soul_now"][0][0]);
+            cut(&mut changed["snapshot"]);
+            std::fs::write(&file, serde_json::to_string(&changed).expect("json")).expect("write");
+
+            let refused = breed(&["--out", path(&dir), "--verify"]);
+
+            assert_eq!(
+                refused.status.code(),
+                Some(1),
+                "{domain}: current Soul, {what}: {}",
+                stdout(&refused)
+            );
+            assert!(
+                stderr(&refused).contains("integrity:")
+                    && stderr(&refused).contains("cannot be recomputed from the checkpoint"),
+                "{domain}: current Soul, {what}: {}",
+                stderr(&refused)
+            );
+        }
+
+        std::fs::write(&file, original).expect("restore");
+        ok(&breed(&["--out", path(&dir), "--verify"]));
+    }
+}
+
+/// What `--verify` printed before ticket 09 on a grid Run without Souls of the settings
+/// `GRID_SHORT`: finished, and stopped before its generation 0.
+const GRID_VERIFIED: &str = "brut-breed: 93 events, hash chain intact, head 13c8f836ab3500222da8771d01b5f0daeb2afe63eeef3b836c1f92e82e7eceaf; checkpoint at entry 93 matches; settings match; report recomputed and equal\n";
+const GRID_STOPPED: &str = "brut-breed: 0 events, hash chain intact, head 0000000000000000000000000000000000000000000000000000000000000000; checkpoint at entry 0 matches; settings match\n";
+
+#[test]
+fn grid_verify_is_unchanged_without_souls() {
+    let finished = fresh("grid-verify-finished");
+    let mut args = vec!["--out", path(&finished), "--domain", "grid"];
+
+    args.extend_from_slice(&SHORT);
+    ok(&breed(&args));
+
+    let verified = breed(&["--out", path(&finished), "--verify"]);
+
+    ok(&verified);
+    assert_eq!(stdout(&verified), GRID_VERIFIED);
+    assert_eq!(stderr(&verified), "");
+
+    // A grid Run without Souls may come from before the select answers were kept, so a
+    // checkpoint without them still falls back to the check of the finalists.
+    let file = finished.join("snapshot.json");
+    let original = std::fs::read_to_string(&file).expect("snapshot");
+    let mut cut: serde_json::Value = serde_json::from_str(&original).expect("json");
+
+    cut["snapshot"]["select_answers"] = serde_json::json!({});
+    std::fs::write(&file, serde_json::to_string(&cut).expect("json")).expect("write");
+
+    let fallback = breed(&["--out", path(&finished), "--verify"]);
+
+    ok(&fallback);
+    assert_eq!(
+        stdout(&fallback),
+        GRID_VERIFIED.replace(
+            "report recomputed and equal",
+            "report finalists match the log"
+        )
+    );
+    std::fs::write(&file, original).expect("restore");
+
+    let stopped = fresh("grid-verify-stopped");
+
+    std::fs::create_dir_all(&stopped).expect("mkdir");
+    std::fs::write(stopped.join("STOP"), "").expect("stop");
+    args[1] = path(&stopped);
+    ok(&breed(&args));
+
+    let verified = breed(&["--out", path(&stopped), "--verify"]);
+
+    ok(&verified);
+    assert_eq!(stdout(&verified), GRID_STOPPED);
+    assert_eq!(stderr(&verified), "");
+}
+
+#[test]
+fn grid_verify_with_souls_says_what_it_checked() {
+    let finished = fresh("grid-souled-verify-finished");
+
+    ok(&arm_run(&finished, "grid", "s", &SHORT));
+
+    let verified = breed(&["--out", path(&finished), "--verify"]);
+
+    ok(&verified);
+    assert!(
+        stdout(&verified)
+            .ends_with("; report recomputed and equal; archive and Souls match the log\n"),
+        "{}",
+        stdout(&verified)
+    );
+
+    // Stopped before its generation 0, the Run is not finished, and the line says why its
+    // archive was not checked.
+    let stopped = fresh("grid-souled-verify-stopped");
+
+    std::fs::create_dir_all(&stopped).expect("mkdir");
+    std::fs::write(stopped.join("STOP"), "").expect("stop");
+    ok(&arm_run(&stopped, "grid", "s", &SHORT));
+
+    let verified = breed(&["--out", path(&stopped), "--verify"]);
+
+    ok(&verified);
+    assert!(
+        stdout(&verified).ends_with(
+            "; settings match; archive and Souls not checked: the run is not finished\n"
+        ),
+        "{}",
+        stdout(&verified)
+    );
+}
+
+#[test]
+fn promote_refuses_souls() {
+    for arm in ["s", "v", "k"] {
+        let dir = fresh(&format!("promote-{arm}"));
+
+        ok(&arm_run(&dir, "grid", arm, &SHORT));
+        assert!(dir.join("report.json").exists(), "a finished Run");
+
+        let refused = breed(&["--out", path(&dir), "--promote"]);
+
+        assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+        assert!(stderr(&refused).contains("Souls"), "{}", stderr(&refused));
+        assert!(!dir.join("promote").exists());
+    }
+}
+
+/// One archived Cascade as its Born event logs it.
+struct Logged {
+    id: String,
+    seed: bool,
+    generation: usize,
+    answers: Vec<Option<Circuit>>,
+}
+
+/// The rediscovery count of the circuit Run in `dir`, recomputed from its log alone, as
+/// `tests/circuits.rs` recounts a Run without Souls: the search panel rebuilt from the
+/// recorded settings (checked against the run start), and every Born event's answers read
+/// back into circuits.
+fn recount(dir: &Path) -> Rediscovery {
+    let cfg: BreedConfig =
+        serde_json::from_slice(&std::fs::read(dir.join("config.json")).expect("config"))
+            .expect("config json");
+    let domain = CircuitDomain::from_config(&cfg).expect("a circuit run");
+    let panel = domain.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+    let log = logged_events(dir);
+    let ids: Vec<&str> = panel.iter().map(|t| t.id.as_str()).collect();
+    let started: Vec<&str> = log[0]["search"]
+        .as_array()
+        .expect("search ids")
+        .iter()
+        .map(|v| v.as_str().expect("id"))
+        .collect();
+
+    assert_eq!(ids, started, "the rebuilt panel is the logged one");
+
+    let born: Vec<Logged> = log
+        .iter()
+        .filter(|e| e["kind"] == "born")
+        .map(|e| {
+            let answers = match e["answers"].as_array() {
+                Some(texts) => texts
+                    .iter()
+                    .map(|t| {
+                        t.as_str()
+                            .map(|s| s.parse::<Circuit>().expect("a logged circuit"))
+                    })
+                    .collect(),
+                None => vec![None; panel.len()],
+            };
+
+            Logged {
+                id: e["id"].as_str().expect("id").to_string(),
+                seed: e["op"] == "seed" && e["generation"] == 0,
+                generation: e["generation"].as_u64().expect("generation") as usize,
+                answers,
+            }
+        })
+        .collect();
+    let members: Vec<Answered<'_>> = born
+        .iter()
+        .map(|m| Answered {
+            id: &m.id,
+            seed: m.seed,
+            generation: m.generation,
+            answers: &m.answers,
+        })
+        .collect();
+
+    rediscovery(&panel, &members).expect("no integrity alarm")
+}
+
+#[test]
+fn rediscovery_is_unchanged_by_souls() {
+    // The settings of the RICH Run of `tests/circuits.rs`, with the Souls of arm S.
+    let dir = fresh("rediscovery-souled");
+
+    ok(&arm_run(
+        &dir,
+        "circuits",
+        "s",
+        &[
+            "--seed",
+            "33",
+            "--generations",
+            "20",
+            "--children",
+            "6",
+            "--search",
+            "11",
+            "--select",
+            "11",
+        ],
+    ));
+
+    let text = std::fs::read_to_string(dir.join("rediscovery.json")).expect("count");
+
+    assert_eq!(
+        text,
+        serde_json::to_string_pretty(&recount(&dir)).expect("json")
+    );
+    assert!(
+        logged_events(&dir).iter().any(|e| e["kind"] == "souls"),
+        "a Run with Souls"
+    );
+    ok(&breed(&["--out", path(&dir), "--verify"]));
+}
+
+#[allow(dead_code)]
+#[path = "../examples/soul_character.rs"]
+mod soul_character;
+
+/// The label of a grid rule in the example's output: its geometric step, and "+colours"
+/// when it carries a colour map.
+fn rule_label(rule: &Rule) -> String {
+    match rule.colours {
+        Some(_) => format!("{:?}+colours", rule.geo),
+        None => format!("{:?}", rule.geo),
+    }
+}
+
+/// The rows of the example's output, by member, Worker and target or rule: the Character
+/// and the normalised Character. The header names the column of the targets or rules.
+fn character_rows(text: &str, column: &str) -> BTreeMap<(String, usize, String), (f64, f64)> {
+    let mut lines = text.lines().filter(|l| !l.starts_with('#'));
+    let header = format!("member\tworker\t{column}\tcharacter\tcharacter_norm");
+
+    assert_eq!(lines.next(), Some(header.as_str()), "{text}");
+
+    let mut rows = BTreeMap::new();
+
+    for line in lines {
+        let cells: Vec<&str> = line.split('\t').collect();
+
+        assert_eq!(cells.len(), 5, "{line}");
+
+        let key = (
+            cells[0].to_string(),
+            cells[1].parse().expect("a Worker"),
+            cells[2].to_string(),
+        );
+        let values = (
+            cells[3].parse().expect("a Character"),
+            cells[4].parse().expect("a normalised Character"),
+        );
+
+        assert!(rows.insert(key, values).is_none(), "twice: {line}");
+    }
+
+    rows
+}
+
+/// Error unless the example's rows for the Run in `dir` hold, for every member and Worker of
+/// the checkpoint and every search task, the Character and the normalised Character of the
+/// Worker's current Soul with the task's strengths, under the task's label, and nothing
+/// else. Returns the number of rows.
+fn check_characters<D: Domain>(
+    dir: &Path,
+    domain: &D,
+    label: impl Fn(&D::Task) -> String,
+    column: &str,
+) -> usize {
+    let cfg: BreedConfig =
+        serde_json::from_slice(&std::fs::read(dir.join("config.json")).expect("config"))
+            .expect("config json");
+    let soul = cfg.soul.clone().expect("a Run with Souls");
+    let panel = domain.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
+    let checkpoint: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("snapshot.json")).expect("snapshot"))
+            .expect("json");
+    let text = soul_character::run(dir).expect("the example reads the Run");
+    let rows = character_rows(&text, column);
+    let mut expected = BTreeSet::new();
+
+    for m in checkpoint["snapshot"]["archive"]
+        .as_array()
+        .expect("archive")
+    {
+        let id = m["id"].as_str().expect("id");
+
+        for (k, now) in m["soul_now"]
+            .as_array()
+            .expect("current Souls")
+            .iter()
+            .enumerate()
+        {
+            let phases: Vec<u16> = serde_json::from_value(now.clone()).expect("phases");
+
+            for task in &panel {
+                let key = (id.to_string(), k, label(task));
+                let s = soul.strengths.of(domain, task);
+                let want = (
+                    character(&phases, &s, soul.readout),
+                    character_norm(&phases, &s, soul.readout),
+                );
+
+                assert_eq!(rows.get(&key), Some(&want), "{key:?}");
+                expected.insert(key);
+            }
+        }
+    }
+
+    assert_eq!(rows.len(), expected.len(), "rows beyond the archive");
+
+    rows.len()
+}
+
+#[test]
+fn the_character_example_agrees() {
+    // Arm V on grids, arm S on circuits, and arm S with equal strengths on circuits.
+    let grid = fresh("character-grid");
+
+    ok(&arm_run(&grid, "grid", "v", &SHORT));
+    assert!(check_characters(&grid, &GridDomain, |p| rule_label(&p.rule), "rule") > 0);
+
+    let circuits = CircuitDomain::new(&CircuitConfig::default()).expect("circuit domain");
+    let named = |t: &CircuitTask| t.name.to_string();
+    let complex = fresh("character-circuits");
+
+    ok(&arm_run(&complex, "circuits", "s", &SHORT));
+    assert!(check_characters(&complex, &circuits, named, "target") > 0);
+
+    let equal = fresh("character-equal");
+    let config = equal.join("equal.json");
+
+    std::fs::create_dir_all(&equal).expect("mkdir");
+    std::fs::write(
+        &config,
+        serde_json::to_string_pretty(&BreedConfig {
+            soul: Some(SoulConfig {
+                strengths: Strengths::Equal,
+                ..SoulConfig::arm_s()
+            }),
+            domain: DomainConfig::Circuits(CircuitConfig::default()),
+            ..BreedConfig::default()
+        })
+        .expect("json"),
+    )
+    .expect("write config");
+
+    let run = equal.join("run");
+    let mut args = vec![
+        "--out",
+        path(&run),
+        "--config",
+        config.to_str().expect("utf-8 path"),
+    ];
+
+    args.extend_from_slice(&SHORT);
+    ok(&breed(&args));
+    assert!(check_characters(&run, &circuits, named, "target") > 0);
+
+    // A Run without Souls has no Character to show.
+    let none = fresh("character-none");
+    let mut args = vec!["--out", path(&none), "--domain", "grid"];
+
+    args.extend_from_slice(&SHORT);
+    ok(&breed(&args));
+    assert!(soul_character::run(&none).is_err());
 }
 
 /// The files that record a finished circuit Run.

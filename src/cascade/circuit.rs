@@ -32,8 +32,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cascade::arena::BreedConfig;
 use crate::cascade::circuit_text::{
-    CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_judge_prompt,
-    render_circuit_solve_prompt,
+    CIRCUIT_SELF_CHECK_TEXT, parse_circuit_answer, render_circuit_example,
+    render_circuit_judge_prompt, render_circuit_solve_prompt,
 };
 use crate::cascade::designer::FAMILY_STEMS;
 use crate::cascade::domain::{CircuitConfig, Domain, DomainConfig, Grade};
@@ -794,6 +794,12 @@ impl Domain for CircuitDomain {
     fn strengths(&self, task: &CircuitTask) -> Vec<f64> {
         library_target(task.name)
             .map_or_else(|| vec![0.0; FAMILY_STEMS.len()], LibraryTarget::strengths)
+    }
+
+    /// The task's dressed target, as a prompt shows it, with `answer` (spec 10.2). Neither
+    /// the library name nor the reference is written.
+    fn example(&self, task: &CircuitTask, answer: &Circuit) -> Option<String> {
+        Some(render_circuit_example(&task.target, answer))
     }
 }
 

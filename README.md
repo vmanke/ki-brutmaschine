@@ -1,6 +1,6 @@
 # Brutmaschine
 
-This page is the English version of the CNN, Stage 2c and step 1 parts of the German
+This page is the English version of the CNN, Stage 2c, step 1 and step 2 parts of the German
 [README.de.md](README.de.md), with the status, the roadmap and the setup of a GPU VM. The rest
 of the project documentation is in German; the code, its comments, `CONTEXT.md` and the
 ADRs are in English.
@@ -11,10 +11,10 @@ built: the CNN genome, the families with their base models, the mutations and th
 promotion of winners (see "CNN models in the MLP mode"). Part 3, ARC grids as tasks
 (ticket 06), comes next.
 
-**Step 2** will give every Worker a hidden, inherited **Soul**, which shows itself only in
-the Worker's Character. A judgment then becomes an Observation: it pulls the Souls of both
-sides together, as strongly as the observer's **Coupling strength** κ says. The design is
-merged (PR #28 and #29), and we have been building it since 2026-10-31.
+**Step 2** gives every Worker a hidden, inherited **Soul**, which shows itself only in the
+Worker's Character. A judgment becomes an Observation: it pulls the Souls of both sides
+together, as strongly as the observer's **Coupling strength** κ says. It is built and off by
+default (see "The Soul (step 2)"); the pre-registered comparison follows after a pilot.
 
 An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
 with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
@@ -40,7 +40,7 @@ with the default values:
 
 ## Status and roadmap
 
-Status on 2026-10-31.
+Status on 2026-11-02.
 
 **Built**
 
@@ -62,6 +62,13 @@ Status on 2026-10-31.
   2026-10-31: Q67 a, Q68 a, Q69 a, Q70 a, Q71 a, Q72 a, Q73 a and d, Q74 a
   ([questions](.scratch/seele-und-kappa/owner-questions.md), in German). The owner can
   overrule each of these decisions.
+- **Step 2: the Soul (tickets 01 to 09 and 12).** Souls and Family strengths, the Character,
+  the complex Stage vote, Observations and the Coupling strength κ, Souletics, Upbringing, the
+  Soul in the simulated models, the `soul` group of the `state` line, `brut-breed --soul s|v|k`
+  and the Character analysis
+  ([ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md),
+  [docs/STEP2_SOUL.md](docs/STEP2_SOUL.md)); see "The Soul (step 2)". Without `--soul` every Run
+  writes the same bytes as before.
 - **Real language models (PR #33).** The separate package `backend-ollama` with the program
   `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
   are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -71,13 +78,14 @@ Status on 2026-10-31.
 
 **Being built**
 
-- **Step 2.** Tickets 01 to 09 and 12, started on 2026-10-31.
+- **Glossary of step 2.** The new terms of step 2 reach `CONTEXT.md` in a small pull request of
+  their own, never inside a code pull request (Q53).
 
 **Planned**
 
 - **CNNs, part 3.** Ticket 06, ARC grids as tasks; it comes next.
-- **Step 2, comparison.** Pre-registration (ticket 10), pilot (ticket 11) and counted Runs
-  (ticket 13).
+- **Step 2, comparison.** Pilot (ticket 11), pre-registration (ticket 10) and counted Runs
+  (ticket 13). The pilot comes first: it sets the open numbers of the pre-registration.
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
   Cascade. F2: a language model as Architect that proposes CNN blueprints. F3: a CNN as a
   tool that the language model calls, at most 3 calls per answer.
@@ -751,6 +759,60 @@ froze the pre-registration. Decision 5 is shown in that version:
    "9 of 10", whose bound was 11/1024 = 0.0107; the sequential rule replaces it.
 6. The panels have 33 search and 22 select tasks.
 
+## The Soul (step 2)
+
+Status: built and off by default; the comparison follows. Described in
+[docs/STEP2_SOUL.md](docs/STEP2_SOUL.md) and
+[ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md).
+Specification: [.scratch/seele-und-kappa/spec.md](.scratch/seele-und-kappa/spec.md), with the
+tickets in `.scratch/seele-und-kappa/issues/`; the decisions are Q42 to Q46 and Q51 to Q74 of
+`.scratch/universum-erfinden/spec.md`.
+
+Every Worker carries a Soul: one integer phase per hypothesis family of the Domain, inherited and
+never shown to a model. Each task gives every family a strength (circuits: the families of the
+routes that step 1 pinned; grids: the families of the hidden rule). The Soul shows itself only
+through its Character, the squared magnitude of the sum of its phasors weighted by these
+strengths. In a Stage vote the judges' phasors add, and the squared magnitude decides; a tie goes
+to the number of verdicts, then to the order. Every judgment with a reply is an Observation that
+pulls the observed Worker's phases toward the observer's by κ times their gap, and the observer's
+back by half of that. Children inherit birth Souls and κ by Souletics (copy, mix, a small random step, now and
+then a new Soul) and are imprinted toward their parents' current Souls after their first task.
+The simulated models read the phases only where they would otherwise take the first of equally
+good answers or flip a coin, so costs, scores and the calibration of step 1 stay as they are.
+
+`--soul s|v|k` sets one of the three arms of the coming comparison: S, the Soul; V, the same
+Soul read only as signs, the real-valued control; K, the Soul with κ fixed at 0. Without `--soul`
+a Run has no Soul and writes the same bytes as before step 2. A reproducible Run on pilot seed
+901:
+
+```sh
+cargo build --release
+./target/release/brut-breed --out runs/s901-S --domain circuits --search 33 --select 22 \
+  --children 8 --generations 60 --seed 901 --max-calls 200000 --soul s
+./target/release/brut-breed --out runs/s901-S --verify
+
+# The Character of every Worker, recomputed from the record
+cargo run --release --example soul_character -- runs/s901-S
+```
+
+The Run takes about 4 s (release build, 4 threads). Among its lines is
+
+```
+brut-breed: wrote runs/s901-S/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 2 of the other 9; D > 1/2: no; calibrated
+```
+
+and `--verify` prints
+
+```
+brut-breed: 2046 events, hash chain intact, head e38339538f19d85fccd1d1a7a1c3a0435e1989eec7838e6b6e0c5a46e0e692a1; checkpoint at entry 2046 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+```
+
+The numbers of the presets (κ of the seeds 0.2, its step 0.02, a phase step of 512 units, θ = 1)
+are placeholders until the pilot sets them, and then this line changes too. For a finished Run
+with Souls, on circuits and on grids, `--verify` also ties every member's Soul records and current
+Souls to the log. Finer settings come as a `soul` object in `--config`; `--soul` next to one is
+wrong usage, and a resume refuses `--soul`. The pilot seeds 901 to 923 never count.
+
 ## Building blocks
 
 | Block | Job | Files |
@@ -759,7 +821,8 @@ froze the pre-registration. Decision 5 is shown in that version:
 | Cascades and variation | genome and limits, mutation and crossover, Mutator requests | `src/cascade/genome.rs`, `src/cascade/variation.rs` |
 | Grid puzzles | puzzle generator, prompt protocol, simulated model | `src/cascade/puzzle.rs`, `src/cascade/sim.rs` |
 | Seam | task kind (`Domain`) and genes (`GenePool`) | `src/cascade/domain.rs` |
-| Observables | the `state` line per generation | `src/cascade/observe.rs` |
+| Observables | the `state` line per generation, with the `soul` group in Runs with Souls | `src/cascade/observe.rs` |
+| Soul | Soul, Character, complex vote, Observations, Souletics; Upbringing | `src/cascade/soul.rs`, `src/cascade/upbringing.rs` |
 | Qubits | exact simulator, text protocol for circuits | `src/cascade/qubit.rs`, `src/cascade/circuit_text.rs` |
 | Circuits | target library, tasks, scoring, rediscovery | `src/cascade/circuit.rs` |
 | Positive control | simulated designer, seed Cascades, phrase pool | `src/cascade/designer.rs`, `src/cascade/circuit_genes.rs` |
@@ -785,6 +848,11 @@ access; `tests/cascade.rs` checks that.
   processes and with 1 and 4 threads, stop and resume, `--verify` against a changed
   `rediscovery.json`, refused promotion), pins the calibration of the positive control
   and compares the exact simulator with `src/quantum.rs`.
+- `tests/soul.rs` checks step 2. Without Souls nothing changes: the seed ids, the prompts, the
+  settings, and in a release test (`cargo test --release --test soul -- --ignored`) the head
+  hash of the step 1 pilot. With `--soul` it runs both Domains: the presets, equal files across
+  processes and with 1 and 4 threads in each arm, `--verify` against tampered Souls, refused
+  promotion, the rediscovery count, and the Character example against `character()`.
 
 ## Limits
 
@@ -795,3 +863,7 @@ access; `tests/cascade.rs` checks that.
   estimate how high the pass rate is, and it says nothing about real language models. What
   the experiment and the pilot show and what they do not is in
   [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 8.
+- Step 2: Soul, Character and Coupling strength are terms of a model, not physics, and say
+  nothing about souls in nature. The comparison has not run yet. With the simulated designer the
+  Soul acts mainly through the vote, the Observations and Upbringing; on pilot seed 901 it
+  changed no outcome up to generation 60 ([docs/STEP2_SOUL.md](docs/STEP2_SOUL.md), section 4).

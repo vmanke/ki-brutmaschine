@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::cascade::arena::BreedConfig;
 use crate::cascade::genome::{Cascade, seed_cascades};
 use crate::cascade::puzzle::{
-    Grid, Puzzle, SELF_CHECK_TEXT, generate_panel, parse_answer, render_judge_prompt,
-    render_solve_prompt,
+    Grid, Puzzle, SELF_CHECK_TEXT, generate_panel, parse_answer, render_example,
+    render_judge_prompt, render_solve_prompt,
 };
 use crate::cascade::sim::{family_names, rule_strengths};
 use crate::cascade::variation::{GRID_BRIEF, MutatorBrief, PHRASES};
@@ -91,6 +91,14 @@ pub trait Domain: Sized + Sync {
     /// Empty by default, as `families()`.
     fn strengths(&self, _task: &Self::Task) -> Vec<f64> {
         Vec::new()
+    }
+
+    /// One solved example for teaching (step 2, spec 10.2): the task with `answer`, as
+    /// plain text for a system prompt. Fixed code writes it; it holds what a prompt shows
+    /// of the task, never the task's id, rule or reference. None by default: a domain that
+    /// renders no example gives no teaching.
+    fn example(&self, _task: &Self::Task, _answer: &Self::Answer) -> Option<String> {
+        None
     }
 }
 
@@ -243,6 +251,11 @@ impl Domain for GridDomain {
     /// The strengths of the puzzle's hidden rule (spec 5.3).
     fn strengths(&self, task: &Puzzle) -> Vec<f64> {
         rule_strengths(&task.rule)
+    }
+
+    /// The puzzle's test input with `answer` as its output, as a worked example.
+    fn example(&self, task: &Puzzle, answer: &Grid) -> Option<String> {
+        Some(render_example(&task.test_input, answer))
     }
 }
 

@@ -1,6 +1,6 @@
 # 08 Soul observables in the `state` line
 
-Status: needs-triage (waits for the owner's approval of the design; no open question)
+Status: resolved
 Blocked by: 07
 Spec: `../spec.md`, section 13
 
@@ -40,3 +40,26 @@ Spec: `../spec.md`, section 13
 - `no_value_is_nan`: in Runs of every arm, every field of every `soul` group is finite or absent.
 
 ## Comments
+
+- 2026-11-02, build. Not committed: this build makes no commits.
+  - `observe.rs`: `UniverseState::soul`, a boxed `SoulState` left out of the JSON
+    without Souls, with the fields of spec 13.1. It reads the archive (birth, imprinted
+    and current Souls, κ, Soul records, the newborns' vote tallies) and a `SoulInput`:
+    the readout, the number of families, the search panel's distinct strength vectors
+    with their task counts (`strength_counts`), this commit's Observations by kind and the
+    Workers they moved, with their Souls before and after.
+  - `arena.rs`: `apply_observations` takes the vote and the peer Observations as two lists
+    and returns what it applied: the changed Workers, their Souls before, and the count of
+    each kind. The state line gets them.
+  - Tests: `the_soul_group_counts_by_hand` and `contrast_weights_tasks` in `observe.rs`;
+    `no_soul_group_without_souls`, `the_soul_population_never_falls`,
+    `fresh_souls_meet_the_formula`, `soul_states_survive_a_resume` and `no_value_is_nan` in
+    `arena.rs`. Added: the Observation counts in
+    `the_observation_switches_give_their_degenerate_case`, the counts and the shift in
+    `observations_act_in_log_order`, and the vote sums per generation in
+    `the_soul_population_never_falls`.
+  - Measured in `fresh_souls_meet_the_formula` (circuits, 51 state lines, 743 Souls at the
+    end): the mean contrast of generations 10 to 50 was 0.661 against 0.655 (complex) and
+    0.946 against 0.927 (real).
+  - Eight deliberate faults in the code were each caught. One of them showed that a task
+    on which every Character is 0 does occur in short Runs; its contrast counts 0.

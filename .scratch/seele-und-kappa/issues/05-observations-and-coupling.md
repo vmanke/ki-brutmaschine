@@ -73,3 +73,21 @@ Spec: `../spec.md`, section 8
   - Left for later tickets: until ticket 07, a newborn's current Souls start as its birth
     Souls, and `--verify` compares with the birth Soul where no event moved a Worker. The
     counts of Observations in the `state` line are ticket 08.
+- 2026-11-02, review fix. Not committed: this build makes no commits.
+  - A resume to more generations after a finished select phase reused the select answers kept
+    in the checkpoint, although later Observations had moved the current Souls with which a
+    member votes on the select panel (spec 8.6). So a resumed Run could report other finalist
+    scores than a straight Run. The commit in `step_with` now drops the kept select answers of
+    every member whose current Soul changed, and the next select phase scores it again. Only a
+    member's own Souls shape its answers, so the answers of the others stay exact, and
+    `select_reserve` already keeps back the calls of a whole select phase. Runs without Souls
+    and straight Runs do not change: they keep no select answers while they breed.
+  - Tests, both failed before the fix:
+    `a_resume_after_the_select_phase_reports_like_a_straight_run` (grid seed 30, arm S, 2 then
+    6 generations; before the fix one finalist solved 5 select tasks after the resume and 4 in
+    the straight Run) and `a_moved_member_is_scored_again_with_its_current_souls` (the
+    hand-built Run of `observations_act_in_log_order`: J and Q are asked again with their new
+    Souls, P keeps its answers). `hand_generation` now builds its Run with the new helper
+    `hand_start`. A scan found the stale answers in 1 of 160 Runs (seeds 1 to 40, arms S and
+    V, both Domains) before the fix, and no difference in 480 Runs (seeds 1 to 120) after it.
+  - Docs: `docs/STEP2_SOUL.md` and `docs/SCHRITT2_SEELE.md`, section 2, Observations and κ.

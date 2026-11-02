@@ -19,6 +19,10 @@
 //! In a Run with Souls (step 2, `.scratch/seele-und-kappa/spec.md`), Souletics gives every
 //! newborn Worker its birth Soul and Coupling strength from the Workers it was built from.
 //! The genetic operators see genes only, and novelty and the seeds of calls go by gene ids.
+//! Upbringing then shapes the newborn (`upbringing.rs`): it answers its first search task
+//! with its birth Souls and the others with Souls imprinted toward its source Workers'
+//! current Souls, which also start its current Souls; with teaching on, a section written
+//! from its parents' best solved examples ends every system prompt it sends.
 //! A Stage vote then tallies amplitudes: the verdicts of each judge weigh with its vote
 //! phasor, and the answer with the largest squared magnitude goes on. The solve and vote
 //! requests of a Cascade's own evaluation carry its Workers' phases to a backend that reads
@@ -41,14 +45,15 @@ use serde::{Deserialize, Serialize};
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
 use crate::cascade::domain::{Domain, DomainConfig, GenePool, GridDomain};
 use crate::cascade::genome::{
-    COUPLING_MAX, Cascade, CascadeLimits, PhaseState, Worker, adapt_seeds,
+    COUPLING_MAX, Cascade, CascadeLimits, PhaseState, Worker, adapt_seeds, check_section_text,
 };
-use crate::cascade::observe::{ObserveInput, UniverseState, observe};
+use crate::cascade::observe::{ObserveInput, SoulInput, UniverseState, observe, strength_counts};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::soul::{
     ArrayVote, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, array_vote, count_winner,
     observation, readout_phases, souletics, vote_phasor,
 };
+use crate::cascade::upbringing::{imprinted, section_block, teaching};
 use crate::cascade::variation::{
     Op, Sources, llm_crossover_request_with, llm_mutate_request_with, mutate_sourced,
     parse_llm_cascade, partner_sources, read_llm_cascade, section_crossover_sourced,
@@ -100,11 +105,15 @@ impl ModelPool {
     }
 }
 
-/// The models and the limits every call runs under.
+/// The models and the limits every call runs under, and the teaching section of the
+/// Cascade that calls.
 #[derive(Clone, Copy)]
 struct Ctx<'a> {
     pool: &'a ModelPool,
     limits: &'a CascadeLimits,
+    /// The calling Cascade's teaching section (step 2, spec 10.2): it ends every system
+    /// prompt the Cascade sends, to solve and to judge. None without one.
+    upbringing: Option<&'a str>,
 }
 
 /// Model usage of one evaluation, summed over calls.
@@ -160,7 +169,8 @@ pub fn worker_request_with(w: &Worker, prompt: String, seed: u64, check_text: &s
 ///
 /// `phases` are the Worker's phases with the readout applied, in a Run with Souls whose
 /// simulator setting is on (step 2, spec 11.1). The request carries them only when the
-/// backend reads phases, so a real model never gets them.
+/// backend reads phases, so a real model never gets them. A teaching section in `ctx` ends
+/// the system prompt (spec 10.2).
 fn call_worker(
     ctx: Ctx,
     w: &Worker,
@@ -181,6 +191,10 @@ fn call_worker(
     usage.model_cost += cost;
 
     let mut req = worker_request_with(w, prompt, seed, check_text);
+
+    if let Some(text) = ctx.upbringing {
+        req.system.push_str(&section_block(text));
+    }
 
     if backend.reads_phases() {
         req.phases = phases.map(<[u16]>::to_vec);
@@ -305,6 +319,9 @@ pub struct RunSouls<'a> {
     /// The judgments of the Stage votes are Observations (spec 8.2): on the search panel
     /// with `observe_vote` on, never on the select panel.
     pub observe: bool,
+    /// The Cascade's teaching section (spec 10.2): it ends every system prompt of the run.
+    /// None without one.
+    pub upbringing: Option<&'a str>,
 }
 
 /// The Stage votes a Cascade tallied by amplitudes (step 2, spec 7.7): its votes, those
@@ -374,7 +391,8 @@ pub fn run_cascade_in<D: Domain>(
 /// phases, readout applied, to a backend that reads them (spec 11.1); the tally counts the
 /// replies whose phases decided. With `observe` on, the run records the Observations of its
 /// Stage votes (spec 8.2): a judgment that got a reply is an Observation by the judge of
-/// every author of both answers other than itself.
+/// every author of both answers other than itself. A teaching section ends every system
+/// prompt of the run (spec 10.2).
 pub fn run_cascade_with<D: Domain>(
     domain: &D,
     pool: &ModelPool,
@@ -384,7 +402,11 @@ pub fn run_cascade_with<D: Domain>(
     seed: u64,
     souls: Option<&RunSouls<'_>>,
 ) -> CascadeRun<D::Answer> {
-    let ctx = Ctx { pool, limits };
+    let ctx = Ctx {
+        pool,
+        limits,
+        upbringing: souls.and_then(|r| r.upbringing),
+    };
     let check = domain.self_check_text();
     let mut usage = Usage::default();
     let mut chosen: Vec<D::Answer> = Vec::new();
@@ -499,6 +521,18 @@ struct StageSouls<'s> {
     phasors: Option<&'s [Phasor]>,
     phases: &'s [Option<Vec<u16>>],
     observe: Option<(&'s [Vec<usize>], usize)>,
+}
+
+/// The Souls a Cascade's Workers answer a panel with in a Run with Souls, frozen for the
+/// generation (step 2, spec 8.4 and 10.1): those of the panel's first task and those of
+/// every later task, and the teaching section that ends each of its system prompts (spec
+/// 10.2). A newborn answers its first search task with its birth Souls and the others with
+/// its imprinted Souls; the select phase uses the current Souls throughout.
+#[derive(Clone, Copy, Debug)]
+struct PanelSouls<'s> {
+    first: &'s [PhaseState],
+    rest: &'s [PhaseState],
+    upbringing: Option<&'s str>,
 }
 
 /// What a Stage vote gave: the winner, the vote by amplitudes if it was one, the replies
@@ -935,10 +969,21 @@ pub struct Member<A = Grid> {
     /// None in a Run without Souls, and then left out of the JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soul_sources: Option<Vec<SoulSource>>,
-    /// The current Soul of each Worker, in Stage order (spec 4.3). It starts as the birth
-    /// Soul of the genome, which never changes. None in a Run without Souls.
+    /// The imprinted Soul of each Worker, in Stage order (spec 4.3, 10.1): its birth Soul
+    /// moved toward the current Souls of its source Workers after the first search task.
+    /// A seed's is its birth Soul. None in a Run without Souls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imprinted: Option<Vec<PhaseState>>,
+    /// The current Soul of each Worker, in Stage order (spec 4.3). It starts as the
+    /// imprinted Soul; the birth Soul of the genome never changes. None in a Run without
+    /// Souls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soul_now: Option<Vec<PhaseState>>,
+    /// The teaching section written at birth from the parents' best solved examples (spec
+    /// 10.2). It ends every system prompt the member sends, and it is never part of the
+    /// genome. None without teaching, and when no example was taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teaching: Option<String>,
     /// The authors of the answer on each search task (spec 7.7). None without Souls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authors: Option<Vec<Vec<usize>>>,
@@ -1026,10 +1071,17 @@ pub enum Event {
         /// not). Left out when no answer has a text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answers: Option<Vec<Option<String>>>,
+        /// The imprinted Soul of each Worker (step 2, spec 10.1, 13.2); left out in a Run
+        /// without Souls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        imprinted: Option<Vec<PhaseState>>,
         /// Where each Worker's birth Soul came from (step 2, spec 13.2); left out in a Run
         /// without Souls. The genome holds the birth Souls themselves.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         soul_sources: Option<Vec<SoulSource>>,
+        /// The teaching section (spec 10.2, 13.2); left out when there is none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        teaching: Option<String>,
         /// The authors of the answer on each search task (spec 7.7, 13.2); left out
         /// without Souls.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1130,9 +1182,10 @@ pub struct Snapshot<A = Grid> {
     /// process, so `max_calls` holds across crashes too.
     #[serde(default)]
     pub reserved: u64,
-    /// Answers on the select panel so far, so a stopped select phase never pays twice.
-    /// Empty when absent. The empty map is named directly: a plain `default` would make
-    /// serde require `A: Default`, which a domain's answer type need not have.
+    /// Answers on the select panel so far, so a stopped select phase never pays twice. In
+    /// a Run with Souls a commit drops those of every member whose current Soul it changed
+    /// (spec 8.6). Empty when absent. The empty map is named directly: a plain `default`
+    /// would make serde require `A: Default`, which a domain's answer type need not have.
     #[serde(default = "BTreeMap::new")]
     pub select_answers: SelectAnswers<A>,
     /// True when the select phase finished on this archive and returned its events.
@@ -1161,6 +1214,10 @@ struct Draft {
     sources: Sources,
     /// Where each Worker's birth Soul came from, once Souletics gave it (Runs with Souls).
     soul_sources: Option<Vec<SoulSource>>,
+    /// The imprinted Souls and the teaching section, once Upbringing gave them (Runs with
+    /// Souls; spec 10).
+    imprinted: Option<Vec<PhaseState>>,
+    teaching: Option<String>,
 }
 
 /// Receives a snapshot to store before calls are made (see `Breeder::step_with`).
@@ -1295,7 +1352,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 let souled = |m: &Member<D::Answer>| {
                     m.cascade.carries_soul()
                         || m.soul_sources.is_some()
+                        || m.imprinted.is_some()
                         || m.soul_now.is_some()
+                        || m.teaching.is_some()
                         || m.authors.is_some()
                         || m.votes.is_some()
                 };
@@ -1308,12 +1367,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 }
             }
             // In a Run with Souls every Worker has a Soul of a phase per family (spec 4.4).
-            Some(_) => {
+            Some(soul) => {
                 let n = b.domain.families().len();
                 let tasks = b.search.len();
 
                 for m in &snap.archive {
-                    check_souls(m, n, tasks).map_err(|why| {
+                    check_souls(m, n, tasks, soul).map_err(|why| {
                         BrutError::Invalid(format!("resume refused: member {}: {why}", m.id))
                     })?;
                 }
@@ -1438,6 +1497,70 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 .collect();
 
             d.soul_sources = Some(records);
+        }
+
+        Ok(())
+    }
+
+    /// Upbringing for the drafts of generation `g`, after Souletics (spec 10) [Q73 a, d].
+    ///
+    /// Imprinting: each Worker's imprinted Soul is its birth Soul moved toward the current
+    /// Soul of each of its source Workers in turn, in parent order, by that source Worker's
+    /// Coupling strength (`soul::imprint`); with `imprint` off, and for a seed, it is the
+    /// birth Soul. The newborn answers its first search task with its birth Souls and the
+    /// others with its imprinted Souls. Imprinting reads no answer, so it is computed here,
+    /// before the evaluation, which then still runs its tasks in parallel.
+    ///
+    /// Teaching: with `teach` on, each draft gets the section its parents' best solved
+    /// examples on the search panel give (`upbringing::teaching`).
+    ///
+    /// Both read the parents as committed after the previous generation and change nothing
+    /// in the archive.
+    fn upbringing(&self, g: usize, drafts: &mut [Draft], soul: &SoulConfig) -> Result<()> {
+        let by_id: HashMap<&str, &Member<D::Answer>> =
+            self.archive.iter().map(|m| (m.id.as_str(), m)).collect();
+        let broken = |what: String| BrutError::Integrity(format!("Upbringing: {what}"));
+
+        for (i, d) in drafts.iter_mut().enumerate() {
+            let records = d.soul_sources.as_ref().ok_or_else(|| {
+                broken(format!("child {i} of generation {g} has no Soul records"))
+            })?;
+            let mut imprinted_souls = Vec::with_capacity(records.len());
+
+            for (birth, rec) in birth_souls(&d.cascade).iter().zip(records) {
+                let sources = rec
+                    .sources
+                    .iter()
+                    .map(|s| current_soul(by_id.get(s.member.as_str())?, s.worker))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        broken(format!(
+                            "a source of child {i} of generation {g} has no current Soul"
+                        ))
+                    })?;
+
+                imprinted_souls.push(PhaseState(imprinted(birth, &sources, soul.imprint)));
+            }
+
+            let section = if soul.teach {
+                let parents = d
+                    .parents
+                    .iter()
+                    .map(|p| Some(by_id.get(p.as_str())?.answers.as_slice()))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        broken(format!(
+                            "a parent of child {i} of generation {g} is not archived"
+                        ))
+                    })?;
+
+                teaching(&self.domain, &self.search, &parents)?
+            } else {
+                None
+            };
+
+            d.imprinted = Some(imprinted_souls);
+            d.teaching = section;
         }
 
         Ok(())
@@ -1570,6 +1693,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     parents: Vec::new(),
                     op: Op::Seed,
                     soul_sources: None,
+                    imprinted: None,
+                    teaching: None,
                 })
                 .collect();
 
@@ -1606,6 +1731,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         if let Some(soul) = &self.cfg.soul {
             self.souletics(g, &mut drafts, soul)?;
+            self.upbringing(g, &mut drafts, soul)?;
         }
 
         let need = drafts
@@ -1637,10 +1763,16 @@ impl<'a, D: Domain> Breeder<'a, D> {
             // and other Souls make the same calls.
             let gene_id = self.gene_key(&id, &d.cascade);
             let tag = format!("search/{gene_id}");
-            // A newborn answers with its birth Souls (spec 8.4).
-            let souls = d.soul_sources.as_ref().map(|_| birth_souls(&d.cascade));
-            let (runs, usage) =
-                self.evaluate(&d.cascade, souls.as_deref(), &self.search, &tag, stop);
+            // A newborn answers its first search task with its birth Souls and every other
+            // one with its imprinted Souls, and its teaching section ends each of its system
+            // prompts (spec 8.4, 10).
+            let birth = d.soul_sources.as_ref().map(|_| birth_souls(&d.cascade));
+            let souls = birth.as_deref().map(|first| PanelSouls {
+                first,
+                rest: d.imprinted.as_deref().unwrap_or(first),
+                upbringing: d.teaching.as_deref(),
+            });
+            let (runs, usage) = self.evaluate(&d.cascade, souls, &self.search, &tag, stop);
 
             calls += usage.calls;
 
@@ -1664,7 +1796,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 answers.push(r.answer);
             }
 
-            let souled = souls.is_some();
+            let souled = birth.is_some();
             let authors = souled.then_some(authors);
             let votes = souled.then_some(votes);
             let (solved, quality) = match tally(&self.domain, &answers, &self.search) {
@@ -1699,13 +1831,15 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 usage,
                 quality,
                 answers: artefacts.iter().any(Option::is_some).then_some(artefacts),
+                imprinted: d.imprinted.clone(),
                 soul_sources: d.soul_sources.clone(),
+                teaching: d.teaching.clone(),
                 authors: authors.clone(),
                 votes,
             });
 
-            // The current Souls start as the birth Souls (spec 4.3).
-            let soul_now = d.soul_sources.as_ref().map(|_| birth_souls(&d.cascade));
+            // The imprinted Souls start the current Souls (spec 4.3, 10.1).
+            let soul_now = d.imprinted.clone();
 
             gene_ids.push(gene_id);
 
@@ -1725,7 +1859,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 fitness: 0.0,
                 rating: 0.0,
                 soul_sources: d.soul_sources,
+                imprinted: d.imprinted,
                 soul_now,
+                teaching: d.teaching,
                 authors,
                 votes,
             });
@@ -1773,16 +1909,26 @@ impl<'a, D: Domain> Breeder<'a, D> {
         // The Observations act at the commit, one after another in log order: the newborns'
         // Stage votes, then the peer judgments in the order of the plan (spec 8.4). The
         // `souls` event lists the Workers whose current Soul changed (spec 8.5).
-        if self.cfg.soul.is_some() {
-            let changed = apply_observations(
-                &mut archive,
-                vote_observations.iter().chain(&peer_observations),
-            );
+        let applied = self.cfg.soul.as_ref().map(|_| {
+            let applied = apply_observations(&mut archive, &vote_observations, &peer_observations);
 
             events.push(Event::Souls {
                 generation: g,
-                changed,
+                changed: applied.changed.clone(),
             });
+
+            applied
+        });
+
+        // A member votes on the select panel with its current Souls (spec 8.6). So the
+        // select answers kept from an earlier select phase are dropped for every member
+        // whose current Soul changed, and the next select phase scores it again. Only a
+        // member's own Souls shape its answers, so the answers of the others stay exact. The
+        // calls that `select_reserve` keeps back cover a whole select phase.
+        if let Some(applied) = &applied {
+            for c in &applied.changed {
+                self.select_answers.remove(&c.member);
+            }
         }
 
         // Commit. The archive changed, so its select phase is still to come.
@@ -1795,8 +1941,40 @@ impl<'a, D: Domain> Breeder<'a, D> {
         self.finished = false;
 
         // The observables of the committed state, with the weights the next generation
-        // draws its parents by.
+        // draws its parents by, and in a Run with Souls this commit's Observations and the
+        // search panel's strengths (spec 13.1).
         let weights = self.selection_weights();
+        let strengths: Vec<(Vec<f64>, usize)> = match &self.cfg.soul {
+            Some(soul) => strength_counts(
+                self.search
+                    .iter()
+                    .map(|t| soul.strengths.of(&self.domain, t)),
+            ),
+            None => Vec::new(),
+        };
+        let moved: Vec<(PhaseState, PhaseState)> = applied
+            .as_ref()
+            .map(|a| {
+                a.before
+                    .iter()
+                    .cloned()
+                    .zip(a.changed.iter().map(|c| c.phases.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let soul = self
+            .cfg
+            .soul
+            .as_ref()
+            .zip(applied.as_ref())
+            .map(|(soul, applied)| SoulInput {
+                readout: soul.readout,
+                families: self.domain.families().len(),
+                strengths: &strengths,
+                observations_vote: applied.vote,
+                observations_peer: applied.peer,
+                moved: &moved,
+            });
 
         events.push(Event::State(observe(&ObserveInput {
             generation: g,
@@ -1806,6 +1984,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             selection_weights: &weights,
             generation_usage,
             tasks: self.search.len(),
+            soul,
         })));
 
         Ok((Status::Continue, events))
@@ -1868,11 +2047,16 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
                 let tag = format!("select/{}", self.gene_ids[i]);
                 let tasks: Vec<&D::Task> = missing.iter().map(|&j| &self.select[j]).collect();
-                // A member votes with its current Souls (spec 8.4, 8.6). The select phase
-                // records no Observation, so it changes no Soul (spec 8.2).
+                // A member votes with its current Souls (spec 8.4, 8.6), and its teaching
+                // section ends its system prompts (spec 10.2). The select phase records no
+                // Observation, so it changes no Soul (spec 8.2).
                 let m = &self.archive[i];
-                let (runs, usage) =
-                    self.run_panel(&m.cascade, m.soul_now.as_deref(), &tasks, &tag, false, stop);
+                let souls = m.soul_now.as_deref().map(|now| PanelSouls {
+                    first: now,
+                    rest: now,
+                    upbringing: m.teaching.as_deref(),
+                });
+                let (runs, usage) = self.run_panel(&m.cascade, souls, &tasks, &tag, false, stop);
                 let mut complete = true;
                 let got = self.select_answers.entry(id.clone()).or_default();
 
@@ -2009,7 +2193,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
     fn evaluate(
         &self,
         c: &Cascade,
-        souls: Option<&[PhaseState]>,
+        souls: Option<PanelSouls<'_>>,
         panel: &[D::Task],
         tag: &str,
         stop: &(dyn Fn() -> bool + Sync),
@@ -2026,13 +2210,14 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// every call made. Every call's seed comes from `tag` (which names the Cascade) and
     /// the task id, so the result depends neither on thread count nor on when, or with
     /// which other tasks, the Cascade runs. In a Run with Souls, `souls` holds the Souls
-    /// its Workers vote with, frozen for the generation, and each task gives its strengths
-    /// (spec 7.2, 8.4). With `observe`, the runs record the Observations of their Stage
+    /// its Workers vote with, frozen for the generation: those of the panel's first task and
+    /// those of every later one (spec 7.2, 8.4, 10.1), and its teaching section; each task
+    /// gives its strengths. With `observe`, the runs record the Observations of their Stage
     /// votes (spec 8.2); the select phase records none.
     fn run_panel(
         &self,
         c: &Cascade,
-        souls: Option<&[PhaseState]>,
+        souls: Option<PanelSouls<'_>>,
         panel: &[&D::Task],
         tag: &str,
         observe: bool,
@@ -2040,7 +2225,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
     ) -> (Vec<Option<CascadeRun<D::Answer>>>, Usage) {
         let runs: Vec<Option<CascadeRun<D::Answer>>> = panel
             .par_iter()
-            .map(|task| {
+            .enumerate()
+            .map(|(i, task)| {
                 if stop() {
                     return None;
                 }
@@ -2048,15 +2234,19 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 let id = self.domain.task_id(task);
                 let seed = derive_seed(self.cfg.seed, &format!("{tag}/{id}"));
                 let run = match (&self.cfg.soul, souls) {
-                    (Some(soul), Some(souls)) => {
+                    (Some(soul), Some(panel_souls)) => {
                         let strengths = soul.strengths.of(&self.domain, task);
                         let with = RunSouls {
-                            souls,
+                            souls: match i {
+                                0 => panel_souls.first,
+                                _ => panel_souls.rest,
+                            },
                             strengths: &strengths,
                             readout: soul.readout,
                             vote: soul.vote,
                             simulator: soul.simulator,
                             observe,
+                            upbringing: panel_souls.upbringing,
                         };
 
                         run_cascade_with(
@@ -2182,9 +2372,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 // The judge Worker's index over the Stages.
                 let judge_worker =
                     judge.worker_count() - judge.stages.last().map_or(0, |s| s.workers.len());
+                // The judge's teaching section ends its request, as it ends every system
+                // prompt the judge sends (spec 10.2).
                 let ctx = Ctx {
                     pool: self.pool,
                     limits: &self.cfg.limits,
+                    upbringing: archive[j].teaching.as_deref(),
                 };
                 // Scored: the domain strictly prefers one of the two answers (for grids,
                 // exactly one of them is right). Some(true) when it prefers `a`.
@@ -2376,6 +2569,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                                 .collect(),
                             op,
                             soul_sources: None,
+                            imprinted: None,
+                            teaching: None,
                         });
 
                         (true, "ok".to_string())
@@ -2462,6 +2657,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     op,
                     sources,
                     soul_sources: None,
+                    imprinted: None,
+                    teaching: None,
                 });
             }
         }
@@ -2523,22 +2720,40 @@ struct Observation {
     observed: (usize, usize),
 }
 
-/// Apply `observations` one after another, in their order, to the current Souls of
-/// `archive` (spec 8.3, 8.4) [Q69 a]: each moves the observed Worker toward the observer by
-/// the observer's Coupling strength, and the observer back by half of that, both from the
-/// Souls before it. Returns every Worker whose current Soul changed, in archive order, with
-/// its new Soul (spec 8.5). An Observation that names a Worker without a current Soul
-/// changes nothing.
-fn apply_observations<'o, A>(
+/// What the Observations of one commit did (spec 8.4, 8.5, 13.1).
+struct Applied {
+    /// Every Worker whose current Soul changed, in archive order, with its new Soul.
+    changed: Vec<SoulChange>,
+    /// The Soul each of them had when the commit began, in the same order.
+    before: Vec<PhaseState>,
+    /// The Observations applied, of Stage votes and of the peer round.
+    vote: u64,
+    peer: u64,
+}
+
+/// Apply the Observations of the Stage votes `vote` and then those of the peer round `peer`,
+/// one after another in their order, to the current Souls of `archive` (spec 8.3, 8.4) [Q69
+/// a]: each moves the observed Worker toward the observer by the observer's Coupling
+/// strength, and the observer back by half of that, both from the Souls before it. Returns
+/// every Worker whose current Soul changed, in archive order, with its new Soul (spec 8.5)
+/// and its Soul before, and how many Observations of each kind were applied. An Observation
+/// that names a Worker without a current Soul changes nothing and is not counted.
+fn apply_observations<A>(
     archive: &mut [Member<A>],
-    observations: impl IntoIterator<Item = &'o Observation>,
-) -> Vec<SoulChange> {
+    vote: &[Observation],
+    peer: &[Observation],
+) -> Applied {
     let current = |archive: &[Member<A>], (m, w): (usize, usize)| -> Option<PhaseState> {
         archive.get(m)?.soul_now.as_ref()?.get(w).cloned()
     };
     let mut before: BTreeMap<(usize, usize), PhaseState> = BTreeMap::new();
+    let mut applied = [0u64; 2];
+    let observations = vote
+        .iter()
+        .map(|o| (0, o))
+        .chain(peer.iter().map(|o| (1, o)));
 
-    for o in observations {
+    for (kind, o) in observations {
         // A Worker never observes itself (spec 8.2); this guards the rule.
         if o.observer == o.observed {
             continue;
@@ -2563,6 +2778,7 @@ fn apply_observations<'o, A>(
         };
         let (moved_p, moved_q) = observation(&p, &q, kappa);
 
+        applied[kind] += 1;
         before.entry(o.observer).or_insert(p);
         before.entry(o.observed).or_insert(q);
 
@@ -2573,18 +2789,26 @@ fn apply_observations<'o, A>(
         }
     }
 
-    before
+    let (changed, before) = before
         .into_iter()
         .filter_map(|((m, w), old)| {
             let now = current(archive, (m, w))?;
-
-            (now != old).then(|| SoulChange {
+            let change = SoulChange {
                 member: archive[m].id.clone(),
                 worker: w,
                 phases: now,
-            })
+            };
+
+            (change.phases != old).then_some((change, old))
         })
-        .collect()
+        .unzip();
+
+    Applied {
+        changed,
+        before,
+        vote: applied[0],
+        peer: applied[1],
+    }
 }
 
 /// Children drafted for one generation, or the requests still waiting for answers.
@@ -2779,6 +3003,20 @@ fn birth_souls(c: &Cascade) -> Vec<PhaseState> {
         .collect()
 }
 
+/// The current Soul of Worker `worker` of `m`, and its Coupling strength: what imprinting
+/// moves a child Worker toward, and how far (spec 10.1).
+fn current_soul<A>(m: &Member<A>, worker: usize) -> Option<(&[u16], u16)> {
+    let now = m.soul_now.as_ref()?.get(worker)?;
+    let w = m
+        .cascade
+        .stages
+        .iter()
+        .flat_map(|s| &s.workers)
+        .nth(worker)?;
+
+    Some((now.0.as_slice(), w.traits.coupling))
+}
+
 /// What source Worker `worker` of `parent` passes on: its birth Soul from the genome, never
 /// its current Soul (Q65), and its Coupling strength; where it is; and its Soul's origin.
 fn source_soul<A>(
@@ -2804,11 +3042,18 @@ fn source_soul<A>(
     Some((inherited, at, origin))
 }
 
-/// Why member `m` breaks the rule of a Run with Souls of `n` phases (spec 4.4), if it does:
-/// every Worker has a Soul of exactly `n` phases and a Coupling strength of at most 1000,
-/// and the member records where each Soul came from, each current Soul, the authors on
-/// each of the `tasks` search tasks and its tally of votes.
-fn check_souls<A>(m: &Member<A>, n: usize, tasks: usize) -> std::result::Result<(), String> {
+/// Why member `m` breaks the rule of a Run with Souls of `n` phases and the settings `soul`
+/// (spec 4.4), if it does: every Worker has a Soul of exactly `n` phases and a Coupling
+/// strength of at most 1000, and the member records where each Soul came from, each
+/// imprinted and current Soul, the authors on each of the `tasks` search tasks and its
+/// tally of votes. A teaching section exists only when the Run teaches, and it keeps the
+/// rules of a genome's section text (spec 10.2).
+fn check_souls<A>(
+    m: &Member<A>,
+    n: usize,
+    tasks: usize,
+    soul: &SoulConfig,
+) -> std::result::Result<(), String> {
     let workers = m.cascade.worker_count();
 
     for (k, w) in m.cascade.stages.iter().flat_map(|s| &s.workers).enumerate() {
@@ -2840,13 +3085,24 @@ fn check_souls<A>(m: &Member<A>, n: usize, tasks: usize) -> std::result::Result<
         ));
     }
 
-    match &m.soul_now {
-        Some(now) if now.len() == workers && now.iter().all(|p| p.len() == n) => {}
-        _ => {
-            return Err(format!(
-                "it does not hold a current Soul of {n} phases for each of its {workers} Workers"
-            ));
+    for (what, souls) in [("an imprinted", &m.imprinted), ("a current", &m.soul_now)] {
+        match souls {
+            Some(s) if s.len() == workers && s.iter().all(|p| p.len() == n) => {}
+            _ => {
+                return Err(format!(
+                    "it does not hold {what} Soul of {n} phases for each of its {workers} Workers"
+                ));
+            }
         }
+    }
+
+    match (&m.teaching, soul.teach) {
+        (None, _) => {}
+        (Some(_), false) => {
+            return Err("it holds a teaching section, but this Run does not teach".to_string());
+        }
+        (Some(text), true) => check_section_text(text)
+            .map_err(|e| format!("its teaching section breaks the rules of a section: {e}"))?,
     }
 
     if m.authors.as_ref().map(Vec::len) != Some(tasks) || m.votes.is_none() {
@@ -2929,12 +3185,16 @@ mod tests {
     use crate::cascade::circuit_text::parse_circuit_prompt;
     use crate::cascade::designer::SimDesigner;
     use crate::cascade::domain::{CircuitConfig, Grade};
-    use crate::cascade::genome::{Section, Stage, Traits, seed_cascades, seeds_for};
+    use crate::cascade::genome::{
+        MAX_SECTION_CHARS, Section, Stage, Traits, seed_cascades, seeds_for,
+    };
+    use crate::cascade::observe::SoulState;
     use crate::cascade::puzzle::{generate_panel, parse_prompt};
     use crate::cascade::sim::SimModel;
     use crate::cascade::soul::{
-        Inheritance, SoulConfig, SoulDraws, Strengths, new_soul_chance, souletics,
+        Inheritance, SoulConfig, SoulDraws, Strengths, imprint, new_soul_chance, souletics,
     };
+    use crate::cascade::upbringing::{TEACHING_INTRO, UPBRINGING, model_word_in, teaching};
     use crate::cascade::variation::{GRID_BRIEF, MutatorBrief};
     use std::collections::BTreeSet;
 
@@ -3689,6 +3949,7 @@ mod tests {
         let ctx = Ctx {
             pool: &pool,
             limits: &limits,
+            upbringing: None,
         };
         let w = seed_cascades()[0].1.stages[0].workers[0].clone();
         let mut orders = std::collections::BTreeSet::new();
@@ -4501,6 +4762,7 @@ mod tests {
         let ctx = Ctx {
             pool: &pool,
             limits: &limits,
+            upbringing: None,
         };
         let task = Number {
             id: "seven".to_string(),
@@ -4663,7 +4925,9 @@ mod tests {
             fitness: 0.5,
             rating: 0.0,
             soul_sources: None,
+            imprinted: None,
             soul_now: None,
+            teaching: None,
             authors: None,
             votes: None,
         };
@@ -4931,6 +5195,25 @@ mod tests {
             );
 
             assert!(reason.contains(&id) && reason.contains("Soul"), "{reason}");
+        }
+
+        // A record of Upbringing too (ticket 07).
+        for which in 0..2 {
+            let mut tampered = snap.clone();
+            let m = &mut tampered.archive[1];
+
+            if which == 0 {
+                m.imprinted = Some(vec![PhaseState(vec![1; 7])]);
+            } else {
+                m.teaching = Some("Solved examples.".to_string());
+            }
+
+            let reason = invalid(
+                Breeder::resume(small_config(67), &pool, None, tampered),
+                "resumed record",
+            );
+
+            assert!(reason.contains("record of Souls"), "{reason}");
         }
 
         // A Mutator answer.
@@ -5366,56 +5649,97 @@ mod tests {
 
     #[test]
     fn a_parent_passes_on_its_birth_soul() {
+        // Changing the parents' current Souls changes none of their children's birth Souls
+        // (Q65). Only Upbringing reads the current Souls: with imprinting on, the children's
+        // imprinted Souls differ; with it off, the current Souls pass on nothing at all.
         let pool = sim_pool();
         let never = || false;
-        let cfg = with_souls(
-            BreedConfig {
-                generations: 5,
-                ..small_config(103)
-            },
-            SoulConfig::arm_s(),
-        );
-        let mut b = Breeder::new(cfg.clone(), &pool, None).expect("breeder");
 
-        for _ in 0..3 {
-            b.step(&never).expect("step");
-        }
+        for imprint in [true, false] {
+            let cfg = with_souls(
+                BreedConfig {
+                    generations: 5,
+                    ..small_config(103)
+                },
+                SoulConfig {
+                    imprint,
+                    ..SoulConfig::arm_s()
+                },
+            );
+            let mut b = Breeder::new(cfg.clone(), &pool, None).expect("breeder");
 
-        let snap = b.snapshot();
-        let mut moved = snap.clone();
+            for _ in 0..3 {
+                b.step(&never).expect("step");
+            }
 
-        for m in &mut moved.archive {
-            for soul in m.soul_now.as_mut().expect("current Souls") {
-                for p in &mut soul.0 {
-                    *p = p.wrapping_add(12345);
+            let snap = b.snapshot();
+            let mut moved = snap.clone();
+
+            for m in &mut moved.archive {
+                for soul in m.soul_now.as_mut().expect("current Souls") {
+                    for p in &mut soul.0 {
+                        *p = p.wrapping_add(12345);
+                    }
                 }
             }
-        }
 
-        // The children born after the resume, as their Born events record them.
-        let children = |snap: Snapshot| {
-            let mut b = Breeder::resume(cfg.clone(), &pool, None, snap).expect("resume");
-            let mut born = Vec::new();
+            // The Born events of each generation after the resume.
+            let children = |snap: Snapshot| {
+                let mut b = Breeder::resume(cfg.clone(), &pool, None, snap).expect("resume");
+                let mut born = Vec::new();
 
-            while let (Status::Continue, events) = b.step(&never).expect("step") {
-                born.extend(
-                    events
-                        .into_iter()
-                        .filter(|e| matches!(e, Event::Born { .. })),
-                );
+                while let (Status::Continue, events) = b.step(&never).expect("step") {
+                    born.push(
+                        events
+                            .into_iter()
+                            .filter(|e| matches!(e, Event::Born { .. }))
+                            .collect::<Vec<Event>>(),
+                    );
+                }
+
+                born
+            };
+            // What Souletics gave a Born event: the genome with its birth Souls, and where
+            // each came from.
+            let births = |events: &[Event]| -> Vec<(Cascade, Option<Vec<SoulSource>>)> {
+                events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Born {
+                            cascade,
+                            soul_sources,
+                            ..
+                        } => Some((cascade.clone(), soul_sources.clone())),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let imprints = |events: &[Event]| -> Vec<Option<Vec<PhaseState>>> {
+                events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Born { imprinted, .. } => Some(imprinted.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let straight = children(snap.clone());
+            let changed = children(moved.clone());
+
+            assert!(!straight.is_empty() && !straight[0].is_empty());
+            assert_ne!(snap.archive, moved.archive);
+            assert_eq!(
+                births(&changed[0]),
+                births(&straight[0]),
+                "the next generation's birth Souls"
+            );
+
+            if imprint {
+                assert_ne!(imprints(&changed[0]), imprints(&straight[0]));
+            } else {
+                assert_eq!(changed, straight, "the current Souls pass on nothing");
             }
-
-            born
-        };
-        let straight = children(snap.clone());
-
-        assert!(!straight.is_empty());
-        assert_ne!(snap.archive, moved.archive);
-        assert_eq!(
-            children(moved),
-            straight,
-            "the current Souls pass on nothing"
-        );
+        }
     }
 
     #[test]
@@ -5623,19 +5947,73 @@ mod tests {
             assert!(reason.contains(&id) && reason.contains('7'), "{reason}");
         }
 
-        // The current Souls must fit as well.
+        // The imprinted and the current Souls must fit as well (ticket 07).
+        for imprinted in [true, false] {
+            let mut tampered = snap.clone();
+            let m = &mut tampered.archive[2];
+            let souls = if imprinted {
+                &mut m.imprinted
+            } else {
+                &mut m.soul_now
+            };
+
+            souls.as_mut().expect("Souls")[0].0.pop();
+
+            let reason = invalid(
+                Breeder::resume(cfg.clone(), &pool, None, tampered),
+                "a Soul of the wrong size",
+            );
+            let what = if imprinted { "imprinted" } else { "current" };
+
+            assert!(
+                reason.contains(&snap.archive[2].id) && reason.contains(what),
+                "{reason}"
+            );
+        }
+
         let mut tampered = snap.clone();
 
-        tampered.archive[2]
-            .soul_now
-            .as_mut()
-            .expect("current Souls")[0]
-            .0
-            .pop();
+        tampered.archive[3].imprinted = None;
+        assert!(Breeder::resume(cfg.clone(), &pool, None, tampered).is_err());
 
-        let reason = invalid(Breeder::resume(cfg, &pool, None, tampered), "current Soul");
+        // A teaching section only in a Run that teaches, and only with the text of a
+        // section.
+        let mut taught = snap.clone();
 
-        assert!(reason.contains(&snap.archive[2].id), "{reason}");
+        taught.archive[1].teaching = Some("Solved examples.".to_string());
+
+        let reason = invalid(
+            Breeder::resume(cfg.clone(), &pool, None, taught.clone()),
+            "a section without teaching",
+        );
+
+        assert!(reason.contains("does not teach"), "{reason}");
+
+        let teaching_cfg = with_souls(small_config(113), teaching_arm());
+        let resumed = |archive: Vec<Member>| {
+            Breeder::resume(
+                teaching_cfg.clone(),
+                &pool,
+                None,
+                Snapshot {
+                    config_hash: teaching_cfg.fixed_hash(),
+                    archive,
+                    ..snap.clone()
+                },
+            )
+        };
+
+        assert!(resumed(taught.archive.clone()).is_ok());
+
+        for bad in ["Hidden\u{200B}text.", "Line\u{7}bell.", ""] {
+            let mut archive = taught.archive.clone();
+
+            archive[1].teaching = Some(bad.to_string());
+
+            let reason = invalid(resumed(archive), "a section that breaks the rules");
+
+            assert!(reason.contains("teaching section"), "{reason}");
+        }
     }
 
     /// A backend that records every request as JSON before its model answers it. It reads
@@ -5897,13 +6275,18 @@ mod tests {
         assert_eq!(straight.snapshot(), second.snapshot());
 
         // Every member records its Souls, and its Born event the same; a seed's Workers have
-        // new Souls of their own origin; the current Souls start as the birth Souls, and
-        // each then is its last entry in the `souls` events (ticket 05).
+        // new Souls of their own origin; the current Souls start as the imprinted Souls
+        // (ticket 07), and each then is its last entry in the `souls` events (ticket 05).
         let archive = straight.archive();
-        let born: Vec<&Option<Vec<SoulSource>>> = events_straight
+        type Logged<'e> = (&'e Option<Vec<SoulSource>>, &'e Option<Vec<PhaseState>>);
+        let born: Vec<Logged<'_>> = events_straight
             .iter()
             .filter_map(|e| match e {
-                Event::Born { soul_sources, .. } => Some(soul_sources),
+                Event::Born {
+                    soul_sources,
+                    imprinted,
+                    ..
+                } => Some((soul_sources, imprinted)),
                 _ => None,
             })
             .collect();
@@ -5912,8 +6295,9 @@ mod tests {
         assert_eq!(born.len(), archive.len());
         assert!(!last.is_empty(), "the Observations moved some Soul");
 
-        for (m, logged) in archive.iter().zip(born) {
+        for (m, (logged, imprinted)) in archive.iter().zip(born) {
             assert_eq!(logged, &m.soul_sources);
+            assert_eq!(imprinted, &m.imprinted);
             assert_eq!(records(m).len(), m.cascade.worker_count());
 
             let now: Vec<Vec<u16>> = m
@@ -5923,10 +6307,10 @@ mod tests {
                 .iter()
                 .map(|p| p.0.clone())
                 .collect();
-            let expected: Vec<Vec<u16>> = birth_phases(&m.cascade)
+            let expected: Vec<Vec<u16>> = plain(&m.imprinted)
                 .into_iter()
                 .enumerate()
-                .map(|(k, birth)| last.get(&(m.id.clone(), k)).map_or(birth, |p| p.0.clone()))
+                .map(|(k, start)| last.get(&(m.id.clone(), k)).map_or(start, |p| p.0.clone()))
                 .collect();
 
             assert_eq!(now, expected);
@@ -5967,7 +6351,9 @@ mod tests {
             fitness: 0.5,
             rating: 0.0,
             soul_sources: None,
+            imprinted: None,
             soul_now: None,
+            teaching: None,
             authors: None,
             votes: None,
         };
@@ -6401,6 +6787,10 @@ mod tests {
         fn strengths(&self, _task: &Number) -> Vec<f64> {
             vec![1.0, 0.0]
         }
+
+        fn example(&self, task: &Number, answer: &u64) -> Option<String> {
+            Some(format!("DOUBLE {} GIVES {answer}", task.n))
+        }
     }
 
     #[test]
@@ -6427,6 +6817,7 @@ mod tests {
                 vote,
                 simulator: false,
                 observe: false,
+                upbringing: None,
             };
 
             run_cascade_with(&Doubling, &pool, &limits, &c, &task, 9, Some(&with))
@@ -6474,7 +6865,8 @@ mod tests {
         );
 
         // In a Run, each member keeps the authors per search task and the sum of its
-        // tallies, as its Born event does: what its own run gives on each task.
+        // tallies, as its Born event does: what its own run gives on each task, with its
+        // birth Souls on the first task and its imprinted Souls on the others (ticket 07).
         fn fixed_seeds() -> Vec<(String, Cascade)> {
             vec![
                 ("votes".to_string(), three_votes()),
@@ -6493,18 +6885,20 @@ mod tests {
         let mut complex = 0;
 
         for m in &snap.archive {
-            let souls = birth_souls(&m.cascade);
+            let birth = birth_souls(&m.cascade);
+            let imprinted = m.imprinted.clone().expect("imprinted Souls");
             let mut tally = VoteTally::default();
             let mut authors = Vec::new();
 
-            for t in &panel {
+            for (i, t) in panel.iter().enumerate() {
                 let with = RunSouls {
-                    souls: &souls,
+                    souls: if i == 0 { &birth } else { &imprinted },
                     strengths: &strengths,
                     readout: Readout::Complex,
                     vote: true,
                     simulator: true,
                     observe: true,
+                    upbringing: None,
                 };
                 let seed = derive_seed(
                     cfg.seed,
@@ -6762,7 +7156,9 @@ mod tests {
 
         Member {
             soul_sources: Some(sources),
+            imprinted: Some(birth_souls(&cascade)),
             soul_now: Some(birth_souls(&cascade)),
+            teaching: None,
             id,
             cascade,
             parents: Vec::new(),
@@ -6805,17 +7201,12 @@ mod tests {
         }
     }
 
-    /// Generation 1 of a hand-built Run with the Soul settings `soul`, on one search task.
-    /// The archive after generation 0: J judges and has no answer; P is the parent of both
-    /// children; Q is their opponent. Fitness 1 is not eligible, so only P is drawn as a
-    /// parent. An LLM round writes two children of P, each a Stage vote of two Workers.
-    /// Returns the events of the step and the archive: J, P, Q and the two children.
-    fn hand_generation(soul: SoulConfig) -> (Vec<Event>, Vec<Member<u64>>) {
-        let mut pool = ModelPool::new();
-
-        pool.insert("sim:small", Box::new(Fixed));
-        pool.insert("sim:large", Box::new(Fixed));
-
+    /// A hand-built Run with the Soul settings `soul` after its generation 0, on one search
+    /// task and one select task: its settings, its checkpoint and the Mutator of its LLM
+    /// round. The archive: J judges and has no answer; P is the parent of both children; Q is
+    /// their opponent. Fitness 1 is not eligible, so only P is drawn as a parent. The LLM
+    /// round of generation 1 writes two children of P, each a Stage vote of two Workers.
+    fn hand_start(soul: SoulConfig) -> (BreedConfig, Snapshot<u64>, Children) {
         let j = hand_member(saying(&[70]), &[(&[32768, 1000], 200)], None, vec![], 1.0);
         let p = hand_member(
             saying(&[10, 20]),
@@ -6861,6 +7252,19 @@ mod tests {
             select_answers: BTreeMap::new(),
             finished: false,
         };
+
+        (cfg, snap, children)
+    }
+
+    /// Generation 1 of the hand-built Run of `hand_start` with the Soul settings `soul`.
+    /// Returns the events of the step and the archive: J, P, Q and the two children.
+    fn hand_generation(soul: SoulConfig) -> (Vec<Event>, Vec<Member<u64>>) {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Fixed));
+        pool.insert("sim:large", Box::new(Fixed));
+
+        let (cfg, snap, children) = hand_start(soul);
         let never = || false;
         let mut b: Breeder<'_, TwoFamilies> =
             Breeder::resume_from(cfg, doubling_genes(), &pool, Some(&children), snap)
@@ -6971,6 +7375,44 @@ mod tests {
 
         assert_eq!(*generation, 1);
         assert_eq!(listed, expected);
+
+        // The state line counts the four Observations of each kind, and the mean shift of
+        // the six Workers that moved, from their Souls before the commit (ticket 08).
+        let Some(Event::State(state)) = events.last() else {
+            panic!("no state event");
+        };
+        let soul = state.soul.as_ref().expect("a soul group");
+        let before: BTreeMap<(String, usize), Vec<u16>> = [
+            (jid.clone(), 0, vec![32768, 1000]),
+            (qid.clone(), 0, vec![8000, 60000]),
+            (a.id.clone(), 0, vec![0, 0]),
+            (a.id.clone(), 1, vec![16384, 40000]),
+            (bb.id.clone(), 0, vec![0, 0]),
+            (bb.id.clone(), 1, vec![16384, 40000]),
+        ]
+        .into_iter()
+        .map(|(id, k, p)| ((id, k), p))
+        .collect();
+        let degrees: f64 = expected
+            .iter()
+            .flat_map(|(id, k, after)| {
+                let from = before[&(id.clone(), *k)].clone();
+
+                from.into_iter().zip(after.clone()).map(|(p, q)| {
+                    let d = u32::from(p.abs_diff(q));
+
+                    f64::from(d.min(65536 - d)) * 360.0 / 65536.0
+                })
+            })
+            .sum();
+
+        assert_eq!((soul.observations_vote, soul.observations_peer), (4, 4));
+        assert_eq!((soul.souls, soul.souls_born), (8, 4));
+        assert!(
+            (soul.shift_mean.expect("a shift") - degrees / 12.0).abs() < 1e-9,
+            "{:?}",
+            soul.shift_mean
+        );
     }
 
     #[test]
@@ -7008,6 +7450,23 @@ mod tests {
                 vec![vec![4096, 59152], vec![2048, 62344]],
             ]
         );
+
+        // The state line counts each kind of Observation that its switch lets act: four
+        // judgments of the votes and four of the peer round, by hand (ticket 08).
+        let counted = |observe_vote: bool, observe_peer: bool| {
+            let (events, _) = hand_generation(SoulConfig {
+                observe_vote,
+                observe_peer,
+                ..exact_copies()
+            });
+            let soul = soul_groups(&events)[0].clone();
+
+            (soul.observations_vote, soul.observations_peer)
+        };
+
+        assert_eq!(counted(true, false), (4, 0));
+        assert_eq!(counted(false, true), (0, 4));
+        assert_eq!(counted(false, false), (0, 0));
 
         // Neither: the `souls` event lists no Worker, and every Soul stays its birth Soul.
         let (events, archive) = hand_generation(SoulConfig {
@@ -7088,6 +7547,113 @@ mod tests {
                 .any(|e| matches!(e, Event::Souls { changed, .. } if !changed.is_empty())),
             "the Run moves Souls"
         );
+    }
+
+    #[test]
+    fn a_resume_after_the_select_phase_reports_like_a_straight_run() {
+        // On this grid Run the Observations of generations 3 to 6 move the current Soul of a
+        // member that the select phase after generation 2 scored, and its new Soul changes
+        // its select answers. A member votes on the select panel with its current Souls
+        // (spec 8.6), so the resumed Run scores it again: its finalists, their answers and
+        // its report are those of the straight Run, calls aside.
+        let pool = sim_pool();
+        let never = || false;
+        let cfg = |generations: usize| {
+            with_souls(
+                BreedConfig {
+                    generations,
+                    children_per_generation: 6,
+                    ..small_config(30)
+                },
+                SoulConfig::arm_s(),
+            )
+        };
+        let scored = |b: &mut Breeder<'_, GridDomain>| {
+            let (report, _) = b
+                .finish(&never, "all generations done")
+                .expect("finish")
+                .expect("not stopped");
+            let kept = b.snapshot().select_answers;
+            let answers: Vec<_> = report
+                .finalists
+                .iter()
+                .map(|f| kept.get(&f.id).cloned())
+                .collect();
+
+            (
+                Report {
+                    calls_used: 0,
+                    ..report
+                },
+                answers,
+            )
+        };
+        let mut first = bred(Breeder::new(cfg(2), &pool, None).expect("first"));
+
+        scored(&mut first);
+
+        let resumed = Breeder::resume(cfg(6), &pool, None, first.snapshot()).expect("resume");
+        let (report, answers) = scored(&mut bred(resumed));
+        let (straight, straight_answers) = scored(&mut bred(
+            Breeder::new(cfg(6), &pool, None).expect("straight"),
+        ));
+
+        assert_eq!(report.finalists, straight.finalists);
+        assert!(answers == straight_answers, "the finalists' select answers");
+        assert_eq!(report, straight);
+    }
+
+    #[test]
+    fn a_moved_member_is_scored_again_with_its_current_souls() {
+        // The hand-built Run finishes a select phase after generation 0, while every current
+        // Soul is a birth Soul. Resumed, generation 1 moves J and Q but not P
+        // (`observations_act_in_log_order`). So the next select phase asks the two children,
+        // and J and Q again, with their new Souls; P keeps the answers its Souls still give.
+        let (pool, log) = phase_log_pool();
+        let (cfg, snap, children) = hand_start(exact_copies());
+        let never = || false;
+        let mut first: Breeder<'_, TwoFamilies> =
+            Breeder::resume_from(cfg.clone(), doubling_genes(), &pool, Some(&children), snap)
+                .expect("resume");
+
+        first
+            .finish(&never, "all generations done")
+            .expect("finish")
+            .expect("not stopped");
+
+        let kept = first.snapshot();
+
+        assert_eq!(
+            kept.select_answers.keys().collect::<BTreeSet<_>>(),
+            kept.archive.iter().map(|m| &m.id).collect::<BTreeSet<_>>(),
+            "the first select phase scores J, P and Q"
+        );
+
+        let mut b: Breeder<'_, TwoFamilies> =
+            Breeder::resume_from(cfg, doubling_genes(), &pool, Some(&children), kept)
+                .expect("resume");
+
+        assert_eq!(b.step(&never).expect("generation 1").0, Status::Continue);
+        taken(&log);
+        b.finish(&never, "all generations done")
+            .expect("finish")
+            .expect("not stopped");
+
+        // With the complex readout, a request carries its Worker's current Soul as it is.
+        let asked: BTreeSet<Vec<u16>> = taken(&log)
+            .iter()
+            .map(|r| r.phases.clone().expect("phases"))
+            .collect();
+        let now = |members: &[usize]| -> BTreeSet<Vec<u16>> {
+            members
+                .iter()
+                .flat_map(|&i| plain(&b.archive()[i].soul_now))
+                .collect()
+        };
+
+        assert_eq!(asked, now(&[0, 2, 3, 4]), "J, Q and the two children");
+        assert!(asked.is_disjoint(&now(&[1])), "P is not asked again");
+        assert_eq!(b.snapshot().select_answers.len(), 5);
     }
 
     #[test]
@@ -7205,6 +7771,7 @@ mod tests {
                     vote: true,
                     simulator: true,
                     observe: true,
+                    upbringing: None,
                 };
 
                 run_cascade_in(domain, pool, &limits, c, task, seed);
@@ -7546,5 +8113,1147 @@ mod tests {
 
         assert!(!circuit_signs.is_empty());
         assert!(circuit_signs.iter().all(|&p| p == 0 || p == 32768));
+    }
+
+    /// `Fixed` that reads phases and keeps every request it gets.
+    struct PhaseLog {
+        log: std::sync::Arc<std::sync::Mutex<Vec<GenRequest>>>,
+    }
+
+    impl ModelBackend for PhaseLog {
+        fn name(&self) -> &str {
+            "phase-log"
+        }
+
+        fn generate(&self, req: &GenRequest) -> Result<GenResponse> {
+            self.log.lock().expect("log").push(req.clone());
+            Fixed.generate(req)
+        }
+
+        fn reads_phases(&self) -> bool {
+            true
+        }
+    }
+
+    type RequestLog = std::sync::Arc<std::sync::Mutex<Vec<GenRequest>>>;
+
+    /// A pool of `PhaseLog` under both tags, and its log.
+    fn phase_log_pool() -> (ModelPool, RequestLog) {
+        let log = RequestLog::default();
+        let mut pool = ModelPool::new();
+
+        for tag in ["sim:small", "sim:large"] {
+            pool.insert(tag, Box::new(PhaseLog { log: log.clone() }));
+        }
+
+        (pool, log)
+    }
+
+    /// Every request of `log`, emptied.
+    fn taken(log: &RequestLog) -> Vec<GenRequest> {
+        std::mem::take(&mut *log.lock().expect("log"))
+    }
+
+    /// The current Souls of P in `upbringing_generation`: not its birth Souls.
+    const P_NOW: [[u16; 2]; 2] = [[12000, 50000], [30000, 1000]];
+
+    /// The birth Souls of P in `upbringing_generation`, which its children copy.
+    const P_BIRTH: [[u16; 2]; 2] = [[0, 0], [16384, 40000]];
+
+    /// Generation 1 of a hand-built Run as `hand_generation` builds it, on `tasks` search
+    /// tasks and with the models of `pool`: P's Workers have the Coupling strength `kappa`
+    /// and the current Souls `P_NOW`, P solves the second task, and J carries the teaching
+    /// section `j_teaching`. With `finish`, the select phase follows. Returns the events,
+    /// the archive (J, P, Q and the two children of P) and the settings.
+    fn upbringing_generation(
+        soul: SoulConfig,
+        kappa: u16,
+        tasks: usize,
+        j_teaching: Option<&str>,
+        finish: bool,
+        pool: &ModelPool,
+    ) -> (Vec<Event>, Vec<Member<u64>>, BreedConfig) {
+        let cfg = with_souls(
+            BreedConfig {
+                seed: 227,
+                generations: 1,
+                children_per_generation: 2,
+                llm_every: 1,
+                llm_children: 2,
+                search_puzzles: tasks,
+                select_puzzles: 1,
+                peer_opponents: 3,
+                peer_puzzles_per_pair: 1,
+                ..BreedConfig::default()
+            },
+            soul,
+        );
+        let panel = TwoFamilies.panel(derive_seed(cfg.seed, "panel/search"), tasks);
+        let on_every = |mut m: Member<u64>| {
+            m.answers = vec![m.answers[0]; tasks];
+            m.authors = m.authors.map(|a| vec![a[0].clone(); tasks]);
+            m
+        };
+        let [b0, b1] = P_BIRTH;
+        let mut j = on_every(hand_member(
+            saying(&[70]),
+            &[(&[32768, 1000], 200)],
+            None,
+            vec![],
+            1.0,
+        ));
+        let mut p = on_every(hand_member(
+            saying(&[10, 20]),
+            &[(&b0, kappa), (&b1, kappa)],
+            Some(20),
+            vec![1],
+            0.5,
+        ));
+        let q = on_every(hand_member(
+            saying(&[60]),
+            &[(&[8000, 60000], 0)],
+            Some(60),
+            vec![0],
+            1.0,
+        ));
+
+        j.teaching = j_teaching.map(str::to_string);
+        p.soul_now = Some(P_NOW.iter().map(|s| PhaseState(s.to_vec())).collect());
+
+        if let Some(task) = panel.get(1) {
+            p.answers[1] = Some(2 * task.n);
+        }
+
+        let children = Children {
+            seed: cfg.seed,
+            children: vec![saying(&[11, 21]), saying(&[30, 40])],
+        };
+        let snap = Snapshot {
+            config_hash: cfg.fixed_hash(),
+            next_generation: 1,
+            archive: vec![j, p, q],
+            comparisons: Vec::new(),
+            calls: 0,
+            mutator_answers: 0,
+            reserved: 0,
+            select_answers: BTreeMap::new(),
+            finished: false,
+        };
+        let never = || false;
+        let mut b: Breeder<'_, TwoFamilies> =
+            Breeder::resume_from(cfg.clone(), doubling_genes(), pool, Some(&children), snap)
+                .expect("resume");
+        let (status, mut events) = b.step(&never).expect("generation 1");
+
+        assert_eq!(status, Status::Continue);
+        assert_eq!(b.archive().len(), 5, "two children of P");
+
+        if finish {
+            let (_, finalists) = b
+                .finish(&never, "all generations done")
+                .expect("finish")
+                .expect("not stopped");
+
+            events.extend(finalists);
+        }
+
+        (events, b.archive().to_vec(), cfg)
+    }
+
+    /// The Souls of every Worker of `souls`, as plain phases.
+    fn plain(souls: &Option<Vec<PhaseState>>) -> Vec<Vec<u16>> {
+        souls
+            .as_ref()
+            .expect("Souls")
+            .iter()
+            .map(|p| p.0.clone())
+            .collect()
+    }
+
+    #[test]
+    fn imprinting_off_keeps_the_birth_soul() {
+        let (pool, log) = phase_log_pool();
+        let births = P_BIRTH.map(|s| s.to_vec());
+
+        // The hand-built generation: with imprinting off, or at κ = 0, each child keeps its
+        // birth Souls, and its calls on every task carry them. With imprinting on and κ
+        // above 0, the children take on P's current Souls.
+        for (soul, kappa, kept) in [
+            (
+                SoulConfig {
+                    imprint: false,
+                    ..exact_copies()
+                },
+                1000,
+                true,
+            ),
+            (exact_copies(), 0, true),
+            (exact_copies(), 1000, false),
+        ] {
+            let (_, archive, _) = upbringing_generation(soul, kappa, 3, None, false, &pool);
+            let sent = taken(&log);
+
+            for child in &archive[3..] {
+                assert_eq!(birth_phases(&child.cascade), births, "copies of P");
+                assert_eq!(plain(&child.imprinted) == births, kept, "κ {kappa}");
+            }
+
+            let phased: Vec<&Vec<u16>> = sent.iter().filter_map(|r| r.phases.as_ref()).collect();
+
+            assert!(!phased.is_empty());
+            assert_eq!(phased.iter().all(|p| births.contains(p)), kept, "κ {kappa}");
+        }
+
+        // Runs on both Domains: arm S with imprinting off and arm K, whose κ is 0, give
+        // every member its birth Souls as its imprinted Souls; arm S imprints.
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let off = SoulConfig {
+            imprint: false,
+            ..SoulConfig::arm_s()
+        };
+
+        for (soul, kept) in [
+            (off, true),
+            (SoulConfig::arm_k(), true),
+            (SoulConfig::arm_s(), false),
+        ] {
+            let grid = bred(
+                Breeder::new(with_souls(small_config(283), soul.clone()), &pool, None)
+                    .expect("grid"),
+            );
+            let circuits = bred(
+                Breeder::<CircuitDomain>::start(
+                    with_souls(circuit_config(293), soul.clone()),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            );
+            let same = |imprinted: &Option<Vec<PhaseState>>, c: &Cascade| {
+                imprinted.as_ref() == Some(&birth_souls(c))
+            };
+            let grid_kept: Vec<bool> = grid
+                .archive()
+                .iter()
+                .map(|m| same(&m.imprinted, &m.cascade))
+                .collect();
+            let circuit_kept: Vec<bool> = circuits
+                .archive()
+                .iter()
+                .map(|m| same(&m.imprinted, &m.cascade))
+                .collect();
+
+            for all in [grid_kept, circuit_kept] {
+                assert_eq!(all.iter().all(|&k| k), kept, "{soul:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_task_uses_the_birth_soul() {
+        let (pool, log) = phase_log_pool();
+        let tasks = 3;
+
+        for kappa in [1000u16, 200] {
+            let (events, archive, cfg) =
+                upbringing_generation(exact_copies(), kappa, tasks, None, false, &pool);
+            let sent = taken(&log);
+            let panel = TwoFamilies.panel(derive_seed(cfg.seed, "panel/search"), tasks);
+            let mut checked = 0;
+
+            for child in &archive[3..] {
+                let birth = birth_phases(&child.cascade);
+                let imprinted = plain(&child.imprinted);
+
+                // Each Worker is P's Worker at its place, copied, then moved toward P's
+                // current Soul by κ, the observed side of an Observation.
+                for k in 0..2 {
+                    assert_eq!(birth[k], P_BIRTH[k]);
+                    assert_eq!(imprinted[k], imprint(&birth[k], &P_NOW[k], kappa));
+                }
+
+                if kappa == 1000 {
+                    assert_eq!(
+                        imprinted,
+                        P_NOW.map(|s| s.to_vec()),
+                        "the source Workers' current phases"
+                    );
+                }
+
+                // Task 0 with the birth Souls, every later task with the imprinted ones: the
+                // solve call of each Worker and its judgment in the Stage vote.
+                for (t, task) in panel.iter().enumerate() {
+                    let run = derive_seed(
+                        cfg.seed,
+                        &format!("search/{}/{}", child.cascade.gene_id(), task.id),
+                    );
+                    let vote = derive_seed(run, "vote0");
+
+                    for k in 0..2 {
+                        let expected = if t == 0 { &birth[k] } else { &imprinted[k] };
+                        let seeds = [
+                            derive_seed(run, &format!("stage0/worker{k}")),
+                            derive_seed(vote, &format!("0/1/{k}")),
+                        ];
+
+                        for seed in seeds {
+                            let req = sent
+                                .iter()
+                                .find(|r| r.seed == seed)
+                                .unwrap_or_else(|| panic!("task {t}, Worker {k}: no call"));
+
+                            assert_eq!(req.phases.as_ref(), Some(expected), "task {t}, Worker {k}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+
+            assert_eq!(checked, 2 * tasks * 2 * 2);
+
+            // The Born events log the imprinted Souls the members keep.
+            let mut logged = 0;
+
+            for e in &events {
+                if let Event::Born { id, imprinted, .. } = e {
+                    assert_eq!(imprinted, &member(&archive, id).imprinted);
+                    logged += 1;
+                }
+            }
+
+            assert_eq!(logged, 2);
+        }
+
+        // In a Run, every newborn Worker's imprinted Soul is its birth Soul moved toward the
+        // current Soul of each source Worker before the generation, in parent order, each by
+        // that source's own κ, which drifts at birth, so a child's κ is not its source's.
+        let pool = sim_pool();
+        let never = || false;
+        let mut b = Breeder::new(
+            with_souls(longer_config(337), SoulConfig::arm_s()),
+            &pool,
+            None,
+        )
+        .expect("breeder");
+        let (mut one, mut two, mut other_kappa) = (0, 0, 0);
+
+        loop {
+            let before: BTreeMap<String, Member> = b
+                .archive()
+                .iter()
+                .map(|m| (m.id.clone(), m.clone()))
+                .collect();
+            let g = b.next_generation();
+
+            if b.step(&never).expect("step").0 != Status::Continue {
+                break;
+            }
+
+            for m in b.archive().iter().filter(|m| m.generation == g && g > 0) {
+                let birth = birth_phases(&m.cascade);
+                let kappas = couplings(&m.cascade);
+
+                for (k, rec) in records(m).iter().enumerate() {
+                    let sources: Vec<(&[u16], u16)> = rec
+                        .sources
+                        .iter()
+                        .map(|r| {
+                            let parent = &before[&r.member];
+
+                            (
+                                parent.soul_now.as_ref().expect("current")[r.worker]
+                                    .0
+                                    .as_slice(),
+                                couplings(&parent.cascade)[r.worker],
+                            )
+                        })
+                        .collect();
+
+                    assert_eq!(
+                        plain(&m.imprinted)[k],
+                        imprinted(&birth[k], &sources, true),
+                        "{} Worker {k}",
+                        m.id
+                    );
+
+                    one += usize::from(sources.len() == 1);
+                    two += usize::from(sources.len() == 2);
+                    other_kappa += usize::from(sources.iter().all(|s| s.1 != kappas[k]));
+                }
+            }
+        }
+
+        assert!(
+            one > 0 && two > 0 && other_kappa > 0,
+            "{one} {two} {other_kappa}"
+        );
+    }
+
+    #[test]
+    fn imprinting_leaves_the_parents_alone() {
+        let (pool, _log) = phase_log_pool();
+        let quiet = |soul: SoulConfig| SoulConfig {
+            observe_vote: false,
+            observe_peer: false,
+            ..soul
+        };
+        let (_, archive, _) =
+            upbringing_generation(quiet(exact_copies()), 1000, 3, None, false, &pool);
+        let now = current_souls(&archive);
+
+        // P keeps the current Souls it had before its children were imprinted toward them,
+        // and J and Q keep theirs; each child starts with its imprinted Souls.
+        assert_eq!(now[1], P_NOW.map(|s| s.to_vec()));
+        assert_eq!(
+            birth_phases(&archive[1].cascade),
+            P_BIRTH.map(|s| s.to_vec())
+        );
+        assert_eq!(now[0], [vec![32768, 1000]]);
+        assert_eq!(now[2], [vec![8000, 60000]]);
+
+        for child in &archive[3..] {
+            assert_eq!(plain(&child.imprinted), P_NOW.map(|s| s.to_vec()));
+            assert_eq!(child.soul_now, child.imprinted);
+        }
+
+        // A Run without Observations: every current Soul stays its imprinted Soul, a seed's
+        // is its birth Soul, and children are imprinted toward their parents' Souls.
+        let archive = grid_archive(with_souls(longer_config(281), quiet(SoulConfig::arm_s())));
+        let mut moved = 0;
+
+        for m in &archive {
+            assert_eq!(m.soul_now, m.imprinted, "{}", m.id);
+
+            if m.op == Op::Seed {
+                assert_eq!(m.imprinted, Some(birth_souls(&m.cascade)), "{}", m.id);
+            }
+
+            moved += usize::from(m.imprinted != Some(birth_souls(&m.cascade)));
+        }
+
+        assert!(moved > 0, "children are imprinted");
+    }
+
+    /// The sections of a Run's members, checked: each is what its parents' answers give,
+    /// none is in a genome, and the Born events log them. Returns how many members hold one,
+    /// and how many of those are children of a child.
+    fn checked_sections<D: Domain>(b: &Breeder<'_, D>, events: &[Event]) -> (usize, usize) {
+        let archive = b.archive();
+        let (mut taught, mut grand) = (0, 0);
+
+        for m in archive {
+            let parents: Vec<&Member<D::Answer>> =
+                m.parents.iter().map(|p| member(archive, p)).collect();
+            let answers: Vec<&[Option<D::Answer>]> =
+                parents.iter().map(|p| p.answers.as_slice()).collect();
+            let genome = serde_json::to_string(&m.cascade).expect("genome json");
+
+            assert_eq!(
+                m.teaching,
+                teaching(&b.domain, &b.search, &answers).expect("teach"),
+                "{}",
+                m.id
+            );
+            assert!(!genome.contains(UPBRINGING), "{}", m.id);
+
+            if let Some(text) = &m.teaching {
+                assert!(!genome.contains(text.as_str()), "{}", m.id);
+                taught += 1;
+                grand += usize::from(parents.iter().any(|p| p.op != Op::Seed));
+            }
+        }
+
+        let mut born = 0;
+
+        for e in events {
+            if let Event::Born { id, teaching, .. } = e {
+                assert_eq!(teaching, &member(archive, id).teaching);
+                born += 1;
+            }
+        }
+
+        assert_eq!(born, archive.len());
+
+        (taught, grand)
+    }
+
+    /// Arm S with teaching on.
+    fn teaching_arm() -> SoulConfig {
+        SoulConfig {
+            teach: true,
+            ..SoulConfig::arm_s()
+        }
+    }
+
+    #[test]
+    fn teaching_is_never_a_gene() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let (grid, grid_events) = bred_with_events(
+            Breeder::new(with_souls(longer_config(307), teaching_arm()), &pool, None)
+                .expect("grid"),
+        );
+        let (circuits, circuit_events) = bred_with_events(
+            Breeder::<CircuitDomain>::start(
+                with_souls(circuit_config(311), teaching_arm()),
+                circuit_pool(),
+                &designers,
+                None,
+            )
+            .expect("circuits"),
+        );
+        let (grid_taught, grid_grand) = checked_sections(&grid, &grid_events);
+        let (circuit_taught, circuit_grand) = checked_sections(&circuits, &circuit_events);
+
+        assert!(
+            grid_taught > 0 && circuit_taught > 0,
+            "{grid_taught} {circuit_taught}"
+        );
+        assert!(
+            grid_grand > 0 && circuit_grand > 0,
+            "{grid_grand} {circuit_grand}"
+        );
+
+        // A section is never inherited: with every archived section replaced, the next
+        // generation's sections are again those its parents' answers give.
+        let never = || false;
+        let cfg = with_souls(small_config(313), teaching_arm());
+        let mut b = Breeder::new(cfg.clone(), &pool, None).expect("breeder");
+
+        for _ in 0..3 {
+            assert_eq!(b.step(&never).expect("step").0, Status::Continue);
+        }
+
+        let mut snap = b.snapshot();
+        let inherited = "Inherited text.";
+
+        for m in &mut snap.archive {
+            m.teaching = Some(inherited.to_string());
+        }
+
+        let mut resumed = Breeder::resume(cfg, &pool, None, snap).expect("resume");
+        let (status, _) = resumed.step(&never).expect("generation 3");
+
+        assert_eq!(status, Status::Continue);
+
+        let archive = resumed.archive();
+        let newborn: Vec<&Member> = archive.iter().filter(|m| m.generation == 3).collect();
+
+        assert!(!newborn.is_empty());
+        assert!(newborn.iter().any(|m| m.teaching.is_some()));
+
+        for m in newborn {
+            let answers: Vec<&[Option<Grid>]> = m
+                .parents
+                .iter()
+                .map(|p| member(archive, p).answers.as_slice())
+                .collect();
+
+            assert_eq!(
+                m.teaching,
+                teaching(&resumed.domain, &resumed.search, &answers).expect("teach")
+            );
+            assert!(
+                !m.teaching
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(inherited)
+            );
+        }
+    }
+
+    #[test]
+    fn the_teaching_text_holds_no_stem() {
+        // The sections the Runs wrote, and the section that every ordered pair of archived
+        // members would give a child of theirs. Returns how many the Run wrote.
+        fn collect<D: Domain>(b: &Breeder<'_, D>, out: &mut Vec<String>) -> usize {
+            let archive = b.archive();
+            let written: Vec<String> = archive.iter().filter_map(|m| m.teaching.clone()).collect();
+            let n = written.len();
+
+            out.extend(written);
+
+            for x in archive {
+                for y in archive {
+                    let both = [x.answers.as_slice(), y.answers.as_slice()];
+
+                    out.extend(teaching(&b.domain, &b.search, &both).expect("teach"));
+                }
+            }
+
+            n
+        }
+
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let (mut grid, mut circuits) = (Vec::new(), Vec::new());
+        let (mut grid_written, mut circuits_written) = (0, 0);
+        let mut seed = 317;
+
+        while grid.len() < 1000 || circuits.len() < 1000 {
+            let g = bred(
+                Breeder::new(with_souls(small_config(seed), teaching_arm()), &pool, None)
+                    .expect("grid"),
+            );
+            let c = bred(
+                Breeder::<CircuitDomain>::start(
+                    with_souls(circuit_config(seed), teaching_arm()),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            );
+
+            grid_written += collect(&g, &mut grid);
+            circuits_written += collect(&c, &mut circuits);
+            seed += 1;
+        }
+
+        assert!(grid_written > 0 && circuits_written > 0, "the Runs teach");
+
+        for text in grid.iter().chain(&circuits) {
+            assert!(check_section_text(text).is_ok(), "{text}");
+            assert!(text.chars().count() <= MAX_SECTION_CHARS, "{text}");
+            assert!(text.starts_with(TEACHING_INTRO), "{text}");
+            assert_eq!(model_word_in(text), None, "{text}");
+        }
+
+        // Most sections hold an example of each parent; some had to leave one out.
+        let two = |all: &[String]| all.iter().filter(|t| t.contains("EXAMPLE 2")).count();
+
+        assert!(two(&grid) > 0 && two(&circuits) > 0);
+    }
+
+    #[test]
+    fn teaching_changes_no_simulated_answer() {
+        /// What a Run decides: per member its id, parents, operator, answers, solved count,
+        /// graded value, authors and vote tally; every comparison; the finalists. And every
+        /// request it sends.
+        fn outcome<D: Domain>(
+            cfg: BreedConfig,
+            genes: GenePool,
+            small: Box<dyn ModelBackend>,
+            large: Box<dyn ModelBackend>,
+        ) -> (Vec<String>, Vec<GenRequest>, usize) {
+            let (pool, log) = recording_pool(small, large, true);
+            let (report, _, snap) = breed_to_end_in::<D>(cfg, genes, &pool, None).expect("run");
+            let mut out: Vec<String> = snap
+                .archive
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} {:?} {:?} {} {} {:?} {:?} {:?}",
+                        m.id,
+                        m.parents,
+                        m.op,
+                        serde_json::to_string(&m.answers).expect("answers json"),
+                        m.solved,
+                        m.quality,
+                        m.authors,
+                        m.votes
+                    )
+                })
+                .collect();
+            let sent: Vec<GenRequest> = drained(&log)
+                .iter()
+                .map(|r| serde_json::from_str(r).expect("request"))
+                .collect();
+
+            out.extend(snap.comparisons.iter().map(|c| format!("{c:?}")));
+            out.extend(report.finalists.iter().map(|f| format!("{f:?}")));
+
+            let taught = snap.archive.iter().filter(|m| m.teaching.is_some()).count();
+
+            (out, sent, taught)
+        }
+
+        let teach = |on: bool| SoulConfig {
+            teach: on,
+            ..SoulConfig::arm_s()
+        };
+        let runs = [
+            [false, true].map(|on| {
+                outcome::<GridDomain>(
+                    with_souls(longer_config(331), teach(on)),
+                    GenePool::grid(),
+                    Box::new(SimModel::small()),
+                    Box::new(SimModel::large()),
+                )
+            }),
+            [false, true].map(|on| {
+                outcome::<CircuitDomain>(
+                    with_souls(circuit_config(337), teach(on)),
+                    circuit_pool(),
+                    Box::new(SimDesigner::small()),
+                    Box::new(SimDesigner::large()),
+                )
+            }),
+        ];
+
+        for [(plain, plain_sent, none), (taught, sent, sections)] in runs {
+            assert_eq!(taught, plain, "the same answers, counts and verdicts");
+            assert_eq!(none, 0);
+            assert!(sections > 0, "the Run teaches");
+            assert_eq!(sent.len(), plain_sent.len(), "the same calls");
+            assert!(
+                plain_sent
+                    .iter()
+                    .all(|r| !r.system.contains("## upbringing"))
+            );
+
+            // The section ends each system prompt that carries it, after the self-check text
+            // where a Worker checks itself.
+            let carrying: Vec<&GenRequest> = sent
+                .iter()
+                .filter(|r| r.system.contains("## upbringing"))
+                .collect();
+
+            assert!(!carrying.is_empty());
+            assert!(carrying.iter().any(|r| r.system.contains("## check\n")));
+
+            for r in carrying {
+                let last = r.system.rsplit("## ").next().unwrap_or_default();
+
+                assert!(
+                    last.starts_with("upbringing\n") && last.ends_with("\n\n"),
+                    "{}",
+                    r.system
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_teaching_section_ends_every_system_prompt() {
+        // In the hand-built generation P solved task 1, so its children are taught that
+        // example, and J judges with a section of its own.
+        let (pool, log) = phase_log_pool();
+        let tasks = 3;
+        let judge = "Notes of the judge.";
+        let (events, archive, cfg) =
+            upbringing_generation(teaching_arm(), 200, tasks, Some(judge), false, &pool);
+        let sent = taken(&log);
+        let panel = TwoFamilies.panel(derive_seed(cfg.seed, "panel/search"), tasks);
+        let lesson = format!(
+            "{TEACHING_INTRO}\nEXAMPLE 1\nDOUBLE {} GIVES {}",
+            panel[1].n,
+            2 * panel[1].n
+        );
+        let mut counted = 0;
+
+        for child in &archive[3..] {
+            assert_eq!(child.teaching.as_deref(), Some(lesson.as_str()));
+
+            for w in child.cascade.stages.iter().flat_map(|s| &s.workers) {
+                let own = w.system_prompt();
+                let calls: Vec<&GenRequest> =
+                    sent.iter().filter(|r| r.system.starts_with(&own)).collect();
+
+                assert_eq!(
+                    calls.len(),
+                    2 * tasks,
+                    "a solve call and a judgment per task"
+                );
+
+                for r in calls {
+                    assert_eq!(r.system, format!("{own}{}", section_block(&lesson)));
+                    counted += 1;
+                }
+            }
+        }
+
+        // The peer judge's requests end with its own section, and P and Q send none.
+        let j = &archive[0].cascade.stages[0].workers[0];
+        let judged: Vec<&GenRequest> = sent
+            .iter()
+            .filter(|r| r.system.starts_with(&j.system_prompt()))
+            .collect();
+
+        assert!(!judged.is_empty());
+
+        for r in &judged {
+            assert_eq!(
+                r.system,
+                format!("{}{}", j.system_prompt(), section_block(judge))
+            );
+        }
+
+        assert_eq!(counted + judged.len(), sent.len());
+
+        // The Born events log the sections, which are in no genome.
+        for e in &events {
+            if let Event::Born {
+                id,
+                teaching,
+                cascade,
+                ..
+            } = e
+            {
+                assert_eq!(teaching.as_deref(), Some(lesson.as_str()), "{id}");
+                assert!(
+                    !serde_json::to_string(cascade)
+                        .expect("json")
+                        .contains("EXAMPLE")
+                );
+            }
+        }
+
+        // With the select phase: every request of every member is its Worker's system
+        // prompt, then the member's section if it has one, and the finalists' select calls
+        // carry theirs.
+        let (events, archive, _) =
+            upbringing_generation(teaching_arm(), 200, tasks, Some(judge), true, &pool);
+        let sent = taken(&log);
+        let mut taught = 0;
+
+        assert!(events.iter().any(|e| matches!(e, Event::Finalist(_))));
+
+        for r in &sent {
+            let (m, w) = archive
+                .iter()
+                .flat_map(|m| {
+                    m.cascade
+                        .stages
+                        .iter()
+                        .flat_map(|s| &s.workers)
+                        .map(move |w| (m, w))
+                })
+                .find(|(_, w)| r.system.starts_with(&w.system_prompt()))
+                .expect("a member's Worker sent it");
+            let section = m.teaching.as_deref().map(section_block);
+
+            assert_eq!(
+                r.system,
+                format!("{}{}", w.system_prompt(), section.unwrap_or_default())
+            );
+            taught += usize::from(m.teaching.is_some() && m.op != Op::Seed);
+        }
+
+        // The children's calls: per Worker a solve call and a judgment on each search task
+        // and on the select task.
+        assert_eq!(taught, 2 * 2 * 2 * (tasks + 1));
+    }
+
+    /// The soul group of every state line among `events`, in order.
+    fn soul_groups(events: &[Event]) -> Vec<&SoulState> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::State(s) => s.soul.as_deref(),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The state lines among `events`, in order.
+    fn state_lines(events: &[Event]) -> Vec<UniverseState> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::State(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_soul_group_without_souls() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+
+        for soul in [None, Some(SoulConfig::arm_s())] {
+            let (_, grid) = bred_with_events(
+                Breeder::new(
+                    BreedConfig {
+                        soul: soul.clone(),
+                        ..small_config(347)
+                    },
+                    &pool,
+                    None,
+                )
+                .expect("grid"),
+            );
+            let (_, circuits) = bred_with_events(
+                Breeder::<CircuitDomain>::start(
+                    BreedConfig {
+                        soul: soul.clone(),
+                        ..circuit_config(349)
+                    },
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            );
+
+            for events in [grid, circuits] {
+                let lines = state_lines(&events);
+
+                assert_eq!(lines.len(), 4, "one per committed generation");
+
+                for state in lines {
+                    let v = serde_json::to_value(&state).expect("state json");
+
+                    assert_eq!(v.get("soul").is_some(), soul.is_some(), "{v}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_soul_population_never_falls() {
+        let pool = sim_pool();
+        let cfg = with_souls(
+            BreedConfig {
+                generations: 50,
+                max_calls: 10_000_000,
+                ..small_config(353)
+            },
+            SoulConfig::arm_s(),
+        );
+        let (b, events) = bred_with_events(Breeder::new(cfg, &pool, None).expect("breeder"));
+        let groups = soul_groups(&events);
+        let mut last = 0;
+
+        assert_eq!(groups.len(), 51, "50 generations after the seeds");
+        assert_eq!(
+            groups[0].souls_new, groups[0].souls_born,
+            "a seed's Soul is new"
+        );
+
+        for (g, s) in groups.iter().enumerate() {
+            assert!(s.souls >= last, "generation {g}: {} after {last}", s.souls);
+            assert_eq!(s.souls, last + s.souls_born, "generation {g}");
+            last = s.souls;
+
+            // The votes are the sum of the tallies the generation's Born events log.
+            let mut tally = VoteTally::default();
+
+            for e in &events {
+                if let Event::Born {
+                    generation,
+                    votes: Some(v),
+                    ..
+                } = e
+                    && *generation == g
+                {
+                    tally.add(v);
+                }
+            }
+
+            assert_eq!(
+                (s.votes, s.votes_flipped, s.votes_tied, s.sim_decided),
+                (tally.complex, tally.flipped, tally.tied, tally.sim_decided),
+                "generation {g}"
+            );
+        }
+
+        assert!(groups.iter().any(|s| s.votes > 0), "the Run holds votes");
+
+        let workers: usize = b.archive().iter().map(|m| m.cascade.worker_count()).sum();
+
+        assert_eq!(last, workers);
+    }
+
+    #[test]
+    fn fresh_souls_meet_the_formula() {
+        // Without copies every Soul is entirely new, and at κ fixed 0 none is pulled: the
+        // Souls are independent and uniform, as the formula of spec 6.3 assumes.
+        let designers = designer_pool();
+
+        for readout in [Readout::Complex, Readout::Real] {
+            let soul = SoulConfig {
+                readout,
+                copy: false,
+                kappa_seed: 0,
+                kappa_fixed: true,
+                ..SoulConfig::arm_s()
+            };
+            let cfg = with_souls(
+                BreedConfig {
+                    generations: 50,
+                    max_calls: 10_000_000,
+                    ..circuit_config(359)
+                },
+                soul,
+            );
+            let (_, events) = bred_with_events(
+                Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None)
+                    .expect("circuits"),
+            );
+            let lines = state_lines(&events);
+            let late: Vec<&SoulState> = lines
+                .iter()
+                .filter(|s| (10..=50).contains(&s.generation))
+                .map(|s| s.soul.as_deref().expect("a soul group"))
+                .collect();
+            let formula = late[0].contrast_independent.expect("the formula");
+            let mean = late
+                .iter()
+                .map(|s| s.contrast.expect("a contrast"))
+                .sum::<f64>()
+                / late.len() as f64;
+
+            assert_eq!(late.len(), 41);
+            assert!(late.iter().all(|s| s.contrast_independent == Some(formula)));
+            assert!(
+                late.iter()
+                    .all(|s| s.moved_mean == Some(0.0) && s.shift_mean.is_none()),
+                "no Soul moved"
+            );
+            assert!(
+                (mean - formula).abs() < 0.1,
+                "{readout:?}: contrast {mean}, formula {formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn soul_states_survive_a_resume() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let pool = sim_pool();
+        let cfg = with_souls(small_config(241), SoulConfig::arm_s());
+        let (_, straight) =
+            bred_with_events(Breeder::new(cfg.clone(), &pool, None).expect("straight"));
+
+        assert_eq!(soul_groups(&straight).len(), 4);
+        assert!(
+            soul_groups(&straight)
+                .iter()
+                .all(|s| s.souls > 0 && s.contrast.is_some() && s.kappa.is_some())
+        );
+
+        // Stopped in generation 1 while its newborns run, and in generation 2 in its peer
+        // round, as in `stop_and_resume_keep_the_souls`; resumed from the snapshot's JSON.
+        for (generation, polls) in [(1usize, 7usize), (2, 50)] {
+            let mut b = Breeder::new(cfg.clone(), &pool, None).expect("split");
+            let never = || false;
+            let mut events = Vec::new();
+
+            for _ in 0..generation {
+                events.extend(b.step(&never).expect("step").1);
+            }
+
+            let counted = AtomicUsize::new(0);
+            let stop = || counted.fetch_add(1, Ordering::SeqCst) >= polls;
+            let (status, stopped) = b.step(&stop).expect("stopped step");
+
+            assert_eq!(status, Status::Done("stopped".to_string()));
+            assert!(stopped.is_empty());
+
+            let json = serde_json::to_string(&b.snapshot()).expect("json");
+            let snap: Snapshot = serde_json::from_str(&json).expect("back");
+            let (_, rest) =
+                bred_with_events(Breeder::resume(cfg.clone(), &pool, None, snap).expect("resume"));
+
+            events.extend(rest);
+
+            assert_eq!(
+                state_lines(&events),
+                state_lines(&straight),
+                "stopped in generation {generation}"
+            );
+        }
+
+        // One and four threads: the same bytes.
+        let at = |threads: usize| {
+            let workers = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("a thread pool");
+
+            workers.install(|| {
+                let (_, events) =
+                    bred_with_events(Breeder::new(cfg.clone(), &pool, None).expect("run"));
+
+                serde_json::to_string(&events).expect("json")
+            })
+        };
+        let one = at(1);
+
+        assert!(one.contains(r#""soul":{"souls":"#));
+        assert_eq!(one, at(4));
+    }
+
+    /// Every number in `v`.
+    fn json_numbers(v: &serde_json::Value, out: &mut Vec<f64>) {
+        match v {
+            serde_json::Value::Number(n) => out.extend(n.as_f64()),
+            serde_json::Value::Array(items) => items.iter().for_each(|x| json_numbers(x, out)),
+            serde_json::Value::Object(fields) => fields.values().for_each(|x| json_numbers(x, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn no_value_is_nan() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let arms = [
+            SoulConfig::arm_s(),
+            SoulConfig::arm_v(),
+            SoulConfig::arm_k(),
+            SoulConfig {
+                strengths: Strengths::Equal,
+                ..SoulConfig::arm_s()
+            },
+        ];
+        let mut checked = 0;
+
+        for arm in arms {
+            let (_, grid) = bred_with_events(
+                Breeder::new(with_souls(small_config(373), arm.clone()), &pool, None)
+                    .expect("grid"),
+            );
+            let (_, circuits) = bred_with_events(
+                Breeder::<CircuitDomain>::start(
+                    with_souls(circuit_config(379), arm.clone()),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            );
+
+            for events in [grid, circuits] {
+                for soul in soul_groups(&events) {
+                    let json = serde_json::to_string(soul).expect("json");
+                    let mut numbers = Vec::new();
+
+                    json_numbers(&serde_json::from_str(&json).expect("value"), &mut numbers);
+
+                    assert!(!json.contains("null"), "{json}");
+                    assert!(
+                        numbers
+                            .iter()
+                            .all(|x| x.is_finite() && x.to_bits() != (-0.0f64).to_bits()),
+                        "{json}"
+                    );
+                    assert_eq!(
+                        &serde_json::from_str::<SoulState>(&json).expect("back"),
+                        soul
+                    );
+                    // The Character statistics are defined on every committed archive.
+                    assert!(soul.contrast.is_some() && soul.order.is_some(), "{json}");
+                    checked += 1;
+                }
+            }
+        }
+
+        assert_eq!(
+            checked,
+            4 * 2 * 4,
+            "four arms, two Domains, four state lines each"
+        );
+
+        // Arm N, without Souls, writes no soul group.
+        let (_, plain) =
+            bred_with_events(Breeder::new(small_config(373), &pool, None).expect("plain"));
+
+        assert!(soul_groups(&plain).is_empty());
     }
 }

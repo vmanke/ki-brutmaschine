@@ -118,6 +118,16 @@ pub fn family_names() -> Vec<&'static str> {
     FAMILIES.iter().map(|&(family, _)| family.name()).collect()
 }
 
+/// Every keyword by which a system prompt names a family, in the order of `FAMILIES`
+/// (step 2). Text that the breeder writes into a system prompt, such as the teaching section
+/// of spec 10.2, holds none of them, so the grid model reads nothing from it.
+pub fn family_keywords() -> Vec<&'static str> {
+    FAMILIES
+        .iter()
+        .flat_map(|&(_, words)| words.iter().copied())
+        .collect()
+}
+
 /// The Family strengths of a puzzle with the hidden rule `rule`, in the order of
 /// `family_names` (step 2, spec 5.3): 1 for the family that knows the rule's geometric step
 /// (none for the identity), 1 for Colour when the rule carries a colour map, 1 for Compose
