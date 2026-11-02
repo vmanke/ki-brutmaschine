@@ -393,6 +393,16 @@ impl Config {
             ));
         }
 
+        // The ARC grid tasks (ticket 06) read their examples from files, which a run does not
+        // load; `brut arc-grid` trains and scores genomes on them.
+        if self.task == TaskKind::ArcGrid {
+            return fail(format!(
+                "task {} reads its examples from files, and a run cannot breed on it yet; \
+                 brut arc-grid trains and scores genomes on it",
+                self.task.name()
+            ));
+        }
+
         let spec = self.task.spec();
         let smallest = Genome {
             arch: Arch::Mlp,
@@ -671,6 +681,19 @@ mod tests {
             .validate()
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_run_cannot_breed_on_the_arc_grid_tasks() {
+        for models in MODEL_KINDS {
+            let config = Config {
+                task: TaskKind::ArcGrid,
+                ..Config::for_models(models)
+            };
+            let message = config.validate().expect_err("refused").to_string();
+
+            assert!(message.contains("brut arc-grid"), "{message}");
+        }
     }
 
     #[test]

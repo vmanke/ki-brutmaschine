@@ -284,6 +284,14 @@ impl Genome {
             ));
         }
 
+        // The MLP's loss (`nn`) knows one class per sample only.
+        if self.arch.is_mlp() && spec.cell_classes().is_some() {
+            return fail(format!(
+                "an MLP cannot learn one class per cell, as task {} asks; a CNN can",
+                spec.kind.name()
+            ));
+        }
+
         let samples = (spec.n_train as f64) * (self.epochs as f64);
         let (params, flops, seconds) = match &self.arch {
             Arch::Mlp => (self.param_count(spec), self.train_flops(spec), 0.0),
@@ -459,6 +467,24 @@ mod tests {
         for g in bad {
             assert!(g.validate(&limits, &spec).is_err(), "{g:?}");
         }
+    }
+
+    #[test]
+    fn an_mlp_cannot_learn_one_class_per_cell() {
+        // A grid of 2 x 2 cells: the linear MLP would fit the limits, but its loss knows
+        // one class per sample only, so the shape check refuses it.
+        let spec = crate::arc_grid::spec(2, 4, 1, 1);
+        let mut g = sample();
+
+        g.hidden.clear();
+
+        let message = g
+            .validate(&Limits::default(), &spec)
+            .expect_err("refused")
+            .to_string();
+
+        assert!(message.contains("one class per cell"), "{message}");
+        assert!(g.param_count(&spec) < Limits::default().max_params);
     }
 
     #[test]

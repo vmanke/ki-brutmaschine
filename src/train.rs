@@ -16,7 +16,7 @@ use crate::config::Limits;
 use crate::genome::{Arch, Genome};
 use crate::model::Model;
 use crate::nn::{Gradients, Mlp, OptimizerState, TargetsRef, Workspace};
-use crate::task::{Dataset, Objective, Targets, TaskSpec};
+use crate::task::{Dataset, NO_CELL, Objective, Targets, TaskSpec};
 use crate::util::{BrutError, Result, derive_seed};
 
 /// Final learning rate as a fraction of the start value (cosine decay).
@@ -361,6 +361,9 @@ fn finite_or_max(v: f32) -> f32 {
 }
 
 /// Reject data that does not fit the task spec.
+///
+/// With one class per cell (`TaskSpec::cell_classes`), a sample has one label per cell, each
+/// a class or `NO_CELL`, and at least one cell inside its grid.
 fn check_data(spec: &TaskSpec, data: &Dataset) -> Result<()> {
     let fail = |m: &str| Err(BrutError::Invalid(format!("train data: {m}")));
 
@@ -378,6 +381,32 @@ fn check_data(spec: &TaskSpec, data: &Dataset) -> Result<()> {
 
     if !data.x.iter().all(|v| v.is_finite()) {
         return fail("non-finite input");
+    }
+
+    // `cell_classes` is Some only for a classification.
+    if let (Targets::Labels(labels), Some((classes, cells))) = (&data.targets, spec.cell_classes())
+    {
+        if classes.checked_mul(cells) != Some(spec.n_out)
+            || data.n.checked_mul(cells) != Some(labels.len())
+        {
+            return fail("label count or class count wrong");
+        }
+
+        if labels
+            .iter()
+            .any(|&c| c != NO_CELL && c as usize >= classes)
+        {
+            return fail("label out of range");
+        }
+
+        if labels
+            .chunks_exact(cells)
+            .any(|sample| sample.iter().all(|&c| c == NO_CELL))
+        {
+            return fail("a sample has no cell inside its grid");
+        }
+
+        return Ok(());
     }
 
     match (&data.targets, spec.objective) {
@@ -544,6 +573,34 @@ mod tests {
         data.x.pop();
 
         assert!(train(&genome(), &spec, &data, &Limits::default()).is_err());
+    }
+
+    #[test]
+    fn cell_class_data_need_one_label_per_cell_and_a_cell_inside_each_grid() {
+        use crate::task::NO_CELL;
+
+        // Two grids of 2 x 2 cells on a canvas of 2 x 2, one class per cell (ticket 06).
+        let spec = crate::arc_grid::spec(2, 2, 1, 1);
+        let ok = |labels: Vec<u32>| Dataset {
+            x: vec![0.0; 2 * spec.n_in],
+            targets: Targets::Labels(labels),
+            n: 2,
+            n_in: spec.n_in,
+            n_out: spec.n_out,
+        };
+
+        assert!(check_data(&spec, &ok(vec![0, 1, 9, NO_CELL, 3, NO_CELL, NO_CELL, 4])).is_ok());
+
+        for (what, labels) in [
+            ("one label per sample", vec![0, 1]),
+            ("class 10 of 10", vec![0, 1, 10, 0, 3, 3, 3, 3]),
+            (
+                "no cell inside a grid",
+                vec![0, 1, 2, 3, NO_CELL, NO_CELL, NO_CELL, NO_CELL],
+            ),
+        ] {
+            assert!(check_data(&spec, &ok(labels)).is_err(), "{what}");
+        }
     }
 
     #[test]

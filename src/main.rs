@@ -14,6 +14,8 @@
 //!   brut learner show <run_dir> <id>
 //!   brut learner report <run_dir>
 //!   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
+//!   brut arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N]
+//!                 [--canvas N] [--limits <file>] [--threads N] [--out <file>]
 //!   brut help
 //!
 //! Tasks: spirals, checkerboard, parity, sine, shapes, bars-and-stripes, blob-count,
@@ -33,14 +35,22 @@
 //! `run`, `status`, `lineage`, `verify` and `approve` work on both run kinds: a directory
 //! with `meta.json` is a learner run, one with `config.json` an MLP run.
 //!
+//! ARC grid tasks (ticket 06, `brutmaschine::arc_grid`): `brut arc-grid` trains a fresh CNN
+//! of each genome on each ARC grid task, an ARC-AGI-1 training task with its re-arc
+//! generations, and scores it on the task's held-out pairs, next to the copy of the input.
+//! Without `--genome` it takes the two base models of these tasks, and without `--limits`
+//! the default limits. It reads only the training files and the re-arc file of the
+//! manifest, each checked against its SHA-256.
+//!
 //! Exit codes: 0 ok, 1 runtime error, 2 usage error.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use brutmaschine::arc_grid::{self, ARC_SIDE, GenomeResult};
 use brutmaschine::archive::{Archive, CandidateStatus, LearnerStatus, RecordKind};
-use brutmaschine::config::{Config, ModelKinds};
+use brutmaschine::config::{Config, Limits, MAX_THREADS, ModelKinds};
 use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup};
 use brutmaschine::genome::Genome;
 use brutmaschine::hidden_eval::create_secret;
@@ -78,6 +88,8 @@ usage:
   brut learner show <run_dir> <id>
   brut learner report <run_dir>
   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
+  brut arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N]
+                [--canvas N] [--limits <file>] [--threads N] [--out <file>]
   brut help
 
 tasks: spirals, checkerboard, parity, sine (flat inputs); shapes, bars-and-stripes,
@@ -94,6 +106,12 @@ models); brut init --promoted candidates/models puts the merged models into gene
 
 learner mode: --secret defaults to $HOME/.brut/learner/hidden.env (create it once with
 brut learner secret-init); run, status, lineage, verify and approve detect the run kind
+
+arc grids: brut arc-grid trains a fresh CNN of each genome (default: the base models u-net
+and fcn) on each ARC-AGI-1 training task with its re-arc generations, one colour class per
+cell on a canvas of 30x30 (--canvas), and scores whole grids (exact match) and cells on the
+held-out pairs; --tasks takes the first N tasks by id, --limits a JSON file of the limits
+of a run's config (default: those of brut init), --out writes the JSON report
 
 exit codes: 0 ok, 1 runtime error, 2 usage error";
 
@@ -213,6 +231,7 @@ fn dispatch(args: &[String]) -> CliResult {
         "promote" => cmd_promote(rest),
         "stop" => cmd_stop(rest),
         "learner" => cmd_learner(rest),
+        "arc-grid" => cmd_arc_grid(rest),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
 
@@ -328,6 +347,188 @@ fn cmd_init(args: &[String]) -> CliResult {
     }
 
     Ok(())
+}
+
+/// `brut arc-grid`: train and score genomes on the ARC grid tasks (`arc_grid`, ticket 06).
+fn cmd_arc_grid(args: &[String]) -> CliResult {
+    let usage = "arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N] \
+                 [--canvas N] [--limits <file>] [--threads N] [--out <file>]";
+    let p = parse(
+        args,
+        &[
+            ("--arc-root", true),
+            ("--manifest", true),
+            ("--genome", true),
+            ("--tasks", true),
+            ("--canvas", true),
+            ("--limits", true),
+            ("--threads", true),
+            ("--out", true),
+        ],
+    )?;
+
+    p.exactly(0, usage)?;
+
+    let (Some(root), Some(manifest)) = (p.value("--arc-root"), p.value("--manifest")) else {
+        return Err(CliError::Usage(format!("expected {usage}")));
+    };
+    let number = |flag: &str| -> Result<Option<usize>, CliError> {
+        p.value(flag)
+            .map(|text| {
+                text.parse::<usize>()
+                    .map_err(|_| CliError::Usage(format!("bad {flag} {text}")))
+            })
+            .transpose()
+    };
+    let canvas = number("--canvas")?.unwrap_or(ARC_SIDE);
+    let count = number("--tasks")?;
+    let threads = number("--threads")?.unwrap_or(0);
+
+    if !(1..=ARC_SIDE).contains(&canvas) {
+        return Err(CliError::Usage(format!(
+            "--canvas must be 1 to {ARC_SIDE}, the largest ARC grid"
+        )));
+    }
+
+    if count == Some(0) {
+        return Err(CliError::Usage("--tasks must be at least 1".into()));
+    }
+
+    if threads > MAX_THREADS {
+        return Err(CliError::Usage(format!(
+            "--threads must be at most {MAX_THREADS}"
+        )));
+    }
+
+    let limits = match p.value("--limits") {
+        Some(file) => read_limits(Path::new(file))?,
+        None => Limits::default(),
+    };
+    let genomes: Vec<(String, Genome)> = match p.value("--genome") {
+        Some(file) => vec![read_genome(Path::new(file))?],
+        None => arc_grid::base_models()
+            .into_iter()
+            .map(|(name, genome)| (name.to_string(), genome))
+            .collect(),
+    };
+    let (mut tasks, left_out) = arc_grid::load(Path::new(root), Path::new(manifest), canvas)?;
+    let eligible = tasks.len();
+
+    if let Some(n) = count {
+        tasks.truncate(n);
+    }
+
+    if tasks.is_empty() {
+        return Err(CliError::Runtime(
+            "no ARC grid task: no training task with re-arc pairs passes the rules".into(),
+        ));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(|e| CliError::Runtime(format!("thread pool: {e}")))?;
+
+    println!(
+        "arc-grid: {} of {eligible} ARC grid tasks on a canvas of {canvas}x{canvas} cells \
+         ({} training tasks left out by the rules)",
+        tasks.len(),
+        left_out.len()
+    );
+
+    let report = pool.install(|| arc_grid::report(&genomes, &tasks, left_out, canvas, &limits));
+
+    println!(
+        "{:<20} {:>11} {:>10} {:>11} {:>10} {:>7} {:>7} {:>8}",
+        "model",
+        "exact valid",
+        "exact test",
+        "cells valid",
+        "cells test",
+        "trained",
+        "refused",
+        "diverged"
+    );
+
+    for result in &report.results {
+        println!("{}", result_line(result));
+    }
+
+    if let Some(out) = p.value("--out") {
+        let mut bytes = serde_json::to_vec_pretty(&report)
+            .map_err(|e| CliError::Runtime(format!("report: {e}")))?;
+
+        bytes.push(b'\n');
+        write_atomic(Path::new(out), &bytes)?;
+        println!("report: {out}");
+    }
+
+    Ok(())
+}
+
+/// One line of the table of `brut arc-grid`: the means of one model.
+fn result_line(result: &GenomeResult) -> String {
+    let s = &result.summary;
+    let name = match &result.id {
+        Some(id) => format!("{} {}", result.name, &id[..id.len().min(8)]),
+        None => result.name.clone(),
+    };
+    let (trained, refused, diverged) = match result.genome {
+        Some(_) => (
+            s.scored.to_string(),
+            s.refused.to_string(),
+            s.diverged.to_string(),
+        ),
+        None => ("-".into(), "-".into(), "-".into()),
+    };
+
+    format!(
+        "{name:<20} {:>11.3} {:>10.3} {:>11.3} {:>10.3} {trained:>7} {refused:>7} {diverged:>8}",
+        s.exact_valid, s.exact_test, s.cells_valid, s.cells_test
+    )
+}
+
+/// The limits in `file`: the JSON of the `limits` of a run's config, unknown fields refused,
+/// held to the same rules and hard caps as there (`Config::validate`).
+fn read_limits(file: &Path) -> Result<Limits, CliError> {
+    let text = read_regular_file(file, MAX_CANDIDATE_FILE_BYTES)
+        .map_err(|e| CliError::Runtime(format!("limits {}: {e}", file.display())))?;
+    let limits: Limits = serde_json::from_str(&text).map_err(|_| {
+        CliError::Runtime(format!(
+            "limits {}: not the JSON of the limits of a config",
+            file.display()
+        ))
+    })?;
+
+    Config {
+        limits,
+        ..Config::default()
+    }
+    .validate()
+    .map_err(|e| CliError::Runtime(format!("limits {}: {e}", file.display())))?;
+
+    Ok(limits)
+}
+
+/// The genome in `file`, named by the file's stem: the JSON of one `Genome`, a regular file
+/// of at most `MAX_CANDIDATE_FILE_BYTES`, unknown fields refused. The error does not quote
+/// the file.
+fn read_genome(file: &Path) -> Result<(String, Genome), CliError> {
+    let text = read_regular_file(file, MAX_CANDIDATE_FILE_BYTES)
+        .map_err(|e| CliError::Runtime(format!("genome {}: {e}", file.display())))?;
+    let genome: Genome = serde_json::from_str(&text).map_err(|_| {
+        CliError::Runtime(format!(
+            "genome {}: not the JSON of one genome",
+            file.display()
+        ))
+    })?;
+    let name = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("genome")
+        .to_string();
+
+    Ok((name, genome))
 }
 
 /// The genomes of the promoted models in `pool` (`candidates/models/`), in the order of their
@@ -1322,6 +1523,40 @@ mod tests {
         assert!(matches!(
             dispatch(&strings(&["init", "x", "--seed", "abc"])),
             Err(CliError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn arc_grid_usage_errors() {
+        let usage = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Usage(_)));
+        let base = ["arc-grid", "--arc-root", "r", "--manifest", "m"];
+        let with = |extra: &[&'static str]| {
+            let mut args = base.to_vec();
+
+            args.extend_from_slice(extra);
+            args
+        };
+
+        assert!(usage(&["arc-grid"]));
+        assert!(usage(&["arc-grid", "--arc-root", "r"]));
+        assert!(usage(&["arc-grid", "--manifest", "m"]));
+        assert!(usage(&with(&["extra"])));
+        assert!(usage(&with(&["--canvas", "0"])));
+        assert!(usage(&with(&["--canvas", "31"])));
+        assert!(usage(&with(&["--canvas", "x"])));
+        assert!(usage(&with(&["--tasks", "0"])));
+        assert!(usage(&with(&["--tasks", "-1"])));
+        assert!(usage(&with(&["--threads", "100000"])));
+        assert!(usage(&with(&["--set", "a1-eval"])));
+
+        // A run cannot breed on the ARC grid tasks; init refuses before it writes anything.
+        assert!(usage(&["init", "arc-grid-run-dir", "--task", "arc-grid"]));
+        assert!(!Path::new("arc-grid-run-dir").exists());
+
+        // Valid options with a data root that does not exist: a runtime error, not usage.
+        assert!(matches!(
+            dispatch(&strings(&with(&["--tasks", "2", "--canvas", "6"]))),
+            Err(CliError::Runtime(_))
         ));
     }
 

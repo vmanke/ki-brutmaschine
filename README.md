@@ -454,6 +454,59 @@ nicht. Die verdeckten Werte der beiden Läufe mit Seed 2 stammen von verschieden
 geheimen Seeds, da `brut init` je Lauf einen zieht; vergleichbar sind nur die
 Validierungswerte.
 
+### ARC-Raster als Aufgaben
+
+Ticket 06 bringt ARC-Raster als Aufgaben der CNNs
+([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md)).
+Jede Trainingsaufgabe von ARC-AGI-1 wird zu einer **ARC-Rasteraufgabe**: ihre eigenen
+Paare und ihre Paare aus re-arc (Hodel 2024, arXiv:2404.07353, Vorabdruck), da eine
+Aufgabendatei nur 3 bis 9 Paare hält, meist 4. Jedes Raster liegt oben links auf einer
+**Leinwand** von 30x30 Zellen. Die Eingabe hat je Farbe einen Kanal, die Ausgabe je Zelle
+eine von 10 Farbklassen. Zellen außerhalb des Rasters zählen weder im Verlust noch in der
+Bewertung.
+
+Ein Genom trainiert auf jeder Aufgabe ein frisches CNN aus seinem eigenen Seed. Bewertet
+wird auf zurückgehaltenen Paaren: auf dem letzten Fünftel der re-arc-Paare (valid) und auf
+den Testpaaren der Aufgabendatei (test), also den Paaren, welche ARC stellt. Der Wert ist
+der **exakte Treffer**, der Anteil der Raster, deren Zellen alle stimmen. Der Anteil
+richtiger Zellen ist nur beschreibend: Schon die Kopie der Eingabe trifft viele Zellen,
+weshalb sie in jedem Bericht als Vergleich vorn steht.
+
+| Schritt | Aufgaben |
+|---|---|
+| Trainingsaufgaben von ARC-AGI-1 | 400 |
+| ein Paar der Aufgabendatei ändert die Rastergröße | 138 bleiben draußen |
+| wiederholt Paare einer Bewertungsaufgabe (40853293, caa06a1f) | 2 bleiben draußen |
+| kein re-arc-Paar gleicher Größe | 1 bleibt draußen |
+| ARC-Rasteraufgaben | 259, mit 13 185 Trainings-, 3 095 Valid- und 264 Testpaaren |
+
+Die beiden Bewertungssätze bleiben zurückgehalten. `brut arc-grid` liest nur die
+Trainingsdateien von ARC-AGI-1 und die umgewandelte re-arc-Datei, jede gegen ihren SHA-256
+aus der Manifest-Datei geprüft. Wir messen auf den echten Daten: Kein Paar der 259
+Aufgaben gleicht normiert (alle 8 Drehungen und Spiegelungen, Farben neu nummeriert) einem
+Paar der Bewertung von ARC-AGI-1 oder ARC-AGI-2 oder von ConceptARC.
+
+```sh
+# 1. Daten unter data/external/ ablegen, siehe "ARC-Daten einrichten (freiwillig)".
+# 2. re-arc einmalig im Sandkasten umwandeln (als root, für setpriv); das Skript nutzt nur
+#    die Python-Standardbibliothek und führt keinen Code von re-arc aus.
+sudo tools/rearc_sandbox.sh data/external/re-arc/re_arc.zip data/external/re-arc/grids.jsonl
+# 3. Die Manifest-Datei nennt jede Datei mit SHA-256, Lizenz, Quelle und Commit.
+cp data/manifest.example.json data/external/manifest.json
+# 4. Die zwei Basismodelle auf den ersten 10 Aufgaben trainieren und bewerten
+./target/release/brut arc-grid --arc-root data/external \
+    --manifest data/external/manifest.json --tasks 10 --out arc-grid.json
+```
+
+`--genome <datei>` bewertet ein anderes Genom (das JSON eines Genoms), `--limits <datei>`
+nimmt andere Grenzen (das JSON der `limits` einer Konfiguration), `--canvas` eine kleinere
+Leinwand und `--threads` eine feste Zahl von Threads. Der Bericht nennt je Aufgabe die
+Epochen, das Training und die Werte. Ein Genom trainiert so viele Epochen, wie es selbst
+nennt, höchstens aber so viele, wie die Formprüfung auf der Aufgabe zulässt; passt es nicht
+einmal mit 5 Epochen, wird es auf der Aufgabe abgelehnt und zählt 0.
+
+ARC-BASE-MODELS-PLACEHOLDER
+
 ### Grenzen der CNN-Modelle
 
 - **Kleine Modelle.** Die Basismodelle sind verkleinert; sie messen sich an 16x16
@@ -680,16 +733,22 @@ Bewertungssatz, genau das erlaubte Budget.
 
 ### ARC-Daten einrichten (freiwillig)
 
-1. Laden Sie die Daten selbst herunter. Legen Sie sie unter
-   `data/external/` ab. Der Ordner `data/` steht in `.gitignore`;
-   ARC-Daten kommen nie ins Git.
-   - ARC-AGI-1: github.com/fchollet/ARC-AGI (Lizenz Apache-2.0)
-   - ARC-AGI-2: github.com/arcprize/ARC-AGI-2 (Lizenz Apache-2.0)
-   - ConceptARC: github.com/victorvikram/ConceptARC (Lizenz MIT)
-2. Schreiben Sie eine **Manifest-Datei** `data/external/manifest.json`. Sie
-   nennt jede Datei mit ihrem SHA-256-Hash, ihrer Lizenz, ihrer Quelle und
-   ihrer Rolle. Das Format zeigt `data/manifest.example.json`. `brut-eval`
-   prüft die Hashes vor jeder ARC-Prüfung.
+1. Laden Sie die Daten selbst herunter, an den Commits, welche
+   `data/manifest.example.json` nennt. Legen Sie sie unter `data/external/`
+   ab, in den Ordnern `arc-agi-1`, `arc-agi-2`, `ConceptARC` und `re-arc`.
+   Der Ordner `data/` steht in `.gitignore`; ARC-Daten kommen nie ins Git.
+   - ARC-AGI-1: github.com/fchollet/ARC-AGI, Commit 39903044 (Lizenz Apache-2.0)
+   - ARC-AGI-2: github.com/arcprize/ARC-AGI-2, Commit f3283f72 (Lizenz Apache-2.0)
+   - ConceptARC: github.com/victorvikram/ConceptARC, Commit 0e67da6a (Lizenz MIT)
+   - re-arc: github.com/michaelhodel/re-arc, Commit e5b7f1d0 (Lizenz MIT), nur für
+     die ARC-Rasteraufgaben der CNNs; `tools/rearc_sandbox.sh` wandelt seine Zip-Datei
+     einmalig im Sandkasten um (siehe „ARC-Raster als Aufgaben“)
+2. Kopieren Sie die **Manifest-Datei** `data/manifest.example.json` nach
+   `data/external/manifest.json`. Sie nennt jede Datei mit ihrem SHA-256-Hash,
+   ihrer Lizenz, ihrer Quelle, ihrem Commit und ihrer Rolle: die 680 Dateien der
+   drei Bewertungssätze, die 400 Trainingsdateien von ARC-AGI-1 und die
+   umgewandelte re-arc-Datei. `brut-eval` prüft die Hashes vor jeder ARC-Prüfung,
+   `brut arc-grid` die der Dateien, welche es liest.
 3. Geben Sie beide Pfade beim Anlegen der geheimen Datei an:
 
    ```sh

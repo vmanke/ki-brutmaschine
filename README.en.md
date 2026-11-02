@@ -298,6 +298,61 @@ show whether promoted models improve later runs on average. The hidden scores of
 of seed 2 come from different secret seeds, since `brut init` draws one per run; only the
 validation scores compare.
 
+### ARC grids as tasks
+
+Ticket 06 brings ARC grids as tasks of the CNNs
+([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md)).
+Each ARC-AGI-1 training task becomes an **ARC grid task**: its own pairs and its pairs from
+re-arc (Hodel 2024, arXiv:2404.07353, preprint), since a task file holds only 3 to 9 pairs,
+4 in most. Each grid lies at the top left of a **canvas** of 30x30 cells. The input has one
+channel per colour, the output one of 10 colour classes per cell. Cells outside the grid
+count neither in the loss nor in the score.
+
+A genome trains a fresh CNN on each task from its own seed. It is scored on held-out pairs:
+the last fifth of the re-arc pairs (valid) and the test pairs of the task file (test), the
+pairs that ARC poses. The score is the **exact match**, the share of grids whose cells are
+all right. The share of right cells is only descriptive: the copy of the input already gets
+many cells right, so every report shows it first, for comparison.
+
+| Step | Tasks |
+|---|---|
+| ARC-AGI-1 training tasks | 400 |
+| a pair of the task file changes the grid size | 138 left out |
+| repeats pairs of an evaluation task (40853293, caa06a1f) | 2 left out |
+| no re-arc pair of the same size | 1 left out |
+| ARC grid tasks | 259, with 13 185 train, 3 095 valid and 264 test pairs |
+
+Both evaluation sets stay held out. `brut arc-grid` reads only the ARC-AGI-1 training files
+and the converted re-arc file, each checked against its SHA-256 in the manifest. We measure
+on the real data that no pair of the 259 tasks equals, after normalization (all 8 rotations
+and reflections, colours renumbered), a pair of the ARC-AGI-1 or ARC-AGI-2 evaluation sets
+or of ConceptARC.
+
+```sh
+# 1. Clone the four repositories at the commits of data/manifest.example.json into
+#    data/external/ (folders arc-agi-1, arc-agi-2, ConceptARC and re-arc); data/ is in
+#    .gitignore, and ARC data never go into git:
+#    fchollet/ARC-AGI 39903044 (Apache-2.0), arcprize/ARC-AGI-2 f3283f72 (Apache-2.0),
+#    victorvikram/ConceptARC 0e67da6a (MIT), michaelhodel/re-arc e5b7f1d0 (MIT).
+# 2. Convert re-arc once, in the sandbox (as root, for setpriv); the script uses the Python
+#    standard library only and runs no code of re-arc.
+sudo tools/rearc_sandbox.sh data/external/re-arc/re_arc.zip data/external/re-arc/grids.jsonl
+# 3. The manifest names each file with its SHA-256, licence, source and commit.
+cp data/manifest.example.json data/external/manifest.json
+# 4. Train and score the two base models on the first 10 tasks
+./target/release/brut arc-grid --arc-root data/external \
+    --manifest data/external/manifest.json --tasks 10 --out arc-grid.json
+```
+
+`--genome <file>` scores another genome (the JSON of one genome), `--limits <file>` takes
+other limits (the JSON of the `limits` of a config), `--canvas` a smaller canvas and
+`--threads` a fixed number of threads. The report gives the epochs, the training and the
+scores of each task. A genome trains for its own epochs, but at most for as many as the shape
+check allows on the task; if it does not fit even at 5 epochs, it is refused on that task,
+which counts 0.
+
+ARC-BASE-MODELS-PLACEHOLDER
+
 ### Limits of the CNN models
 
 - **Small models.** The base models are scaled down; they are measured on 16x16 images, not

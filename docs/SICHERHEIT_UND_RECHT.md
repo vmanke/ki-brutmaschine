@@ -347,9 +347,22 @@ sein. Trainingsdaten könnten Bewertungsaufgaben schon enthalten
   Spiegelungen und mit neu nummerierten Farben). Jede Überschneidung führt
   zur Ablehnung, ohne Buchung. Ein Test pflanzt ein gedrehtes und
   umgefärbtes Duplikat und prüft, dass es erkannt wird.
-- Während `brut` und `brut-eval` läuft kein fremder Code. Nur der
-  abgeschaltete Zusatzversuch E2 bräuchte eine einmalige Umwandlung der
-  re-arc-Daten; sie liefe nur im getesteten Sandkasten-Rezept des Plans.
+- Während `brut` und `brut-eval` läuft kein fremder Code. Die re-arc-Daten
+  wandelt `tools/rearc_to_jsonl.py` einmalig um, ein eigenes Skript nur mit der
+  Python-Standardbibliothek; es liest `re_arc.zip` als Daten und führt keinen
+  Code von re-arc aus. Es läuft nur im getesteten Sandkasten-Rezept des Plans
+  (`tools/rearc_sandbox.sh`): erst Benutzer 65534 ohne neue Rechte, dann eigene
+  Namensräume ohne Netzwerk, ein eigenes tmpfs und `prlimit`. Die Zip-Datei
+  bekommt es über die Standardeingabe, die Zeilen gibt es über die
+  Standardausgabe zurück, sodass es keine Datei außerhalb seines tmpfs öffnet.
+  Wir wandeln am 2026-11-01 für die ARC-Rasteraufgaben der CNNs (Ticket 06) um;
+  den SHA-256 der Ausgabe hält die Manifest-Datei fest.
+- Die ARC-Rasteraufgaben der CNNs lesen nur die Trainingsdateien von
+  ARC-AGI-1 und die umgewandelte re-arc-Datei, nie eine Bewertungsdatei. Zwei
+  Trainingsaufgaben, welche Paare von Bewertungsaufgaben wiederholen
+  (40853293 und caa06a1f), bleiben mit ihren re-arc-Paaren draußen. Wir messen
+  auf den echten Daten: Kein Paar dieser Aufgaben gleicht normiert einem Paar
+  der drei Bewertungssätze.
 
 ### 11. Lieferkette
 
