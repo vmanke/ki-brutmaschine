@@ -15,8 +15,8 @@
 //!   brut-breed --out <dir> [--config <json>] [--seed N] [--generations G]
 //!              [--children C] [--search P] [--select S] [--max-calls M]
 //!              [--max-seconds T] [--llm-every K] [--llm-children N] [--no-pause]
-//!              [--llm-answers <dir>] [--domain grid|circuits] [--selection dgm|uniform]
-//!              [--soul s|v|k]
+//!              [--llm-answers <dir>] [--domain grid|circuits] [--selection dgm|uniform|lexicase|tournament]
+//!              [--lexicase-epsilon E] [--tournament-size K] [--soul s|v|k]
 //!   brut-breed --out <dir> --resume [--generations G] [--max-calls M] [--max-seconds T]
 //!              [--llm-answers <dir>]
 //!   brut-breed --out <dir> --promote
@@ -26,8 +26,9 @@
 //! circuits. A circuit run takes its circuit settings (targets, dressing, gate cap) from
 //! --config; --domain circuits alone uses the defaults: every verified library target,
 //! dressed, with at most 64 gates per answer. --selection says how parents are drawn: dgm
-//! (the default) or uniform, the control arm. Both define the experiment, so a resume
-//! cannot change them.
+//! (the default), uniform (the control arm), lexicase (task by task, docs/SELECTION_STUDY.md)
+//! or tournament; --lexicase-epsilon and --tournament-size tune the last two. All of these
+//! define the experiment, so a resume cannot change them.
 //!
 //! --soul gives every Worker a Soul with the settings of an arm of step 2
 //! (`.scratch/seele-und-kappa/spec.md`, section 12.2): s for arm S, the Soul with complex
@@ -1357,15 +1358,23 @@ fn fresh_config(args: &BTreeMap<String, String>) -> Result<BreedConfig> {
     }
 
     if let Some(v) = args.get("selection") {
-        cfg.selection = match v.as_str() {
-            "dgm" => ParentSelection::Dgm,
-            "uniform" => ParentSelection::Uniform,
-            _ => {
-                return Err(usage(&format!(
-                    "--selection must be dgm or uniform, got {v:?}"
-                )));
-            }
-        };
+        cfg.selection = ParentSelection::parse(v).ok_or_else(|| {
+            usage(&format!(
+                "--selection must be dgm, uniform, lexicase or tournament, got {v:?}"
+            ))
+        })?;
+    }
+
+    if let Some(v) = args.get("lexicase-epsilon") {
+        cfg.selection_params.lexicase_epsilon = v
+            .parse()
+            .map_err(|_| usage(&format!("--lexicase-epsilon must be a number, got {v:?}")))?;
+    }
+
+    if let Some(v) = args.get("tournament-size") {
+        cfg.selection_params.tournament_size = v
+            .parse()
+            .map_err(|_| usage(&format!("--tournament-size must be a whole number, got {v:?}")))?;
     }
 
     // --soul gives the Run the Souls of arm S, V or K (step 2, spec 12.2 and 12.5). Finer
@@ -1563,7 +1572,7 @@ fn usage(m: &str) -> BrutError {
 /// `--key value` pairs; `--resume`, `--promote`, `--verify` and `--no-pause` take none.
 fn parse_args() -> Result<BTreeMap<String, String>> {
     const FLAGS: [&str; 4] = ["resume", "promote", "verify", "no-pause"];
-    const KEYS: [&str; 15] = [
+    const KEYS: [&str; 17] = [
         "out",
         "config",
         "seed",
@@ -1579,6 +1588,8 @@ fn parse_args() -> Result<BTreeMap<String, String>> {
         "domain",
         "selection",
         "soul",
+        "lexicase-epsilon",
+        "tournament-size",
     ];
 
     let mut map = BTreeMap::new();

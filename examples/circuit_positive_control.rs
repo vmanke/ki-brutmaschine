@@ -2435,7 +2435,7 @@ mod tests {
             let dir = root.join(name);
             let rediscovery = match cfg.selection {
                 ParentSelection::Dgm => found(&SEEDS_HIT, &bred(7)),
-                ParentSelection::Uniform => found(&SEEDS_HIT, &[]),
+                _ => found(&SEEDS_HIT, &[]),
             };
             let (reason, completed) = stop.unwrap_or((ALL_GENERATIONS, cfg.generations + 1));
 
