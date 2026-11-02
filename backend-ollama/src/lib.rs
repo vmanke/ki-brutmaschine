@@ -24,6 +24,7 @@
 //! (binary `vote-control`).
 #![forbid(unsafe_code)]
 
+pub mod breeding_vs_vote;
 pub mod mutator;
 pub mod vllm;
 pub mod vote;
