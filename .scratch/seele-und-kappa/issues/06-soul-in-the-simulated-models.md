@@ -1,6 +1,6 @@
 # 06 The Soul in the simulated models
 
-Status: needs-triage (waits for the owner's approval of the design; Q72 is decided)
+Status: resolved
 Blocked by: 04
 Spec: `../spec.md`, section 11
 
@@ -64,3 +64,47 @@ Spec: `../spec.md`, section 11
 - `real_arm_phases_are_signs`: in arm V every `phases` entry is 0 or 32768.
 
 ## Comments
+
+- 2026-11-01, build. Not committed: this build makes no commits.
+  - `backend.rs`: `GenRequest::phases` and `GenResponse::soul_decided`, both with serde
+    defaults and left out of the JSON when unset; `ModelBackend::reads_phases()`, false by
+    default. `docs/STAGE2_BACKEND_CONTRACT.md` is contract-v3, with a new rule I8 for the
+    adapter.
+  - `soul.rs`: `readout_phases` (0 or 32768 in arm V) and `intensity` (one family gives 1
+    exactly, no family 0).
+  - `arena.rs`: `call_worker` fills `phases` only for a backend that reads them.
+    `run_cascade_with` gives each Worker's phases, readout applied, to its solve and
+    Stage-vote requests when `simulator` is on, on the search and the select panel. The
+    peer round keeps `judge_in` without phases. `VoteTally::sim_decided` counts the replies
+    with `soul_decided`.
+  - `sim.rs`: `SimModel::reads_phases`. With phases, the grid judge collects the
+    explaining families of each candidate, each once (`family_of`). When both are
+    explained, the larger intensity wins and equal values keep the coin, which is drawn
+    as before. The solver is unchanged.
+  - `designer.rs`: `SimDesigner::reads_phases`. With phases and self-check, the `Pool`
+    keeps later candidates of the best rank that pass a free check on every column, each
+    with its support; `Pool::reply` takes the largest intensity, then the first found. The
+    best candidate stays the one the methods work on, so every step stays the same. The
+    step-1 source scan (`the_designer_knows_nothing_of_the_library`) lets the designer reach
+    only `qubit`, `circuit_text`, `backend` and `util`, so it keeps its own copy of the
+    phasor (`unit_phasor`, `support_intensity`); `the_designer_reads_phases_as_the_soul_does`
+    in `soul.rs` checks that both give the same bits.
+  - Tests in `arena.rs`: `requests_without_phases_are_unchanged`,
+    `peer_requests_carry_no_phases` (it tells each judge request apart by its seed, on Runs
+    that hold Stage votes), `real_arm_phases_are_signs`.
+  - Tests in `sim.rs`: `the_grid_judge_breaks_its_coin_by_phase`, `soul_decided_is_reported`.
+  - Tests in `designer.rs`: `designer_costs_do_not_move`,
+    `the_designer_prefers_constructive_support`, `soul_decided_is_reported`, and
+    `the_step1_calibration_holds_with_phases` for the pinned routes.
+  - Other tests: the seeds on every dressing in a test of the same name in
+    `circuit_genes.rs`; `requests_carry_the_readout_of_their_phases` and
+    `one_family_has_intensity_one_whatever_the_phase` in `soul.rs`;
+    `the_backend_contract_is_v3` in `tests/soul.rs`. The calibration tests of step 1 are
+    unchanged and pass.
+  - Seen in a probe: in 3000 random designer requests, 18 replies were decided by the
+    phases. All were equally cheap exact circuits, for example CS by Phase and Simplify
+    with self-check.
+  - Open: the Ollama adapter (`backend-ollama/src/lib.rs`) builds `GenRequest` and
+    `GenResponse` by struct literals. It needs `phases: None` twice and
+    `soul_decided: false` twice to compile against this change. That package was not to be
+    changed in this build, so the four lines are still to be added.

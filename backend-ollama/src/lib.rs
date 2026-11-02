@@ -196,6 +196,7 @@ impl ModelBackend for OllamaBackend {
         let cut = reply.done_reason.as_deref() == Some("length") || completion > req.max_tokens;
 
         Ok(GenResponse {
+            soul_decided: false,
             prompt_tokens: reply.prompt_eval_count.unwrap_or(0),
             completion_tokens: completion,
             text: reply.response,
@@ -607,6 +608,7 @@ mod tests {
 
     fn req(max_tokens: u32) -> GenRequest {
         GenRequest {
+            phases: None,
             system: "sys".to_string(),
             prompt: "hello".to_string(),
             max_tokens,
@@ -863,6 +865,7 @@ mod tests {
             let n = self.0.fetch_add(1, Ordering::SeqCst);
 
             Ok(GenResponse {
+                soul_decided: false,
                 text: format!("answer {n} to {}", req.prompt),
                 prompt_tokens: 1,
                 completion_tokens: 3,
@@ -927,6 +930,7 @@ mod tests {
         let b = OllamaBackend::new("ollama:qwen2.5:7b", DEFAULT_BASE, Duration::from_secs(120)).expect("new");
         let out = b
             .generate(&GenRequest {
+                phases: None,
                 system: "Answer with the number only.".to_string(),
                 prompt: "What is 17 times 23?".to_string(),
                 max_tokens: 16,

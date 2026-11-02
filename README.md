@@ -1,6 +1,6 @@
 # Brutmaschine
 
-This page is the English version of the CNN, Stage 2c and step 1 parts of the German
+This page is the English version of the CNN, Stage 2c, step 1 and step 2 parts of the German
 [README.de.md](README.de.md), with the status, the roadmap and the setup of a GPU VM. The rest
 of the project documentation is in German; the code, its comments, `CONTEXT.md` and the
 ADRs are in English.
@@ -11,10 +11,10 @@ built: the CNN genome, the families with their base models, the mutations and th
 promotion of winners (see "CNN models in the MLP mode"). Part 3, ARC grids as tasks
 (ticket 06), comes next.
 
-**Step 2** will give every Worker a hidden, inherited **Soul**, which shows itself only in
-the Worker's Character. A judgment then becomes an Observation: it pulls the Souls of both
-sides together, as strongly as the observer's **Coupling strength** κ says. The design is
-merged (PR #28 and #29), and we have been building it since 2026-10-31.
+**Step 2** gives every Worker a hidden, inherited **Soul**, which shows itself only in the
+Worker's Character. A judgment becomes an Observation: it pulls the Souls of both sides
+together, as strongly as the observer's **Coupling strength** κ says. It is built and off by
+default (see "The Soul (step 2)"); the pre-registered comparison follows after a pilot.
 
 An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
 with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
@@ -40,7 +40,7 @@ with the default values:
 
 ## Status and roadmap
 
-Status on 2026-10-31.
+Status on 2026-11-02.
 
 **Built**
 
@@ -56,12 +56,24 @@ Status on 2026-10-31.
   ([ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md));
   see "CNN models in the MLP mode". PR #27 merged an interim state, and PR #32 brought the
   CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt.
+- **CNNs, part 3.** Ticket 06: ARC grids as tasks of the CNNs, with one colour class per
+  cell, the ARC-AGI-1 training tasks and their re-arc pairs, two base models of their own (a
+  U-Net and a fully convolutional network) and the command `brut arc-grid`
+  ([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md));
+  see "ARC grids as tasks".
 - **Design of step 2 (PR #28 and #29).** It describes the Soul and the Coupling strength κ
   ([spec](.scratch/seele-und-kappa/spec.md)). PR #28 was the first draft, PR #29 is the
   final version. The questions Q67 to Q74 were decided by their recommended answers on
   2026-10-31: Q67 a, Q68 a, Q69 a, Q70 a, Q71 a, Q72 a, Q73 a and d, Q74 a
   ([questions](.scratch/seele-und-kappa/owner-questions.md), in German). The owner can
   overrule each of these decisions.
+- **Step 2: the Soul (tickets 01 to 09 and 12).** Souls and Family strengths, the Character,
+  the complex Stage vote, Observations and the Coupling strength κ, Souletics, Upbringing, the
+  Soul in the simulated models, the `soul` group of the `state` line, `brut-breed --soul s|v|k`
+  and the Character analysis
+  ([ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md),
+  [docs/STEP2_SOUL.md](docs/STEP2_SOUL.md)); see "The Soul (step 2)". Without `--soul` every Run
+  writes the same bytes as before.
 - **Real language models (PR #33).** The separate package `backend-ollama` with the program
   `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
   are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -71,13 +83,15 @@ Status on 2026-10-31.
 
 **Being built**
 
-- **Step 2.** Tickets 01 to 09 and 12, started on 2026-10-31.
+- **Glossary of step 2.** The new terms of step 2 reach `CONTEXT.md` in a small pull request of
+  their own, never inside a code pull request (Q53).
 
 **Planned**
 
-- **CNNs, part 3.** Ticket 06, ARC grids as tasks; it comes next.
-- **Step 2, comparison.** Pre-registration (ticket 10), pilot (ticket 11) and counted Runs
-  (ticket 13).
+- **Breeding on ARC grids.** A run (`brut run`) that breeds CNNs on the ARC grid tasks;
+  today `brut arc-grid` trains and scores given genomes.
+- **Step 2, comparison.** Pilot (ticket 11), pre-registration (ticket 10) and counted Runs
+  (ticket 13). The pilot comes first: it sets the open numbers of the pre-registration.
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
   Cascade. F2: a language model as Architect that proposes CNN blueprints. F3: a CNN as a
   tool that the language model calls, at most 3 calls per answer.
@@ -92,8 +106,10 @@ Status on 2026-10-31.
 
 ## CNN models in the MLP mode
 
-Status: tickets 01 to 05 and 07 of `.scratch/cnn-basismodelle/` are built, the promotion
-of winners included. The ARC grids (ticket 06) follow.
+Status: tickets 01 to 07 of `.scratch/cnn-basismodelle/` are built, the promotion of
+winners and the ARC grids (ticket 06,
+[ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md))
+included.
 [ADR 0007](docs/adr/0007-cnns-train-through-candle-at-a-pinned-commit.md) records the
 library, and
 [ADR 0008](docs/adr/0008-cnn-families-enter-a-run-as-base-models-and-each-child-changes-by-one-operator.md)
@@ -317,6 +333,91 @@ show whether promoted models improve later runs on average. The hidden scores of
 of seed 2 come from different secret seeds, since `brut init` draws one per run; only the
 validation scores compare.
 
+### ARC grids as tasks
+
+Ticket 06 brings ARC grids as tasks of the CNNs
+([ADR 0010](docs/adr/0010-arc-grid-tasks-train-a-fresh-cnn-per-training-task-and-score-whole-grids.md)).
+Each ARC-AGI-1 training task becomes an **ARC grid task**: its own pairs and its pairs from
+re-arc (Hodel 2024, arXiv:2404.07353, preprint), since a task file holds only 3 to 9 pairs,
+4 in most. Each grid lies at the top left of a **canvas** of 30x30 cells. The input has one
+channel per colour, the output one of 10 colour classes per cell. Cells outside the grid
+count neither in the loss nor in the score.
+
+A genome trains a fresh CNN on each task from its own seed. It is scored on held-out pairs:
+the last fifth of the re-arc pairs (valid) and the test pairs of the task file (test), the
+pairs that ARC poses. The score is the **exact match**, the share of grids whose cells are
+all right. The share of right cells is only descriptive: the copy of the input already gets
+many cells right, so every report shows it first, for comparison.
+
+| Step | Tasks |
+|---|---|
+| ARC-AGI-1 training tasks | 400 |
+| a pair of the task file changes the grid size | 138 left out |
+| repeats pairs of an evaluation task (40853293, caa06a1f) | 2 left out |
+| no re-arc pair of the same size | 1 left out |
+| ARC grid tasks | 259, with 13 185 train, 3 095 valid and 264 test pairs |
+
+Both evaluation sets stay held out. `brut arc-grid` reads only the ARC-AGI-1 training files
+and the converted re-arc file, each checked against its SHA-256 in the manifest. We measure
+on the real data that no pair of the 259 tasks equals, after normalization (all 8 rotations
+and reflections, colours renumbered), a pair of the ARC-AGI-1 or ARC-AGI-2 evaluation sets
+or of ConceptARC.
+
+```sh
+# 1. Clone the four repositories at the commits of data/manifest.example.json into
+#    data/external/ (folders arc-agi-1, arc-agi-2, ConceptARC and re-arc); data/ is in
+#    .gitignore, and ARC data never go into git:
+#    fchollet/ARC-AGI 39903044 (Apache-2.0), arcprize/ARC-AGI-2 f3283f72 (Apache-2.0),
+#    victorvikram/ConceptARC 0e67da6a (MIT), michaelhodel/re-arc e5b7f1d0 (MIT).
+# 2. Convert re-arc once, in the sandbox (as root, for setpriv); the script uses the Python
+#    standard library only and runs no code of re-arc.
+sudo tools/rearc_sandbox.sh data/external/re-arc/re_arc.zip data/external/re-arc/grids.jsonl
+# 3. The manifest names each file with its SHA-256, licence, source and commit.
+cp data/manifest.example.json data/external/manifest.json
+# 4. Train and score the two base models on the first 10 tasks
+./target/release/brut arc-grid --arc-root data/external \
+    --manifest data/external/manifest.json --tasks 10 --out arc-grid.json
+```
+
+`--genome <file>` scores another genome (the JSON of one genome), `--limits <file>` takes
+other limits (the JSON of the `limits` of a config), `--canvas` a smaller canvas and
+`--threads` a fixed number of threads. The report gives the epochs, the training and the
+scores of each task. A genome trains for its own epochs, but at most for as many as the shape
+check allows on the task; if it does not fit even at 5 epochs, it is refused on that task,
+which counts 0.
+
+The two base models of the ARC grid tasks fit the default limits, on the largest task too,
+at their own epochs:
+
+| Base model | Design | Training |
+|---|---|---|
+| `u-net` (Ronneberger, Fischer and Brox 2015) | a 3x3 stem of 8 channels, an encoder to half the size with 16 channels, two residual blocks, a decoder with a transposed convolution that joins the map of the stem, the per-cell head | learning rate 0.03, 8 epochs |
+| `fcn` (Long, Shelhamer and Darrell 2015) | a 1x1 stem of 16 channels, two 3x3 convolutions of 16 channels at full size, the per-cell head | learning rate 0.01, 9 epochs |
+
+The U-Net base model of the families reads one channel of 8x8 cells; its stem of 4 channels
+would squeeze 10 colours, so the ARC grids have a U-Net of their own. We chose both designs
+by a few runs on the first 8 tasks (ticket 06, Comments). Under the default limits the time
+model sets the epochs: on 30x30 cells the budget buys 32 steps of the U-Net and 36 of the FCN
+per task, fewer on two tasks with few re-arc pairs.
+
+We measure both base models on all 259 tasks (built with `cargo build`, dev profile,
+`--threads 3`, 59 min). Another build shared the 4 cores, so we set `max_candidate_seconds`
+to 120 s instead of 30 s; 22 trainings of the FCN took longer than 30 s. All other limits are
+the defaults, and the FLOP limit and the time model set the epochs, not the clock.
+
+| Model | exact valid | exact test | cells valid | cells test |
+|---|---|---|---|---|
+| copy of the input | 0.000 | 0.000 | 0.766 | 0.752 |
+| `u-net` | 0.002 | 0.000 | 0.571 | 0.628 |
+| `fcn` | 0.003 | 0.004 | 0.673 | 0.713 |
+
+The FCN gets 10 of the 3 095 valid grids and 1 of the 264 test grids right (task 6f8cd79b),
+the U-Net 6 valid grids and no test grid, the copy none. In cell accuracy both stay below the
+copy on average; they beat the copy on 29 to 54 of the 259 tasks. No training was refused,
+none diverged. On the first 4 tasks, two earlier designs with ten times the FLOPs (about 90
+epochs per task) came near the copy's cell accuracy or above it, without getting a whole grid
+right.
+
 ### Limits of the CNN models
 
 - **Small models.** The base models are scaled down; they are measured on 16x16 images, not
@@ -328,8 +429,13 @@ validation scores compare.
   count; another CPU may give other bits (ADR 0007).
 - **Untuned twins.** The 1-D twins on `motif-1d` are not tuned, and no test asks them to
   learn.
-- **A stand-in for ARC.** `mirror-grid` is a regression scored by R²; the ARC grids with a
-  colour class per cell follow in ticket 06.
+- **Short training on ARC.** The default limits were made for images of 16x16. On the
+  30x30 canvas they buy 32 to 36 steps per task. With them both base models stay below the
+  copy's cell accuracy on average and get almost no grid right. `--limits` takes other
+  limits.
+- **No breeding on ARC.** `brut run` does not breed on the ARC grid tasks; `brut arc-grid`
+  scores given genomes. Tasks that change the grid size stay out. `mirror-grid` stays a
+  regression scored by R².
 - **No inherited weights.** Each child learns from scratch. That costs compute, but keeps
   runs simple to reproduce.
 - **Promotion after one run.** Whether a model is promoted depends on its hidden score in a
@@ -751,6 +857,60 @@ froze the pre-registration. Decision 5 is shown in that version:
    "9 of 10", whose bound was 11/1024 = 0.0107; the sequential rule replaces it.
 6. The panels have 33 search and 22 select tasks.
 
+## The Soul (step 2)
+
+Status: built and off by default; the comparison follows. Described in
+[docs/STEP2_SOUL.md](docs/STEP2_SOUL.md) and
+[ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md).
+Specification: [.scratch/seele-und-kappa/spec.md](.scratch/seele-und-kappa/spec.md), with the
+tickets in `.scratch/seele-und-kappa/issues/`; the decisions are Q42 to Q46 and Q51 to Q74 of
+`.scratch/universum-erfinden/spec.md`.
+
+Every Worker carries a Soul: one integer phase per hypothesis family of the Domain, inherited and
+never shown to a model. Each task gives every family a strength (circuits: the families of the
+routes that step 1 pinned; grids: the families of the hidden rule). The Soul shows itself only
+through its Character, the squared magnitude of the sum of its phasors weighted by these
+strengths. In a Stage vote the judges' phasors add, and the squared magnitude decides; a tie goes
+to the number of verdicts, then to the order. Every judgment with a reply is an Observation that
+pulls the observed Worker's phases toward the observer's by κ times their gap, and the observer's
+back by half of that. Children inherit birth Souls and κ by Souletics (copy, mix, a small random step, now and
+then a new Soul) and are imprinted toward their parents' current Souls after their first task.
+The simulated models read the phases only where they would otherwise take the first of equally
+good answers or flip a coin, so costs, scores and the calibration of step 1 stay as they are.
+
+`--soul s|v|k` sets one of the three arms of the coming comparison: S, the Soul; V, the same
+Soul read only as signs, the real-valued control; K, the Soul with κ fixed at 0. Without `--soul`
+a Run has no Soul and writes the same bytes as before step 2. A reproducible Run on pilot seed
+901:
+
+```sh
+cargo build --release
+./target/release/brut-breed --out runs/s901-S --domain circuits --search 33 --select 22 \
+  --children 8 --generations 60 --seed 901 --max-calls 200000 --soul s
+./target/release/brut-breed --out runs/s901-S --verify
+
+# The Character of every Worker, recomputed from the record
+cargo run --release --example soul_character -- runs/s901-S
+```
+
+The Run takes about 4 s (release build, 4 threads). Among its lines is
+
+```
+brut-breed: wrote runs/s901-S/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 2 of the other 9; D > 1/2: no; calibrated
+```
+
+and `--verify` prints
+
+```
+brut-breed: 2046 events, hash chain intact, head e38339538f19d85fccd1d1a7a1c3a0435e1989eec7838e6b6e0c5a46e0e692a1; checkpoint at entry 2046 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+```
+
+The numbers of the presets (κ of the seeds 0.2, its step 0.02, a phase step of 512 units, θ = 1)
+are placeholders until the pilot sets them, and then this line changes too. For a finished Run
+with Souls, on circuits and on grids, `--verify` also ties every member's Soul records and current
+Souls to the log. Finer settings come as a `soul` object in `--config`; `--soul` next to one is
+wrong usage, and a resume refuses `--soul`. The pilot seeds 901 to 923 never count.
+
 ## Building blocks
 
 | Block | Job | Files |
@@ -759,7 +919,8 @@ froze the pre-registration. Decision 5 is shown in that version:
 | Cascades and variation | genome and limits, mutation and crossover, Mutator requests | `src/cascade/genome.rs`, `src/cascade/variation.rs` |
 | Grid puzzles | puzzle generator, prompt protocol, simulated model | `src/cascade/puzzle.rs`, `src/cascade/sim.rs` |
 | Seam | task kind (`Domain`) and genes (`GenePool`) | `src/cascade/domain.rs` |
-| Observables | the `state` line per generation | `src/cascade/observe.rs` |
+| Observables | the `state` line per generation, with the `soul` group in Runs with Souls | `src/cascade/observe.rs` |
+| Soul | Soul, Character, complex vote, Observations, Souletics; Upbringing | `src/cascade/soul.rs`, `src/cascade/upbringing.rs` |
 | Qubits | exact simulator, text protocol for circuits | `src/cascade/qubit.rs`, `src/cascade/circuit_text.rs` |
 | Circuits | target library, tasks, scoring, rediscovery | `src/cascade/circuit.rs` |
 | Positive control | simulated designer, seed Cascades, phrase pool | `src/cascade/designer.rs`, `src/cascade/circuit_genes.rs` |
@@ -770,6 +931,12 @@ access; `tests/cascade.rs` checks that.
 
 ## Tests
 
+- `tests/arc_grid.rs` checks the converter `tools/rearc_to_jsonl.py` on a hand-made zip (it
+  needs `python3`), runs `brut arc-grid` with both base models on hand-made tasks, requires
+  equal reports at 1 and 2 threads, and refuses a changed training file and broken genome
+  and limits files. Two tests run on request with the real data: the contamination audit
+  against the three evaluation sets, and a training of both base models on four tasks
+  (`BRUT_ARC_TEST_ROOT=<data> cargo test --test arc_grid -- --ignored real_`).
 - `tests/cascade.rs` checks the purity of `src/cascade/` and makes small real Runs with
   `brut-breed`: equal results across processes, `--verify` against tampered logs and
   reports, kill switch and resume, hard kills, the lock and LLM rounds.
@@ -785,6 +952,11 @@ access; `tests/cascade.rs` checks that.
   processes and with 1 and 4 threads, stop and resume, `--verify` against a changed
   `rediscovery.json`, refused promotion), pins the calibration of the positive control
   and compares the exact simulator with `src/quantum.rs`.
+- `tests/soul.rs` checks step 2. Without Souls nothing changes: the seed ids, the prompts, the
+  settings, and in a release test (`cargo test --release --test soul -- --ignored`) the head
+  hash of the step 1 pilot. With `--soul` it runs both Domains: the presets, equal files across
+  processes and with 1 and 4 threads in each arm, `--verify` against tampered Souls, refused
+  promotion, the rediscovery count, and the Character example against `character()`.
 
 ## Limits
 
@@ -795,3 +967,7 @@ access; `tests/cascade.rs` checks that.
   estimate how high the pass rate is, and it says nothing about real language models. What
   the experiment and the pilot show and what they do not is in
   [docs/STEP1_CIRCUITS.md](docs/STEP1_CIRCUITS.md), section 8.
+- Step 2: Soul, Character and Coupling strength are terms of a model, not physics, and say
+  nothing about souls in nature. The comparison has not run yet. With the simulated designer the
+  Soul acts mainly through the vote, the Observations and Upbringing; on pilot seed 901 it
+  changed no outcome up to generation 60 ([docs/STEP2_SOUL.md](docs/STEP2_SOUL.md), section 4).

@@ -2960,6 +2960,7 @@ mod tests {
                     completion_tokens: 9,
                     stop_reason: StopReason::Stop,
                     backend: TAG.to_string(),
+                    soul_decided: false,
                 })
             }
         }
@@ -2999,6 +3000,7 @@ mod tests {
                     completion_tokens: 100,
                     stop_reason: StopReason::Stop,
                     backend: "answer-book".to_string(),
+                    soul_decided: false,
                 })
             }
         }

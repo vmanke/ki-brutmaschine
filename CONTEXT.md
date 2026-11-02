@@ -41,7 +41,7 @@ One of the 16 published designs that the CNN genome covers, such as ResNet or U-
 _Avoid_: family (alone; Task family means Learner tasks), architecture
 
 **Base model**:
-A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion.
+A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion. The ARC grid tasks have two base models of their own, a U-Net and a fully convolutional network, which `brut arc-grid` trains and scores.
 _Avoid_: seed, seed program (that is a Learner), template
 
 **Shape check**:
@@ -55,6 +55,18 @@ _Avoid_: benchmark, timing
 **Operator**:
 One kind of change the random mutator makes to a CNN, such as switching the CNN family of a CNN stage or inserting one; each child of one CNN gets exactly one, named in the archive.
 _Avoid_: mutation operator, mutation (alone; a mutation applies one Operator)
+
+**ARC grid task**:
+One ARC-AGI-1 training task as a grid-to-grid task for CNNs: the pairs of its task file and its re-arc generations, each grid on the Canvas, one colour class per cell. A genome trains a fresh CNN on each from its own seed, and the CNN is scored by Exact match on the task's held-out pairs: the last fifth of the generated pairs and the test pairs of the task file. A task whose pairs change the grid size is left out, and so are the two tasks that repeat pairs of evaluation tasks.
+_Avoid_: ARC family, task family (that is a Learner term), ARC task (alone; the ARC check of the Learner mode uses the evaluation sets)
+
+**Canvas**:
+The square of cells, 30 per side by default, at whose top left every grid of an ARC grid task lies. A cell outside its grid has no colour channel on, and its label carries no loss and no score.
+_Avoid_: padding (alone), board
+
+**Exact match**:
+The score of an ARC grid task: the share of held-out pairs whose whole output grid the CNN gets right. Cell accuracy, the share of right cells inside the grids, is only descriptive, since the copy of the input already gets many cells right.
+_Avoid_: accuracy (alone)
 
 ### How Learners are made
 
@@ -149,7 +161,7 @@ One model call configured as data: a model tag from the allow-list, a system pro
 _Avoid_: agent, sub-AI, bot
 
 **Trait**:
-An inheritable setting that shapes how a Worker thinks, not what it thinks: thinking budget, temperature, answer length, self-check. Hard ceilings on Traits are code, not genes.
+An inheritable setting that shapes how a Worker thinks, not what it thinks: thinking budget, temperature, answer length, self-check. Hard ceilings on Traits are code, not genes. The Soul and the Coupling strength are stored with the Traits, but they pass to children by Souletics, not as genes; the Mutator never sees them.
 _Avoid_: hyperparameter (alone), gene (for prompts)
 
 **Stage**:
@@ -245,7 +257,7 @@ The breeder side of a Domain: the seed Cascades, the phrase pool of the section 
 _Avoid_: genome (that is one Cascade), library
 
 **Universe state**:
-The per-generation record of a Run's six observables (performance, diversity, lineage, honesty, judging, cost), logged as one `state` event after every committed generation. It is computed from committed state only, so a resumed Run writes the same records as a straight one.
+The per-generation record of a Run's six observables (performance, diversity, lineage, honesty, judging, cost), logged as one `state` event after every committed generation; a Run with Souls logs a seventh group, `soul`. It is computed from committed state only, so a resumed Run writes the same records as a straight one.
 _Avoid_: metrics, stats, telemetry
 
 **Target**:
@@ -285,13 +297,13 @@ The first generation in which a Run's bred Cascades have solved more than half o
 _Avoid_: T alone (T also counts T gates), success generation, hitting time
 
 **Arm**:
-One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice.
+One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice. In step 2, arm S has the Soul, arm V the same Soul with the real Readout (German Vorzeichen), and arm K the Soul with the Coupling strength fixed at 0; the pilot adds arm E (equal Family strengths) and arm N (no Soul).
 _Avoid_: condition, group
 
-### Soul and Character (planned, step 2)
+### Soul and Character (step 2)
 
 **Soul**:
-A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but are the Family strengths of the Task. It is never seen directly, only through the Character it produces.
+A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but are the Family strengths of the Task. It is never seen directly, only through the Character it produces. A Worker has three: its birth Soul, part of its genome, the only one it passes on; its imprinted Soul, fixed at birth by Upbringing; and its current Soul, which starts as the imprinted Soul and which Observations change during the Run.
 _Avoid_: spirit, psyche, mind
 
 **Soul population**:
@@ -303,7 +315,7 @@ How well a hypothesis family fits a Task, as the Domain states it; the same for 
 _Avoid_: prior, weight (alone)
 
 **Character**:
-The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it. The logs use the normalised Character: the Character divided by the sum of the squared Family strengths, whose mean is 1 on every Task over Souls with independent, uniformly distributed phases; shared ancestry, Imprinting and Observations can move it away from 1.
 _Avoid_: personality, temperament, profile
 
 **Array pattern**:
@@ -315,16 +327,20 @@ A Worker judging answers of others, in the vote of its own Stage or as a peer ju
 _Avoid_: measurement (alone), look
 
 **Coupling strength**:
-The inherited number κ between 0 and 1 with which an observer pulls the phases of the Worker it observes toward its own and is pulled in turn. At 1 the observed takes the observer's phases.
+The inherited number κ between 0 and 1 with which an observer pulls the phases of the Worker it observes toward its own and is pulled in turn, by half as much. At 1 the observed takes the observer's phases.
 _Avoid_: feeling, measurement strength, gain
 
 **Upbringing**:
-What a child receives from its parents' lives besides genes and Soul. In imprinting, its parents observe its first answers and so shift its Soul toward theirs. In teaching, a prompt section is written fresh at birth from its parents' best solved examples and lessons; it is never inherited as a gene.
+What a child receives from its parents' lives besides genes and Soul. In imprinting, after the child's first answer each of its Workers is shifted toward the current Soul of each parent Worker it came from (one, or two after a crossover, taken in parent order), each time by that parent Worker's Coupling strength, without a model call and without changing the parents. In teaching, a prompt section is written fresh at birth from its parents' best solved examples; it is never inherited as a gene. Lessons written by a language model come in a later step.
 _Avoid_: training, education (alone)
 
 **Souletics**:
-Soul inheritance: a child's Soul is a copy of one parent's Soul from birth, or a mix of both parents' Souls, with small random changes, and now and then an entirely new Soul. It is one of three channels of inheritance besides genes and Upbringing; experience passes only through Upbringing. German reports call it Seeletik.
+Soul inheritance: a child's Soul is a copy of one parent's Soul from birth, or a mix of both parents' Souls, with small random changes, and now and then an entirely new Soul. The Coupling strength passes the same way, with a small random step, although it is not part of the Soul. It is one of three channels of inheritance besides genes and Upbringing; experience passes only through Upbringing. German reports call it Seeletik.
 _Avoid_: soul genetics
+
+**Readout**:
+How a Soul's hidden angles are read: as unit phasors (complex), or as the sign of the nearer of 0 and half a turn (real, the control of arm V). Both readouts read the same angles, and a phasor has length 1 in either, so the Soul carries no strength.
+_Avoid_: projection, measurement (that is an Observation)
 
 ### Records and control
 

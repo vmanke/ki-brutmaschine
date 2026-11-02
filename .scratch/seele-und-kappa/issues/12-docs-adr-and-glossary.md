@@ -1,6 +1,6 @@
 # 12 ADR 0009, READMEs, report skeleton and glossary
 
-Status: needs-triage (waits for the owner's approval of the design; Q67 to Q74 are decided, and the ADR records them)
+Status: resolved
 Blocked by: 09
 Spec: `../spec.md`, section 20
 
@@ -46,3 +46,36 @@ Spec: `../spec.md`, section 20
 - `docs/SCHREIBSTIL.md` names `docs/SCHRITT2_SEELE.md`.
 
 ## Comments
+
+- 2026-11-02, build. Not committed: this build makes no commits.
+  - ADR: `docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md`. It names
+    Q42 to Q48 and Q51 to Q74 by number, says which quantum forms of Q45 step 2 builds, lists
+    the options of Q67 to Q74 that were not chosen under "Rejected", and links the spec and
+    both reports. The link to `docs/PREREG_STEP2_SOUL.md` follows with tickets 10 and 11.
+  - READMEs: since pull request #44, `README.md` is the English README and `README.de.md` the
+    German one, and `README.en.md` is gone, so this ticket's file names are out of date. Both
+    READMEs got a section on the Soul ("The Soul (step 2)", "Seele und Kopplungsstärke
+    (Schritt 2)") with `--soul s|v|k` and one command on pilot seed 901, plus the status
+    lines, the table of building blocks, the tests and the limits.
+  - Report skeleton: `docs/SCHRITT2_SEELE.md` (German original) and `docs/STEP2_SOUL.md`
+    (English): purpose, what step 2 built, how to run and verify a Run, what the `soul` group
+    means, what comes next, limits and sources. `docs/SCHREIBSTIL.md` names the German
+    report.
+  - Glossary (Q53): not in this branch; `CONTEXT.md` is unchanged here. The change is
+    prepared as a patch that touches `CONTEXT.md` only, for a pull request of its own. It
+    drops "planned" from the heading; gives Soul its birth, imprinted and current Soul;
+    names the normalised Character under Character; counts seven groups in the Universe
+    state of a Run with Souls; says under Trait that the Soul and κ are stored with the
+    Traits but pass by Souletics; lets Souletics pass κ; adds the arms S, V, K, E and N under
+    Arm; says under Coupling strength that the observer is pulled back by half as much; brings
+    Upbringing in line with Q73 a and d; and adds Readout as a new term.
+  - README check: the command of both READMEs ran on the release build of the worktree,
+    which holds tickets 01 to 09: `rediscovery.json` line "the seeds solve 2 of 11 targets,
+    bred Cascades 2 of the other 9; D > 1/2: no; calibrated", and `--verify` "2046 events,
+    ..., head e38339538f19d85fccd1d1a7a1c3a0435e1989eec7838e6b6e0c5a46e0e692a1, ...;
+    rediscovery recomputed and equal", as both READMEs show. The debug build gives the same
+    bytes. There is no commit yet, so the check at the commit of the code pull request is
+    still to be done.
+  - Seen on that seed, for the pilot: the three arms make the same 484 newborns up to
+    generation 60 (the Soul changed no outcome), and in arm V the contrast lies above its
+    formula (1.217 against 0.927), unlike spec 13.1 expects; the reports say so.

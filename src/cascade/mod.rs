@@ -19,5 +19,7 @@ pub mod puzzle;
 pub mod qubit;
 pub mod selection;
 pub mod sim;
+pub mod soul;
 pub mod study;
+pub mod upbringing;
 pub mod variation;

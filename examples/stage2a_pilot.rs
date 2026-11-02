@@ -65,6 +65,7 @@ impl ModelBackend for OracleModel {
             text,
             stop_reason: StopReason::Stop,
             backend: self.name.clone(),
+            soul_decided: false,
         })
     }
 }

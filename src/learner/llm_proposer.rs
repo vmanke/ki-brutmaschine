@@ -213,6 +213,7 @@ impl LlmProposer {
             temperature: TEMPERATURE,
             seed,
             think_tokens: 0,
+            phases: None,
         }
     }
 
@@ -491,6 +492,7 @@ mod tests {
                 text: self.text.clone(),
                 stop_reason: StopReason::Stop,
                 backend: self.name.clone(),
+                soul_decided: false,
             })
         }
     }
@@ -610,6 +612,7 @@ mod tests {
                     completion_tokens: 3,
                     stop_reason: StopReason::Refusal,
                     backend: "refuser".to_string(),
+                    soul_decided: false,
                 })
             }
         }

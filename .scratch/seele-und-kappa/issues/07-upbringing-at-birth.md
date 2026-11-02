@@ -1,6 +1,6 @@
 # 07 Upbringing at birth: imprinting and teaching
 
-Status: needs-triage (waits for the owner's approval of the design; Q73 is decided in both parts; the step of imprinting follows Q69)
+Status: resolved
 Blocked by: 05, 06
 Spec: `../spec.md`, section 10
 
@@ -39,3 +39,36 @@ Spec: `../spec.md`, section 10
 - Without Souls nothing changes: the goldens of `tests/universe.rs` hold.
 
 ## Comments
+
+- 2026-11-02, build. Not committed: this build makes no commits.
+  - `soul.rs`: `imprint`, the observed side of an Observation by the source Worker.
+  - New `upbringing.rs`: `imprinted` moves a Worker's birth Soul toward each source
+    Worker's current Soul in turn, in parent order, by that source's κ. `teaching` writes
+    the section: for each parent its first task of the highest graded value among those
+    it solved, rendered by `Domain::example` and numbered, while the text keeps the rules
+    of a section text. `section_block`, `UPBRINGING` and `TEACHING_INTRO` render it. The
+    test helper `simulated_model_words` lists the designer's stems, the grid model's
+    keywords and both self-check texts.
+  - `Domain::example`, None by default. Grids render the test input and the answer
+    (`puzzle::render_example`); circuits the target's rows and the answer's gates
+    (`circuit_text::render_circuit_example`). Also `genome::check_section_text` and
+    `sim::family_keywords`.
+  - `arena.rs`: `Breeder::upbringing` runs after Souletics. `Member::imprinted` and
+    `Member::teaching` exist, and the `born` event logs both. The current Souls start as
+    the imprinted Souls. A newborn answers its first search task with its birth Souls and
+    the others with its imprinted Souls. Imprinting reads no answer, so it is computed
+    before the evaluation, and the tasks still run in parallel. The section ends every
+    system prompt the member sends: solve and vote calls, peer judgments and the select
+    phase. A resume checks the imprinted Souls and the section.
+  - `brut-breed`: `check_archive` compares the imprinted Souls and the section, and
+    `check_current_souls` falls back to the imprinted Soul.
+  - Tests in `arena.rs`: the six above, and `the_teaching_section_ends_every_system_prompt`
+    on a hand-built generation with a select phase. `the_first_task_uses_the_birth_soul`
+    also checks every newborn of a 6-generation grid Run against the rule. Six unit tests
+    in `upbringing.rs`, and `imprinting_is_the_observed_side_of_an_observation` in
+    `soul.rs`. The goldens of `tests/universe.rs` hold.
+  - Changed tests, since the current Souls now start as the imprinted Souls:
+    `a_parent_passes_on_its_birth_soul` compares the next generation's birth Souls, and
+    with imprinting off all its Born events; `a_souled_run_records_its_souls_and_resumes_like_a_straight_one`
+    and `authors_and_tallies_are_recorded` expect the imprinted Souls after the first task.
+  - Twelve deliberate faults in the code were each caught by these tests.

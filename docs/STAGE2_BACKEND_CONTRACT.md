@@ -1,6 +1,6 @@
 # Stage 2 model-backend contract
 
-Version: contract-v2, 2026-10-29 (v1: 2026-10-21; v2 adds `think_tokens`). This document is normative for the model backend
+Version: contract-v3, 2026-11-01 (v1: 2026-10-21; v2, 2026-10-29, adds `think_tokens`; v3 adds `phases`, `soul_decided` and `reads_phases()`). This document is normative for the model backend
 of Stage 2. It defines the interface the core already has (`src/backend.rs`) and the
 separate adapter that serves a local open model through Ollama in a Docker sandbox.
 The adapter runs only on a host the user controls; this managed container cannot run it
@@ -19,16 +19,32 @@ prompt mutator, code mutator) is specified elsewhere and is not part of this con
 ## 1. Interface (already in core, `src/backend.rs`)
 
 ```rust
-pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64, think_tokens: u32 }
+pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64, think_tokens: u32, phases: Option<Vec<u16>> }
 pub enum StopReason { Stop, Length, Refusal, Error }
-pub struct GenResponse { text, prompt_tokens: u32, completion_tokens: u32, stop_reason, backend }
-pub trait ModelBackend { fn name(&self) -> &str; fn generate(&self, &GenRequest) -> Result<GenResponse>; }
+pub struct GenResponse { text, prompt_tokens: u32, completion_tokens: u32, stop_reason, backend, soul_decided: bool }
+pub trait ModelBackend { fn name(&self) -> &str; fn generate(&self, &GenRequest) -> Result<GenResponse>; fn reads_phases(&self) -> bool { false } }
 pub struct StubModel;   // deterministic, no network, for tests and local development here
 ```
 
 The orchestrator depends only on this trait. It uses `StubModel` here and the Ollama
 adapter on the host. It checks `GenResponse::is_usable()` (clean stop and non-empty) before
 it parses an answer as a proposal.
+
+**contract-v3: the Soul (step 2, `.scratch/seele-und-kappa/spec.md`, section 11.1).**
+
+- `GenRequest::phases` holds the current phases of the Worker's Soul, one per hypothesis
+  family of the Domain, with the readout applied (in the real-valued arm each phase is 0
+  or 32768). It has the serde default `None` and is left out of the JSON when `None`. The
+  breeder fills it only in the solve and Stage-vote requests of a Cascade's own evaluation,
+  never in a peer judgment, and only for a backend whose `reads_phases()` is true. So the
+  Ollama adapter never receives phases, and every recorded request and its key stay as they
+  are.
+- `GenResponse::soul_decided` is true when the request's phases decided the reply: the reply
+  differs from the reply to the same request without phases. It has the serde default
+  `false` and is left out of the JSON when false, so a response from an adapter that does
+  not know the field still reads.
+- `ModelBackend::reads_phases()` is false by default. Only the simulated models (`SimModel`,
+  `SimDesigner`) return true. The Family strengths of a task never reach a request.
 
 ## 2. The Ollama adapter (separate crate `backend-ollama`, host only; built)
 
@@ -71,6 +87,9 @@ MUST hold for the adapter:
   runtime. Every request and its full answer are recorded in the run (ADR 0002), and a
   repeated run replays the recorded answers instead of calling the model again. Thus the
   run is reproducible even though the model is not.
+- I8. **No Soul (contract-v3).** The adapter keeps the default `reads_phases()`, false, so
+  it never receives `phases`, and it answers with `soul_decided` false. A real model sees
+  no Soul; with real models the Soul acts only in the Stage vote.
 
 ## 3. Host setup (user, once)
 
