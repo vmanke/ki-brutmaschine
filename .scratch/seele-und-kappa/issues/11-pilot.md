@@ -1,6 +1,6 @@
 # 11 Pilot of the step 2 comparison
 
-Status: needs-triage (waits for the owner's approval of the design; Q71 and Q74 are decided)
+Status: resolved
 Blocked by: 10 (its draft and analysis; ticket 10 is resolved only after this pilot)
 Spec: `../spec.md`, sections 12.2 and 17
 
@@ -105,3 +105,5 @@ Spec: `../spec.md`, sections 12.2 and 17
     the counted experiment as designed (dropping both claims comes to the same). One claim
     reaches power 0.5 only if P(S first | untied) is about 0.68 or more at the pilot's tie rate.
     The owner decides before ticket 10 is frozen.
+- 2026-11-02, resolved. The pilot ran (pull request #50). The owner followed its proposal and
+  dropped the counted experiment (tickets 10 and 13).

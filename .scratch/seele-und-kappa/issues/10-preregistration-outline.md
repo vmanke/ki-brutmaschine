@@ -1,6 +1,6 @@
 # 10 Pre-registration of the step 2 comparison (outline)
 
-Status: needs-triage (waits for the owner's approval of the design; Q74 is decided; the numbers come from the pilot, ticket 11)
+Status: wontfix (on 2026-11-02, after the pilot of ticket 11, the owner decided not to run the counted experiment)
 Blocked by: 09
 Spec: `../spec.md`, section 17
 
@@ -217,3 +217,6 @@ control of the breeder, not about real models, not about inventions, and not abo
   `the_counted_seeds_run_from_1002_without_gaps`, and it also refuses seed 1001. The analysis no
   longer tells the operator to resume an unfinished run: a stopped or interrupted counted run is
   run again from scratch, as section 7 of the draft says.
+- 2026-11-02, the owner's decision. The counted experiment is not run. `docs/PREREG_STEP2_SOUL.md`
+  stays as the record of the rejected design and is never frozen. Next comes a search for a Soul
+  model that changes outcomes early and often.

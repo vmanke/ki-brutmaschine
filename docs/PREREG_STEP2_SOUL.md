@@ -1,14 +1,11 @@
-# Pre-registration of step 2: does a Soul of complex phases make the breeder pass sooner? (draft)
+# Pre-registration of step 2: does a Soul of complex phases make the breeder pass sooner? (withdrawn)
 
-**Status: draft for the owner; nothing is frozen.** This document writes out the outline of
-ticket 10 of `.scratch/seele-und-kappa/`. Every number marked "proposal" comes from the pilot
-of ticket 11 ([docs/pilot-step2/](pilot-step2/README.md)) and waits for the owner's decision.
-No counted seed has run. The document is frozen only after the owner's approval, by the squash
-merge of its pull request, as pull request #19 froze step 1. The frozen commit is the one commit
-that this merge creates on the main branch. A commit cannot hold its own hash, so we record the
-hash with the results. From that commit on nothing below changes, and nothing changes after seed
-1002 has started: a change then makes a new experiment on seeds not used before. Every deviation
-is reported with the results, with its reason.
+**Status: withdrawn; the counted experiment is not run.** This document writes out the outline
+of ticket 10 of `.scratch/seele-und-kappa/`, with the numbers that the pilot of ticket 11
+([docs/pilot-step2/](pilot-step2/README.md)) proposed. On 2026-11-02 the owner decided, after
+the pilot, not to run the counted experiment. So this document is never frozen, and no counted
+seed runs. It stays as the record of the design that the pilot rejected. Step 2 is reported
+from the pilot alone, as a description.
 
 **The pilot's finding comes first.** The pilot of ticket 11 finds that this comparison has no
 useful power. The Soul changes no outcome before its first flipped vote or its first
@@ -18,9 +15,9 @@ arm S passed first 4 of 8 times against arm V and 3 of 6 times against arm K, so
 P(S first | untied) are 1/2. At these estimates the rule of section 8 proves claim V with
 probability 0.0038 and claim K with probability 0.0034 within 120 triples; averaged over the
 uncertainty of the estimates, 0.1485 and 0.1528 (section 9). Each is far below 0.5. So we
-propose, as ticket 11 asks, not to run the counted experiment as designed; dropping both claims
-comes to the same. The owner decides before this document is frozen. The numbers below are the
-design that the pilot proposes in case the owner runs it anyway.
+proposed, as ticket 11 asks, not to run the counted experiment as designed; dropping both claims
+comes to the same. The owner followed this proposal on 2026-11-02. The numbers below are the
+design as the pilot left it.
 
 The design is section 17 of the [spec](../.scratch/seele-und-kappa/spec.md) and
 [ADR 0009](adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md). The report on step

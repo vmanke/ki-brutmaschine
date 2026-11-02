@@ -260,16 +260,24 @@ gewählt wurde) und `votes` (die Zählung der Abstimmungen). Das Genom im Ereign
 Geburtsseele und κ. Nach jedem `generation`-Ereignis nennt ein `souls`-Ereignis jeden Worker,
 dessen aktuelle Seele sich beim Festschreiben änderte, mit seinen neuen Phasen.
 
-## 5. Wie es weitergeht
+## 5. Der Pilot und die Entscheidung
 
-- **Pilot (Ticket 11).** Die Arme S, V und K, dazu E (gleiche Stärken) und N (ohne Seele, das
-  ist Arm A von Schritt 1), auf den Pilot-Seeds 901 bis 912 über 1000 Generationen. Er legt die
-  Platzhalter fest und misst, wie oft die Seele ein Ergebnis ändert.
-- **Vorab-Registrierung (Ticket 10).** Zwei getrennte Aussagen, „S vor V“ und „S vor K“, nach
-  der Bestehenszeit von Schritt 1, jede höchstens mit Wahrscheinlichkeit 1/200 falsch, beide
-  zusammen höchstens 1/100 [Q74 a]. Sie wird nach dem Pilot geschrieben und mit dem
-  Zusammenführen ihres Pull-Requests eingefroren.
-- **Gezählte Läufe (Ticket 13).** Ihre Ergebnisse tragen wir in diesen Bericht nach.
+- **Pilot (Ticket 11, Pull-Request #50).** Die Arme S, V und K, dazu E (gleiche Stärken) und N
+  (ohne Seele, das ist Arm A von Schritt 1), liefen auf den Pilot-Seeds 901 bis 912 über 1000
+  Generationen. Sein Bericht ist [docs/pilot-step2/README.md](pilot-step2/README.md) (Englisch).
+  Alle 60 Läufe bestanden `--verify`, und Seed 901 gab, in allen fünf Armen noch einmal
+  gerechnet, dieselben Bytes.
+- **Die Seele wirkt spät.** Sie ändert ein Ergebnis nur über eine komplexe Abstimmung, deren
+  Sieger kippt, oder über eine Antwort, in der die Phasen die Wahl des simulierten Designers
+  entscheiden. Beides ist selten und kommt oft erst nach der Bestehenszeit. Gegen Arm V bestand
+  Arm S 4-mal zuerst, Arm V 4-mal, und 4 Tripel waren gleichauf. Gegen Arm K lauteten die
+  Zahlen 3, 3 und 6. Arm S bestand nie vor Arm N.
+- **Entscheidung.** Bei den Schätzwerten des Pilots hätte der geplante Vergleich von Ticket 10
+  eine Aussage nur mit einer Wahrscheinlichkeit unter 0,004 belegt. Am 2026-11-02 fiel deshalb
+  die Entscheidung, die gezählten Läufe nicht durchzuführen (Tickets 10 und 13).
+  [docs/PREREG_STEP2_SOUL.md](PREREG_STEP2_SOUL.md) bleibt als Beleg des verworfenen Entwurfs.
+- **Als Nächstes.** Die Suche nach einem Seelen-Modell, das Ergebnisse früh und oft ändert,
+  sodass seine Wirkung messbar wird.
 
 ## 6. Grenzen
 

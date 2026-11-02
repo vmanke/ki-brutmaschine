@@ -21,7 +21,7 @@ proposed rule (p₁ = 3/4, N_max = 120) proves claim V with probability 0.0038 a
 probability 0.0034, and averaged over the uncertainty of the estimates with 0.1485 and 0.1528.
 **With N_max = 120 the power of each claim at the pilot's estimate is far below 0.5. We therefore
 propose not to run the counted experiment of ticket 10 as designed**, or, which comes to the same,
-to drop both claims and report step 2 descriptively. The owner decides before ticket 10 is frozen.
+to drop both claims and report step 2 descriptively. On 2026-11-02 the owner decided not to run it.
 In the pilot, arm S never passed before arm N: it passed later on 5 seeds and at the same
 generation on 7. This describes 12 seeds; it is no test.
 
@@ -218,7 +218,8 @@ those seeds are free for such a batch; this pilot does not answer that question.
 
 ## Proposals for ticket 10
 
-Each number is a proposal for the owner. Ticket 10 is frozen only after the owner's approval.
+Each number was a proposal for the owner. The owner decided not to run the counted experiment,
+so ticket 10 is never frozen and none of these numbers is used.
 
 | Number | Proposal | Reason |
 |---|---|---|
@@ -286,8 +287,8 @@ plainly and propose either to drop each claim from the pre-registration or not t
 experiment; since both claims lack power, both proposals come to the same: **we propose not to
 run the counted experiment of ticket 10 as designed**, and to report step 2 descriptively from the
 pilot. A confirmatory test of the Soul would need a design in which the Soul acts before the pass
-time decides, for example another endpoint or Domain; that needs a pilot of its own. The owner
-decides before ticket 10 is frozen.
+time decides, for example another endpoint or Domain; that needs a pilot of its own. On
+2026-11-02 the owner decided not to run it.
 
 ## Reproduce
 

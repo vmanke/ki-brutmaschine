@@ -42,8 +42,9 @@ erfinden (Schritt 1)“.
 **Schritt 2** gibt jedem Worker eine verborgene, vererbte **Seele (Phasenzustand)**, die sich
 nur in seinem Charakter zeigt. Ein Urteil wird zur Beobachtung: Es rückt die Seelen beider
 Seiten aufeinander zu, so stark, wie die **Kopplungsstärke des Beobachters** κ es sagt. Das ist
-gebaut und in der Voreinstellung aus (siehe „Seele und Kopplungsstärke (Schritt 2)“); der vorab
-festgelegte Vergleich folgt nach einem Pilot.
+gebaut und in der Voreinstellung aus (siehe „Seele und Kopplungsstärke (Schritt 2)“). Sein Pilot
+fand keine Wirkung auf die Bestehenszeit, deshalb entfällt der gezählte Vergleich; als Nächstes
+kommt ein Seelen-Modell, das früher wirkt.
 
 Einen bebilderten Überblick gibt der [Atlas](docs/atlas/index.html), eine Seite auf
 Deutsch und Englisch mit Diagrammen, einem Speckle-Simulator und dem Ergebnis von Schritt 1.
@@ -87,6 +88,11 @@ Stand: 2026-11-02.
   ([ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md),
   [docs/SCHRITT2_SEELE.md](docs/SCHRITT2_SEELE.md)); siehe „Seele und Kopplungsstärke
   (Schritt 2)“. Ohne `--soul` schreibt jeder Lauf dieselben Bytes wie zuvor.
+- **Schritt 2, Pilot (Ticket 11, PR #50).** 60 Läufe auf den Pilot-Seeds 901 bis 912. Die
+  Seele ändert Ergebnisse selten und meist erst nach der Bestehenszeit: S gegen V 4:4 bei 4
+  Gleichständen, S gegen K 3:3 bei 6 ([Bericht](docs/pilot-step2/README.md), Englisch). Der
+  gezählte Vergleich entfällt deshalb (Tickets 10 und 13).
+- **Begriffe von Schritt 2 (PR #49).** Die neuen Begriffe von Schritt 2 stehen in `CONTEXT.md`.
 - **Echte Sprachmodelle (PR #33).** Das eigene Paket `backend-ollama` mit dem Programm
   `brut-breed-ollama`, siehe „Echte Modelle über Ollama“. Die ersten drei Läufe auf der H200
   fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -96,16 +102,13 @@ Stand: 2026-11-02.
 
 **Im Bau**
 
-- **Begriffe von Schritt 2.** Die neuen Begriffe kommen in einem kleinen eigenen Pull-Request
-  nach `CONTEXT.md`, nie in einem Code-Pull-Request (Q53).
+- **Ein Seelen-Modell, das wirkt.** Die Suche nach einem Seelen-Modell, das Ergebnisse früh und
+  oft ändert, sodass seine Wirkung messbar wird. Sein Entwurf kommt in einem eigenen Pull-Request.
 
 **Geplant**
 
 - **Zucht auf ARC-Rastern.** Ein Lauf (`brut run`), welcher CNNs auf den ARC-Rasteraufgaben
   züchtet; heute trainiert und bewertet `brut arc-grid` gegebene Genome.
-- **Schritt 2, Vergleich.** Pilot (Ticket 11), Vorab-Registrierung (Ticket 10) und gezählte
-  Läufe (Ticket 13). Der Pilot kommt zuerst: Er legt die offenen Zahlen der
-  Vorab-Registrierung fest.
 - **Sprachmodelle nutzen CNNs (Entwurf geschrieben, Pull-Request folgt).** F1: ein CNN als
   Worker in einer Kaskade. F2: ein Sprachmodell als Architekt, der Baupläne für CNNs
   vorschlägt. F3: ein CNN als Werkzeug, welches das Sprachmodell aufruft, mit höchstens 3
@@ -1218,7 +1221,8 @@ Fassung:
 
 ## Seele und Kopplungsstärke (Schritt 2)
 
-Stand: gebaut und in der Voreinstellung aus; der Vergleich folgt. Beschrieben in
+Stand: gebaut und in der Voreinstellung aus; sein Pilot fand keine Wirkung, deshalb entfällt der
+gezählte Vergleich (PR #50). Beschrieben in
 [docs/SCHRITT2_SEELE.md](docs/SCHRITT2_SEELE.md) und
 [ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md).
 Spezifikation: [.scratch/seele-und-kappa/spec.md](.scratch/seele-und-kappa/spec.md), mit den
@@ -1239,7 +1243,7 @@ eine neue Seele), und nach ihrer ersten Aufgabe prägen die Eltern sie (Erziehun
 simulierten Modelle lesen die Phasen nur dort, wo sie sonst die erste von gleich guten Antworten
 nähmen oder eine Münze würfen; Kosten, Noten und die Kalibrierung von Schritt 1 bleiben.
 
-`--soul s|v|k` setzt einen der drei Arme des kommenden Vergleichs: S, die Seele; V, dieselbe
+`--soul s|v|k` setzt einen der drei Arme des Vergleichs im Pilot: S, die Seele; V, dieselbe
 Seele nur als Vorzeichen gelesen, die reellwertige Kontrolle; K, die Seele mit κ fest bei 0.
 Ohne `--soul` hat ein Lauf keine Seele und schreibt dieselben Bytes wie vor Schritt 2. Ein
 nachrechenbarer Lauf auf dem Pilot-Seed 901:
@@ -1267,8 +1271,7 @@ brut-breed: 2046 events, hash chain intact, head e38339538f19d85fccd1d1a7a1c3a04
 ```
 
 Die Zahlen der Voreinstellungen (κ der Startprogramme 0.2, sein Schritt 0.02, ein Phasenschritt
-von 512 Einheiten, θ = 1) sind Platzhalter, bis der Pilot sie festlegt; dann ändert sich auch
-diese Zeile. Bei einem fertigen Lauf mit Seelen, auf Schaltungen wie auf Gittern, bindet
+von 512 Einheiten, θ = 1) sind die Platzhalter, die der Pilot beibehielt. Bei einem fertigen Lauf mit Seelen, auf Schaltungen wie auf Gittern, bindet
 `--verify` zudem die Seelen-Datensätze und die aktuellen Seelen jedes Mitglieds an das
 Protokoll. Feinere Einstellungen kommen als Objekt `soul` über `--config`; `--soul` daneben ist
 ein Bedienfehler, und ein Fortsetzen lehnt `--soul` ab. Die Pilot-Seeds 901 bis 923 zählen nie.
