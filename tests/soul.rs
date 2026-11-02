@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -420,6 +421,144 @@ fn a_souled_run_does_not_depend_on_threads() {
 
     assert!(complex > 0, "no complex vote");
     assert_eq!(one, at("4"));
+}
+
+/// The Workers the `souls` events of a log moved, by member id and Worker index.
+fn moved_workers(events: &[serde_json::Value]) -> BTreeSet<(String, u64)> {
+    events
+        .iter()
+        .filter(|e| e["kind"] == "souls")
+        .flat_map(|e| e["changed"].as_array().expect("changed").clone())
+        .map(|c| {
+            (
+                c["member"].as_str().expect("member").to_string(),
+                c["worker"].as_u64().expect("worker"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn souls_do_not_depend_on_threads() {
+    let at = |threads: &str| {
+        let dir = fresh(&format!("souls-threads-{threads}"));
+        let config = souled_config_file(&dir);
+        let run = dir.join("run");
+        let out = Command::new(BREED)
+            .args(["--out", run.to_str().expect("utf-8 path")])
+            .args(["--config", config.to_str().expect("utf-8 path")])
+            .args(["--domain", "grid", "--generations", "3"])
+            .args(["--children", "6", "--search", "12", "--select", "12"])
+            .env("RAYON_NUM_THREADS", threads)
+            .output()
+            .expect("run brut-breed");
+
+        assert!(out.status.success(), "{threads} threads: {}", stderr(&out));
+
+        let events = logged_events(&run);
+
+        (
+            ["events.jsonl", "snapshot.json"].map(|name| {
+                std::fs::read(run.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+            }),
+            events,
+        )
+    };
+    let (one, events) = at("1");
+
+    // One `souls` event per committed generation, and the Observations moved Souls.
+    assert_eq!(events.iter().filter(|e| e["kind"] == "souls").count(), 4);
+    assert!(!moved_workers(&events).is_empty());
+    assert_eq!(one, at("4").0);
+}
+
+#[test]
+fn verify_finds_a_changed_soul() {
+    let (run, out) = souled_run(&fresh("verify-soul"), "circuits");
+    let dir = run.to_str().expect("utf-8 path");
+
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    let verified = breed(&["--out", dir, "--verify"]);
+
+    assert!(verified.status.success(), "{}", stderr(&verified));
+
+    // One changed phase in a current Soul of the checkpoint: of a Worker the `souls` events
+    // moved, and of one they never moved, whose current Soul is its birth Soul.
+    let path = run.join("snapshot.json");
+    let original = std::fs::read_to_string(&path).expect("snapshot");
+    let checkpoint: serde_json::Value = serde_json::from_str(&original).expect("json");
+    let moved = &moved_workers(&logged_events(&run));
+    let archive = checkpoint["snapshot"]["archive"]
+        .as_array()
+        .expect("archive");
+    let workers: Vec<(usize, u64, bool)> = archive
+        .iter()
+        .enumerate()
+        .flat_map(|(i, m)| {
+            let id = m["id"].as_str().expect("id").to_string();
+            let n = m["soul_now"].as_array().expect("current Souls").len() as u64;
+
+            (0..n).map(move |k| (i, k, moved.contains(&(id.clone(), k))))
+        })
+        .collect();
+    let picks: Vec<(usize, u64)> = [true, false]
+        .iter()
+        .filter_map(|&was_moved| {
+            workers
+                .iter()
+                .find(|w| w.2 == was_moved)
+                .map(|&(i, k, _)| (i, k))
+        })
+        .collect();
+
+    assert_eq!(picks.len(), 2, "a moved and an unmoved Worker");
+
+    for (i, k) in picks {
+        let mut tampered = checkpoint.clone();
+        let phase = &mut tampered["snapshot"]["archive"][i]["soul_now"][k as usize][0];
+        let changed = (phase.as_u64().expect("a phase") + 1) % 65536;
+
+        *phase = serde_json::json!(changed);
+        std::fs::write(&path, serde_json::to_string(&tampered).expect("json")).expect("write");
+
+        let refused = breed(&["--out", dir, "--verify"]);
+
+        assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+        assert!(
+            stderr(&refused).contains("integrity:") && stderr(&refused).contains("current Soul"),
+            "{}",
+            stderr(&refused)
+        );
+    }
+
+    std::fs::write(&path, original).expect("restore");
+
+    assert!(breed(&["--out", dir, "--verify"]).status.success());
+}
+
+#[test]
+fn the_backend_contract_is_v3() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/STAGE2_BACKEND_CONTRACT.md");
+    let contract = std::fs::read_to_string(path).expect("contract");
+    let flat = contract.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    assert!(flat.contains("Version: contract-v3,"), "{flat}");
+
+    for needle in [
+        "phases: Option<Vec<u16>>",
+        "soul_decided: bool",
+        "fn reads_phases(&self) -> bool { false }",
+        "`GenRequest::phases`",
+        "serde default `None` and is left out of the JSON when `None`",
+        "never in a peer judgment",
+        "only for a backend whose `reads_phases()` is true",
+        "`GenResponse::soul_decided`",
+        "serde default `false` and is left out of the JSON when false",
+        "`ModelBackend::reads_phases()` is false by default",
+    ] {
+        assert!(flat.contains(needle), "{needle}");
+    }
 }
 
 /// The 60-generation Run of pilot seed 101 in arm A of step 1, run as the pilot ran it. A

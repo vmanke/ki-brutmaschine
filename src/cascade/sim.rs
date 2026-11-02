@@ -19,7 +19,16 @@
 //!    names that check), else apply the first fitting hypothesis, else pass the latest
 //!    previous answer through, else guess with the first hypothesis.
 //! 5. Judge: pick the one candidate a fitting hypothesis explains, else flip a coin.
+//!
+//! With phases on the request (step 2, a Run with Souls), the judge also knows which
+//! families explain each candidate, each family once. When both are explained, the coin
+//! still falls, but the candidate whose families give the larger |Σ e^(iφ)|² wins; equal
+//! values keep the coin. The reply then says whether the phases decided (`soul_decided`).
+//! The solver never reads phases.
 #![forbid(unsafe_code)]
+
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -31,6 +40,7 @@ use crate::cascade::puzzle::{
     Geo, Grid, Pair, ParsedPrompt, Rule, SELF_CHECK_TEXT, Verdict, apply, apply_geo,
     fit_colour_map, parse_prompt, render_answer, render_verdict,
 };
+use crate::cascade::soul::intensity;
 use crate::util::{Result, derive_seed};
 
 /// The reply to a prompt that does not follow the puzzle protocol.
@@ -78,6 +88,14 @@ impl Family {
             Family::Gravity => &[Geo::GravityDown],
             Family::Colour | Family::Compose | Family::Previous => &[],
         }
+    }
+
+    /// The family's place in `FAMILIES`: its phase in a Soul on grid puzzles (step 2).
+    fn index(self) -> usize {
+        FAMILIES
+            .iter()
+            .position(|&(family, _)| family == self)
+            .unwrap_or(FAMILIES.len())
     }
 
     /// The family's name, as `family_names` lists it.
@@ -183,6 +201,20 @@ fn hypotheses(known: &[Family]) -> Vec<Hypothesis> {
     }
 
     out
+}
+
+/// The family whose knowledge gives the hypothesis `h` in `hypotheses`: the family of its
+/// geometric step, Colour for the colour map alone, Compose for a step with a map. The
+/// Identity a prompt without families falls back to has none.
+fn family_of(h: Hypothesis) -> Option<Family> {
+    match (h.geo, h.colour) {
+        (Geo::Identity, true) => Some(Family::Colour),
+        (_, true) => Some(Family::Compose),
+        (geo, false) => FAMILIES
+            .iter()
+            .map(|&(family, _)| family)
+            .find(|family| family.geos().contains(&geo)),
+    }
 }
 
 /// What testing one hypothesis on the checked examples showed.
@@ -339,21 +371,38 @@ fn solve(
 
 /// The judge's verdict: the one candidate some fitting hypothesis explains, else a coin
 /// flip (when both or neither are explained).
+///
+/// With `phases` (step 2, spec 11.3) [Q72 a], each candidate also gets the set of families
+/// whose hypotheses, among those tested so far, explain it, each family once. When both
+/// are explained, the candidate whose families give the larger intensity |Σ_f e^(iφ_f)|²
+/// wins, and equal intensities go to the coin. The coin is drawn where it is drawn without
+/// phases, also when the phases decide, so the random stream stays as it is, and nothing
+/// more is tested. Returns the verdict and the verdict the same call gives without phases.
 fn judge(
     test: &Grid,
     (a, b): (&Grid, &Grid),
     tries: &[Hypothesis],
     thinker: &mut Thinker<'_>,
     rng: &mut ChaCha8Rng,
-) -> Verdict {
+    phases: Option<&[u16]>,
+) -> (Verdict, Verdict) {
     let (mut explains_a, mut explains_b) = (false, false);
+    let (mut families_a, mut families_b) = (BTreeSet::new(), BTreeSet::new());
 
     for &h in tries {
         if let Outcome::Fits(rule) = thinker.outcome(h) {
             let predicted = apply(&rule, test);
+            let family = family_of(h).map(Family::index);
 
-            explains_a |= predicted == *a;
-            explains_b |= predicted == *b;
+            if predicted == *a {
+                explains_a = true;
+                families_a.extend(family);
+            }
+
+            if predicted == *b {
+                explains_b = true;
+                families_b.extend(family);
+            }
         }
 
         if explains_a && explains_b {
@@ -362,10 +411,24 @@ fn judge(
     }
 
     match (explains_a, explains_b) {
-        (true, false) => Verdict::A,
-        (false, true) => Verdict::B,
-        _ if rng.random_bool(0.5) => Verdict::A,
-        _ => Verdict::B,
+        (true, false) => (Verdict::A, Verdict::A),
+        (false, true) => (Verdict::B, Verdict::B),
+        (both, _) => {
+            let coin = if rng.random_bool(0.5) {
+                Verdict::A
+            } else {
+                Verdict::B
+            };
+            let by_phase = phases.filter(|_| both).and_then(|p| {
+                match intensity(p, &families_a).total_cmp(&intensity(p, &families_b)) {
+                    Ordering::Greater => Some(Verdict::A),
+                    Ordering::Less => Some(Verdict::B),
+                    Ordering::Equal => None,
+                }
+            });
+
+            (by_phase.unwrap_or(coin), coin)
+        }
     }
 }
 
@@ -465,6 +528,7 @@ impl SimModel {
             text,
             stop_reason: stop,
             backend: self.tag.clone(),
+            soul_decided: false,
         }
     }
 }
@@ -498,21 +562,40 @@ impl ModelBackend for SimModel {
         };
         let mut thinker = Thinker::new(checked, req.think_tokens, self.test_cost);
 
-        let (text, stop) = match &task.candidates {
+        let phases = req.phases.as_deref();
+        let (text, stop, decided) = match &task.candidates {
             Some((a, b)) => {
-                let verdict = judge(&task.test_input, (a, b), &tries, &mut thinker, &mut rng);
+                let (verdict, plain) = judge(
+                    &task.test_input,
+                    (a, b),
+                    &tries,
+                    &mut thinker,
+                    &mut rng,
+                    phases,
+                );
+                let reply = word_reply(render_verdict(verdict), req.max_tokens);
+                // The phases decided when the reply differs from the one without them.
+                let decided = reply != word_reply(render_verdict(plain), req.max_tokens);
 
-                word_reply(render_verdict(verdict), req.max_tokens)
+                (reply.0, reply.1, decided)
             }
             None => {
                 let verify = known.contains(&Family::Previous);
                 let answer = solve(&task, verify, &tries, &mut thinker);
+                let (text, stop) = answer_reply(&answer, req.max_tokens);
 
-                answer_reply(&answer, req.max_tokens)
+                (text, stop, false)
             }
         };
 
-        Ok(self.response(text, stop, prompt_tokens, thinker.used))
+        Ok(GenResponse {
+            soul_decided: decided,
+            ..self.response(text, stop, prompt_tokens, thinker.used)
+        })
+    }
+
+    fn reads_phases(&self) -> bool {
+        true
     }
 }
 
@@ -606,6 +689,7 @@ mod tests {
             temperature: 0.0,
             seed: 1,
             think_tokens,
+            phases: None,
         }
     }
 
@@ -946,6 +1030,220 @@ mod tests {
             .count();
 
         solved as f64 / panel.len() as f64
+    }
+
+    /// A puzzle whose one example is a 1 x 1 grid, so every hypothesis fits it, and whose
+    /// test input is symmetric under a half turn: both mirrors and both quarter turns give
+    /// the same grid, gravity another.
+    fn symmetric_puzzle() -> Puzzle {
+        let one = grid(&[&[1]]);
+        let test_input = grid(&[&[1, 0], &[0, 1]]);
+
+        Puzzle {
+            id: "symmetric".to_string(),
+            rule: Rule {
+                geo: Geo::Identity,
+                colours: None,
+            },
+            train: vec![Pair {
+                input: one.clone(),
+                output: one,
+            }],
+            test_output: test_input.clone(),
+            test_input,
+        }
+    }
+
+    /// The large model's reply to the judge request on `p` with the candidates (a, b).
+    fn judged(
+        system: &str,
+        p: &Puzzle,
+        (a, b): (&Grid, &Grid),
+        seed: u64,
+        phases: Option<&[u16]>,
+    ) -> GenResponse {
+        let req = GenRequest {
+            seed,
+            phases: phases.map(<[u16]>::to_vec),
+            ..request(system, render_judge_prompt(p, a, b), 1024)
+        };
+
+        SimModel::large().generate(&req).expect("generate")
+    }
+
+    /// Names Mirror, Rotate and Gravity: the mirrors and the quarter turns explain one
+    /// candidate of `symmetric_puzzle`, gravity the other.
+    const THREE: &str = "Look for mirror images, rotations and gravity.";
+
+    /// Names Mirror and Gravity: two mirrors explain one candidate, gravity the other.
+    const TWO: &str = "Look for mirror images and gravity.";
+
+    /// Phases with Mirror and Rotate in phase, and with them half a turn apart.
+    fn aligned() -> Vec<u16> {
+        vec![0; 7]
+    }
+
+    fn opposed() -> Vec<u16> {
+        let mut p = vec![0; 7];
+
+        p[1] = 32768;
+        p
+    }
+
+    #[test]
+    fn the_grid_judge_breaks_its_coin_by_phase() {
+        use Family::{Gravity, Mirror, Rotate};
+
+        let p = symmetric_puzzle();
+        let x = apply_geo(Geo::FlipH, &p.test_input);
+        let y = apply_geo(Geo::GravityDown, &p.test_input);
+
+        for geo in [Geo::FlipH, Geo::FlipV, Geo::Rot90, Geo::Rot270] {
+            assert_eq!(apply_geo(geo, &p.test_input), x, "{geo:?}");
+        }
+
+        assert_ne!(x, y);
+        assert_eq!(knowledge(THREE), [Mirror, Rotate, Gravity]);
+        assert_eq!(knowledge(TWO), [Mirror, Gravity]);
+
+        let verdict = |r: &GenResponse| parse_verdict(&r.text).expect("a verdict");
+        let mut coins = HashSet::new();
+
+        for seed in 0..32 {
+            for (pair, x_side) in [((&x, &y), Verdict::A), ((&y, &x), Verdict::B)] {
+                let y_side = if x_side == Verdict::A {
+                    Verdict::B
+                } else {
+                    Verdict::A
+                };
+                let plain = judged(THREE, &p, pair, seed, None);
+                let in_phase = judged(THREE, &p, pair, seed, Some(&aligned()));
+                let against = judged(THREE, &p, pair, seed, Some(&opposed()));
+
+                // Mirror and Rotate explain x, Gravity y: in phase x weighs 4 against 1,
+                // half a turn apart 0 against 1, whatever the coin says.
+                assert_eq!(verdict(&in_phase), x_side, "seed {seed}");
+                assert_eq!(verdict(&against), y_side, "seed {seed}");
+                coins.insert(verdict(&plain) == x_side);
+
+                // Nothing more is tested, so the thinking stays the same.
+                assert_eq!(in_phase.completion_tokens, plain.completion_tokens);
+                assert_eq!(against.completion_tokens, plain.completion_tokens);
+
+                // Two mirrors explain x, gravity y: one family each, so the seeded coin
+                // decides as without phases, whatever the phases.
+                let coin = verdict(&judged(TWO, &p, pair, seed, None));
+
+                for phases in [aligned(), opposed(), vec![9000, 1, 2, 40000, 4, 5, 6]] {
+                    assert_eq!(verdict(&judged(TWO, &p, pair, seed, Some(&phases))), coin);
+                }
+            }
+        }
+
+        assert_eq!(coins.len(), 2, "without phases the coin decides");
+
+        // The coin is drawn as today, so the stream after the verdict is the same with and
+        // without phases.
+        let tries = hypotheses(&knowledge(THREE));
+        let after = |phases: Option<&[u16]>| {
+            let mut rng = ChaCha8Rng::seed_from_u64(5);
+            let mut thinker = Thinker::new(&p.train, 1024, 32);
+            let (v, _) = judge(
+                &p.test_input,
+                (&x, &y),
+                &tries,
+                &mut thinker,
+                &mut rng,
+                phases,
+            );
+
+            (v, rng.get_word_pos(), rng.random::<u64>(), thinker.used)
+        };
+        let plain = after(None);
+        let in_phase = after(Some(&aligned()));
+        let against = after(Some(&opposed()));
+
+        assert_eq!((in_phase.0, against.0), (Verdict::A, Verdict::B));
+        assert_eq!(
+            (in_phase.1, in_phase.2, in_phase.3),
+            (plain.1, plain.2, plain.3)
+        );
+        assert_eq!(
+            (against.1, against.2, against.3),
+            (plain.1, plain.2, plain.3)
+        );
+    }
+
+    #[test]
+    fn soul_decided_is_reported() {
+        let p = symmetric_puzzle();
+        let x = apply_geo(Geo::FlipH, &p.test_input);
+        let y = apply_geo(Geo::GravityDown, &p.test_input);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let mut seen = HashSet::new();
+        // The flag is set exactly when the reply differs from the reply without phases.
+        let mut check = |with: &GenResponse, without: &GenResponse| {
+            assert!(!without.soul_decided);
+            assert_eq!(with.soul_decided, with.text != without.text, "{with:?}");
+            seen.insert(with.soul_decided);
+        };
+
+        for seed in 0..32 {
+            for system in [THREE, TWO] {
+                for pair in [(&x, &y), (&y, &x)] {
+                    let without = judged(system, &p, pair, seed, None);
+
+                    for phases in [aligned(), opposed()] {
+                        check(&judged(system, &p, pair, seed, Some(&phases)), &without);
+                    }
+                }
+            }
+        }
+
+        // Random judge and solve requests with random phases: the solver never reads them.
+        for (i, puzzle) in generate_panel(19, 60).iter().enumerate() {
+            let seed = i as u64;
+            let phases: Vec<u16> = (0..7).map(|_| rng.random()).collect();
+            let wrong = apply_geo(Geo::Rot90, &puzzle.test_output);
+            let pair = (&puzzle.test_output, &wrong);
+            let without = judged(STRONG, puzzle, pair, seed, None);
+
+            check(&judged(STRONG, puzzle, pair, seed, Some(&phases)), &without);
+
+            let solve = |phases: Option<Vec<u16>>| {
+                let req = GenRequest {
+                    seed,
+                    phases,
+                    ..request(STRONG, render_solve_prompt(puzzle, &[]), 1024)
+                };
+
+                SimModel::large().generate(&req).expect("generate")
+            };
+            let plain = solve(None);
+            let souled = solve(Some(phases));
+
+            assert_eq!(plain, souled, "the solver is unchanged");
+            assert!(!souled.soul_decided);
+        }
+
+        assert_eq!(seen.len(), 2, "both values occur");
+
+        // Cut to one word, both verdicts read VERDICT: the phases change the verdict but not
+        // the reply, so they did not decide it.
+        let cut = |phases: Option<&[u16]>| {
+            let req = GenRequest {
+                max_tokens: 1,
+                phases: phases.map(<[u16]>::to_vec),
+                ..request(THREE, render_judge_prompt(&p, &x, &y), 1024)
+            };
+
+            SimModel::large().generate(&req).expect("generate")
+        };
+        let flipped = cut(Some(&opposed()));
+
+        assert_eq!(flipped.text, "VERDICT");
+        assert_eq!(flipped.text, cut(None).text);
+        assert!(!flipped.soul_decided);
     }
 
     #[test]

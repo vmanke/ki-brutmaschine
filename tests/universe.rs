@@ -104,6 +104,7 @@ impl Mutator for Echo {
             completion_tokens: 50,
             stop_reason: StopReason::Stop,
             backend: "echo".to_string(),
+            soul_decided: false,
         })
     }
 }
@@ -169,7 +170,8 @@ fn digest(events: &[Event]) -> String {
                 "finalist id={} seed={} select={}/{}",
                 f.id, f.is_seed, f.select_solved, f.select_puzzles
             ),
-            Event::State(_) => continue,
+            // Runs without Souls write no `souls` event (step 2).
+            Event::State(_) | Event::Souls { .. } => continue,
         };
 
         out.push_str(&line);

@@ -20,7 +20,14 @@
 //! newborn Worker its birth Soul and Coupling strength from the Workers it was built from.
 //! The genetic operators see genes only, and novelty and the seeds of calls go by gene ids.
 //! A Stage vote then tallies amplitudes: the verdicts of each judge weigh with its vote
-//! phasor, and the answer with the largest squared magnitude goes on.
+//! phasor, and the answer with the largest squared magnitude goes on. The solve and vote
+//! requests of a Cascade's own evaluation carry its Workers' phases to a backend that reads
+//! them, a simulated model; a peer request never does. Judging is an Observation: the
+//! judgments of a newborn's Stage votes and of the peer round are recorded, and at the
+//! commit they pull the current Souls of both sides together, one after another in log
+//! order, as strongly as the observer's Coupling strength says. A `souls` event after the
+//! generation event lists the Workers whose current Soul changed. The select phase observes
+//! nothing.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -40,7 +47,7 @@ use crate::cascade::observe::{ObserveInput, UniverseState, observe};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::soul::{
     ArrayVote, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, array_vote, count_winner,
-    souletics, vote_phasor,
+    observation, readout_phases, souletics, vote_phasor,
 };
 use crate::cascade::variation::{
     Op, Sources, llm_crossover_request_with, llm_mutate_request_with, mutate_sourced,
@@ -142,6 +149,7 @@ pub fn worker_request_with(w: &Worker, prompt: String, seed: u64, check_text: &s
         temperature: w.traits.temperature,
         seed,
         think_tokens: w.traits.think_tokens,
+        phases: None,
     }
 }
 
@@ -149,12 +157,17 @@ pub fn worker_request_with(w: &Worker, prompt: String, seed: u64, check_text: &s
 /// and pays its model's fixed price, also when the backend fails, since a failed request
 /// may already have used compute; tokens count only for an answer. A model without a
 /// backend is not attempted and gives None. `check_text` is the domain's self-check text.
+///
+/// `phases` are the Worker's phases with the readout applied, in a Run with Souls whose
+/// simulator setting is on (step 2, spec 11.1). The request carries them only when the
+/// backend reads phases, so a real model never gets them.
 fn call_worker(
     ctx: Ctx,
     w: &Worker,
     prompt: String,
     seed: u64,
     check_text: &str,
+    phases: Option<&[u16]>,
     usage: &mut Usage,
 ) -> Option<GenResponse> {
     let backend = ctx.pool.get(&w.model).ok()?;
@@ -167,7 +180,12 @@ fn call_worker(
     usage.calls += 1;
     usage.model_cost += cost;
 
-    let req = worker_request_with(w, prompt, seed, check_text);
+    let mut req = worker_request_with(w, prompt, seed, check_text);
+
+    if backend.reads_phases() {
+        req.phases = phases.map(<[u16]>::to_vec);
+    }
+
     let resp = backend.generate(&req).ok()?;
 
     usage.prompt_tokens += u64::from(resp.prompt_tokens);
@@ -198,22 +216,42 @@ fn judge_in<D: Domain>(
     seed: u64,
     usage: &mut Usage,
 ) -> Judgment {
+    judge_phased(ctx, domain, w, task, (a, b), seed, None, usage).0
+}
+
+/// `judge_in` with the judge's phases on the request (step 2, spec 11.1), as a Stage vote
+/// sends it. Also returns whether the phases decided the reply (`soul_decided`).
+#[allow(clippy::too_many_arguments)]
+fn judge_phased<D: Domain>(
+    ctx: Ctx,
+    domain: &D,
+    w: &Worker,
+    task: &D::Task,
+    (a, b): (&D::Answer, &D::Answer),
+    seed: u64,
+    phases: Option<&[u16]>,
+    usage: &mut Usage,
+) -> (Judgment, bool) {
     let swap = ChaCha8Rng::seed_from_u64(derive_seed(seed, "order")).random_bool(0.5);
     let (first, second) = if swap { (b, a) } else { (a, b) };
     let prompt = domain.judge_prompt(task, first, second);
-    let Some(resp) = call_worker(ctx, w, prompt, seed, domain.self_check_text(), usage) else {
-        return Judgment::NoReply;
+    let check = domain.self_check_text();
+    let Some(resp) = call_worker(ctx, w, prompt, seed, check, phases, usage) else {
+        return (Judgment::NoReply, false);
     };
+    let decided = resp.soul_decided;
 
     if resp.stop_reason != StopReason::Stop {
-        return Judgment::NoVerdict;
+        return (Judgment::NoVerdict, decided);
     }
 
-    match parse_verdict(&resp.text) {
+    let judgment = match parse_verdict(&resp.text) {
         Some(Verdict::A) => Judgment::Verdict(!swap),
         Some(Verdict::B) => Judgment::Verdict(swap),
         None => Judgment::NoVerdict,
-    }
+    };
+
+    (judgment, decided)
 }
 
 /// Upper bound on calls one stage of `width` Workers makes on one puzzle: every Worker
@@ -242,8 +280,13 @@ pub struct CascadeRun<A = Grid> {
     /// The authors of the answer (step 2, spec 7.7): the Workers of the Stage that chose
     /// it whose own answer it was, by their index over the Stages. Empty without an answer.
     pub authors: Vec<usize>,
-    /// The Stage votes tallied by amplitudes, in a Run with Souls (spec 7.7).
+    /// The Stage votes tallied by amplitudes, in a Run with Souls (spec 7.7), and the
+    /// replies whose phases decided a simulated model's choice.
     pub votes: VoteTally,
+    /// The Observations of the Stage votes (step 2, spec 8.2), in log order: (observer,
+    /// observed), each a Worker index over the Stages. Empty without Souls, and when the
+    /// votes observe nothing.
+    pub observed: Vec<(usize, usize)>,
 }
 
 /// What the Souls give one run of a Cascade on one task, frozen for the generation (step 2,
@@ -256,6 +299,12 @@ pub struct RunSouls<'a> {
     pub readout: Readout,
     /// The complex Stage vote (spec 12.2); off, a vote counts its verdicts as today.
     pub vote: bool,
+    /// The phases reach the simulated models (spec 11.1, 12.2): every solve and Stage-vote
+    /// request carries its Worker's phases, readout applied, to a backend that reads them.
+    pub simulator: bool,
+    /// The judgments of the Stage votes are Observations (spec 8.2): on the search panel
+    /// with `observe_vote` on, never on the select panel.
+    pub observe: bool,
 }
 
 /// The Stage votes a Cascade tallied by amplitudes (step 2, spec 7.7): its votes, those
@@ -267,6 +316,9 @@ pub struct VoteTally {
     pub flipped: u64,
     pub tied: u64,
     pub coherence_sum: f64,
+    /// Replies in which the phases decided a simulated model's choice (spec 7.7, 11.1).
+    #[serde(default)]
+    pub sim_decided: u64,
 }
 
 impl VoteTally {
@@ -284,6 +336,7 @@ impl VoteTally {
         self.flipped += other.flipped;
         self.tied += other.tied;
         self.coherence_sum += other.coherence_sum;
+        self.sim_decided += other.sim_decided;
     }
 }
 
@@ -316,6 +369,12 @@ pub fn run_cascade_in<D: Domain>(
 /// vote on, a Stage vote tallies amplitudes: the verdicts of each judge weigh with its vote
 /// phasor, and the answer with the largest Π goes on (`soul::array_vote`). The run names the
 /// authors of its answer and tallies its complex votes. None runs as without Souls.
+///
+/// With the simulator setting on, every solve and Stage-vote request carries its Worker's
+/// phases, readout applied, to a backend that reads them (spec 11.1); the tally counts the
+/// replies whose phases decided. With `observe` on, the run records the Observations of its
+/// Stage votes (spec 8.2): a judgment that got a reply is an Observation by the judge of
+/// every author of both answers other than itself.
 pub fn run_cascade_with<D: Domain>(
     domain: &D,
     pool: &ModelPool,
@@ -331,6 +390,15 @@ pub fn run_cascade_with<D: Domain>(
     let mut chosen: Vec<D::Answer> = Vec::new();
     let mut authors: Vec<usize> = Vec::new();
     let mut votes = VoteTally::default();
+    let mut observed = Vec::new();
+    // The phases each Worker's requests carry, readout applied (spec 11.1).
+    let phases: Vec<Option<Vec<u16>>> = (0..c.worker_count())
+        .map(|w| {
+            souls
+                .filter(|r| r.simulator)
+                .and_then(|r| Some(readout_phases(r.souls.get(w)?, r.readout)))
+        })
+        .collect();
     // The index of the Stage's first Worker over all Stages.
     let mut first = 0;
 
@@ -342,7 +410,11 @@ pub fn run_cascade_with<D: Domain>(
 
         for (j, w) in stage.workers.iter().enumerate() {
             let s = derive_seed(seed, &format!("stage{k}/worker{j}"));
-            let resp = call_worker(ctx, w, prompt.clone(), s, check, &mut usage);
+            let own = phases[first + j].as_deref();
+            let resp = call_worker(ctx, w, prompt.clone(), s, check, own, &mut usage);
+
+            votes.sim_decided += u64::from(resp.as_ref().is_some_and(|r| r.soul_decided));
+
             let answer = resp
                 .filter(|r| r.stop_reason == StopReason::Stop)
                 .and_then(|r| domain.parse_answer(task, &r.text));
@@ -369,11 +441,16 @@ pub fn run_cascade_with<D: Domain>(
                 })
                 .collect()
         });
+        let with = StageSouls {
+            phasors: phasors.as_deref(),
+            phases: &phases[first..first + stage.workers.len()],
+            observe: souls.filter(|r| r.observe).map(|_| (by.as_slice(), first)),
+        };
         let winner = match distinct.len() {
             0 => None,
             1 => Some(0),
             _ => {
-                let (winner, array) = stage_vote(
+                let vote = stage_vote(
                     ctx,
                     domain,
                     &stage.workers,
@@ -381,14 +458,17 @@ pub fn run_cascade_with<D: Domain>(
                     &distinct,
                     derive_seed(seed, &format!("vote{k}")),
                     &mut usage,
-                    phasors.as_deref(),
+                    &with,
                 );
 
-                if let Some(vote) = &array {
-                    votes.count(vote);
+                if let Some(array) = &vote.array {
+                    votes.count(array);
                 }
 
-                Some(winner)
+                votes.sim_decided += vote.decided;
+                observed.extend(vote.observed);
+
+                Some(vote.winner)
             }
         };
 
@@ -407,15 +487,38 @@ pub fn run_cascade_with<D: Domain>(
         usage,
         authors,
         votes,
+        observed,
     }
+}
+
+/// What the Souls give one Stage vote (step 2): the judges' vote phasors (spec 7.2), the
+/// phases each judge's requests carry (spec 11.1), and, when its judgments are
+/// Observations, the authors of each answer and the index of the Stage's first Worker,
+/// both over the Stages (spec 8.2). Without Souls, none of them.
+struct StageSouls<'s> {
+    phasors: Option<&'s [Phasor]>,
+    phases: &'s [Option<Vec<u16>>],
+    observe: Option<(&'s [Vec<usize>], usize)>,
+}
+
+/// What a Stage vote gave: the winner, the vote by amplitudes if it was one, the replies
+/// whose phases decided, and the Observations of its judgments in log order.
+struct VoteOutcome {
+    winner: usize,
+    array: Option<ArrayVote>,
+    decided: u64,
+    observed: Vec<(usize, usize)>,
 }
 
 /// Blind vote among a stage's distinct answers: every Worker judges every pair. Returns
 /// the index of the answer with the most pairwise wins, ties to the lowest index.
 ///
-/// With `phasors`, one per Worker, the same judgments are tallied by amplitudes instead
+/// With phasors, one per Worker, the same judgments are tallied by amplitudes instead
 /// (step 2, spec 7.3 and 7.4): the answer with the largest Π goes on, and the vote comes
-/// back with its Array pattern. The prompts, seeds and calls stay as they are.
+/// back with its Array pattern. The prompts, seeds and calls stay as they are. A judgment
+/// that got a reply, with or without a verdict, is an Observation by its judge of every
+/// author of x and then of y other than itself, when the vote observes (spec 8.2); the
+/// pairs (x, y) and the judges go in order.
 #[allow(clippy::too_many_arguments)]
 fn stage_vote<D: Domain>(
     ctx: Ctx,
@@ -425,26 +528,42 @@ fn stage_vote<D: Domain>(
     answers: &[D::Answer],
     seed: u64,
     usage: &mut Usage,
-    phasors: Option<&[Phasor]>,
-) -> (usize, Option<ArrayVote>) {
+    with: &StageSouls<'_>,
+) -> VoteOutcome {
     // The verdicts of each judge for each answer.
     let mut verdicts = vec![vec![0u32; answers.len()]; workers.len()];
+    let mut decided = 0;
+    let mut observed = Vec::new();
 
     for (x, ax) in answers.iter().enumerate() {
         for (y, ay) in answers.iter().enumerate().skip(x + 1) {
             for (j, w) in workers.iter().enumerate() {
                 let s = derive_seed(seed, &format!("{x}/{y}/{j}"));
+                let phases = with.phases.get(j).and_then(Option::as_deref);
+                let (judgment, by_phase) =
+                    judge_phased(ctx, domain, w, task, (ax, ay), s, phases, usage);
 
-                match judge_in(ctx, domain, w, task, (ax, ay), s, usage) {
+                decided += u64::from(by_phase);
+
+                match judgment {
                     Judgment::Verdict(true) => verdicts[j][x] += 1,
                     Judgment::Verdict(false) => verdicts[j][y] += 1,
                     Judgment::NoReply | Judgment::NoVerdict => {}
+                }
+
+                if judgment != Judgment::NoReply
+                    && let Some((by, first)) = with.observe
+                {
+                    let judge = first + j;
+                    let authors = by.get(x).into_iter().chain(by.get(y)).flatten();
+
+                    observed.extend(authors.filter(|&&t| t != judge).map(|&t| (judge, t)));
                 }
             }
         }
     }
 
-    match phasors {
+    let (winner, array) = match with.phasors {
         Some(p) => {
             let vote = array_vote(&verdicts, p);
 
@@ -457,6 +576,13 @@ fn stage_vote<D: Domain>(
 
             (count_winner(&wins), None)
         }
+    };
+
+    VoteOutcome {
+        winner,
+        array,
+        decided,
+        observed,
     }
 }
 
@@ -618,6 +744,7 @@ impl Mutator for AnswerBook {
             text,
             stop_reason: StopReason::Stop,
             backend: "answer-book".to_string(),
+            soul_decided: false,
         })
     }
 }
@@ -829,6 +956,15 @@ pub struct WorkerRef {
     pub worker: usize,
 }
 
+/// A Worker whose current Soul changed at a commit (step 2, spec 8.5): its member's id,
+/// its index over the member's Stages, and its new phases.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SoulChange {
+    pub member: String,
+    pub worker: usize,
+    pub phases: PhaseState,
+}
+
 /// Where a Worker's birth Soul came from (step 2, spec 9 and 13.2).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoulSource {
@@ -920,6 +1056,12 @@ pub enum Event {
         calls_used: u64,
     },
     Finalist(Finalist),
+    /// The Workers whose current Soul changed at the commit of `generation`, after its
+    /// `Generation` event, in a Run with Souls (step 2, spec 8.5, 13.3).
+    Souls {
+        generation: usize,
+        changed: Vec<SoulChange>,
+    },
     /// The universe observables of a committed generation: the last event of its step.
     State(UniverseState),
 }
@@ -1485,8 +1627,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
         let first_new = archive.len();
         let mut gene_ids = self.gene_ids.clone();
 
+        // The Observations of the newborns' Stage votes, in log order (spec 8.4).
+        let mut vote_observations: Vec<Observation> = Vec::new();
+
         for d in drafts {
             let id = d.cascade.id();
+            let index = archive.len();
             // Calls take their seeds from the genes (spec 15): members with the same genes
             // and other Souls make the same calls.
             let gene_id = self.gene_key(&id, &d.cascade);
@@ -1507,9 +1653,13 @@ impl<'a, D: Domain> Breeder<'a, D> {
             let mut authors = Vec::with_capacity(runs.len());
             let mut votes = VoteTally::default();
 
-            // In panel order, so the sums do not depend on threads.
+            // In panel order, so the sums and the Observations do not depend on threads.
             for r in runs {
                 votes.add(&r.votes);
+                vote_observations.extend(r.observed.iter().map(|&(o, t)| Observation {
+                    observer: (index, o),
+                    observed: (index, t),
+                }));
                 authors.push(r.authors);
                 answers.push(r.answer);
             }
@@ -1585,12 +1735,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
         // their answers differ (it may meet none), and new members are the preferred
         // judges (Q12).
         let new: Vec<usize> = (first_new..archive.len()).collect();
-        let (new_comparisons, peer_usage) = self.peer_round(&archive, &new, g, &mut rng, stop);
+        let (peer, peer_usage) = self.peer_round(&archive, &new, g, &mut rng, stop);
 
         calls += peer_usage.calls;
         generation_usage.add(&peer_usage);
 
-        let Some(new_comparisons) = new_comparisons else {
+        let Some((new_comparisons, peer_observations)) = peer else {
             self.calls = calls;
 
             return Ok((Status::Done("stopped".to_string()), Vec::new()));
@@ -1617,6 +1767,21 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 best_solved: b.solved,
                 archive_size: archive.len(),
                 calls_used: calls,
+            });
+        }
+
+        // The Observations act at the commit, one after another in log order: the newborns'
+        // Stage votes, then the peer judgments in the order of the plan (spec 8.4). The
+        // `souls` event lists the Workers whose current Soul changed (spec 8.5).
+        if self.cfg.soul.is_some() {
+            let changed = apply_observations(
+                &mut archive,
+                vote_observations.iter().chain(&peer_observations),
+            );
+
+            events.push(Event::Souls {
+                generation: g,
+                changed,
             });
         }
 
@@ -1703,10 +1868,11 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
                 let tag = format!("select/{}", self.gene_ids[i]);
                 let tasks: Vec<&D::Task> = missing.iter().map(|&j| &self.select[j]).collect();
-                // A member votes with its current Souls (spec 8.4, 8.6).
+                // A member votes with its current Souls (spec 8.4, 8.6). The select phase
+                // records no Observation, so it changes no Soul (spec 8.2).
                 let m = &self.archive[i];
                 let (runs, usage) =
-                    self.run_panel(&m.cascade, m.soul_now.as_deref(), &tasks, &tag, stop);
+                    self.run_panel(&m.cascade, m.soul_now.as_deref(), &tasks, &tag, false, stop);
                 let mut complete = true;
                 let got = self.select_answers.entry(id.clone()).or_default();
 
@@ -1838,7 +2004,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
     /// The runs of `c` on `panel`, with `souls` as its Workers' Souls in a Run with Souls,
     /// and their usage. The runs are None when `stop` fired before some task; the usage
-    /// still counts every call that was made.
+    /// still counts every call that was made. A newborn's evaluation on the search panel,
+    /// so its Stage votes observe when `observe_vote` is on (spec 8.2).
     fn evaluate(
         &self,
         c: &Cascade,
@@ -1848,7 +2015,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
         stop: &(dyn Fn() -> bool + Sync),
     ) -> (Option<Vec<CascadeRun<D::Answer>>>, Usage) {
         let tasks: Vec<&D::Task> = panel.iter().collect();
-        let (runs, usage) = self.run_panel(c, souls, &tasks, tag, stop);
+        let observe = self.cfg.soul.as_ref().is_some_and(|s| s.observe_vote);
+        let (runs, usage) = self.run_panel(c, souls, &tasks, tag, observe, stop);
 
         (runs.into_iter().collect(), usage)
     }
@@ -1859,13 +2027,15 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// the task id, so the result depends neither on thread count nor on when, or with
     /// which other tasks, the Cascade runs. In a Run with Souls, `souls` holds the Souls
     /// its Workers vote with, frozen for the generation, and each task gives its strengths
-    /// (spec 7.2, 8.4).
+    /// (spec 7.2, 8.4). With `observe`, the runs record the Observations of their Stage
+    /// votes (spec 8.2); the select phase records none.
     fn run_panel(
         &self,
         c: &Cascade,
         souls: Option<&[PhaseState]>,
         panel: &[&D::Task],
         tag: &str,
+        observe: bool,
         stop: &(dyn Fn() -> bool + Sync),
     ) -> (Vec<Option<CascadeRun<D::Answer>>>, Usage) {
         let runs: Vec<Option<CascadeRun<D::Answer>>> = panel
@@ -1885,6 +2055,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                             strengths: &strengths,
                             readout: soul.readout,
                             vote: soul.vote,
+                            simulator: soul.simulator,
+                            observe,
                         };
 
                         run_cascade_with(
@@ -1931,6 +2103,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// skill gets measured; a member whose judgments are never scored keeps the prior
     /// skill of 1/2. The comparisons are None when `stop` fired; the usage still counts
     /// every call that was made.
+    ///
+    /// In a Run with Souls and `observe_peer` on, a judgment that got a reply is an
+    /// Observation by the judge Worker of every author of the first answer and then of the
+    /// second's (step 2, spec 8.2). They come back with the comparisons, in the order of the
+    /// plan. A peer request never carries phases (spec 7.8, 11.1).
+    #[allow(clippy::type_complexity)]
     fn peer_round(
         &self,
         archive: &[Member<D::Answer>],
@@ -1938,7 +2116,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
         g: usize,
         rng: &mut ChaCha8Rng,
         stop: &(dyn Fn() -> bool + Sync),
-    ) -> (Option<Vec<Comparison>>, Usage) {
+    ) -> (Option<(Vec<Comparison>, Vec<Observation>)>, Usage) {
         let kin = Kinship::new(archive);
         let mut plan: Vec<(usize, usize, usize, usize, u64)> = Vec::new();
         let mut assigned = vec![0usize; archive.len()];
@@ -1982,7 +2160,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
             }
         }
 
-        let outcomes: Vec<Option<(Option<Comparison>, Usage)>> = plan
+        let observe = self.cfg.soul.as_ref().is_some_and(|s| s.observe_peer);
+        let outcomes: Vec<Option<PeerOutcome>> = plan
             .par_iter()
             .map(|&(c, o, i, j, seed)| {
                 if stop() {
@@ -1993,13 +2172,16 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 let (Some(Some(a)), Some(Some(b))) =
                     (archive[c].answers.get(i), archive[o].answers.get(i))
                 else {
-                    return Some((None, Usage::default()));
+                    return Some((None, Usage::default(), Vec::new()));
                 };
                 let judge = &archive[j].cascade;
                 let mut usage = Usage::default();
                 let Some(w) = judge.stages.last().and_then(|s| s.workers.first()) else {
-                    return Some((None, usage));
+                    return Some((None, usage, Vec::new()));
                 };
+                // The judge Worker's index over the Stages.
+                let judge_worker =
+                    judge.worker_count() - judge.stages.last().map_or(0, |s| s.workers.len());
                 let ctx = Ctx {
                     pool: self.pool,
                     limits: &self.cfg.limits,
@@ -2017,6 +2199,22 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     judge_correct,
                 };
                 let verdict = judge_in(ctx, &self.domain, w, task, (a, b), seed, &mut usage);
+                // The authors of both answers on this task, first then second (spec 7.7).
+                let observed: Vec<Observation> = match verdict {
+                    Judgment::NoReply => Vec::new(),
+                    _ if !observe => Vec::new(),
+                    _ => [c, o]
+                        .into_iter()
+                        .flat_map(|m| {
+                            let authors = archive[m].authors.as_ref().and_then(|a| a.get(i));
+
+                            authors.into_iter().flatten().map(move |&t| Observation {
+                                observer: (j, judge_worker),
+                                observed: (m, t),
+                            })
+                        })
+                        .collect(),
+                };
                 let comparison = match verdict {
                     Judgment::Verdict(a_won) => {
                         let winner = if a_won { c } else { o };
@@ -2031,25 +2229,27 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     Judgment::NoVerdict | Judgment::NoReply => None,
                 };
 
-                Some((comparison, usage))
+                Some((comparison, usage, observed))
             })
             .collect();
 
         let mut comparisons = Vec::new();
+        let mut observations = Vec::new();
         let mut usage = Usage::default();
         let mut complete = true;
 
         for out in outcomes {
             match out {
-                Some((c, u)) => {
+                Some((c, u, seen)) => {
                     usage.add(&u);
                     comparisons.extend(c);
+                    observations.extend(seen);
                 }
                 None => complete = false,
             }
         }
 
-        (complete.then_some(comparisons), usage)
+        (complete.then_some((comparisons, observations)), usage)
     }
 
     /// Draft the children of generation `g` (g >= 1): first the LLM round's children if
@@ -2309,6 +2509,82 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         best
     }
+}
+
+/// One peer judgment's comparison, if it gives one, its usage, and its Observations.
+type PeerOutcome = (Option<Comparison>, Usage, Vec<Observation>);
+
+/// One Observation (step 2, spec 8.2): the Worker `observer` observes the Worker
+/// `observed`, each named by its member's place in the archive and its index over the
+/// member's Stages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Observation {
+    observer: (usize, usize),
+    observed: (usize, usize),
+}
+
+/// Apply `observations` one after another, in their order, to the current Souls of
+/// `archive` (spec 8.3, 8.4) [Q69 a]: each moves the observed Worker toward the observer by
+/// the observer's Coupling strength, and the observer back by half of that, both from the
+/// Souls before it. Returns every Worker whose current Soul changed, in archive order, with
+/// its new Soul (spec 8.5). An Observation that names a Worker without a current Soul
+/// changes nothing.
+fn apply_observations<'o, A>(
+    archive: &mut [Member<A>],
+    observations: impl IntoIterator<Item = &'o Observation>,
+) -> Vec<SoulChange> {
+    let current = |archive: &[Member<A>], (m, w): (usize, usize)| -> Option<PhaseState> {
+        archive.get(m)?.soul_now.as_ref()?.get(w).cloned()
+    };
+    let mut before: BTreeMap<(usize, usize), PhaseState> = BTreeMap::new();
+
+    for o in observations {
+        // A Worker never observes itself (spec 8.2); this guards the rule.
+        if o.observer == o.observed {
+            continue;
+        }
+
+        let kappa = archive
+            .get(o.observer.0)
+            .and_then(|m| {
+                m.cascade
+                    .stages
+                    .iter()
+                    .flat_map(|s| &s.workers)
+                    .nth(o.observer.1)
+            })
+            .map(|w| w.traits.coupling);
+        let (Some(kappa), Some(p), Some(q)) = (
+            kappa,
+            current(archive, o.observer),
+            current(archive, o.observed),
+        ) else {
+            continue;
+        };
+        let (moved_p, moved_q) = observation(&p, &q, kappa);
+
+        before.entry(o.observer).or_insert(p);
+        before.entry(o.observed).or_insert(q);
+
+        for ((m, w), phases) in [(o.observer, moved_p), (o.observed, moved_q)] {
+            if let Some(now) = archive[m].soul_now.as_mut().and_then(|n| n.get_mut(w)) {
+                *now = PhaseState(phases);
+            }
+        }
+    }
+
+    before
+        .into_iter()
+        .filter_map(|((m, w), old)| {
+            let now = current(archive, (m, w))?;
+
+            (now != old).then(|| SoulChange {
+                member: archive[m].id.clone(),
+                worker: w,
+                phases: now,
+            })
+        })
+        .collect()
 }
 
 /// Children drafted for one generation, or the requests still waiting for answers.
@@ -2650,10 +2926,11 @@ mod tests {
     use crate::backend::StubModel;
     use crate::cascade::circuit::CircuitDomain;
     use crate::cascade::circuit_genes::{CIRCUIT_BRIEF, circuit_pool};
+    use crate::cascade::circuit_text::parse_circuit_prompt;
     use crate::cascade::designer::SimDesigner;
     use crate::cascade::domain::{CircuitConfig, Grade};
     use crate::cascade::genome::{Section, Stage, Traits, seed_cascades, seeds_for};
-    use crate::cascade::puzzle::generate_panel;
+    use crate::cascade::puzzle::{generate_panel, parse_prompt};
     use crate::cascade::sim::SimModel;
     use crate::cascade::soul::{
         Inheritance, SoulConfig, SoulDraws, Strengths, new_soul_chance, souletics,
@@ -3243,6 +3520,7 @@ mod tests {
                 completion_tokens: 6,
                 stop_reason: StopReason::Stop,
                 backend: "no-verdicts".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -3385,6 +3663,7 @@ mod tests {
                 completion_tokens: 2,
                 stop_reason: StopReason::Stop,
                 backend: "oracle".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -3734,6 +4013,7 @@ mod tests {
                 completion_tokens: 10,
                 stop_reason: StopReason::Stop,
                 backend: "large".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -3926,6 +4206,7 @@ mod tests {
                 completion_tokens: 5,
                 stop_reason: StopReason::Stop,
                 backend: "scripted".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -4037,6 +4318,7 @@ mod tests {
                 completion_tokens: 10,
                 stop_reason: StopReason::Stop,
                 backend: "writer".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -4473,6 +4755,7 @@ mod tests {
                 completion_tokens: 10,
                 stop_reason: StopReason::Stop,
                 backend: "soul-writer".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -5256,6 +5539,7 @@ mod tests {
                 completion_tokens: 10,
                 stop_reason: StopReason::Stop,
                 backend: "repeater".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -5354,10 +5638,12 @@ mod tests {
         assert!(reason.contains(&snap.archive[2].id), "{reason}");
     }
 
-    /// A backend that records every request as JSON before its model answers it.
+    /// A backend that records every request as JSON before its model answers it. It reads
+    /// phases when `reads` is true and its model reads them.
     struct Recording {
         model: Box<dyn ModelBackend>,
         log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        reads: bool,
     }
 
     impl ModelBackend for Recording {
@@ -5371,6 +5657,34 @@ mod tests {
             self.log.lock().expect("log").push(json);
             self.model.generate(req)
         }
+
+        fn reads_phases(&self) -> bool {
+            self.reads && self.model.reads_phases()
+        }
+    }
+
+    /// A pool of two recording backends on one log: `small` and `large` under the tags of
+    /// the simulated models, reading phases when `reads` is true.
+    fn recording_pool(
+        small: Box<dyn ModelBackend>,
+        large: Box<dyn ModelBackend>,
+        reads: bool,
+    ) -> (ModelPool, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut pool = ModelPool::new();
+
+        for (tag, model) in [("sim:small", small), ("sim:large", large)] {
+            pool.insert(
+                tag,
+                Box::new(Recording {
+                    model,
+                    log: log.clone(),
+                    reads,
+                }),
+            );
+        }
+
+        (pool, log)
     }
 
     /// Every request a run with these settings sends, sorted, and its archive.
@@ -5388,6 +5702,7 @@ mod tests {
             Box::new(Recording {
                 model: small,
                 log: log.clone(),
+                reads: false,
             }),
         );
         pool.insert(
@@ -5395,6 +5710,7 @@ mod tests {
             Box::new(Recording {
                 model: large,
                 log: log.clone(),
+                reads: false,
             }),
         );
 
@@ -5535,6 +5851,21 @@ mod tests {
         }
     }
 
+    /// The last entry of every Worker in the `souls` events, by member id and Worker index.
+    fn last_souls(events: &[Event]) -> BTreeMap<(String, usize), PhaseState> {
+        let mut last = BTreeMap::new();
+
+        for e in events {
+            if let Event::Souls { changed, .. } = e {
+                for c in changed {
+                    last.insert((c.member.clone(), c.worker), c.phases.clone());
+                }
+            }
+        }
+
+        last
+    }
+
     #[test]
     fn a_souled_run_records_its_souls_and_resumes_like_a_straight_one() {
         let pool = sim_pool();
@@ -5566,7 +5897,8 @@ mod tests {
         assert_eq!(straight.snapshot(), second.snapshot());
 
         // Every member records its Souls, and its Born event the same; a seed's Workers have
-        // new Souls of their own origin; the current Souls start as the birth Souls.
+        // new Souls of their own origin; the current Souls start as the birth Souls, and
+        // each then is its last entry in the `souls` events (ticket 05).
         let archive = straight.archive();
         let born: Vec<&Option<Vec<SoulSource>>> = events_straight
             .iter()
@@ -5575,8 +5907,10 @@ mod tests {
                 _ => None,
             })
             .collect();
+        let last = last_souls(&events_straight);
 
         assert_eq!(born.len(), archive.len());
+        assert!(!last.is_empty(), "the Observations moved some Soul");
 
         for (m, logged) in archive.iter().zip(born) {
             assert_eq!(logged, &m.soul_sources);
@@ -5589,8 +5923,13 @@ mod tests {
                 .iter()
                 .map(|p| p.0.clone())
                 .collect();
+            let expected: Vec<Vec<u16>> = birth_phases(&m.cascade)
+                .into_iter()
+                .enumerate()
+                .map(|(k, birth)| last.get(&(m.id.clone(), k)).map_or(birth, |p| p.0.clone()))
+                .collect();
 
-            assert_eq!(now, birth_phases(&m.cascade));
+            assert_eq!(now, expected);
 
             if m.op == Op::Seed {
                 for (k, r) in records(m).iter().enumerate() {
@@ -5930,6 +6269,7 @@ mod tests {
                 completion_tokens: 5,
                 stop_reason: StopReason::Stop,
                 backend: "fixed".to_string(),
+                soul_decided: false,
             })
         }
     }
@@ -6085,6 +6425,8 @@ mod tests {
                 strengths: &strengths,
                 readout,
                 vote,
+                simulator: false,
+                observe: false,
             };
 
             run_cascade_with(&Doubling, &pool, &limits, &c, &task, 9, Some(&with))
@@ -6104,6 +6446,7 @@ mod tests {
                     flipped: 1,
                     tied: 1,
                     coherence_sum: 1.0 / 3.0,
+                    sim_decided: 0,
                 }
             );
             // 2 answers in Stage 0, which agrees; 2 and 2 judgments; 3 and 9 judgments.
@@ -6160,6 +6503,8 @@ mod tests {
                     strengths: &strengths,
                     readout: Readout::Complex,
                     vote: true,
+                    simulator: true,
+                    observe: true,
                 };
                 let seed = derive_seed(
                     cfg.seed,
@@ -6257,5 +6602,949 @@ mod tests {
             BTreeSet::from([Some(10)])
         );
         assert_eq!(select([0; 7]), BTreeSet::from([Some(30)]));
+    }
+
+    /// Every event of a run stepped until its generations are done, and the breeder.
+    fn bred_with_events<D: Domain>(mut b: Breeder<'_, D>) -> (Breeder<'_, D>, Vec<Event>) {
+        let never = || false;
+        let mut events = Vec::new();
+
+        while let (Status::Continue, ev) = b.step(&never).expect("step") {
+            events.extend(ev);
+        }
+
+        (b, events)
+    }
+
+    /// The `souls` events among `events`.
+    fn souls_events(events: &[Event]) -> Vec<&Event> {
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Souls { .. }))
+            .collect()
+    }
+
+    /// The current Soul of every Worker of every member.
+    fn current_souls<A>(archive: &[Member<A>]) -> Vec<Vec<Vec<u16>>> {
+        archive
+            .iter()
+            .map(|m| {
+                m.soul_now
+                    .as_ref()
+                    .expect("current Souls")
+                    .iter()
+                    .map(|p| p.0.clone())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn kappa_zero_changes_nothing() {
+        // Arm K: every commit writes a `souls` event, none lists a Worker, and every current
+        // Soul stays its birth Soul. Arm S on the same Runs moves Souls, so the Runs hold
+        // Observations.
+        let pool = sim_pool();
+        let designers = designer_pool();
+
+        for arm in [SoulConfig::arm_k(), SoulConfig::arm_s()] {
+            let grid = bred_with_events(
+                Breeder::new(with_souls(small_config(229), arm.clone()), &pool, None)
+                    .expect("grid"),
+            );
+            let circuits = bred_with_events(
+                Breeder::<CircuitDomain>::start(
+                    with_souls(circuit_config(233), arm.clone()),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .expect("circuits"),
+            );
+            let runs = [
+                (
+                    souls_events(&grid.1),
+                    current_souls(grid.0.archive()),
+                    grid.0
+                        .archive()
+                        .iter()
+                        .map(|m| birth_phases(&m.cascade))
+                        .collect(),
+                ),
+                (
+                    souls_events(&circuits.1),
+                    current_souls(circuits.0.archive()),
+                    circuits
+                        .0
+                        .archive()
+                        .iter()
+                        .map(|m| birth_phases(&m.cascade))
+                        .collect::<Vec<_>>(),
+                ),
+            ];
+
+            for (souls, now, birth) in runs {
+                let changed: usize = souls
+                    .iter()
+                    .map(|e| match e {
+                        Event::Souls { changed, .. } => changed.len(),
+                        _ => 0,
+                    })
+                    .sum();
+
+                assert_eq!(souls.len(), 4, "one per committed generation");
+
+                if arm.kappa_fixed {
+                    assert_eq!(changed, 0, "arm K changes no Soul");
+                    assert_eq!(now, birth);
+                } else {
+                    assert!(changed > 0, "arm S moves Souls");
+                    assert_ne!(now, birth);
+                }
+            }
+        }
+    }
+
+    /// Writes the children of the LLM round of generation 1: the i-th request gets the i-th
+    /// Cascade, by the request's seed.
+    struct Children {
+        seed: u64,
+        children: Vec<Cascade>,
+    }
+
+    impl Mutator for Children {
+        fn answer(&self, req: &GenRequest) -> Option<GenResponse> {
+            let i = (0..self.children.len())
+                .find(|&i| req.seed == derive_seed(self.seed, &format!("llm/1/{i}")))?;
+
+            Some(GenResponse {
+                text: serde_json::to_string(&self.children[i]).ok()?,
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                stop_reason: StopReason::Stop,
+                backend: "children".to_string(),
+                soul_decided: false,
+            })
+        }
+    }
+
+    /// A member of generation 0 of a hand-built archive on one search task: `cascade` with
+    /// these birth Souls and Coupling strengths, its answer, the authors of it, and its
+    /// fitness. Its current Souls are its birth Souls.
+    fn hand_member(
+        mut cascade: Cascade,
+        souls: &[(&[u16], u16)],
+        answer: Option<u64>,
+        authors: Vec<usize>,
+        fitness: f64,
+    ) -> Member<u64> {
+        for (w, &(phases, kappa)) in cascade
+            .stages
+            .iter_mut()
+            .flat_map(|s| &mut s.workers)
+            .zip(souls)
+        {
+            w.traits.phase_state = Some(PhaseState(phases.to_vec()));
+            w.traits.coupling = kappa;
+        }
+
+        let id = cascade.id();
+        let sources = (0..cascade.worker_count())
+            .map(|k| SoulSource {
+                sources: Vec::new(),
+                new: true,
+                origin: WorkerRef {
+                    member: id.clone(),
+                    worker: k,
+                },
+            })
+            .collect();
+
+        Member {
+            soul_sources: Some(sources),
+            soul_now: Some(birth_souls(&cascade)),
+            id,
+            cascade,
+            parents: Vec::new(),
+            op: Op::Seed,
+            generation: 0,
+            answers: vec![answer],
+            solved: 0,
+            quality: Some(0.0),
+            usage: Usage::default(),
+            children: 0,
+            judge_correct: 0,
+            judge_wrong: 0,
+            fitness,
+            rating: 0.0,
+            authors: Some(vec![authors]),
+            votes: Some(VoteTally::default()),
+        }
+    }
+
+    /// A Cascade of one Stage whose Workers say these numbers and judge high.
+    fn saying(numbers: &[u64]) -> Cascade {
+        Cascade {
+            stages: vec![Stage {
+                workers: numbers
+                    .iter()
+                    .map(|&k| fixed_worker(Some(k), "high"))
+                    .collect(),
+            }],
+        }
+    }
+
+    /// The Soul settings of the hand-built generation: arm S with copies without drift, no
+    /// new Soul and κ copied, so the children's Workers carry their parent's Souls.
+    fn exact_copies() -> SoulConfig {
+        SoulConfig {
+            phase_drift: 0,
+            kappa_drift: 0,
+            new_soul_theta: 0.0,
+            ..SoulConfig::arm_s()
+        }
+    }
+
+    /// Generation 1 of a hand-built Run with the Soul settings `soul`, on one search task.
+    /// The archive after generation 0: J judges and has no answer; P is the parent of both
+    /// children; Q is their opponent. Fitness 1 is not eligible, so only P is drawn as a
+    /// parent. An LLM round writes two children of P, each a Stage vote of two Workers.
+    /// Returns the events of the step and the archive: J, P, Q and the two children.
+    fn hand_generation(soul: SoulConfig) -> (Vec<Event>, Vec<Member<u64>>) {
+        let mut pool = ModelPool::new();
+
+        pool.insert("sim:small", Box::new(Fixed));
+        pool.insert("sim:large", Box::new(Fixed));
+
+        let j = hand_member(saying(&[70]), &[(&[32768, 1000], 200)], None, vec![], 1.0);
+        let p = hand_member(
+            saying(&[10, 20]),
+            &[(&[0, 0], 1000), (&[16384, 40000], 500)],
+            Some(20),
+            vec![1],
+            0.5,
+        );
+        let q = hand_member(
+            saying(&[60]),
+            &[(&[8000, 60000], 0)],
+            Some(60),
+            vec![0],
+            1.0,
+        );
+        let cfg = with_souls(
+            BreedConfig {
+                seed: 227,
+                generations: 1,
+                children_per_generation: 2,
+                llm_every: 1,
+                llm_children: 2,
+                search_puzzles: 1,
+                select_puzzles: 1,
+                peer_opponents: 3,
+                peer_puzzles_per_pair: 1,
+                ..BreedConfig::default()
+            },
+            soul,
+        );
+        let children = Children {
+            seed: cfg.seed,
+            children: vec![saying(&[11, 21]), saying(&[30, 40])],
+        };
+        let snap = Snapshot {
+            config_hash: cfg.fixed_hash(),
+            next_generation: 1,
+            archive: vec![j, p, q],
+            comparisons: Vec::new(),
+            calls: 0,
+            mutator_answers: 0,
+            reserved: 0,
+            select_answers: BTreeMap::new(),
+            finished: false,
+        };
+        let never = || false;
+        let mut b: Breeder<'_, TwoFamilies> =
+            Breeder::resume_from(cfg, doubling_genes(), &pool, Some(&children), snap)
+                .expect("resume");
+        let (status, events) = b.step(&never).expect("generation 1");
+
+        assert_eq!(status, Status::Continue);
+
+        (events, b.archive().to_vec())
+    }
+
+    #[test]
+    fn observations_act_in_log_order() {
+        let (events, archive) = hand_generation(exact_copies());
+        let (jid, pid, qid) = (
+            archive[0].id.clone(),
+            archive[1].id.clone(),
+            archive[2].id.clone(),
+        );
+
+        // The generation as built: two children of P, each answers with its Worker 1 after
+        // a vote, and J judges each child against Q, A first.
+        let (a, bb) = (&archive[3], &archive[4]);
+
+        assert_eq!(
+            (a.parents.clone(), a.op),
+            (vec![pid.clone()], Op::LlmMutate)
+        );
+        assert_eq!(a.cascade.genes(), saying(&[11, 21]));
+        assert_eq!(bb.cascade.genes(), saying(&[30, 40]));
+        assert_eq!(birth_phases(&a.cascade), [vec![0, 0], vec![16384, 40000]]);
+        assert_eq!(couplings(&bb.cascade), [1000, 500]);
+        assert_eq!(
+            (a.answers.clone(), a.authors.clone()),
+            (vec![Some(21)], Some(vec![vec![1]]))
+        );
+        assert_eq!(
+            (bb.answers.clone(), bb.authors.clone()),
+            (vec![Some(40)], Some(vec![vec![1]]))
+        );
+
+        let judged: Vec<(String, String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Compared(c) => Some((c.first.clone(), c.second.clone(), c.judge.clone())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            judged,
+            [
+                (a.id.clone(), qid.clone(), jid.clone()),
+                (bb.id.clone(), qid.clone(), jid.clone())
+            ]
+        );
+
+        // By hand, in log order: A's vote (A0 observes A1, then A1 observes A0), B's vote
+        // likewise, then the peer judgments: J observes A1 and then Q0, J observes B1 and
+        // then Q0. Each step follows spec 8.3 from the Souls before it; for example A0 at
+        // κ = 1000 moves A1 by the gap -16384 to 0 and itself by 8192.
+        let expected: Vec<(String, usize, Vec<u16>)> = vec![
+            (jid.clone(), 0, vec![23714, 64792]),
+            (qid.clone(), 0, vec![14867, 62016]),
+            (a.id.clone(), 0, vec![4096, 59152]),
+            (a.id.clone(), 1, vec![8192, 63182]),
+            (bb.id.clone(), 0, vec![4096, 59152]),
+            (bb.id.clone(), 1, vec![7144, 62976]),
+        ];
+        let now = current_souls(&archive);
+
+        assert_eq!(
+            now,
+            [
+                vec![vec![23714, 64792]],
+                vec![vec![0, 0], vec![16384, 40000]],
+                vec![vec![14867, 62016]],
+                vec![vec![4096, 59152], vec![8192, 63182]],
+                vec![vec![4096, 59152], vec![7144, 62976]],
+            ]
+        );
+
+        // The `souls` event follows the generation event and lists the changed Workers in
+        // archive order; P did not change. The state stays the last event.
+        let kinds: Vec<&str> = events
+            .iter()
+            .map(|e| match e {
+                Event::Generation { .. } => "generation",
+                Event::Souls { .. } => "souls",
+                Event::State(_) => "state",
+                _ => "other",
+            })
+            .collect();
+
+        assert_eq!(kinds[kinds.len() - 3..], ["generation", "souls", "state"]);
+
+        let Some(Event::Souls {
+            generation,
+            changed,
+        }) = souls_events(&events).first().copied()
+        else {
+            panic!("no souls event");
+        };
+        let listed: Vec<(String, usize, Vec<u16>)> = changed
+            .iter()
+            .map(|c| (c.member.clone(), c.worker, c.phases.0.clone()))
+            .collect();
+
+        assert_eq!(*generation, 1);
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn the_observation_switches_give_their_degenerate_case() {
+        let now = |soul: SoulConfig| current_souls(&hand_generation(soul).1);
+
+        // Only the peer judgments observe: J observes A1 and Q0, then B1 and Q0, while the
+        // children keep their birth Souls from their votes. By hand, as in
+        // `observations_act_in_log_order`.
+        assert_eq!(
+            now(SoulConfig {
+                observe_vote: false,
+                ..exact_copies()
+            }),
+            [
+                vec![vec![26079, 61108]],
+                vec![vec![0, 0], vec![16384, 40000]],
+                vec![vec![15616, 60850]],
+                vec![vec![0, 0], vec![19661, 45307]],
+                vec![vec![0, 0], vec![18871, 44699]],
+            ]
+        );
+
+        // Only the Stage votes observe: J and Q keep their Souls.
+        assert_eq!(
+            now(SoulConfig {
+                observe_peer: false,
+                ..exact_copies()
+            }),
+            [
+                vec![vec![32768, 1000]],
+                vec![vec![0, 0], vec![16384, 40000]],
+                vec![vec![8000, 60000]],
+                vec![vec![4096, 59152], vec![2048, 62344]],
+                vec![vec![4096, 59152], vec![2048, 62344]],
+            ]
+        );
+
+        // Neither: the `souls` event lists no Worker, and every Soul stays its birth Soul.
+        let (events, archive) = hand_generation(SoulConfig {
+            observe_vote: false,
+            observe_peer: false,
+            ..exact_copies()
+        });
+        let births: Vec<Vec<Vec<u16>>> = archive.iter().map(|m| birth_phases(&m.cascade)).collect();
+
+        assert!(
+            matches!(souls_events(&events)[..], [Event::Souls { changed, .. }] if changed.is_empty())
+        );
+        assert_eq!(current_souls(&archive), births);
+
+        // With the simulator off no request carries phases, also to a backend that reads
+        // them.
+        let (steps, select, _) = phased_requests::<GridDomain>(
+            with_souls(
+                small_config(277),
+                SoulConfig {
+                    simulator: false,
+                    ..SoulConfig::arm_s()
+                },
+            ),
+            GenePool::grid(),
+            Box::new(SimModel::small()),
+            Box::new(SimModel::large()),
+        );
+        let sent: Vec<&GenRequest> = steps.iter().flat_map(|step| &step.requests).collect();
+
+        assert!(!sent.is_empty() && sent.iter().all(|r| r.phases.is_none()));
+        assert!(!select.is_empty() && select.iter().all(|r| r.phases.is_none()));
+    }
+
+    #[test]
+    fn the_select_phase_changes_no_soul() {
+        let pool = sim_pool();
+        let never = || false;
+        let cfg = |generations: usize| {
+            with_souls(
+                BreedConfig {
+                    generations,
+                    ..small_config(239)
+                },
+                SoulConfig::arm_s(),
+            )
+        };
+        let (mut first, mut before) =
+            bred_with_events(Breeder::new(cfg(2), &pool, None).expect("first"));
+        let souls_before = current_souls(first.archive());
+
+        first
+            .finish(&never, "all generations done")
+            .expect("finish")
+            .expect("not stopped");
+
+        // The select phase votes with the current Souls and changes none.
+        assert_eq!(current_souls(first.archive()), souls_before);
+
+        // Resumed to more generations after it, the Run logs what a straight Run logs.
+        let resumed = Breeder::resume(cfg(4), &pool, None, first.snapshot()).expect("resume");
+        let (_, after) = bred_with_events(resumed);
+        let (_, straight) = bred_with_events(Breeder::new(cfg(4), &pool, None).expect("straight"));
+        let logged = |events: &[Event]| -> Vec<Event> {
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Souls { .. } | Event::State(_)))
+                .cloned()
+                .collect()
+        };
+
+        before.extend(after);
+
+        assert_eq!(logged(&before), logged(&straight));
+        assert!(
+            souls_events(&straight)
+                .iter()
+                .any(|e| matches!(e, Event::Souls { changed, .. } if !changed.is_empty())),
+            "the Run moves Souls"
+        );
+    }
+
+    #[test]
+    fn stop_and_resume_keep_the_souls() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let pool = sim_pool();
+        let cfg = with_souls(small_config(241), SoulConfig::arm_s());
+        let (straight, straight_events) =
+            bred_with_events(Breeder::new(cfg.clone(), &pool, None).expect("straight"));
+
+        assert!(
+            souls_events(&straight_events)
+                .iter()
+                .any(|e| matches!(e, Event::Souls { changed, .. } if !changed.is_empty())),
+            "the Run moves Souls"
+        );
+
+        // Stop generation 1 while its newborns run, and generation 2 in its peer round: 4
+        // newborns poll once per task (12 tasks), then each peer judgment polls.
+        for (generation, polls) in [(1usize, 7usize), (2, 50)] {
+            let mut b = Breeder::new(cfg.clone(), &pool, None).expect("split");
+            let never = || false;
+            let mut events = Vec::new();
+
+            for _ in 0..generation {
+                events.extend(b.step(&never).expect("step").1);
+            }
+
+            let counted = AtomicUsize::new(0);
+            let stop = || counted.fetch_add(1, Ordering::SeqCst) >= polls;
+            let (status, stopped) = b.step(&stop).expect("stopped step");
+
+            assert_eq!(status, Status::Done("stopped".to_string()));
+            assert!(stopped.is_empty(), "a stopped generation logs nothing");
+
+            let json = serde_json::to_string(&b.snapshot()).expect("json");
+            let snap: Snapshot = serde_json::from_str(&json).expect("back");
+            let (resumed, rest) =
+                bred_with_events(Breeder::resume(cfg.clone(), &pool, None, snap).expect("resume"));
+
+            events.extend(rest);
+
+            assert_eq!(
+                souls_events(&events),
+                souls_events(&straight_events),
+                "stopped in generation {generation}"
+            );
+            assert_eq!(
+                current_souls(resumed.archive()),
+                current_souls(straight.archive())
+            );
+        }
+    }
+
+    /// A Cascade of one Stage with the first Workers of the first three seeds: it votes on
+    /// most tasks.
+    fn wide_seed(seeds: &[(String, Cascade)]) -> Cascade {
+        Cascade {
+            stages: vec![Stage {
+                workers: seeds
+                    .iter()
+                    .take(3)
+                    .map(|(_, c)| c.stages[0].workers[0].clone())
+                    .collect(),
+            }],
+        }
+    }
+
+    /// `c` with a random Soul of `n` phases and a random Coupling strength on every Worker.
+    fn with_random_souls(c: &Cascade, n: usize, rng: &mut ChaCha8Rng) -> Cascade {
+        let mut souled = c.clone();
+
+        for w in souled.stages.iter_mut().flat_map(|s| &mut s.workers) {
+            w.traits.phase_state = Some(PhaseState((0..n).map(|_| rng.random()).collect()));
+            w.traits.coupling = rng.random_range(0..=1000);
+        }
+
+        souled
+    }
+
+    /// Every request of `log`, emptied.
+    fn drained(log: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
+        std::mem::take(&mut *log.lock().expect("log"))
+    }
+
+    #[test]
+    fn requests_without_phases_are_unchanged() {
+        // A backend that does not read phases gets, task by task, byte for byte the requests
+        // the same Cascade without Souls sends, with the seed from its gene id.
+        fn compare<D: Domain>(
+            domain: &D,
+            tasks: &[D::Task],
+            c: &Cascade,
+            n: usize,
+            pool: &ModelPool,
+            log: &std::sync::Mutex<Vec<String>>,
+        ) -> usize {
+            let limits = CascadeLimits::default();
+            let mut rng = ChaCha8Rng::seed_from_u64(251);
+            let mut sent = 0;
+
+            for task in tasks {
+                let souled = with_random_souls(c, n, &mut rng);
+                let souls = birth_souls(&souled);
+                let strengths = domain.strengths(task);
+                let seed = derive_seed(
+                    7,
+                    &format!("search/{}/{}", souled.gene_id(), domain.task_id(task)),
+                );
+                let with = RunSouls {
+                    souls: &souls,
+                    strengths: &strengths,
+                    readout: Readout::Complex,
+                    vote: true,
+                    simulator: true,
+                    observe: true,
+                };
+
+                run_cascade_in(domain, pool, &limits, c, task, seed);
+
+                let plain = drained(log);
+
+                run_cascade_with(domain, pool, &limits, &souled, task, seed, Some(&with));
+
+                let phased = drained(log);
+
+                assert_eq!(phased, plain, "task {}", domain.task_id(task));
+                assert!(phased.iter().all(|r| !r.contains("phases")));
+                sent += phased.len();
+            }
+
+            sent
+        }
+
+        let (grid_pool, grid_log) = recording_pool(
+            Box::new(SimModel::small()),
+            Box::new(SimModel::large()),
+            false,
+        );
+        let (circuit_pool_, circuit_log) = recording_pool(
+            Box::new(SimDesigner::small()),
+            Box::new(SimDesigner::large()),
+            false,
+        );
+        let circuits = CircuitDomain::new(&CircuitConfig::default()).expect("domain");
+        // The circuit seeds' Workers with the most thinking, and the third one also knowing
+        // row operations, so that they disagree and vote: on CZ, Phase alone and Hadamard
+        // with Linear build two different circuits.
+        let mut thinking = wide_seed(&(circuit_pool().seeds)());
+
+        for w in &mut thinking.stages[0].workers {
+            w.traits.think_tokens = 4096;
+        }
+
+        thinking.stages[0].workers[2].sections[1]
+            .text
+            .push_str(" Treat each CNOT as a row operation.");
+
+        let grid_sent = compare(
+            &GridDomain,
+            &generate_panel(23, 12),
+            &wide_seed(&seed_cascades()),
+            7,
+            &grid_pool,
+            &grid_log,
+        );
+        let circuit_sent = compare(
+            &circuits,
+            &circuits.panel(derive_seed(3, "panel/search"), 11),
+            &thinking,
+            8,
+            &circuit_pool_,
+            &circuit_log,
+        );
+
+        // Three Workers answer and judge: more than one call per task.
+        assert!(
+            grid_sent > 3 * 12 && circuit_sent > 3 * 11,
+            "{grid_sent} {circuit_sent}"
+        );
+
+        // The JSON: no `phases` key without phases, no `soul_decided` key when it is false,
+        // and a response written without it reads as false.
+        let w = &seed_cascades()[0].1.stages[0].workers[0];
+        let mut req = worker_request(w, "task".to_string(), 3);
+        let plain = serde_json::to_string(&req).expect("json");
+
+        assert!(!plain.contains("phases"), "{plain}");
+
+        req.phases = Some(vec![1, 2]);
+
+        assert!(
+            serde_json::to_string(&req)
+                .expect("json")
+                .contains(r#""phases":[1,2]"#)
+        );
+        assert_eq!(
+            serde_json::from_str::<GenRequest>(&plain)
+                .expect("read")
+                .phases,
+            None
+        );
+
+        let resp = GenResponse {
+            text: "ANSWER".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            stop_reason: StopReason::Stop,
+            backend: "sim:small".to_string(),
+            soul_decided: false,
+        };
+        let json = serde_json::to_string(&resp).expect("json");
+
+        assert!(!json.contains("soul_decided"), "{json}");
+        assert!(
+            !serde_json::from_str::<GenResponse>(&json)
+                .expect("read")
+                .soul_decided
+        );
+
+        let decided = GenResponse {
+            soul_decided: true,
+            ..resp
+        };
+
+        assert!(
+            serde_json::to_string(&decided)
+                .expect("json")
+                .ends_with(r#","soul_decided":true}"#)
+        );
+    }
+
+    /// One committed generation of a Run whose backend reads phases: its requests, the
+    /// Cascades born in it, the calls of their own evaluations, and all calls of the step.
+    struct PhasedStep {
+        requests: Vec<GenRequest>,
+        born: Vec<Cascade>,
+        own: u64,
+        all: u64,
+    }
+
+    /// The requests of a Run with Souls to a backend that reads phases, one committed
+    /// generation after another, then those of its select phase, and the ids of its search
+    /// tasks.
+    fn phased_requests<D: Domain>(
+        cfg: BreedConfig,
+        genes: GenePool,
+        small: Box<dyn ModelBackend>,
+        large: Box<dyn ModelBackend>,
+    ) -> (Vec<PhasedStep>, Vec<GenRequest>, Vec<String>) {
+        let (pool, log) = recording_pool(small, large, true);
+        let mut b: Breeder<'_, D> = Breeder::start(cfg, genes, &pool, None).expect("breeder");
+        let never = || false;
+        let parse = |log: &std::sync::Mutex<Vec<String>>| -> Vec<GenRequest> {
+            drained(log)
+                .iter()
+                .map(|r| serde_json::from_str(r).expect("request"))
+                .collect()
+        };
+        let tasks: Vec<String> = b
+            .search_panel()
+            .iter()
+            .map(|t| b.domain().task_id(t).to_string())
+            .collect();
+        let mut steps = Vec::new();
+
+        loop {
+            let before = b.calls_used();
+            let (status, events) = b.step(&never).expect("step");
+
+            if status != Status::Continue {
+                break;
+            }
+
+            let mut own = 0;
+            let mut born = Vec::new();
+
+            for e in &events {
+                if let Event::Born { usage, cascade, .. } = e {
+                    own += usage.calls;
+                    born.push(cascade.clone());
+                }
+            }
+
+            steps.push(PhasedStep {
+                requests: parse(&log),
+                born,
+                own,
+                all: b.calls_used() - before,
+            });
+        }
+
+        b.finish(&never, "all generations done")
+            .expect("finish")
+            .expect("not stopped");
+
+        (steps, parse(&log), tasks)
+    }
+
+    /// Every seed a Stage vote of these newborns can give a judge call on these search
+    /// tasks: from the task's seed of the Cascade's genes (spec 15), the Stage, the pair of
+    /// answers and the judge, as `run_cascade_with` and `stage_vote` derive them.
+    fn vote_seeds(seed: u64, tasks: &[String], born: &[Cascade]) -> HashSet<u64> {
+        let mut seeds = HashSet::new();
+
+        for c in born {
+            for task in tasks {
+                let run = derive_seed(seed, &format!("search/{}/{task}", c.gene_id()));
+
+                for (k, stage) in c.stages.iter().enumerate() {
+                    let vote = derive_seed(run, &format!("vote{k}"));
+                    let width = stage.workers.len();
+
+                    for x in 0..width {
+                        for y in x + 1..width {
+                            for j in 0..width {
+                                seeds.insert(derive_seed(vote, &format!("{x}/{y}/{j}")));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        seeds
+    }
+
+    #[test]
+    fn peer_requests_carry_no_phases() {
+        // Every request is told apart by its seed: a Stage vote's judge calls take seeds
+        // derived from the newborn's genes, the task, the Stage, the pair and the judge; a
+        // peer judgment's seed is drawn for the plan.
+        fn check<D: Domain>(
+            cfg: BreedConfig,
+            genes: GenePool,
+            models: [Box<dyn ModelBackend>; 2],
+            judges: fn(&GenRequest) -> bool,
+            n: usize,
+        ) {
+            let seed = cfg.seed;
+            let [small, large] = models;
+            let (steps, select, tasks) = phased_requests::<D>(cfg, genes, small, large);
+            let (mut solves, mut votes, mut peers) = (0, 0, 0);
+
+            for (g, step) in steps.iter().enumerate() {
+                let in_votes = vote_seeds(seed, &tasks, &step.born);
+                let mut phased = 0;
+
+                for r in &step.requests {
+                    let carries = r.phases.as_ref().is_some_and(|p| p.len() == n);
+
+                    phased += u64::from(r.phases.is_some());
+
+                    if !judges(r) {
+                        assert!(carries, "generation {g}: a solve request without phases");
+                        solves += 1;
+                    } else if in_votes.contains(&r.seed) {
+                        assert!(carries, "generation {g}: a Stage vote without phases");
+                        votes += 1;
+                    } else {
+                        assert!(
+                            r.phases.is_none(),
+                            "generation {g}: a peer request with phases"
+                        );
+                        peers += 1;
+                    }
+                }
+
+                // The newborns' own evaluations are exactly the requests with phases.
+                assert_eq!(phased, step.own, "generation {g}");
+                assert_eq!(step.requests.len() as u64, step.all, "generation {g}");
+            }
+
+            assert!(
+                solves > 0 && votes > 0 && peers > 0,
+                "{solves} {votes} {peers}"
+            );
+            assert!(!select.is_empty() && select.iter().all(|r| r.phases.is_some()));
+        }
+
+        // Runs that hold Stage votes (ticket 04): grid seed 191 over 8 generations, circuit
+        // seed 41 over 20.
+        check::<GridDomain>(
+            with_souls(
+                BreedConfig {
+                    generations: 8,
+                    children_per_generation: 6,
+                    ..small_config(191)
+                },
+                SoulConfig::arm_s(),
+            ),
+            GenePool::grid(),
+            [Box::new(SimModel::small()), Box::new(SimModel::large())],
+            |r| parse_prompt(&r.prompt).is_some_and(|t| t.candidates.is_some()),
+            7,
+        );
+        check::<CircuitDomain>(
+            with_souls(
+                BreedConfig {
+                    generations: 20,
+                    children_per_generation: 6,
+                    max_calls: 200_000,
+                    ..circuit_config(41)
+                },
+                SoulConfig::arm_s(),
+            ),
+            circuit_pool(),
+            [
+                Box::new(SimDesigner::small()),
+                Box::new(SimDesigner::large()),
+            ],
+            |r| parse_circuit_prompt(&r.prompt).is_some_and(|t| t.candidates.is_some()),
+            8,
+        );
+    }
+
+    #[test]
+    fn real_arm_phases_are_signs() {
+        // In arm V every phase a request carries is 0 or half a turn; in arm S, on the same
+        // Run, the phases are the Souls themselves.
+        let phases_of = |soul: SoulConfig| -> Vec<u16> {
+            let (steps, select, _) = phased_requests::<GridDomain>(
+                with_souls(small_config(269), soul),
+                GenePool::grid(),
+                Box::new(SimModel::small()),
+                Box::new(SimModel::large()),
+            );
+
+            steps
+                .into_iter()
+                .flat_map(|step| step.requests)
+                .chain(select)
+                .flat_map(|r| r.phases.unwrap_or_default())
+                .collect()
+        };
+        let signs = phases_of(SoulConfig::arm_v());
+        let angles = phases_of(SoulConfig::arm_s());
+
+        assert!(!signs.is_empty());
+        assert!(signs.iter().all(|&p| p == 0 || p == 32768), "{signs:?}");
+        assert!(angles.iter().any(|&p| p != 0 && p != 32768));
+
+        // Circuits too.
+        let (steps, _, _) = phased_requests::<CircuitDomain>(
+            with_souls(circuit_config(271), SoulConfig::arm_v()),
+            circuit_pool(),
+            Box::new(SimDesigner::small()),
+            Box::new(SimDesigner::large()),
+        );
+        let circuit_signs: Vec<u16> = steps
+            .into_iter()
+            .flat_map(|step| step.requests)
+            .flat_map(|r| r.phases.unwrap_or_default())
+            .collect();
+
+        assert!(!circuit_signs.is_empty());
+        assert!(circuit_signs.iter().all(|&p| p == 0 || p == 32768));
     }
 }

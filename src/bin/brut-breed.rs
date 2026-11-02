@@ -37,8 +37,9 @@
 //! per Born event of the log, in its order, and that each member, written as a Born event,
 //! is the logged one (the same id, Cascade, parents, generation, operator, solved count,
 //! graded value, usage and answers, and in a run with Souls where each Soul came from, the
-//! authors of each answer and the tally of votes). Then it recomputes the count from that
-//! archive.
+//! authors of each answer and the tally of votes). In a run with Souls it also checks every
+//! member's current Soul: its last entry in the `souls` events, or its birth Soul when no
+//! event moved it (step 2). Then it recomputes the count from that archive.
 //! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1. It
 //! also refuses runs with Souls (step 2): a Soul belongs to its run.
 //!
@@ -68,14 +69,14 @@ use serde::{Deserialize, Serialize};
 
 use brutmaschine::backend::ModelBackend;
 use brutmaschine::cascade::arena::{
-    AnswerBook, BreedConfig, Breeder, Event, Finalist, ModelPool, ParentSelection, Report,
+    AnswerBook, BreedConfig, Breeder, Event, Finalist, Member, ModelPool, ParentSelection, Report,
     Snapshot, Status, request_key,
 };
 use brutmaschine::cascade::circuit::{Answered, CircuitDomain, Rediscovery, rediscovery};
 use brutmaschine::cascade::circuit_genes::circuit_pool;
 use brutmaschine::cascade::designer::SimDesigner;
 use brutmaschine::cascade::domain::{CircuitConfig, Domain, DomainConfig, GenePool, GridDomain};
-use brutmaschine::cascade::genome::CascadeLimits;
+use brutmaschine::cascade::genome::{CascadeLimits, PhaseState, Worker};
 use brutmaschine::cascade::puzzle::Grid;
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::cascade::variation::Op;
@@ -1119,7 +1120,8 @@ fn check_rediscovery(
 /// the checkpoint, so only this ties the archive to the hash-chained log: an answer edited
 /// in the checkpoint would otherwise enter the count with the next resume. What a member
 /// gains later (children, judgments, fitness, rating) is not in its Born event, and this
-/// does not check it.
+/// does not check it. The current Souls, which Observations change after a member's birth,
+/// are checked against the `souls` events instead (`check_current_souls`).
 fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Event]) -> Result<()> {
     let tasks = breeder.search_panel().len();
     let born: Vec<&Event> = events
@@ -1170,6 +1172,65 @@ fn check_archive(out: &Path, breeder: &Breeder<'_, CircuitDomain>, events: &[Eve
         if written != *logged {
             return Err(differs(format!("archive member {}", m.id)));
         }
+    }
+
+    check_current_souls(out, archive, events)
+}
+
+/// Error unless every Worker's current Soul in the archive is its last entry in the `souls`
+/// events among `events`, or its birth Soul when there is none (step 2, spec 16), and every
+/// Worker those events name is in the archive. A Run without Souls has neither.
+fn check_current_souls<A>(out: &Path, archive: &[Member<A>], events: &[Event]) -> Result<()> {
+    let mut last: BTreeMap<(&str, usize), &PhaseState> = BTreeMap::new();
+
+    for e in events {
+        if let Event::Souls { changed, .. } = e {
+            for c in changed {
+                last.insert((c.member.as_str(), c.worker), &c.phases);
+            }
+        }
+    }
+
+    let broken = |what: String| {
+        BrutError::Integrity(format!(
+            "{}: {what} ({})",
+            out.join(SNAPSHOT).display(),
+            out.join(EVENTS).display()
+        ))
+    };
+
+    for m in archive {
+        let now = m.soul_now.as_deref().unwrap_or_default();
+        let workers: Vec<&Worker> = m.cascade.stages.iter().flat_map(|s| &s.workers).collect();
+
+        if now.len() > workers.len() {
+            return Err(broken(format!(
+                "archive member {} holds a current Soul for {} Workers but has {}",
+                m.id,
+                now.len(),
+                workers.len()
+            )));
+        }
+
+        for (k, w) in workers.iter().enumerate() {
+            let (expected, from) = match last.remove(&(m.id.as_str(), k)) {
+                Some(p) => (Some(p), "its last entry in the souls events"),
+                None => (w.traits.phase_state.as_ref(), "its birth Soul"),
+            };
+
+            if now.get(k) != expected {
+                return Err(broken(format!(
+                    "the current Soul of Worker {k} of archive member {} differs from {from}",
+                    m.id
+                )));
+            }
+        }
+    }
+
+    if let Some(((id, k), _)) = last.first_key_value() {
+        return Err(broken(format!(
+            "a souls event names Worker {k} of member {id}, which the archive does not hold"
+        )));
     }
 
     Ok(())

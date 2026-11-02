@@ -9,12 +9,14 @@
 //! The Soul is never seen. It shows itself through its Character on each task (Q51, Q57):
 //! the squared magnitude of the sum of its phasors, each weighted by the task's Family
 //! strength. `character` computes it from the Soul each time; nothing stores a Character
-//! (Q55). The phasor of a phase comes from `phasor` alone, so the whole crate uses one table
-//! of values (spec 15).
+//! (Q55). The phasor of a phase comes from `phasor`, so the crate uses one table of values
+//! (spec 15). The simulated designer may not reach this module, so it keeps a copy, which a
+//! test here compares bit for bit.
 //!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
 use std::ops::{Add, AddAssign};
 
 use rand::Rng;
@@ -535,6 +537,87 @@ pub fn souletics(
     }
 }
 
+/// The signed phase gap from `from` to `to`, wrapped into -32768..=32767 phase units (spec
+/// 8.3): the step that takes `from` to `to` along the shorter way, and at half a turn the
+/// step down.
+pub fn phase_gap(from: u16, to: u16) -> i32 {
+    let d = (i32::from(to) - i32::from(from)).rem_euclid(65536);
+
+    if d >= i32::from(HALF_TURN) {
+        d - 65536
+    } else {
+        d
+    }
+}
+
+/// round(κ · Δ / `per`) in phase units, rounding half away from zero in integers: the step
+/// of an Observation (spec 8.3) for the Coupling strength κ in thousandths and the gap Δ.
+/// `per` is 1000 for the observed side and 2000 for the observer.
+pub fn coupling_step(kappa: u16, gap: i32, per: i64) -> i32 {
+    let a = i64::from(kappa) * i64::from(gap);
+    let per = per.max(1);
+    // round(|a| / per) half up, then the sign of a: half away from zero.
+    let q = (2 * a.abs() + per) / (2 * per);
+
+    // |q| <= |a| / per + 1, and |a| <= 1000 * 32768 at most for a valid κ, so it fits.
+    i32::try_from(q * a.signum()).unwrap_or(0)
+}
+
+/// One Observation (spec 8.3) [Q69 a]: the observer, with Coupling strength κ in
+/// thousandths, observes the Worker with the Soul `observed`. For each family, Δ is the gap
+/// from the observed phase to the observer's. The observed moves toward the observer by
+/// round(κ · Δ / 1000), and the observer toward the observed by round(κ · Δ / 2000). Both
+/// moves start from the phases before this Observation, all modulo a whole turn. At κ = 0
+/// nothing moves; at κ = 1000 the observed takes the observer's phases. Returns the new
+/// Souls of the observer and the observed, in that order. A family that only one of the
+/// two Souls has does not move.
+pub fn observation(observer: &[u16], observed: &[u16], kappa: u16) -> (Vec<u16>, Vec<u16>) {
+    let mut o = observer.to_vec();
+    let mut t = observed.to_vec();
+
+    for (f, (&op, &tp)) in observer.iter().zip(observed).enumerate() {
+        let gap = phase_gap(tp, op);
+
+        t[f] = turn(tp, coupling_step(kappa, gap, 1000));
+        o[f] = turn(op, -coupling_step(kappa, gap, 2000));
+    }
+
+    (o, t)
+}
+
+/// The phases a request carries for the Soul `soul` (spec 11.1): with the complex readout
+/// the phases themselves; with the real readout each phase becomes 0 or half a turn, the
+/// angle of its sign. So a simulated model reads the same unit phasors as the vote.
+pub fn readout_phases(soul: &[u16], r: Readout) -> Vec<u16> {
+    soul.iter()
+        .map(|&p| match r {
+            Readout::Complex => p,
+            Readout::Real if readout(p, r).re > 0.0 => 0,
+            Readout::Real => HALF_TURN,
+        })
+        .collect()
+}
+
+/// The intensity |Σ_f e^(2πi p_f / 65536)|² of a set of families under the phases `phases`
+/// of a request, each family once, summed in ascending order (spec 11.2, 11.3). One family
+/// gives 1 exactly and no family 0, whatever the phases, so phases can decide only between
+/// sets of two or more families. A family without a phase counts nothing.
+pub fn intensity(phases: &[u16], families: &BTreeSet<usize>) -> f64 {
+    let read: Vec<u16> = families
+        .iter()
+        .filter_map(|&f| phases.get(f).copied())
+        .collect();
+
+    match read.as_slice() {
+        [] => 0.0,
+        [_] => 1.0,
+        many => many
+            .iter()
+            .fold(Phasor::default(), |z, &p| z + phasor(p))
+            .norm_sqr(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f64::consts::{SQRT_2, TAU};
@@ -543,6 +626,7 @@ mod tests {
 
     use super::*;
     use crate::cascade::circuit::{CircuitDomain, library_target, verified};
+    use crate::cascade::designer::support_intensity;
     use crate::cascade::domain::{CircuitConfig, Domain, GridDomain};
     use crate::cascade::puzzle::{Geo, Rule, generate_panel};
     use crate::cascade::sim::rule_strengths;
@@ -1463,6 +1547,129 @@ mod tests {
             array_vote(&verdicts(2, 1, |_, _, _| Some(0)), &[Phasor::default()]).coherence,
             0.0
         );
+    }
+
+    #[test]
+    fn one_observation_by_the_rule() {
+        // Six families: 150 degrees apart (27307 units, 150.0018 degrees), the same across
+        // the wrap, the other way round, exactly half a turn, and 5 units up and down.
+        let observed = [0u16, 60000, 27307, 0, 100, 105];
+        let observer = [27307u16, 21771, 0, 32768, 105, 100];
+
+        assert_eq!(
+            [
+                (0, 27307),
+                (60000, 21771),
+                (27307, 0),
+                (0, 32768),
+                (100, 105),
+                (105, 100)
+            ]
+            .map(|(t, o)| phase_gap(t, o)),
+            [27307, 27307, -27307, -32768, 5, -5]
+        );
+
+        // At κ = 1000 the observed takes the observer's phases, and the observer moves half
+        // the gap toward it, rounded half away from zero: 13654 units, about 75 degrees.
+        let (o, t) = observation(&observer, &observed, 1000);
+
+        assert_eq!(t, observer);
+        assert_eq!(o, [13653, 8117, 13654, 49152, 102, 103]);
+        // The atlas sketch: 150 degrees apart before, 75 degrees apart after.
+        assert_eq!(phase_gap(o[0], t[0]), 13654);
+
+        // At κ = 200, by hand: round(200 Δ / 1000) and round(200 Δ / 2000). For Δ = 27307
+        // that is 5461 (from 5461.4) and 2731 (from 2730.7); for Δ = -32768, -6554 (from
+        // -6553.6) and -3277 (from -3276.8); for Δ = 5 and -5, 1 and -1, and 1 and -1 from
+        // 0.5 and -0.5, away from zero.
+        let (o, t) = observation(&observer, &observed, 200);
+
+        assert_eq!(t, [5461, 65461, 21846, 58982, 101, 104]);
+        assert_eq!(o, [24576, 19040, 2731, 36045, 104, 101]);
+
+        // At κ = 0 nothing moves.
+        assert_eq!(
+            observation(&observer, &observed, 0),
+            (observer.to_vec(), observed.to_vec())
+        );
+
+        // The steps alone, in integers.
+        assert_eq!(coupling_step(200, 27307, 1000), 5461);
+        assert_eq!(coupling_step(200, 5, 2000), 1);
+        assert_eq!(coupling_step(200, -5, 2000), -1);
+        assert_eq!(coupling_step(1000, -32768, 2000), -16384);
+        assert_eq!(coupling_step(0, 27307, 1000), 0);
+    }
+
+    #[test]
+    fn requests_carry_the_readout_of_their_phases() {
+        let soul = [0u16, 1, 16383, 16384, 32768, 49151, 49152, 65535];
+
+        assert_eq!(readout_phases(&soul, Readout::Complex), soul);
+        assert_eq!(
+            readout_phases(&soul, Readout::Real),
+            [0, 0, 0, 32768, 32768, 32768, 0, 0]
+        );
+
+        // The readout of a request's phase is the vote's readout of the hidden phase.
+        for &p in &soul {
+            for r in READOUTS {
+                assert_eq!(
+                    phasor(readout_phases(&[p], r)[0]),
+                    readout(p, r),
+                    "{p} {r:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_designer_reads_phases_as_the_soul_does() {
+        // The designer keeps its own copy of the phasor; both give the same intensity, bit
+        // for bit, on random phases and supports and on the quarter turns.
+        let mut rng = ChaCha8Rng::seed_from_u64(47);
+        let quarters = [0u16, 1, 16383, 16384, 32767, 32768, 49152, 65535];
+
+        for i in 0..10_000 {
+            let phases: Vec<u16> = if i < 64 {
+                (0..8).map(|_| quarters[rng.random_range(0..8)]).collect()
+            } else {
+                (0..8).map(|_| rng.random()).collect()
+            };
+            let support: BTreeSet<usize> = (0..9).filter(|_| rng.random_bool(0.5)).collect();
+
+            assert_eq!(
+                support_intensity(&phases, &support).to_bits(),
+                intensity(&phases, &support).to_bits(),
+                "{phases:?} {support:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_family_has_intensity_one_whatever_the_phase() {
+        let set = |f: &[usize]| f.iter().copied().collect::<BTreeSet<usize>>();
+        let mut rng = ChaCha8Rng::seed_from_u64(31);
+
+        for _ in 0..1000 {
+            let phases: Vec<u16> = (0..8).map(|_| rng.random()).collect();
+            let f = rng.random_range(0..8);
+
+            assert_eq!(intensity(&phases, &set(&[f])), 1.0, "{phases:?} {f}");
+            assert_eq!(intensity(&phases, &set(&[])), 0.0);
+
+            let pair = set(&[0, 5]);
+            let z = phasor(phases[0]) + phasor(phases[5]);
+
+            assert_eq!(intensity(&phases, &pair), z.norm_sqr());
+        }
+
+        // In phase, at a quarter turn, against each other.
+        assert_eq!(intensity(&[7, 7, 7], &set(&[0, 1, 2])), 9.0);
+        assert_eq!(intensity(&[0, 16384], &set(&[0, 1])), 2.0);
+        assert_eq!(intensity(&[0, 32768], &set(&[0, 1])), 0.0);
+        // A family without a phase counts nothing.
+        assert_eq!(intensity(&[0, 32768], &set(&[0, 7])), 1.0);
     }
 
     #[test]

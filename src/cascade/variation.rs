@@ -1263,6 +1263,7 @@ fn llm_request(brief: &MutatorBrief, prompt: String, seed: u64) -> GenRequest {
         temperature: LLM_TEMPERATURE,
         seed,
         think_tokens: 0,
+        phases: None,
     }
 }
 
