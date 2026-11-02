@@ -113,16 +113,22 @@ pub struct GenePool {
     pub brief: &'static MutatorBrief,
     /// A rule every new Cascade must also pass (Ok for grids).
     pub admit: fn(&Cascade) -> std::result::Result<(), String>,
+    /// The hypothesis families a text names, by their places in the Domain's family order
+    /// (step 2, arm W of `.scratch/seelen-modell/spec.md`, section 4.1). None for a gene
+    /// pool that cannot name them; a Run whose Soul steers variation is refused then.
+    pub families_of: Option<fn(&str) -> Vec<usize>>,
 }
 
 impl GenePool {
-    /// The grid puzzles of Stage 2c: today's seeds, phrases and brief.
+    /// The grid puzzles of Stage 2c: today's seeds, phrases and brief. They name no
+    /// families of a text.
     pub fn grid() -> GenePool {
         GenePool {
             seeds: seed_cascades,
             phrases: PHRASES,
             brief: &GRID_BRIEF,
             admit: |_| Ok(()),
+            families_of: None,
         }
     }
 }
@@ -320,6 +326,10 @@ mod tests {
         assert_eq!((pool.seeds)(), seed_cascades());
         assert_eq!(pool.phrases, PHRASES);
         assert!(std::ptr::eq(pool.brief, &GRID_BRIEF));
+        assert!(
+            pool.families_of.is_none(),
+            "grids name no families of a text"
+        );
 
         for (_, c) in seed_cascades() {
             assert_eq!((pool.admit)(&c), Ok(()));

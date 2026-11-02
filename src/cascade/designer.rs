@@ -249,6 +249,16 @@ pub fn knowledge(system: &str) -> Vec<&'static str> {
     known(system).into_iter().map(Family::name).collect()
 }
 
+/// The families a text names, by their places in `FAMILY_STEMS`, in that order: those of
+/// `knowledge`, without the order of first mention. The circuit gene pool names the
+/// families of a text by it (arm W, `.scratch/seelen-modell/spec.md`, section 4.1).
+pub fn named_families(text: &str) -> Vec<usize> {
+    let mut named: Vec<usize> = known(text).into_iter().map(Family::index).collect();
+
+    named.sort_unstable();
+    named
+}
+
 /// What the known families can build, whatever their order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Skills {
@@ -2648,6 +2658,41 @@ mod tests {
                 "Hadamard", "Phase", "Linear", "Compose", "Simplify", "Search", "Meet"
             ]
         );
+    }
+
+    #[test]
+    fn named_families_are_the_known_ones_in_family_order() {
+        let english = "Try every short circuit, cancel pairs, use XOR row operations and Hadamard basis changes.";
+
+        assert_eq!(named_families(english), [0, 2, 4, 6]);
+        assert!(named_families("Solve it.").is_empty());
+
+        // Each text of the strong prompt and every stem: the families of `knowledge`, by
+        // their places in `FAMILY_STEMS`, ascending.
+        let texts = [
+            english.to_string(),
+            strong(),
+            LINEAR.to_string(),
+            ROLE.to_string(),
+        ];
+        let stems = FAMILY_STEMS
+            .iter()
+            .flat_map(|&(_, stems)| stems.iter().map(|s| s.to_string()));
+
+        for text in texts.into_iter().chain(stems) {
+            let mut known: Vec<usize> = knowledge(&text)
+                .into_iter()
+                .map(|name| {
+                    FAMILY_STEMS
+                        .iter()
+                        .position(|&(n, _)| n == name)
+                        .expect("a family")
+                })
+                .collect();
+
+            known.sort_unstable();
+            assert_eq!(named_families(&text), known, "{text}");
+        }
     }
 
     #[test]

@@ -18,7 +18,8 @@
 //! the Souls are, what experience did to them, and this generation's Observations and
 //! votes. It is left out of the JSON in a Run without Souls, so those state lines stay as
 //! they were. It too is a pure function of committed state, with this commit's Observations
-//! as the generation's usage is for the cost group. A statistic of the Character is computed
+//! as the generation's usage is for the cost group, and in arm W the choices that the
+//! preferences decided in this generation's children. A statistic of the Character is computed
 //! once per distinct strength vector of the search panel and weighted by the number of
 //! tasks that have it, so every task weighs alike.
 #![forbid(unsafe_code)]
@@ -32,7 +33,7 @@ use crate::cascade::genome::{COUPLING_MAX, Cascade, PhaseState};
 use crate::cascade::soul::{
     Phasor, Readout, character_norm, independent_contrast, phase_gap, readout,
 };
-use crate::cascade::variation::Op;
+use crate::cascade::variation::{Op, Steered};
 use crate::util::sha256_hex;
 
 /// The observables of one committed generation: the payload of a `state` event.
@@ -229,6 +230,14 @@ pub struct SoulState {
     /// Replies to this generation's newborns on the search panel in which the phases
     /// decided a simulated model's choice (spec 11).
     pub sim_decided: u64,
+    /// With `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1): the
+    /// choices that the preferences decided in the operators that made this generation's
+    /// newborns, among options of unequal weight, and those of them whose pick differs from
+    /// the uniform pick of the same draw. Both are left out when `variation` is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variation_choices: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variation_changed: Option<u64>,
 }
 
 /// What the soul group reads besides the archive (step 2, spec 13.1).
@@ -248,6 +257,9 @@ pub struct SoulInput<'a> {
     /// Each Worker whose current Soul changed at this commit: the Soul it had when the
     /// commit began, and the Soul it has after it.
     pub moved: &'a [(PhaseState, PhaseState)],
+    /// With `variation` on, the choices the preferences decided in the operators that made
+    /// this generation's newborns; None with `variation` off.
+    pub variation: Option<Steered>,
 }
 
 /// The committed state that one generation's observables are computed from.
@@ -468,6 +480,8 @@ fn soul_state<A>(archive: &[Member<A>], first_new: usize, s: &SoulInput<'_>) -> 
         votes_tied: votes.tied,
         coherence_mean: (votes.complex > 0).then(|| votes.coherence_sum / votes.complex as f64),
         sim_decided: votes.sim_decided,
+        variation_choices: s.variation.map(|v| v.choices),
+        variation_changed: s.variation.map(|v| v.changed),
     }
 }
 
@@ -1328,6 +1342,7 @@ mod tests {
                     observations_vote: 5,
                     observations_peer: 3,
                     moved: &moved,
+                    variation: None,
                 }),
             })
             .soul
@@ -1407,6 +1422,7 @@ mod tests {
                 observations_vote: 0,
                 observations_peer: 0,
                 moved: &[],
+                variation: None,
             },
         );
         let json = serde_json::to_string(&empty).expect("json");
@@ -1417,6 +1433,40 @@ mod tests {
             json,
             r#"{"souls":0,"souls_born":0,"souls_new":0,"origins":0,"origin_entropy_bits":0.0,"observations_vote":0,"observations_peer":0,"votes":0,"votes_flipped":0,"votes_tied":0,"sim_decided":0}"#
         );
+
+        // With `variation` on, the choices the preferences decided end the group, also when
+        // they are 0.
+        for (steered, tail) in [
+            (
+                Steered {
+                    choices: 7,
+                    changed: 2,
+                },
+                r#","sim_decided":0,"variation_choices":7,"variation_changed":2}"#,
+            ),
+            (
+                Steered::default(),
+                r#","sim_decided":0,"variation_choices":0,"variation_changed":0}"#,
+            ),
+        ] {
+            let on = soul_state::<u32>(
+                &[],
+                0,
+                &SoulInput {
+                    readout: Readout::Complex,
+                    families: 2,
+                    strengths: &[],
+                    observations_vote: 0,
+                    observations_peer: 0,
+                    moved: &[],
+                    variation: Some(steered),
+                },
+            );
+            let json = serde_json::to_string(&on).expect("json");
+
+            assert!(json.ends_with(tail), "{json}");
+            assert_eq!(serde_json::from_str::<SoulState>(&json).expect("read"), on);
+        }
     }
 
     #[test]
@@ -1449,6 +1499,7 @@ mod tests {
                 observations_vote: 0,
                 observations_peer: 0,
                 moved: &[],
+                variation: None,
             };
             let k = soul_state(&soul_archive(), 2, &input)
                 .contrast_independent

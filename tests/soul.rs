@@ -1325,3 +1325,156 @@ fn souls_off_reproduces_the_step1_pilot() {
     assert_eq!(last["seq"], 1361, "1362 events");
     assert_eq!(last["hash"], PILOT_A_101_HEAD);
 }
+
+/// The head hash of the README's Run on pilot seed 901 in arm S (`README.md`, section "The
+/// Soul (step 2)"), recorded before the setting `variation` existed.
+const README_S_901_HEAD: &str = "e38339538f19d85fccd1d1a7a1c3a0435e1989eec7838e6b6e0c5a46e0e692a1";
+
+/// The README's Run of arm S on pilot seed 901, as the README gives it. With `variation` off
+/// it writes the same bytes as before arm W. A release build takes a few seconds: `cargo
+/// test --release -- --ignored`.
+#[test]
+#[ignore = "release test: cargo test --release -- --ignored"]
+fn the_readme_run_of_arm_s_is_unchanged() {
+    let dir = fresh("readme-S-901");
+
+    ok(&breed(&[
+        "--out",
+        path(&dir),
+        "--domain",
+        "circuits",
+        "--search",
+        "33",
+        "--select",
+        "22",
+        "--children",
+        "8",
+        "--generations",
+        "60",
+        "--seed",
+        "901",
+        "--max-calls",
+        "200000",
+        "--soul",
+        "s",
+    ]));
+
+    let verified = breed(&["--out", path(&dir), "--verify"]);
+
+    ok(&verified);
+    assert!(
+        stdout(&verified).contains(&format!(
+            "2046 events, hash chain intact, head {README_S_901_HEAD}"
+        )),
+        "{}",
+        stdout(&verified)
+    );
+}
+
+/// The settings of arm S with `variation` set to `variation` (arm W: prefer; arm WF:
+/// fixed), as a config file in `dir`.
+fn varied_config_file(dir: &Path, variation: &str) -> PathBuf {
+    let mut cfg = serde_json::to_value(souled_config()).expect("json");
+    let config = dir.join(format!("{variation}.json"));
+
+    cfg["soul"]["variation"] = serde_json::json!(variation);
+    std::fs::create_dir_all(dir).expect("mkdir");
+    std::fs::write(&config, serde_json::to_string_pretty(&cfg).expect("json"))
+        .expect("write config");
+
+    config
+}
+
+#[test]
+fn a_run_whose_soul_steers_variation_reproduces() {
+    // 60 generations of arm W on circuits with the pilot's panels: --verify passes, and the
+    // five record files are byte-equal at 1 and at 4 threads.
+    let at = |threads: &str| {
+        let dir = fresh(&format!("variation-threads-{threads}"));
+        let config = varied_config_file(&dir, "prefer");
+        let run = dir.join("run");
+        let out = Command::new(BREED)
+            .args(["--out", path(&run), "--config", path(&config)])
+            .args(["--domain", "circuits", "--search", "33", "--select", "22"])
+            .args(["--children", "8", "--generations", "60", "--seed", "41"])
+            .args(["--max-calls", "13000000"])
+            .env("RAYON_NUM_THREADS", threads)
+            .output()
+            .expect("run brut-breed");
+
+        ok(&out);
+        ok(&breed(&["--out", path(&run), "--verify"]));
+
+        (
+            RECORD.map(|name| {
+                std::fs::read(run.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+            }),
+            logged_events(&run),
+            config_json(&run),
+        )
+    };
+    let (four, events, config) = at("4");
+    let states: Vec<&serde_json::Value> = events.iter().filter(|e| e["kind"] == "state").collect();
+    let count = |field: &str| -> u64 {
+        states
+            .iter()
+            .map(|e| {
+                e["soul"][field]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{field}"))
+            })
+            .sum()
+    };
+
+    // The setting is recorded, every state line counts the choices, and the weights
+    // changed some.
+    assert_eq!(config["soul"]["variation"], "prefer");
+    assert_eq!(states.len(), 61);
+    assert!(count("variation_changed") > 0);
+    assert!(count("variation_changed") <= count("variation_choices"));
+    assert_eq!(four, at("1").0, "1 and 4 threads");
+}
+
+#[test]
+fn variation_needs_circuits() {
+    // The grid gene pool names no families of a text, so a grid Run whose Soul steers
+    // variation is refused before it writes anything.
+    for variation in ["prefer", "fixed"] {
+        let dir = fresh(&format!("variation-grid-{variation}"));
+        let config = varied_config_file(&dir, variation);
+        let run = dir.join("run");
+        let refused = breed(&[
+            "--out",
+            path(&run),
+            "--config",
+            path(&config),
+            "--domain",
+            "grid",
+        ]);
+
+        assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+        assert!(
+            stderr(&refused).contains("variation needs a gene pool"),
+            "{}",
+            stderr(&refused)
+        );
+        assert!(!run.join("config.json").exists());
+    }
+
+    // Arm WF on circuits starts and records its setting.
+    let dir = fresh("variation-fixed");
+    let config = varied_config_file(&dir, "fixed");
+    let run = dir.join("run");
+
+    std::fs::create_dir_all(&run).expect("mkdir");
+    std::fs::write(run.join("STOP"), "").expect("stop");
+    ok(&breed(&[
+        "--out",
+        path(&run),
+        "--config",
+        path(&config),
+        "--domain",
+        "circuits",
+    ]));
+    assert_eq!(config_json(&run)["soul"]["variation"], "fixed");
+}

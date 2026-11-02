@@ -20,6 +20,7 @@
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
 
+use crate::cascade::designer::named_families;
 use crate::cascade::domain::GenePool;
 use crate::cascade::genome::{Cascade, Section, Stage, Traits, Worker};
 use crate::cascade::qubit::Gate;
@@ -382,14 +383,15 @@ pub fn no_gate_lists(c: &Cascade) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// The genes of circuit breeding: the seeds, the phrase pool, the brief and the rule that
-/// refuses gate lists.
+/// The genes of circuit breeding: the seeds, the phrase pool, the brief, the rule that
+/// refuses gate lists, and the families a text names by the stems the designer reads.
 pub fn circuit_pool() -> GenePool {
     GenePool {
         seeds: circuit_seed_cascades,
         phrases: CIRCUIT_PHRASES,
         brief: &CIRCUIT_BRIEF,
         admit: no_gate_lists,
+        families_of: Some(named_families),
     }
 }
 
@@ -1664,5 +1666,17 @@ mod tests {
         }
 
         assert!((pool.admit)(&single("strategy", "H 0; CNOT 0 1; T 1")).is_err());
+
+        // The families of a text are those the designer reads, in its order.
+        let families_of = pool
+            .families_of
+            .expect("circuits name the families of a text");
+
+        assert_eq!(families_of(SEED_LINEAR), [0]);
+        assert_eq!(families_of(SEED_HADAMARD), [2]);
+
+        for (_, text) in CIRCUIT_PHRASES {
+            assert_eq!(families_of(text), named_families(text), "{text}");
+        }
     }
 }

@@ -13,7 +13,12 @@ The criteria below are fixed before the first Run and never change after it.
   added to its `soul` object, as the pilot wrote `config-E.json`; the flags below override its
   seed and numbers. Write `config-W0.json`: the same with `"copy": false` and
   `"imprint": false`. Arm N has no Soul.
-- Run the three arms on seeds 913 to 920 with the settings of the pilot, two Runs at a time,
+- Write `config-WF.json`: `config-W.json` with `"variation": "fixed"`. Arm WF is the upper
+  bound (spec 4.1, Controls): every Worker prefers Linear, Phase and Hadamard at 2 and every
+  other family at 1, and no Soul gives it. It shows whether preferences can shorten the wait
+  at all, and whether the inherited Soul adds anything beyond a fixed, hand-made rule. Its 8
+  Runs are reported for description only; they are no part of the criteria below.
+- Run the four arms on seeds 913 to 920 with the settings of the pilot, two Runs at a time,
   each with `RAYON_NUM_THREADS=2` and `nice -n 5`, into a directory outside the repository:
 
   ```sh
@@ -24,11 +29,12 @@ The criteria below are fixed before the first Run and never change after it.
     $B --out runs/W-$s $common --config config-W.json
     $B --out runs/W0-$s $common --config config-W0.json
     $B --out runs/N-$s $common
+    $B --out runs/WF-$s $common --config config-WF.json
   done
   ```
 
 - After each Run: `brut-breed --out <dir> --verify`, the SHA-256 of the five record files, then
-  `xz -6` on `events.jsonl` and `snapshot.json`, since 24 Runs would not fit on the disk
+  `xz -6` on `events.jsonl` and `snapshot.json`, since 32 Runs would not fit on the disk
   uncompressed.
 - Add the analysis to `.scratch/seelen-modell/analysis/` (Python standard library, run with
   `python3 -I`), reading the compressed files once each: the pass time; the divergence
@@ -37,9 +43,13 @@ The criteria below are fixed before the first Run and never change after it.
   the Workers of the parents chosen in generations 41 to 50; and, before the first Worker that
   names all three families, the draws on a parent with a promising Worker: the share that changes
   a promising Worker, the share of those that loses one of its families, and the share that makes
-  the Worker with all three.
+  the Worker with all three. For arm WF, for description: the pass time, the divergence
+  generations of WF and W and of WF and N, and the same draws on a parent with a promising
+  Worker. Its preference is fixed, so it has no mean preference to measure.
 - Write the results, criterion by criterion with their numbers, and the verdict to
-  `.scratch/seelen-modell/screen-w.md`. Report a failed criterion as plainly as a met one.
+  `.scratch/seelen-modell/screen-w.md`. Report a failed criterion as plainly as a met one. Give
+  the numbers of arm WF beside them, marked as description: its pass times against those of
+  W and N, and its share of draws that lose a family.
 
 ## Criteria (spec 4.1, fixed before the first Run)
 
@@ -62,6 +72,7 @@ fails. In every other case the owner decides. A go leads to a pre-registration o
 
 ## Done when
 
-- All 24 Runs pass `--verify`, and their hashes, wall times and calls are recorded.
-- `.scratch/seelen-modell/screen-w.md` holds every criterion with its numbers and the verdict.
+- All 32 Runs pass `--verify`, and their hashes, wall times and calls are recorded.
+- `.scratch/seelen-modell/screen-w.md` holds every criterion with its numbers and the verdict,
+  and the numbers of arm WF for description.
 - The analysis scripts and their outputs are in `.scratch/seelen-modell/analysis/`.

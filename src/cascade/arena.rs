@@ -31,7 +31,9 @@
 //! commit they pull the current Souls of both sides together, one after another in log
 //! order, as strongly as the observer's Coupling strength says. A `souls` event after the
 //! generation event lists the Workers whose current Soul changed. The select phase observes
-//! nothing.
+//! nothing. With `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1), the
+//! section operators also get the preference of each parent Worker's birth Soul, which
+//! weights their choices; they still see genes only.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -53,14 +55,15 @@ use crate::cascade::selection::{
     SelectionParams, lexicase_pick, lexicase_weights, tournament_pick, tournament_weights,
 };
 use crate::cascade::soul::{
-    ArrayVote, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, array_vote, count_winner,
-    observation, readout_phases, souletics, vote_phasor,
+    ArrayVote, FIXED_PREFERRED, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, Variation,
+    array_vote, count_winner, fixed_preference, observation, preference, readout_phases, souletics,
+    vote_phasor,
 };
 use crate::cascade::upbringing::{imprinted, section_block, teaching};
 use crate::cascade::variation::{
-    Op, Sources, llm_crossover_request_with, llm_mutate_request_with, mutate_sourced,
-    parse_llm_cascade, partner_sources, read_llm_cascade, section_crossover_sourced,
-    stage_crossover_sourced,
+    Op, Sources, Steer, Steered, llm_crossover_request_with, llm_mutate_request_with,
+    mutate_sourced, mutate_steered, parse_llm_cascade, partner_sources, read_llm_cascade,
+    section_crossover_sourced, section_crossover_steered, stage_crossover_sourced,
 };
 use crate::util::{BrutError, Result, derive_seed, sha256_hex};
 
@@ -1313,6 +1316,9 @@ struct Draft {
     /// Souls; spec 10).
     imprinted: Option<Vec<PhaseState>>,
     teaching: Option<String>,
+    /// The choices the preferences decided in the operator that made the child (arm W);
+    /// none for a seed, a Mutator's child, or with `variation` off.
+    steered: Steered,
 }
 
 /// Receives a snapshot to store before calls are made (see `Breeder::step_with`).
@@ -1386,6 +1392,30 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 "breed config: a Run with Souls needs a domain that names its hypothesis families"
                     .to_string(),
             ));
+        }
+
+        // A Soul that steers variation needs a gene pool that names the families of a text
+        // (arm W), and the fixed preference of arm WF needs the families it favours.
+        if let Some(soul) = &cfg.soul
+            && !soul.variation.is_off()
+        {
+            if genes.families_of.is_none() {
+                return Err(BrutError::Invalid(
+                    "breed config: soul: variation needs a gene pool that names the families of a text, and this Domain's gene pool does not"
+                        .to_string(),
+                ));
+            }
+
+            let names = domain.families();
+
+            if soul.variation == Variation::Fixed
+                && let Some(missing) = FIXED_PREFERRED.iter().find(|f| !names.contains(f))
+            {
+                return Err(BrutError::Invalid(format!(
+                    "breed config: soul: variation fixed favours {}, but this Domain has no family {missing}",
+                    FIXED_PREFERRED.join(", ")
+                )));
+            }
         }
 
         // A seed brings no Soul and no Coupling strength (spec 4.4): a Run without Souls has
@@ -1807,6 +1837,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     soul_sources: None,
                     imprinted: None,
                     teaching: None,
+                    steered: Steered::default(),
                 })
                 .collect();
 
@@ -1845,6 +1876,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
             self.souletics(g, &mut drafts, soul)?;
             self.upbringing(g, &mut drafts, soul)?;
         }
+
+        // The choices the preferences decided in this generation's children (arm W).
+        let steered = drafts.iter().fold(Steered::default(), |mut sum, d| {
+            sum.add(d.steered);
+            sum
+        });
 
         let need = drafts
             .iter()
@@ -2086,6 +2123,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 observations_vote: applied.vote,
                 observations_peer: applied.peer,
                 moved: &moved,
+                variation: (!soul.variation.is_off()).then_some(steered),
             });
 
         events.push(Event::State(observe(&ObserveInput {
@@ -2683,6 +2721,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                             soul_sources: None,
                             imprinted: None,
                             teaching: None,
+                            steered: Steered::default(),
                         });
 
                         (true, "ok".to_string())
@@ -2729,36 +2768,63 @@ impl<'a, D: Domain> Breeder<'a, D> {
             };
             let parent = &self.archive[a];
             let crossover = rng.random_bool(self.cfg.crossover_rate);
-            let mut child: Option<(Cascade, Vec<String>, Op, Sources)> = None;
+            let mut child: Option<(Cascade, Vec<String>, Op, Sources, Steered)> = None;
+            // Arm W: the preference of each of the parent's Workers, which weights the
+            // choices of the section operators.
+            let preferences = self.preferences(parent);
+            let steer = preferences.as_deref().zip(self.genes.families_of).map(
+                |(preferences, families_of)| Steer {
+                    families_of,
+                    preferences,
+                },
+            );
 
             // The operators see genes only: they remove the parents' Souls and Coupling
             // strengths first, so their draws are those of a Run without Souls (spec 9.1).
+            // In arm W the section operators also get the parent's preferences, and their
+            // draws follow them.
             if crossover && let Some(b) = self.partner(a, sel, rng) {
                 let other = &self.archive[b];
                 let by_stage = rng.random_bool(0.5);
+                let limits = &self.cfg.limits;
                 let made = if by_stage {
-                    stage_crossover_sourced(&parent.cascade, &other.cascade, &self.cfg.limits, rng)
-                        .map(|(c, s)| (c, Op::StageCrossover, s))
+                    stage_crossover_sourced(&parent.cascade, &other.cascade, limits, rng)
+                        .map(|(c, s)| (c, Op::StageCrossover, s, Steered::default()))
                 } else {
-                    section_crossover_sourced(
-                        &parent.cascade,
-                        &other.cascade,
-                        &self.cfg.limits,
-                        rng,
-                    )
-                    .map(|(c, s)| (c, Op::SectionCrossover, s))
+                    match &steer {
+                        Some(steer) => section_crossover_steered(
+                            &parent.cascade,
+                            &other.cascade,
+                            limits,
+                            steer,
+                            rng,
+                        ),
+                        None => {
+                            section_crossover_sourced(&parent.cascade, &other.cascade, limits, rng)
+                                .map(|(c, s)| (c, s, Steered::default()))
+                        }
+                    }
+                    .map(|(c, s, steered)| (c, Op::SectionCrossover, s, steered))
                 };
 
-                child =
-                    made.map(|(c, op, s)| (c, vec![parent.id.clone(), other.id.clone()], op, s));
+                child = made.map(|(c, op, s, steered)| {
+                    (c, vec![parent.id.clone(), other.id.clone()], op, s, steered)
+                });
             }
 
             if child.is_none() {
-                child = mutate_sourced(&parent.cascade, &self.cfg.limits, self.genes.phrases, rng)
-                    .map(|(c, op, s)| (c, vec![parent.id.clone()], op, s));
+                let (limits, phrases) = (&self.cfg.limits, self.genes.phrases);
+                let made = match &steer {
+                    Some(steer) => mutate_steered(&parent.cascade, limits, phrases, steer, rng),
+                    None => mutate_sourced(&parent.cascade, limits, phrases, rng)
+                        .map(|(c, op, s)| (c, op, s, Steered::default())),
+                };
+
+                child =
+                    made.map(|(c, op, s, steered)| (c, vec![parent.id.clone()], op, s, steered));
             }
 
-            if let Some((c, parents, op, sources)) = child
+            if let Some((c, parents, op, sources, steered)) = child
                 && c.check(&self.cfg.limits).is_ok()
                 && (self.genes.admit)(&c).is_ok()
                 && seen.insert(c.id())
@@ -2771,7 +2837,36 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     soul_sources: None,
                     imprinted: None,
                     teaching: None,
+                    steered,
                 });
+            }
+        }
+    }
+
+    /// The preference of every Worker of `m`, in Stage order, that weights the choices of the
+    /// section operators (arm W, `.scratch/seelen-modell/spec.md`, section 4.1): with
+    /// `variation: prefer` that of the Worker's birth Soul, never of its current Soul; with
+    /// `fixed` the preference of arm WF. None without Souls or with `variation` off.
+    fn preferences(&self, m: &Member<D::Answer>) -> Option<Vec<Vec<f64>>> {
+        let soul = self.cfg.soul.as_ref()?;
+        let workers = m.cascade.stages.iter().flat_map(|s| &s.workers);
+
+        match soul.variation {
+            Variation::Off => None,
+            Variation::Prefer => Some(
+                workers
+                    .map(|w| {
+                        preference(
+                            w.traits.phase_state.as_deref().unwrap_or_default(),
+                            soul.readout,
+                        )
+                    })
+                    .collect(),
+            ),
+            Variation::Fixed => {
+                let fixed = fixed_preference(&self.domain.families());
+
+                Some(workers.map(|_| fixed.clone()).collect())
             }
         }
     }
@@ -3361,7 +3456,8 @@ mod tests {
     use crate::cascade::puzzle::{generate_panel, parse_prompt};
     use crate::cascade::sim::SimModel;
     use crate::cascade::soul::{
-        Inheritance, SoulConfig, SoulDraws, Strengths, imprint, new_soul_chance, souletics,
+        Inheritance, QUARTER_TURN, SoulConfig, SoulDraws, Strengths, imprint, new_soul_chance,
+        souletics,
     };
     use crate::cascade::upbringing::{TEACHING_INTRO, UPBRINGING, model_word_in, teaching};
     use crate::cascade::variation::{GRID_BRIEF, MutatorBrief};
@@ -4756,6 +4852,7 @@ mod tests {
             phrases: DOUBLING_PHRASES,
             brief: &DOUBLING_BRIEF,
             admit: no_forbidden,
+            families_of: None,
         }
     }
 
@@ -9459,5 +9556,264 @@ mod tests {
             bred_with_events(Breeder::new(small_config(373), &pool, None).expect("plain"));
 
         assert!(soul_groups(&plain).is_empty());
+    }
+
+    /// Arm S with the setting `variation`.
+    fn varied(variation: Variation) -> SoulConfig {
+        SoulConfig {
+            variation,
+            ..SoulConfig::arm_s()
+        }
+    }
+
+    #[test]
+    fn variation_needs_a_gene_pool_that_names_families() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+
+        for variation in [Variation::Prefer, Variation::Fixed] {
+            // The grid gene pool cannot name the families of a text.
+            let reason = invalid(
+                Breeder::new(
+                    with_souls(small_config(331), varied(variation)),
+                    &pool,
+                    None,
+                ),
+                "grid",
+            );
+
+            assert!(reason.contains("variation"), "{reason}");
+
+            // The circuit gene pool can.
+            assert!(
+                Breeder::<CircuitDomain>::start(
+                    with_souls(circuit_config(337), varied(variation)),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                )
+                .is_ok()
+            );
+        }
+
+        // The fixed preference needs the families it favours: a grid gene pool that names
+        // families still lacks Linear, Phase and Hadamard.
+        let named = GenePool {
+            families_of: Some(|_| vec![0]),
+            ..GenePool::grid()
+        };
+        let reason = invalid(
+            Breeder::<GridDomain>::start(
+                with_souls(small_config(331), varied(Variation::Fixed)),
+                named,
+                &pool,
+                None,
+            ),
+            "fixed on grids",
+        );
+
+        assert!(reason.contains("Linear"), "{reason}");
+        assert!(
+            Breeder::<GridDomain>::start(
+                with_souls(small_config(331), varied(Variation::Prefer)),
+                named,
+                &pool,
+                None,
+            )
+            .is_ok()
+        );
+
+        // A resume refuses a change of the setting, as of every soul setting.
+        let snap = Breeder::<CircuitDomain>::start(
+            with_souls(circuit_config(337), SoulConfig::arm_s()),
+            circuit_pool(),
+            &designers,
+            None,
+        )
+        .expect("arm S")
+        .snapshot();
+        let reason = invalid(
+            Breeder::<CircuitDomain>::resume_from(
+                with_souls(circuit_config(337), varied(Variation::Prefer)),
+                circuit_pool(),
+                &designers,
+                None,
+                snap,
+            ),
+            "resume",
+        );
+
+        assert!(reason.contains("resume refused"), "{reason}");
+    }
+
+    /// What generation 1 of a circuit run with the Soul settings `soul` drafts, 24 children,
+    /// after every Worker of generation 0 got the birth Soul `birth` and the imprinted and
+    /// current Soul `now`: each child's gene id, parents and operator, and the place in the
+    /// generation's stream afterwards; and the choices the preferences decided.
+    fn steered_drafts(soul: SoulConfig, birth: [u16; 8], now: [u16; 8]) -> (String, Steered) {
+        let designers = designer_pool();
+        let never = || false;
+        let cfg = BreedConfig {
+            children_per_generation: 24,
+            ..circuit_config(347)
+        };
+        let mut b = Breeder::<CircuitDomain>::start(
+            with_souls(cfg, soul),
+            circuit_pool(),
+            &designers,
+            None,
+        )
+        .expect("circuits");
+
+        assert_eq!(b.step(&never).expect("generation 0").0, Status::Continue);
+
+        for m in &mut b.archive {
+            let n = m.cascade.worker_count();
+
+            for w in m.cascade.stages.iter_mut().flat_map(|s| &mut s.workers) {
+                w.traits.phase_state = Some(PhaseState(birth.to_vec()));
+            }
+
+            m.imprinted = Some(vec![PhaseState(now.to_vec()); n]);
+            m.soul_now = Some(vec![PhaseState(now.to_vec()); n]);
+        }
+
+        let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(b.cfg.seed, "gen/1"));
+        let Drafted::Ready(drafts, _, _) = b.draft_children(1, &mut rng).expect("draft") else {
+            panic!("generation 1 waits for answers");
+        };
+        let mut steered = Steered::default();
+        let mut record = String::new();
+
+        for d in &drafts {
+            steered.add(d.steered);
+            record.push_str(&format!(
+                "{} {} {:?}\n",
+                d.cascade.gene_id(),
+                d.parents.join(","),
+                d.op
+            ));
+        }
+
+        record.push_str(&format!("pos={}", rng.get_word_pos()));
+
+        (record, steered)
+    }
+
+    #[test]
+    fn the_birth_soul_steers_variation() {
+        let quarter = [QUARTER_TURN; 8];
+        let mut linear = quarter;
+
+        // Linear at no turn: its preference is 2.
+        linear[0] = 0;
+
+        let (today, none) = steered_drafts(SoulConfig::arm_s(), quarter, quarter);
+
+        assert_eq!(none, Steered::default());
+
+        // With every birth Soul at a quarter turn every preference is 1, and arm W drafts
+        // exactly what arm S drafts, whatever the current Souls.
+        for now in [quarter, linear, [0; 8]] {
+            assert_eq!(
+                steered_drafts(varied(Variation::Prefer), quarter, now),
+                (today.clone(), Steered::default())
+            );
+        }
+
+        // A birth Soul that prefers Linear steers: the preferences decide choices and
+        // change some, and the children differ.
+        let (by_birth, counts) = steered_drafts(varied(Variation::Prefer), linear, quarter);
+
+        assert!(
+            counts.changed > 0 && counts.changed <= counts.choices,
+            "{counts:?}"
+        );
+        assert_ne!(by_birth, today);
+
+        // Arm WF steers by its fixed preference, whatever the Souls.
+        let (fixed, counts) = steered_drafts(varied(Variation::Fixed), quarter, quarter);
+
+        assert!(counts.choices > 0, "{counts:?}");
+        assert_ne!(fixed, today);
+        assert_eq!(
+            steered_drafts(varied(Variation::Fixed), linear, [0; 8]),
+            (fixed, counts)
+        );
+    }
+
+    #[test]
+    fn a_run_with_variation_logs_its_choices_and_resumes_like_a_straight_one() {
+        let designers = designer_pool();
+        let never = || false;
+        let run = |soul: SoulConfig| {
+            let cfg = with_souls(circuit_config(349), soul);
+            let start = || {
+                Breeder::<CircuitDomain>::start(cfg.clone(), circuit_pool(), &designers, None)
+                    .expect("circuits")
+            };
+            let mut straight = start();
+            let mut events = Vec::new();
+
+            while let (Status::Continue, ev) = straight.step(&never).expect("step") {
+                events.extend(ev);
+            }
+
+            // Stopped after two generations and resumed from the snapshot: the same events.
+            let mut first = start();
+            let mut split = Vec::new();
+
+            for _ in 0..2 {
+                split.extend(first.step(&never).expect("step").1);
+            }
+
+            let json = serde_json::to_string(&first.snapshot()).expect("json");
+            let mut second = Breeder::<CircuitDomain>::resume_from(
+                cfg.clone(),
+                circuit_pool(),
+                &designers,
+                None,
+                serde_json::from_str(&json).expect("back"),
+            )
+            .expect("resume");
+
+            while let (Status::Continue, ev) = second.step(&never).expect("step") {
+                split.extend(ev);
+            }
+
+            assert_eq!(events, split);
+            assert_eq!(straight.snapshot(), second.snapshot());
+
+            events
+        };
+        let counts = |events: &[Event]| -> Vec<(Option<u64>, Option<u64>)> {
+            soul_groups(events)
+                .iter()
+                .map(|s| (s.variation_choices, s.variation_changed))
+                .collect()
+        };
+
+        // Arm W counts in every state line: nothing for the seeds, then the choices of the
+        // children, of which the weights changed some.
+        let steered = counts(&run(varied(Variation::Prefer)));
+
+        assert_eq!(steered.len(), 4);
+        assert_eq!(steered[0], (Some(0), Some(0)));
+
+        for &(choices, changed) in &steered {
+            assert!(changed.expect("changed") <= choices.expect("choices"));
+        }
+
+        assert!(
+            steered.iter().any(|&(_, changed)| changed > Some(0)),
+            "{steered:?}"
+        );
+
+        // Arm S leaves both out.
+        assert!(
+            counts(&run(SoulConfig::arm_s()))
+                .iter()
+                .all(|c| *c == (None, None))
+        );
     }
 }
