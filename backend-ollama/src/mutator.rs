@@ -438,6 +438,7 @@ mod tests {
 
     fn request(seed: u64) -> GenRequest {
         GenRequest {
+            phases: None,
             system: "You are the mutation operator.".to_string(),
             prompt: format!("Parent Cascade {seed}:\n{{\"stages\": []}}\n\"quoted\" \u{e9}"),
             max_tokens: 4096,
@@ -476,6 +477,7 @@ mod tests {
             let n = self.0.fetch_add(1, Ordering::SeqCst);
 
             Ok(GenResponse {
+                soul_decided: false,
                 text: format!("answer {n} to seed {}", req.seed),
                 prompt_tokens: 10,
                 completion_tokens: 5,

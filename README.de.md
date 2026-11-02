@@ -39,10 +39,11 @@ Quantenschaltungen, deren Richtigkeit ein exakter Simulator prüft.
 Beides beschreiben die Abschnitte „Kaskaden-Zucht (Stufe 2c)“ und „Universen, die
 erfinden (Schritt 1)“.
 
-**Schritt 2** soll jedem Worker eine verborgene, vererbte **Seele (Phasenzustand)** geben,
-die sich nur in seinem Charakter zeigt. Ein Urteil wird dann zur Beobachtung: Es rückt die
-Seelen beider Seiten aufeinander zu, so stark, wie die **Kopplungsstärke des Beobachters** κ
-es sagt. Der Entwurf ist zusammengeführt (PR #28 und #29) und seit dem 2026-10-31 im Bau.
+**Schritt 2** gibt jedem Worker eine verborgene, vererbte **Seele (Phasenzustand)**, die sich
+nur in seinem Charakter zeigt. Ein Urteil wird zur Beobachtung: Es rückt die Seelen beider
+Seiten aufeinander zu, so stark, wie die **Kopplungsstärke des Beobachters** κ es sagt. Das ist
+gebaut und in der Voreinstellung aus (siehe „Seele und Kopplungsstärke (Schritt 2)“); der vorab
+festgelegte Vergleich folgt nach einem Pilot.
 
 Einen bebilderten Überblick gibt der [Atlas](docs/atlas/index.html), eine Seite auf
 Deutsch und Englisch mit Diagrammen, einem Speckle-Simulator und dem Ergebnis von Schritt 1.
@@ -79,6 +80,13 @@ Stand: 2026-11-02.
   empfohlenen Antwort entschieden: Q67 a, Q68 a, Q69 a, Q70 a, Q71 a, Q72 a, Q73 a und d,
   Q74 a ([Fragen](.scratch/seele-und-kappa/owner-questions.md)). Die Eigentümerin bzw. der
   Eigentümer kann jede dieser Entscheidungen aufheben.
+- **Schritt 2: die Seele (Tickets 01 bis 09 und 12).** Seelen und Familienstärken, der
+  Charakter, die komplexe Abstimmung der Stufe, Beobachtungen und die Kopplungsstärke κ, die
+  Seeletik, die Erziehung, die Seele in den simulierten Modellen, die Gruppe `soul` der
+  `state`-Zeile, `brut-breed --soul s|v|k` und die Auswertung des Charakters
+  ([ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md),
+  [docs/SCHRITT2_SEELE.md](docs/SCHRITT2_SEELE.md)); siehe „Seele und Kopplungsstärke
+  (Schritt 2)“. Ohne `--soul` schreibt jeder Lauf dieselben Bytes wie zuvor.
 - **Echte Sprachmodelle (PR #33).** Das eigene Paket `backend-ollama` mit dem Programm
   `brut-breed-ollama`, siehe „Echte Modelle über Ollama“. Die ersten drei Läufe auf der H200
   fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -88,14 +96,16 @@ Stand: 2026-11-02.
 
 **Im Bau**
 
-- **Schritt 2.** Die Tickets 01 bis 09 und 12, begonnen am 2026-10-31.
+- **Begriffe von Schritt 2.** Die neuen Begriffe kommen in einem kleinen eigenen Pull-Request
+  nach `CONTEXT.md`, nie in einem Code-Pull-Request (Q53).
 
 **Geplant**
 
 - **Zucht auf ARC-Rastern.** Ein Lauf (`brut run`), welcher CNNs auf den ARC-Rasteraufgaben
   züchtet; heute trainiert und bewertet `brut arc-grid` gegebene Genome.
-- **Schritt 2, Vergleich.** Vorab-Registrierung (Ticket 10), Pilot (Ticket 11) und gezählte
-  Läufe (Ticket 13).
+- **Schritt 2, Vergleich.** Pilot (Ticket 11), Vorab-Registrierung (Ticket 10) und gezählte
+  Läufe (Ticket 13). Der Pilot kommt zuerst: Er legt die offenen Zahlen der
+  Vorab-Registrierung fest.
 - **Sprachmodelle nutzen CNNs (Entwurf geschrieben, Pull-Request folgt).** F1: ein CNN als
   Worker in einer Kaskade. F2: ein Sprachmodell als Architekt, der Baupläne für CNNs
   vorschlägt. F3: ein CNN als Werkzeug, welches das Sprachmodell aufruft, mit höchstens 3
@@ -1206,6 +1216,63 @@ Fassung:
    11/1024 = 0.0107 lag; die sequenzielle Regel ersetzt sie.
 6. Die Panels haben 33 Such- und 22 Auswahl-Aufgaben.
 
+## Seele und Kopplungsstärke (Schritt 2)
+
+Stand: gebaut und in der Voreinstellung aus; der Vergleich folgt. Beschrieben in
+[docs/SCHRITT2_SEELE.md](docs/SCHRITT2_SEELE.md) und
+[ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md).
+Spezifikation: [.scratch/seele-und-kappa/spec.md](.scratch/seele-und-kappa/spec.md), mit den
+Tickets in `.scratch/seele-und-kappa/issues/`; die Entscheidungen sind Q42 bis Q46 und Q51 bis
+Q74 von `.scratch/universum-erfinden/spec.md`.
+
+Jeder Worker trägt eine Seele (Phasenzustand): je Hypothesenfamilie der Domäne eine ganzzahlige
+Phase, vererbt und keinem Modell gezeigt. Jede Aufgabe gibt jeder Familie eine Familienstärke
+(Schaltungen: die Familien der Wege, die Schritt 1 festhielt; Gitter: die Familien der
+verborgenen Regel). Die Seele zeigt sich nur in ihrem Charakter, dem Betragsquadrat der Summe
+ihrer Zeiger, gewichtet mit diesen Stärken. In der Abstimmung einer Stufe addieren sich die
+Zeiger der Urteilenden, und das Betragsquadrat entscheidet; die Gruppencharakteristik der Stufe
+ist das Muster über die Antworten. Bei Gleichstand zählt die Zahl der Urteile, dann die
+Reihenfolge. Jedes Urteil mit Antwort ist eine Beobachtung: Der Beobachtete rückt um κ mal den
+Phasenabstand auf den Beobachter zu, der Beobachter um die Hälfte davon zurück. Kinder erben
+Geburtsseele und κ durch die Seeletik (Kopie, Mischung, ein kleiner Zufallsschritt, ab und zu
+eine neue Seele), und nach ihrer ersten Aufgabe prägen die Eltern sie (Erziehung). Die
+simulierten Modelle lesen die Phasen nur dort, wo sie sonst die erste von gleich guten Antworten
+nähmen oder eine Münze würfen; Kosten, Noten und die Kalibrierung von Schritt 1 bleiben.
+
+`--soul s|v|k` setzt einen der drei Arme des kommenden Vergleichs: S, die Seele; V, dieselbe
+Seele nur als Vorzeichen gelesen, die reellwertige Kontrolle; K, die Seele mit κ fest bei 0.
+Ohne `--soul` hat ein Lauf keine Seele und schreibt dieselben Bytes wie vor Schritt 2. Ein
+nachrechenbarer Lauf auf dem Pilot-Seed 901:
+
+```sh
+cargo build --release
+./target/release/brut-breed --out runs/s901-S --domain circuits --search 33 --select 22 \
+  --children 8 --generations 60 --seed 901 --max-calls 200000 --soul s
+./target/release/brut-breed --out runs/s901-S --verify
+
+# Den Charakter jedes Workers aus dem Protokoll nachrechnen
+cargo run --release --example soul_character -- runs/s901-S
+```
+
+Der Lauf dauert rund 4 s (Release-Build, 4 Threads). Unter seinen Zeilen steht
+
+```
+brut-breed: wrote runs/s901-S/rediscovery.json: the seeds solve 2 of 11 targets, bred Cascades 2 of the other 9; D > 1/2: no; calibrated
+```
+
+und `--verify` meldet
+
+```
+brut-breed: 2046 events, hash chain intact, head e38339538f19d85fccd1d1a7a1c3a0435e1989eec7838e6b6e0c5a46e0e692a1; checkpoint at entry 2046 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+```
+
+Die Zahlen der Voreinstellungen (κ der Startprogramme 0.2, sein Schritt 0.02, ein Phasenschritt
+von 512 Einheiten, θ = 1) sind Platzhalter, bis der Pilot sie festlegt; dann ändert sich auch
+diese Zeile. Bei einem fertigen Lauf mit Seelen, auf Schaltungen wie auf Gittern, bindet
+`--verify` zudem die Seelen-Datensätze und die aktuellen Seelen jedes Mitglieds an das
+Protokoll. Feinere Einstellungen kommen als Objekt `soul` über `--config`; `--soul` daneben ist
+ein Bedienfehler, und ein Fortsetzen lehnt `--soul` ab. Die Pilot-Seeds 901 bis 923 zählen nie.
+
 ## Die sechs Komponenten
 
 | Komponente | Aufgabe | Dateien |
@@ -1238,7 +1305,7 @@ Bausteine des Lerner-Modus:
 
 Alles unter `src/learner/` ist reine Rechnung ohne Datei- oder Netzzugriff.
 
-Bausteine der Kaskaden-Zucht (Stufe 2c und Schritt 1):
+Bausteine der Kaskaden-Zucht (Stufe 2c, Schritt 1 und Schritt 2):
 
 | Baustein | Aufgabe | Dateien |
 |---|---|---|
@@ -1246,7 +1313,8 @@ Bausteine der Kaskaden-Zucht (Stufe 2c und Schritt 1):
 | Kaskaden und Varianten | Genom und Grenzen, Mutation und Kreuzung, Aufträge an den Mutator | `src/cascade/genome.rs`, `src/cascade/variation.rs` |
 | Gitter-Rätsel | Rätselgenerator, Prompt-Protokoll, simuliertes Modell | `src/cascade/puzzle.rs`, `src/cascade/sim.rs` |
 | Naht | Aufgabenart (`Domain`) und Gene (`GenePool`) | `src/cascade/domain.rs` |
-| Kennzahlen | die `state`-Zeile je Generation | `src/cascade/observe.rs` |
+| Kennzahlen | die `state`-Zeile je Generation, in Läufen mit Seelen mit der Gruppe `soul` | `src/cascade/observe.rs` |
+| Seele | Seele, Charakter, komplexe Abstimmung, Beobachtungen, Seeletik; Erziehung | `src/cascade/soul.rs`, `src/cascade/upbringing.rs` |
 | Qubits | exakter Simulator, Textprotokoll für Schaltungen | `src/cascade/qubit.rs`, `src/cascade/circuit_text.rs` |
 | Schaltungen | Zielbibliothek, Aufgaben, Bewertung, Wiederentdeckung | `src/cascade/circuit.rs` |
 | Positivkontrolle | simulierter Entwerfer, Startprogramme, Satzbausteine | `src/cascade/designer.rs`, `src/cascade/circuit_genes.rs` |
@@ -1345,6 +1413,11 @@ Mehr dazu, und welche Lücken es gibt, steht in
   Generation 1000 besteht; wie hoch die Erfolgsquote ist, schätzt es nicht, und über echte
   Sprachmodelle sagt es nichts. Was das Experiment und der Pilot zeigen und was nicht,
   steht in [docs/SCHRITT1_SCHALTUNGEN.md](docs/SCHRITT1_SCHALTUNGEN.md), Abschnitt 8.
+- Schritt 2: Seele, Charakter und Kopplungsstärke sind Begriffe eines Modells, keine Physik,
+  und sagen nichts über Seelen in der Natur. Der Vergleich ist noch nicht gelaufen. Mit dem
+  simulierten Entwerfer wirkt die Seele vor allem über Abstimmung, Beobachtung und Erziehung;
+  auf dem Pilot-Seed 901 änderte sie bis Generation 60 kein Ergebnis
+  ([docs/SCHRITT2_SEELE.md](docs/SCHRITT2_SEELE.md), Abschnitt 4).
 
 ## Aufbau eines Lauf-Verzeichnisses (MLP-Modus)
 
@@ -1514,6 +1587,13 @@ Die Tests der Kaskaden-Zucht:
   über Prozesse und bei 1 und 4 Threads, Stopp und Fortsetzen, `--verify` gegen eine
   veränderte `rediscovery.json`, abgelehnte Beförderung), legt die Kalibrierung der
   Positivkontrolle fest und vergleicht den exakten Simulator mit `src/quantum.rs`.
+- `tests/soul.rs` prüft Schritt 2. Ohne Seele ändert sich nichts: die Kennungen der
+  Startprogramme, die Prompts, die Einstellungen und in einem Release-Test
+  (`cargo test --release --test soul -- --ignored`) die Prüfsumme des Pilotlaufs von Schritt 1.
+  Mit `--soul` rechnet es auf beiden Domänen: die Voreinstellungen, gleiche Dateien über
+  Prozesse und bei 1 und 4 Threads in jedem Arm, `--verify` gegen veränderte Seelen, abgelehnte
+  Beförderung, die Wiederentdeckungs-Zählung und das Beispiel zum Charakter gegen
+  `character()`.
 
 ## Schneller rechnen (freiwillig)
 

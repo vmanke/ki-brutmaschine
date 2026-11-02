@@ -1,6 +1,6 @@
 # 01 Soul storage and settings, off by default
 
-Status: needs-triage (waits for the owner's approval of the design; no open question)
+Status: resolved
 Blocked by: none
 Spec: `../spec.md`, sections 4, 12.2 and 14
 
@@ -49,3 +49,24 @@ Spec: `../spec.md`, sections 4, 12.2 and 14
   that `docs/pilot-step1/pilot.json` records.
 
 ## Comments
+
+- 2026-10-31, build. `Traits` has `phase_state` (`PhaseState`, a list of `u16`) and
+  `coupling` (thousandths), both left out of the JSON at their default. `Cascade` has
+  `genes()`, `gene_id()` and `carries_soul()`, and `check` refuses a coupling above 1000
+  (`COUPLING_MAX`). `BreedConfig::soul` holds a `SoulConfig` of the new `src/cascade/soul.rs`,
+  with `Readout`, `Strengths`, the arms S, V and K, and a range check. `Breeder::start` refuses
+  every Run with Souls ("Souls are not built yet") and, without Souls, a seed with a Soul or a
+  coupling; `resume_from` refuses such a member. The Mutator's requests show `genes()` only;
+  an answer with either field is refused with "not admitted: the Mutator does not write
+  Souls", before any other rule (`read_llm_cascade`). `--promote` refuses a Run with Souls
+  with exit code 1, and the pool gate (`CascadeAdapter::validate`) refuses a Cascade with a
+  Soul. Tests: in `tests/soul.rs` `old_traits_write_back_byte_equal` (seed ids recorded
+  before the change), `soul_settings_are_left_out_when_off`,
+  `a_run_with_souls_is_refused_until_souletics_exists`, `promote_refuses_a_run_with_souls`
+  and `souls_off_reproduces_the_step1_pilot` (ignored, release: head e93ed521…); in
+  `genome.rs` `a_soul_changes_the_id_but_not_the_gene_id`,
+  `check_refuses_a_coupling_above_1000` and `traits_written_before_step_2_read_without_a_soul`;
+  in `arena.rs` `the_mutator_never_sees_or_writes_a_soul` and
+  `a_run_without_souls_refuses_souled_workers`; three setting tests in `soul.rs`;
+  `the_cascade_pool_refuses_a_soul` in `hitl.rs`. The goldens of `tests/universe.rs` and
+  `tests/mlp_golden.rs` pass, and `tests/fixtures` is unchanged.

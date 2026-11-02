@@ -393,6 +393,7 @@ fn brut_mutator_refuses_before_any_call() {
     let dir = fresh("refuse");
     let out = dir.to_str().expect("path");
     let req = GenRequest {
+        phases: None,
         system: "s".to_string(),
         prompt: "p".to_string(),
         max_tokens: 64,

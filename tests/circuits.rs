@@ -1204,6 +1204,7 @@ fn strong_cascade() -> Cascade {
         temperature: 0.0,
         answer_tokens: 512,
         self_check: true,
+        ..Traits::default()
     };
 
     Cascade {
@@ -1455,6 +1456,7 @@ fn ceiling_worker(slots: &[(&str, &str)]) -> Worker {
             temperature: 0.0,
             answer_tokens: 512,
             self_check: true,
+            ..Traits::default()
         },
     }
 }

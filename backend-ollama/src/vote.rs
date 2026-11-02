@@ -1182,6 +1182,7 @@ mod tests {
             self.0.lock().expect("lock").push(req.seed);
 
             Ok(GenResponse {
+                soul_decided: false,
                 text: "ANSWER\n1".to_string(),
                 prompt_tokens: 1,
                 completion_tokens: 1,
@@ -1380,6 +1381,7 @@ mod tests {
             };
 
             Ok(GenResponse {
+                soul_decided: false,
                 text,
                 prompt_tokens: 10,
                 completion_tokens: 4,
@@ -1571,6 +1573,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let request = GenRequest {
+                    phases: None,
                     system: "sys".to_string(),
                     prompt: format!("puzzle {i}"),
                     max_tokens: 64,
@@ -1583,6 +1586,7 @@ mod tests {
                     tag: tag.to_string(),
                     request,
                     response: GenResponse {
+                        soul_decided: false,
                         text: "ANSWER\n1".to_string(),
                         prompt_tokens: 1,
                         completion_tokens: 1,

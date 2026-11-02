@@ -24,7 +24,10 @@
 //! 4. Temperature: with probability 0.5 * temperature / 1.5 the method order is shuffled.
 //! 5. Solve: each method runs until it is done or the budget is spent. The reply is the
 //!    cheapest verified candidate by (T, CNOT, gates), else the latest earlier answer that
-//!    fits the gate cap, else a line without ANSWER.
+//!    fits the gate cap, else a line without ANSWER. With phases on the request and
+//!    self-check (step 2), equally cheap verified candidates are kept too, each with the
+//!    families that found it, and the phases may pick another of them (see `Pool`); costs,
+//!    exactness and thinking stay as they are.
 //! 6. Judge: verify both candidates. When exactly one passes, it wins; otherwise the stated
 //!    costs decide (T, then CNOT), and a seeded coin breaks a tie. So without self-check,
 //!    a cheap wrong circuit can fool the judge.
@@ -201,6 +204,14 @@ impl Family {
         Family::Previous,
     ];
 
+    /// The family's place in `FAMILY_STEMS`: its phase in a Soul on circuits (step 2).
+    fn index(self) -> usize {
+        Family::ALL
+            .iter()
+            .position(|&f| f == self)
+            .unwrap_or(Family::ALL.len())
+    }
+
     /// The family's name, as in `FAMILY_STEMS`.
     fn name(self) -> &'static str {
         match self {
@@ -364,39 +375,157 @@ fn verify(target: &Target, c: &Circuit, checked: &[u32], meter: &mut Meter) -> O
     Some(agrees_on(target, c, checked).unwrap_or(false))
 }
 
+/// The unit phasor e^(2πip/65536) of the phase `p` as (re, im), reduced to its quarter turn
+/// first (step 2). The designer reaches the crate only through the modules of its protocol
+/// and the backend, so it keeps this copy of `soul::phasor`; a test in `soul.rs` checks that
+/// both give the same values.
+fn unit_phasor(p: u16) -> (f64, f64) {
+    const QUARTER_TURN: u16 = 16384;
+
+    let rest = std::f64::consts::TAU * f64::from(p % QUARTER_TURN) / 65536.0;
+    let (c, s) = (rest.cos(), rest.sin());
+
+    match p / QUARTER_TURN {
+        0 => (c, s),
+        1 => (-s, c),
+        2 => (-c, -s),
+        _ => (s, -c),
+    }
+}
+
+/// The intensity |Σ_f e^(iφ_f)|² of the families `support`, by their places in
+/// `FAMILY_STEMS`, under the request's `phases`, each family once, summed in ascending order
+/// (step 2, spec 11.2). One family gives 1 exactly and none 0, whatever the phases; a family
+/// without a phase counts nothing. The same computation as `soul::intensity`.
+pub(crate) fn support_intensity(phases: &[u16], support: &BTreeSet<usize>) -> f64 {
+    let read: Vec<u16> = support
+        .iter()
+        .filter_map(|&f| phases.get(f).copied())
+        .collect();
+
+    match read.as_slice() {
+        [] => 0.0,
+        [_] => 1.0,
+        many => {
+            let (re, im) = many.iter().fold((0.0, 0.0), |(re, im), &p| {
+                let (c, s) = unit_phasor(p);
+
+                (re + c, im + s)
+            });
+
+            re * re + im * im
+        }
+    }
+}
+
 /// The candidates of one solve call. A candidate counts only after it is verified, and
 /// only the cheapest verified one is kept; on a tie the earlier one stays.
+///
+/// With phases and self-check (step 2, spec 11.2) [Q72 a], the pool also keeps every later
+/// candidate of the best rank that passes the same check on every column. That one check is
+/// not paid for, so the budget and the reported thinking stay as they are. Each kept
+/// candidate has a support: the families whose methods produced exactly that circuit, so a
+/// circuit found twice merges both. The best candidate, the first found, stays the one the
+/// methods work on, so they make the same steps with phases as without.
 struct Pool<'t> {
     target: &'t Target,
     checked: Vec<u32>,
     max_gates: usize,
     best: Option<Circuit>,
+    /// True when the pool keeps the later candidates of the best rank.
+    keep_ties: bool,
+    /// The kept candidates of the best rank, the first found first, each with its support.
+    /// Empty unless `keep_ties`.
+    kept: Vec<(Circuit, BTreeSet<Family>)>,
 }
 
 impl<'t> Pool<'t> {
+    /// A pool of a request without phases; the tests build these directly.
+    #[cfg(test)]
     fn new(target: &'t Target, self_check: bool, max_gates: usize) -> Self {
+        Pool::with_phases(target, self_check, max_gates, false)
+    }
+
+    /// The pool of a request that carries phases when `phases` is true: it keeps ties only
+    /// when the request also carries the self-check text. Without it the check covers the
+    /// first and the last column only, so a later candidate could be inexact where the first
+    /// was exact.
+    fn with_phases(target: &'t Target, self_check: bool, max_gates: usize, phases: bool) -> Self {
         Pool {
             target,
             checked: checked_columns(target.qubits(), self_check),
             max_gates,
             best: None,
+            keep_ties: phases && self_check,
+            kept: Vec::new(),
         }
     }
 
-    /// Offer a candidate. It is dropped without cost when it has no gates, breaks the gate
-    /// cap, or is no cheaper than the best so far; otherwise it is verified and kept when
-    /// it passes. True when it was kept.
-    fn offer(&mut self, c: Circuit, meter: &mut Meter) -> bool {
+    /// Offer a candidate that the methods of `family` produced. It is dropped without cost
+    /// when it has no gates, breaks the gate cap, or is no cheaper than the best so far;
+    /// otherwise it is verified and kept when it passes. True when it was kept as the best.
+    ///
+    /// When the pool keeps ties, a candidate of the best rank is checked on every column
+    /// without paying, and kept beside the best when it passes; it changes no step.
+    fn offer(&mut self, c: Circuit, family: Family, meter: &mut Meter) -> bool {
         let fits = !c.gates().is_empty() && c.gates().len() <= self.max_gates;
         let cheaper = self.best.as_ref().is_none_or(|b| rank(&c) < rank(b));
+
+        if fits && self.keep_ties && self.best.as_ref().is_some_and(|b| rank(&c) == rank(b)) {
+            self.keep_tie(c, family);
+
+            return false;
+        }
 
         if !fits || !cheaper || verify(self.target, &c, &self.checked, meter) != Some(true) {
             return false;
         }
 
+        if self.keep_ties {
+            // A cheaper candidate replaces them all.
+            self.kept = vec![(c.clone(), BTreeSet::from([family]))];
+        }
+
         self.best = Some(c);
 
         true
+    }
+
+    /// Keep `c`, a candidate of the best rank, beside the best: merge `family` into the
+    /// support of the same circuit kept before, or keep `c` with its own support when it
+    /// passes the check, which costs no step.
+    fn keep_tie(&mut self, c: Circuit, family: Family) {
+        if let Some((_, support)) = self.kept.iter_mut().find(|(k, _)| *k == c) {
+            support.insert(family);
+        } else if agrees_on(self.target, &c, &self.checked).unwrap_or(false) {
+            self.kept.push((c, BTreeSet::from([family])));
+        }
+    }
+
+    /// The reply: the kept candidate of the best rank whose support gives the largest
+    /// intensity |Σ_f e^(iφ_f)|² under `phases`, then the first found; and the first found,
+    /// the reply without phases. Without kept ties both are the best candidate.
+    fn reply(self, phases: Option<&[u16]>) -> Option<(Circuit, Circuit)> {
+        let (Some(phases), true) = (phases, self.kept.len() > 1) else {
+            return self.best.map(|c| (c.clone(), c));
+        };
+        let support =
+            |s: &BTreeSet<Family>| -> BTreeSet<usize> { s.iter().map(|f| f.index()).collect() };
+        let mut chosen = 0;
+        let mut loudest = support_intensity(phases, &support(&self.kept[0].1));
+
+        for (i, (_, s)) in self.kept.iter().enumerate().skip(1) {
+            let louder = support_intensity(phases, &support(s));
+
+            if louder.total_cmp(&loudest) == Ordering::Greater {
+                chosen = i;
+                loudest = louder;
+            }
+        }
+
+        let first = self.kept[0].0.clone();
+
+        self.kept.into_iter().nth(chosen).map(|(c, _)| (c, first))
     }
 }
 
@@ -1876,7 +2005,7 @@ fn rewindow(gates: Vec<Gate>, table: &mut Cliffords, meter: &mut Meter) -> Vec<G
 fn simplify(c: &Circuit, n: usize, pool: &mut Pool<'_>, table: &mut Cliffords, meter: &mut Meter) {
     let offer = |gates: Vec<Gate>, pool: &mut Pool<'_>, meter: &mut Meter| {
         if let Ok(c) = Circuit::new(gates) {
-            pool.offer(c, meter);
+            pool.offer(c, Family::Simplify, meter);
         }
     };
     let Some(base) = peephole(c.gates().to_vec(), meter) else {
@@ -1905,18 +2034,20 @@ fn simplify(c: &Circuit, n: usize, pool: &mut Pool<'_>, table: &mut Cliffords, m
 }
 
 /// Run the methods in order, offer every candidate to a pool, and return the cheapest
-/// verified one.
+/// verified one, which `phases` may choose among equally cheap ones, and the one the same
+/// call returns without phases, the first found.
 fn design(
     task: &ParsedCircuitPrompt,
     order: &[Family],
     self_check: bool,
+    phases: Option<&[u16]>,
     meter: &mut Meter,
-) -> Option<Circuit> {
+) -> Option<(Circuit, Circuit)> {
     let target = &task.target;
     let n = target.qubits();
     let skills = Skills::of(order);
     let meet = order.contains(&Family::Meet);
-    let mut pool = Pool::new(target, self_check, task.max_gates);
+    let mut pool = Pool::with_phases(target, self_check, task.max_gates, phases.is_some());
     let mut tried = BTreeSet::new();
     let mut searched = false;
     let mut table = Cliffords::default();
@@ -1930,7 +2061,7 @@ fn design(
                     }
 
                     if let Some(c) = through(target, frame, skills, meter) {
-                        pool.offer(c, meter);
+                        pool.offer(c, family, meter);
                     }
                 }
             }
@@ -1941,8 +2072,11 @@ fn design(
 
                 let checked = pool.checked.clone();
 
+                // The search is the method of Meet when it meets in the middle.
+                let by = if meet { Family::Meet } else { Family::Search };
+
                 if let Some(c) = word_search(target, &checked, meet, task.max_gates, meter) {
-                    pool.offer(c, meter);
+                    pool.offer(c, by, meter);
                 }
             }
             Family::Search | Family::Meet => {}
@@ -1962,13 +2096,13 @@ fn design(
             }
             Family::Previous => {
                 for c in task.previous.iter().rev() {
-                    pool.offer(c.clone(), meter);
+                    pool.offer(c.clone(), Family::Previous, meter);
                 }
             }
         }
     }
 
-    pool.best
+    pool.reply(phases)
 }
 
 /// The judge's verdict, "VERDICT A" or "VERDICT B". Both candidates are verified within the
@@ -2105,6 +2239,7 @@ impl SimDesigner {
             text,
             stop_reason: stop,
             backend: self.tag.clone(),
+            soul_decided: false,
         }
     }
 }
@@ -2132,6 +2267,7 @@ impl ModelBackend for SimDesigner {
 
         let self_check = req.system.contains(CIRCUIT_SELF_CHECK_TEXT);
         let mut meter = Meter::new(req.think_tokens, self.step_tokens);
+        let mut decided = false;
 
         let (text, stop) = match &task.candidates {
             Some((a, b)) => {
@@ -2148,14 +2284,30 @@ impl ModelBackend for SimDesigner {
                         .cloned()
                 };
 
-                match design(&task, &order, self_check, &mut meter).or_else(fallback) {
-                    Some(answer) => answer_reply(&answer, req.max_tokens),
+                let phases = req.phases.as_deref();
+                let designed = design(&task, &order, self_check, phases, &mut meter);
+
+                match designed.or_else(|| fallback().map(|c| (c.clone(), c))) {
+                    Some((answer, plain)) => {
+                        let reply = answer_reply(&answer, req.max_tokens);
+
+                        // The phases decided when the reply differs from the one without.
+                        decided = answer != plain && reply != answer_reply(&plain, req.max_tokens);
+                        reply
+                    }
                     None => word_reply(NO_CIRCUIT, req.max_tokens),
                 }
             }
         };
 
-        Ok(self.response(text, stop, prompt_tokens, meter.thinking(self.step_tokens)))
+        Ok(GenResponse {
+            soul_decided: decided,
+            ..self.response(text, stop, prompt_tokens, meter.thinking(self.step_tokens))
+        })
+    }
+
+    fn reads_phases(&self) -> bool {
+        true
     }
 }
 
@@ -2401,6 +2553,7 @@ mod tests {
             temperature: 0.0,
             seed: 1,
             think_tokens,
+            phases: None,
         }
     }
 
@@ -3261,6 +3414,7 @@ mod tests {
                 temperature: temperatures[i % temperatures.len()],
                 seed: i as u64,
                 think_tokens: [0, 4096][i % 2],
+                phases: None,
             };
 
             for model in [SimDesigner::small(), SimDesigner::large()] {
@@ -3327,6 +3481,530 @@ mod tests {
     /// A meter that never runs out in these tests.
     fn plenty() -> Meter {
         Meter::new(u32::MAX, 1)
+    }
+
+    /// The reply of `model` to a solve request on `target`, with `phases` attached.
+    fn reply_with(
+        model: &SimDesigner,
+        system: &str,
+        prompt: String,
+        think: u32,
+        phases: Option<Vec<u16>>,
+    ) -> GenResponse {
+        let req = GenRequest {
+            phases,
+            ..request(system, prompt, think)
+        };
+
+        model.generate(&req).expect("generate")
+    }
+
+    /// `designed` with `phases` attached to the request.
+    fn designed_with(
+        model: &SimDesigner,
+        system: &str,
+        target: &Target,
+        think: u32,
+        phases: Vec<u16>,
+    ) -> Option<(bool, u32, u32)> {
+        let reply = reply_with(
+            model,
+            system,
+            solve_prompt(target, &[]),
+            think,
+            Some(phases),
+        );
+        let c = parse_circuit_answer(&reply.text, target.qubits(), 64)?;
+        let checked = check(target, &c).expect("check");
+
+        assert_eq!(checked.exact, dense_agrees(target, &c), "{}", c.render());
+
+        Some((checked.exact, checked.cost.t, checked.cost.cnot))
+    }
+
+    /// Eight random phases, one per family.
+    fn random_phases(r: &mut ChaCha8Rng) -> Vec<u16> {
+        (0..8).map(|_| r.random()).collect()
+    }
+
+    #[test]
+    fn the_step1_calibration_holds_with_phases() {
+        // The routes of the calibration (PREREG_STEP1_CIRCUITS.md, section 5), as
+        // `one_step_short_misses_and_enough_thinking_hits` and
+        // `each_route_reaches_its_cost_on_plain_and_dressed_targets` pin them, with random
+        // phases on every request: each keeps its fewest thinking tokens and its exact cost.
+        // `circuit_genes.rs` checks the seeds on every dressing in a test of the same name.
+        let mut r = rng(29);
+        let (small, large) = (SimDesigner::small(), SimDesigner::large());
+        let basis = format!("{HADAMARD} {PHASE} {LINEAR} {CIRCUIT_SELF_CHECK_TEXT}");
+        let framing = format!("{HADAMARD} {PHASE} {LINEAR} {COMPOSE} {CIRCUIT_SELF_CHECK_TEXT}");
+        let fewest = [
+            (&small, PHASE.to_string(), ccz(), 8, (7, 10)),
+            (&small, format!("{PHASE} {LINEAR}"), ccz(), 196, (7, 6)),
+            (&large, basis.clone(), toffoli(), 158, (7, 6)),
+            (&large, basis.clone(), peres(), 124, (7, 5)),
+            (&large, basis.clone(), rtof(), 78, (4, 3)),
+            (&large, basis, ccix(), 92, (4, 4)),
+            (&large, framing, fredkin(), 654, (7, 8)),
+            (&large, checking(&[SEARCH]), cz(), 104, (0, 1)),
+            (&large, checking(&[SEARCH, MEET]), ch(), 3124, (2, 1)),
+            (
+                &large,
+                checking(&[COMPOSE, HADAMARD, PHASE, LINEAR, SIMPLIFY]),
+                fredkin(),
+                1566,
+                (7, 7),
+            ),
+            (&small, LINEAR.to_string(), swap(), 0, (0, 3)),
+            (&small, PHASE.to_string(), cs(), 0, (3, 2)),
+        ];
+
+        for (model, system, target, think, (t, cnot)) in fewest {
+            let hit = Some((true, t, cnot));
+
+            assert_eq!(
+                designed_with(model, &system, &target, think, random_phases(&mut r)),
+                hit,
+                "{think}"
+            );
+
+            if think > 0 {
+                assert_ne!(
+                    designed_with(model, &system, &target, think - 1, random_phases(&mut r)),
+                    hit,
+                    "{think} - 1"
+                );
+            }
+        }
+
+        let basis = checking(&[HADAMARD, PHASE, LINEAR]);
+        let at_the_ceiling: Vec<Route> = vec![
+            ("swap by Linear", LINEAR.to_string(), swap(), Some((0, 3))),
+            ("cs by Phase", PHASE.to_string(), cs(), Some((3, 2))),
+            ("cz by Phase alone", PHASE.to_string(), cz(), Some((0, 2))),
+            (
+                "cz by Hadamard and Linear",
+                checking(&[HADAMARD, LINEAR]),
+                cz(),
+                Some((0, 1)),
+            ),
+            (
+                "ccz by Phase alone",
+                PHASE.to_string(),
+                ccz(),
+                Some((7, 10)),
+            ),
+            (
+                "ccz by Phase and Linear",
+                checking(&[PHASE, LINEAR]),
+                ccz(),
+                Some((7, 6)),
+            ),
+            ("qft2", basis.clone(), qft2(), Some((3, 3))),
+            ("toffoli", basis.clone(), toffoli(), Some((7, 6))),
+            ("peres", basis.clone(), peres(), Some((7, 5))),
+            ("rtof", basis.clone(), rtof(), Some((4, 3))),
+            ("ccix", basis.clone(), ccix(), Some((4, 4))),
+            (
+                "fredkin by Compose",
+                checking(&[COMPOSE, HADAMARD, PHASE, LINEAR]),
+                fredkin(),
+                Some((7, 8)),
+            ),
+            (
+                "fredkin by Compose and Simplify",
+                checking(&[COMPOSE, HADAMARD, PHASE, LINEAR, SIMPLIFY]),
+                fredkin(),
+                Some((7, 7)),
+            ),
+            ("cz by Search", checking(&[SEARCH]), cz(), Some((0, 1))),
+            (
+                "ch by Search and Meet",
+                checking(&[SEARCH, MEET]),
+                ch(),
+                Some((2, 1)),
+            ),
+            ("ch by Meet alone", checking(&[MEET]), ch(), Some((2, 1))),
+            ("fredkin without Compose", basis.clone(), fredkin(), None),
+            (
+                "toffoli without Hadamard",
+                checking(&[PHASE, LINEAR]),
+                toffoli(),
+                None,
+            ),
+            ("swap by Phase", PHASE.to_string(), swap(), None),
+            ("cz by Hadamard alone", HADAMARD.to_string(), cz(), None),
+            ("ch by Search alone", checking(&[SEARCH]), ch(), None),
+            (
+                "ch",
+                checking(&[HADAMARD, PHASE, LINEAR, COMPOSE, PREVIOUS, SIMPLIFY]),
+                ch(),
+                None,
+            ),
+        ];
+
+        for (label, system, base, cost) in at_the_ceiling {
+            for seed in 0..6 {
+                let target = if seed == 0 {
+                    base.clone()
+                } else {
+                    base.dress(&Dressing::draw(base.qubits(), &mut rng(seed)))
+                };
+                let want = cost.map(|(t, cnot)| (true, t, cnot));
+
+                assert_eq!(
+                    designed_with(&large, &system, &target, 4096, random_phases(&mut r)),
+                    want,
+                    "{label}, dressing {seed}"
+                );
+            }
+        }
+    }
+
+    /// A random solve request on one of the eleven targets, plain or dressed, that names
+    /// one to five families in a random order, with an earlier answer half of the time. The
+    /// system prompt comes without and with the self-check text.
+    fn random_request(r: &mut ChaCha8Rng) -> (Target, [String; 2], String, u32, SimDesigner) {
+        let texts = [
+            LINEAR, PHASE, HADAMARD, COMPOSE, SEARCH, MEET, SIMPLIFY, PREVIOUS,
+        ];
+        let targets = [
+            cz(),
+            swap(),
+            cs(),
+            ch(),
+            qft2(),
+            ccz(),
+            toffoli(),
+            peres(),
+            fredkin(),
+            rtof(),
+            ccix(),
+        ];
+        let base = targets[r.random_range(0..targets.len())].clone();
+        let target = if r.random_bool(0.5) {
+            base.dress(&Dressing::draw(base.qubits(), r))
+        } else {
+            base
+        };
+        let mut named: Vec<&str> = texts.to_vec();
+
+        named.shuffle(r);
+        named.truncate(r.random_range(1..=5));
+
+        let system = named.join(" ");
+        let think = [0, 16, 64, 256, 1024, 4096][r.random_range(0..6)];
+        let earlier = if r.random_bool(0.5) {
+            let other = checking(&[texts[r.random_range(0..texts.len())]]);
+            let first = solve_prompt(&target, &[]);
+
+            answer(&SimDesigner::large(), &other, first, 4096)
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let model = if r.random_bool(0.5) {
+            SimDesigner::small()
+        } else {
+            SimDesigner::large()
+        };
+        let checked = format!("{system} {CIRCUIT_SELF_CHECK_TEXT}");
+
+        (
+            target.clone(),
+            [system, checked],
+            solve_prompt(&target, &earlier),
+            think,
+            model,
+        )
+    }
+
+    /// What must not move: the answer's (T, CNOT, gates), its exactness, and the thinking
+    /// tokens the reply reports.
+    fn outcome(target: &Target, reply: &GenResponse) -> (Option<(u32, u32, u32, bool)>, u32) {
+        let thinking = reply.completion_tokens - approx_tokens(&reply.text);
+        let answer = parse_circuit_answer(&reply.text, target.qubits(), 64).map(|c| {
+            let checked = check(target, &c).expect("check");
+
+            (
+                checked.cost.t,
+                checked.cost.cnot,
+                checked.cost.gates,
+                checked.exact,
+            )
+        });
+
+        (answer, thinking)
+    }
+
+    #[test]
+    fn designer_costs_do_not_move() {
+        let mut r = rng(37);
+        let mut decided = 0;
+
+        for i in 0..200 {
+            let (target, systems, prompt, think, model) = random_request(&mut r);
+            let phases = random_phases(&mut r);
+
+            for system in &systems {
+                let plain = reply_with(&model, system, prompt.clone(), think, None);
+                let souled =
+                    reply_with(&model, system, prompt.clone(), think, Some(phases.clone()));
+
+                assert_eq!(
+                    outcome(&target, &souled),
+                    outcome(&target, &plain),
+                    "request {i}: {system}"
+                );
+                assert_eq!(souled.stop_reason, plain.stop_reason);
+                decided += usize::from(souled.soul_decided);
+            }
+        }
+
+        // The phases chose another circuit in some of them, among equally cheap ones.
+        assert!(decided > 0, "no request where the phases decided");
+    }
+
+    #[test]
+    fn soul_decided_is_reported() {
+        // CS by Phase and Simplify: Phase finds T 1; T 0; ..., and Simplify finds it again
+        // and also T 0; T 1; ..., which costs the same. With self-check, the first weighs 4
+        // when the two families are in phase and 0 when they are half a turn apart.
+        let model = SimDesigner::large();
+        let first = circuit("T 1; T 0; CNOT 0 1; TDG 1; CNOT 0 1");
+        let other = circuit("T 0; T 1; CNOT 0 1; TDG 1; CNOT 0 1");
+        let checked = checking(&[PHASE, SIMPLIFY]);
+        let unchecked = format!("{PHASE} {SIMPLIFY}");
+        let mut opposed = vec![0u16; 8];
+
+        opposed[Family::Phase.index()] = 32768;
+
+        let circuit_of = |reply: &GenResponse| parse_circuit_answer(&reply.text, 2, 64);
+
+        for think in [64, 1024, 4096] {
+            let prompt = || solve_prompt(&cs(), &[]);
+            let plain = reply_with(&model, &checked, prompt(), think, None);
+            let in_phase = reply_with(&model, &checked, prompt(), think, Some(vec![0; 8]));
+            let against = reply_with(&model, &checked, prompt(), think, Some(opposed.clone()));
+
+            assert_eq!(circuit_of(&plain), Some(first.clone()));
+            assert_eq!(
+                (&in_phase.text, in_phase.soul_decided),
+                (&plain.text, false)
+            );
+            assert_eq!(circuit_of(&against), Some(other.clone()));
+            assert!(against.soul_decided, "think {think}");
+            assert_eq!(outcome(&cs(), &against), outcome(&cs(), &plain));
+
+            // Without self-check the first found stays, whatever the phases.
+            let trusting = reply_with(&model, &unchecked, prompt(), think, None);
+            let souled = reply_with(&model, &unchecked, prompt(), think, Some(opposed.clone()));
+
+            assert_eq!((&souled.text, souled.soul_decided), (&trusting.text, false));
+
+            // Cut to its first word, either circuit reads ANSWER: the reply is the same, so
+            // the phases did not decide it.
+            let cut = GenRequest {
+                max_tokens: 1,
+                phases: Some(opposed.clone()),
+                ..request(&checked, prompt(), think)
+            };
+            let short = model.generate(&cut).expect("generate");
+
+            assert_eq!((short.text.as_str(), short.soul_decided), ("ANSWER", false));
+        }
+
+        // On random requests, the flag is set exactly when the reply differs from the reply
+        // to the same request without phases. A judge is never decided by phases.
+        let mut r = rng(41);
+
+        for i in 0..100 {
+            let (target, systems, prompt, think, model) = random_request(&mut r);
+            let phases = random_phases(&mut r);
+
+            for system in &systems {
+                let plain = reply_with(&model, system, prompt.clone(), think, None);
+                let souled =
+                    reply_with(&model, system, prompt.clone(), think, Some(phases.clone()));
+
+                assert!(!plain.soul_decided);
+                assert_eq!(
+                    souled.soul_decided,
+                    souled.text != plain.text,
+                    "request {i}"
+                );
+
+                let Some(a) = circuit_of_target(&plain, &target) else {
+                    continue;
+                };
+                let b = circuit("X 0");
+                let judge = render_circuit_judge_prompt(&target, 64, &a, &b);
+                let verdicts = [None, Some(phases.clone())]
+                    .map(|p| reply_with(&model, system, judge.clone(), think, p));
+
+                assert_eq!(verdicts[0], verdicts[1], "the judge does not read phases");
+            }
+        }
+    }
+
+    /// The circuit of a solve reply on `target`, if it parses.
+    fn circuit_of_target(reply: &GenResponse, target: &Target) -> Option<Circuit> {
+        parse_circuit_answer(&reply.text, target.qubits(), 64)
+    }
+
+    /// The reply of a pool for `target` that is offered `offers` in order, whether the
+    /// phases chose it, and the steps the meter paid. The pool keeps ties as `design` keeps
+    /// them: with phases and self-check.
+    fn pick(
+        target: &Target,
+        self_check: bool,
+        phases: Option<&[u16]>,
+        offers: &[(&Circuit, Family)],
+    ) -> (Option<(Circuit, bool)>, u64) {
+        let mut pool = Pool::with_phases(target, self_check, 64, phases.is_some());
+        let mut meter = plenty();
+
+        for &(c, family) in offers {
+            pool.offer(c.clone(), family, &mut meter);
+        }
+
+        let reply = pool.reply(phases).map(|(c, first)| {
+            let chosen = c != first;
+
+            (c, chosen)
+        });
+
+        (reply, meter.used)
+    }
+
+    #[test]
+    fn the_designer_prefers_constructive_support() {
+        use Family::{Hadamard, Linear, Phase, Previous, Search, Simplify};
+
+        // Two equally cheap exact circuits of SWAP.
+        let target = swap();
+        let first = circuit("CNOT 0 1; CNOT 1 0; CNOT 0 1");
+        let other = circuit("CNOT 1 0; CNOT 0 1; CNOT 1 0");
+
+        for c in [&first, &other] {
+            assert!(check(&target, c).expect("check").exact, "{}", c.render());
+        }
+
+        assert_eq!(rank(&first), rank(&other));
+        assert_ne!(first, other);
+
+        let zeros = [0u16; 8];
+        let mut opposed = zeros;
+
+        opposed[Simplify.index()] = 32768;
+
+        // Search and Simplify both found the other circuit. In phase they weigh 4 against
+        // the 1 of the first circuit, so the other wins; half a turn apart they weigh 0, and
+        // the first found stays.
+        let constructive = [(&first, Linear), (&other, Search), (&other, Simplify)];
+
+        assert_eq!(
+            pick(&target, true, Some(&zeros), &constructive).0,
+            Some((other.clone(), true))
+        );
+        assert_eq!(
+            pick(&target, true, Some(&opposed), &constructive).0,
+            Some((first.clone(), false))
+        );
+
+        // Equal intensities, 4 and 4: the first found.
+        let even = [
+            (&first, Linear),
+            (&first, Previous),
+            (&other, Search),
+            (&other, Simplify),
+        ];
+
+        assert_eq!(
+            pick(&target, true, Some(&zeros), &even).0,
+            Some((first.clone(), false))
+        );
+
+        // Without the self-check text, or without phases: the first found.
+        assert_eq!(
+            pick(&target, false, Some(&zeros), &constructive).0,
+            Some((first.clone(), false))
+        );
+        assert_eq!(
+            pick(&target, true, None, &constructive).0,
+            Some((first.clone(), false))
+        );
+
+        // Between two one-family candidates the first found, whatever the phases.
+        let mut r = rng(3);
+
+        for _ in 0..200 {
+            let phases: Vec<u16> = (0..8).map(|_| r.random()).collect();
+            let single = [(&first, Linear), (&other, Search)];
+
+            assert_eq!(
+                pick(&target, true, Some(&phases), &single).0,
+                Some((first.clone(), false)),
+                "{phases:?}"
+            );
+        }
+
+        // The check of a later candidate of the best rank is not paid for.
+        assert_eq!(
+            pick(&target, true, Some(&zeros), &constructive).1,
+            pick(&target, true, None, &constructive).1
+        );
+
+        // A candidate of the best rank that fails the check on some column is not kept.
+        let wrong = circuit("CNOT 0 1; CNOT 0 1; CNOT 0 1");
+
+        assert_eq!(rank(&wrong), rank(&first));
+        assert!(!check(&target, &wrong).expect("check").exact);
+        assert_eq!(
+            pick(
+                &target,
+                true,
+                Some(&zeros),
+                &[(&first, Linear), (&wrong, Search), (&wrong, Simplify)]
+            )
+            .0,
+            Some((first.clone(), false))
+        );
+
+        // A cheaper candidate replaces them all, and the ties of its rank count from it.
+        let target = cz();
+        let costly = circuit("S 0; S 1; CNOT 0 1; SDG 1; CNOT 0 1");
+        let costly_too = circuit("S 1; S 0; CNOT 0 1; SDG 1; CNOT 0 1");
+        let cheap = circuit("H 1; CNOT 0 1; H 1");
+        let cheap_too = circuit("H 0; CNOT 1 0; H 0");
+
+        for c in [&costly, &costly_too, &cheap, &cheap_too] {
+            assert!(check(&target, c).expect("check").exact, "{}", c.render());
+        }
+
+        let replaced = [
+            (&costly, Phase),
+            (&costly_too, Linear),
+            (&costly_too, Simplify),
+            (&cheap, Hadamard),
+        ];
+
+        assert_eq!(
+            pick(&target, true, Some(&zeros), &replaced).0,
+            Some((cheap.clone(), false))
+        );
+
+        let later = [
+            replaced.as_slice(),
+            &[(&cheap_too, Search), (&cheap_too, Simplify)],
+        ]
+        .concat();
+
+        assert_eq!(
+            pick(&target, true, Some(&zeros), &later).0,
+            Some((cheap_too.clone(), true))
+        );
     }
 
     #[test]

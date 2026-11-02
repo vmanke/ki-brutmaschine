@@ -329,6 +329,7 @@ pub fn circuit_seed_cascades() -> Vec<(String, Cascade)> {
             temperature: 0.2,
             answer_tokens: 512,
             self_check: false,
+            ..Traits::default()
         },
     };
 
@@ -517,7 +518,7 @@ fn is_qubit_index(word: &str) -> bool {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
@@ -756,6 +757,7 @@ mod tests {
                 temperature: 0.0,
                 answer_tokens: 512,
                 self_check,
+                ..Traits::default()
             },
         }
     }
@@ -1254,6 +1256,7 @@ mod tests {
                     temperature: 0.2,
                     answer_tokens: 512,
                     self_check: false,
+                    ..Traits::default()
                 },
                 "{name}"
             );
@@ -1300,6 +1303,70 @@ mod tests {
         ]);
 
         assert_eq!(calls, 4 * (5 * 32 + 6 * 384));
+        assert_eq!(hits, expected);
+    }
+
+    /// `run` with random phases from `phases` on every request (step 2): the circuit the
+    /// Cascade chooses when its Workers' requests carry phases, as a simulated designer
+    /// receives them in a Run with Souls.
+    fn run_with_phases(
+        c: &Cascade,
+        target: &Target,
+        seed: u64,
+        phases: &mut ChaCha8Rng,
+    ) -> Option<Circuit> {
+        let mut chosen: Vec<Circuit> = Vec::new();
+
+        for (k, stage) in c.stages.iter().enumerate() {
+            let w = stage.workers.first().expect("a Worker");
+            let model = SimDesigner::from_tag(&w.model).expect("a simulated designer");
+            let prompt = render_circuit_solve_prompt(target, MAX_GATES, &chosen);
+            let req = GenRequest {
+                phases: Some((0..8).map(|_| phases.random()).collect()),
+                ..circuit_request(w, prompt, derive_seed(seed, &format!("stage{k}/worker0")))
+            };
+            let reply = model.generate(&req).expect("generate");
+
+            if reply.stop_reason == StopReason::Stop
+                && let Some(answer) = parse_circuit_answer(&reply.text, target.qubits(), MAX_GATES)
+            {
+                chosen.push(answer);
+            }
+        }
+
+        chosen.last().cloned()
+    }
+
+    #[test]
+    fn the_step1_calibration_holds_with_phases() {
+        // The count of `the_seeds_reach_only_swap_and_cs_on_every_dressing` with random
+        // phases on every request: the seeds still solve exactly swap and cs, in every
+        // disguise. `designer.rs` checks the pinned routes in a test of the same name.
+        let mut phases = rng(43);
+        let mut hits: BTreeMap<(String, &str), usize> = BTreeMap::new();
+
+        for (seed, c) in circuit_seed_cascades() {
+            for (name, base, (t, cnot)) in targets() {
+                for (i, d) in (0u64..).zip(every_dressing(base.qubits())) {
+                    let target = base.dress(&d);
+                    let reached = run_with_phases(&c, &target, i, &mut phases).is_some_and(|a| {
+                        let checked = check(&target, &a).expect("check");
+
+                        checked.exact && checked.cost.t <= t && checked.cost.cnot <= cnot
+                    });
+
+                    if reached {
+                        *hits.entry((seed.clone(), name)).or_default() += 1;
+                    }
+                }
+            }
+        }
+
+        let expected = BTreeMap::from([
+            (("linear".to_string(), "swap"), 32),
+            (("phase".to_string(), "cs"), 32),
+        ]);
+
         assert_eq!(hits, expected);
     }
 
