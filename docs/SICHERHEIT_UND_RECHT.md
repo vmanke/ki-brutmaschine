@@ -355,6 +355,10 @@ sein. Trainingsdaten könnten Bewertungsaufgaben schon enthalten
   Namensräume ohne Netzwerk, ein eigenes tmpfs und `prlimit`. Die Zip-Datei
   bekommt es über die Standardeingabe, die Zeilen gibt es über die
   Standardausgabe zurück, sodass es keine Datei außerhalb seines tmpfs öffnet.
+  Root schreibt die Ausgabe nur in einen Ordner, in den kein anderer Benutzer
+  schreiben kann, auch in keinen Ordner darüber (wie `StrictModes` von sshd);
+  sonst bricht das Skript ab. So kann niemand root über einen Symlink eine
+  fremde Datei überschreiben lassen.
   Wir wandeln am 2026-11-01 für die ARC-Rasteraufgaben der CNNs (Ticket 06) um;
   den SHA-256 der Ausgabe hält die Manifest-Datei fest.
 - Die ARC-Rasteraufgaben der CNNs lesen nur die Trainingsdateien von

@@ -14,7 +14,9 @@
 # its output goes to standard output. So it opens no file by a path outside its tmpfs, and
 # user 65534 needs no staging directory (it cannot read /tmp/claude-0, mode 0700 root).
 # Root writes that output into a private directory beside the target and renames it into
-# place at the end. Relative paths are made absolute first.
+# place at the end. The target's directory is taken by its canonical path, and it and every
+# directory above it must be safe from other users (see trusted_dir), as sshd's StrictModes
+# asks of a user's .ssh directory.
 #
 # usage: sudo tools/rearc_sandbox.sh <re_arc.zip> <output.jsonl> [converter options]
 set -euo pipefail
@@ -34,17 +36,77 @@ out=$2
 shift 2
 script="$(cd "$(dirname "$0")" && pwd)/rearc_to_jsonl.py"
 
-# The sandbox below starts in / (cd /), so make both paths absolute first: a relative path
-# would otherwise resolve from /.
-case $zip in /*) ;; *) zip="$PWD/$zip" ;; esac
-case $out in /*) ;; *) out="$PWD/$out" ;; esac
+# A directory is trusted when it and every directory above it is a real directory (no
+# symlink), owned by root or by the user who called sudo, and writable by nobody else: no
+# write bit for others, and a group write bit only for the group of root or of that user.
+# A sticky directory such as /tmp passes, since there nobody can rename or delete what
+# another user made. Otherwise another user could swap a directory or plant a symlink
+# between the checks below and root's writes, and root would write through it.
+trusted_dir() {
+    local d=$1 uid gid mode
 
-for tool in setpriv unshare prlimit mount python3; do
+    while :; do
+        if [ -L "$d" ] || [ ! -d "$d" ]; then
+            echo "rearc_sandbox: $d is not a plain directory" >&2
+            return 1
+        fi
+
+        read -r uid gid mode < <(stat -c '%u %g %a' -- "$d")
+
+        if [ "$uid" != 0 ] && [ "$uid" != "${SUDO_UID:-0}" ]; then
+            echo "rearc_sandbox: $d belongs to another user" >&2
+            return 1
+        fi
+
+        if (( (8#$mode & 8#1000) == 0 )); then
+            if (( (8#$mode & 8#002) != 0 )); then
+                echo "rearc_sandbox: every user can write to $d" >&2
+                return 1
+            fi
+
+            if (( (8#$mode & 8#020) != 0 )) && [ "$gid" != 0 ] && [ "$gid" != "${SUDO_GID:-0}" ]; then
+                echo "rearc_sandbox: the group of $d can write to it" >&2
+                return 1
+            fi
+        fi
+
+        if [ "$d" = / ]; then
+            return 0
+        fi
+
+        d=$(dirname -- "$d")
+    done
+}
+
+for tool in setpriv unshare prlimit mount python3 realpath stat mktemp; do
     if ! command -v "$tool" >/dev/null; then
         echo "rearc_sandbox: $tool is missing" >&2
         exit 2
     fi
 done
+
+# The sandbox below starts in / (cd /), so make the zip's path absolute first: a relative
+# path would otherwise resolve from /.
+case $zip in /*) ;; *) zip="$PWD/$zip" ;; esac
+
+# The output goes to the canonical path of its directory (no symlink, no ".."), which must
+# exist and be trusted. All later steps use that path.
+name=$(basename -- "$out")
+
+case $name in
+    . | .. | /)
+        echo "rearc_sandbox: $out names no file" >&2
+        exit 2
+        ;;
+esac
+
+if ! dir=$(realpath -e -- "$(dirname -- "$out")"); then
+    echo "rearc_sandbox: the directory of $out does not exist" >&2
+    exit 2
+fi
+
+trusted_dir "$dir" || exit 2
+out="$dir/$name"
 
 if [ ! -f "$zip" ]; then
     echo "rearc_sandbox: $zip is not a file" >&2
@@ -60,7 +122,7 @@ fi
 # 0700, owned by root). Nobody else can place a symlink there, so root never writes through
 # one, and the final rename stays on the same file system. A rename replaces a symlink at
 # the target instead of following it.
-stage=$(mktemp -d "$(dirname "$out")/.rearc_sandbox.XXXXXXXX")
+stage=$(mktemp -d "$dir/.rearc_sandbox.XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT
 partial="$stage/output.jsonl"
 
