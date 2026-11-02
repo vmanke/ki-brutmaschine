@@ -31,5 +31,10 @@ path = "src/bin/brut-mutator.rs"
 name = "vote-control"
 path = "src/vote_control.rs"
 
+# The analysis of docs/PREREG_BREEDING_VS_VOTE.md (module `breeding_vs_vote`).
+[[bin]]
+name = "breeding-vs-vote"
+path = "src/bin/breeding-vs-vote.rs"
+
 [profile.release]
 opt-level = 3

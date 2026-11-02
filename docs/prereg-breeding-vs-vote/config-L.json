@@ -1,0 +1,31 @@
+{
+  "seed": 1,
+  "generations": 30,
+  "children_per_generation": 8,
+  "search_puzzles": 40,
+  "select_puzzles": 100,
+  "crossover_rate": 0.5,
+  "peer_opponents": 3,
+  "peer_puzzles_per_pair": 2,
+  "judge_weight": 0.2,
+  "token_cost_per_1k": 0.01,
+  "dgm_lambda": 10.0,
+  "dgm_alpha0": 0.5,
+  "llm_every": 2,
+  "llm_children": 8,
+  "pause_for_llm": true,
+  "max_calls": 480000,
+  "finalists": 3,
+  "limits": {
+    "models": [
+      {
+        "tag": "vllm:qwen2.5-32b",
+        "cost_per_call": 0.002
+      }
+    ],
+    "max_stages": 4,
+    "max_width": 3,
+    "think_ceiling_per_stage": []
+  },
+  "selection": "lexicase"
+}

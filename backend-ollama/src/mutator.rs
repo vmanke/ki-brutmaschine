@@ -15,6 +15,9 @@
 //!   over an existing answer;
 //! - writes an answer that did not end cleanly (cut off at `max_tokens`, a refusal, an
 //!   error) as an empty file;
+//! - writes an empty file, too, for a request the server refuses as longer than the
+//!   model's context (`too_long`): that refusal repeats on every try, so a pending
+//!   request would stop the run for good;
 //! - reads and writes only inside the run directory.
 //!
 //! The core reads every answer file as a clean stop (`AnswerBook`), so it cannot see a
@@ -345,6 +348,17 @@ pub struct Round {
     pub skipped: usize,
 }
 
+/// True when the model server refused a request because its prompt and `max_tokens` do
+/// not fit the model's context: vLLM answers HTTP 400 with "maximum context length" in
+/// its message. The same request is refused the same way every time, so a retry cannot
+/// help; `answer` writes an empty, unusable answer for it, and the core fills a random
+/// child, as for a cut-off answer. Every other failed call stays pending.
+fn too_long(e: &BrutError) -> bool {
+    let text = e.to_string();
+
+    text.contains("HTTP 400") && text.contains("maximum context length")
+}
+
 /// Answer every request in `todo` through `backend`, at most `parallel` at a time, and
 /// write each answer as soon as it arrives: the text if the answer ended cleanly, else an
 /// empty file. `stop` is asked before each call; calls in flight finish and their answers
@@ -380,6 +394,20 @@ pub fn answer(
 
                     let resp = match backend.generate(&p.request) {
                         Ok(resp) => resp,
+                        Err(e) if too_long(&e) => {
+                            match write_answer(answers, &key, "") {
+                                Ok(Written::New) => note(&mut |r| {
+                                    r.unusable.push((key.clone(), StopReason::Length));
+                                    r.written.push(key.clone());
+                                }),
+                                Ok(Written::Kept) => note(&mut |r| r.kept.push(key.clone())),
+                                Err(w) => {
+                                    note(&mut |r| r.failed.push((key.clone(), w.to_string())))
+                                }
+                            }
+
+                            continue;
+                        }
                         Err(e) => {
                             note(&mut |r| r.failed.push((key.clone(), e.to_string())));
                             continue;
@@ -499,6 +527,24 @@ mod tests {
 
         fn generate(&self, _req: &GenRequest) -> Result<GenResponse> {
             Err(crate::err("vllm: HTTP 503 Service Unavailable".to_string()))
+        }
+    }
+
+    /// Refuses every call as longer than the model's context, in vLLM's words.
+    struct TooLong;
+
+    impl crate::Detailed for TooLong {}
+
+    impl ModelBackend for TooLong {
+        fn name(&self) -> &str {
+            "vllm:qwen2.5-32b"
+        }
+
+        fn generate(&self, _req: &GenRequest) -> Result<GenResponse> {
+            Err(crate::err(
+                "vllm: HTTP 400 Bad Request: {\"object\":\"error\",\"message\":\"This model's maximum context length is 8192 tokens. However, you requested 9100 tokens (5004 in the messages, 4096 in the completion).\"}"
+                    .to_string(),
+            ))
         }
     }
 
@@ -742,6 +788,42 @@ mod tests {
         assert!(!dirs.record.exists(), "a failure is never filed as an answer");
         assert!(dirs.record.with_file_name("mutator-errors.jsonl").is_file());
         assert_eq!(scan(&dirs).expect("scan").pending.len(), 1, "it stays pending");
+
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn a_request_longer_than_the_context_gets_an_empty_answer_and_does_not_stay_pending() {
+        let out = run_dir("toolong");
+        let key = file_request(&out, &request(31));
+        let dirs = RunDirs::new(&out, None).expect("dirs");
+        let backend = Recorded::open(TooLong, &dirs.record).expect("open");
+        let todo = scan(&dirs).expect("scan").pending;
+        let round = answer(&backend, &dirs.answers, &todo, 1, &never);
+
+        assert!(round.failed.is_empty(), "{:?}", round.failed);
+        assert_eq!(round.written, vec![key.clone()]);
+        assert_eq!(round.unusable, vec![(key.clone(), StopReason::Length)]);
+        assert_eq!(
+            std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"),
+            ""
+        );
+        assert!(
+            scan(&dirs).expect("scan").pending.is_empty(),
+            "nothing waits for it"
+        );
+        assert!(
+            dirs.record.with_file_name("mutator-errors.jsonl").is_file(),
+            "the refusal stays on file"
+        );
+
+        // The core's own lookup gives empty text for it, which it never parses.
+        let mut book = AnswerBook::new();
+        book.insert(
+            &key,
+            std::fs::read_to_string(dirs.answer_path(&key)).expect("answer"),
+        );
+        assert!(!book.answer(&request(31)).expect("found").is_usable());
 
         let _ = std::fs::remove_dir_all(&out);
     }
