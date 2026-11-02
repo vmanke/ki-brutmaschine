@@ -47,3 +47,61 @@ Spec: `../spec.md`, sections 12.2 and 17
   the acceptance check itself runs at the frozen commit (ticket 10, section 7).
 
 ## Comments
+
+- 2026-11-02, pilot. Not committed (this work makes no commits). The status stays: the owner
+  decides the numbers.
+  - **What ran.** Arms S, V, K, E and N on seeds 901 to 912, 60 Runs, with the release build of
+    `e315220` (pull request #48) on rustc 1.97.0, x86_64 Linux, the settings of the counted Runs
+    of step 1 and the placeholders of spec 12.2 (`kappa_seed` 200, `kappa_drift` 20,
+    `phase_drift` 512, θ 1). Arm E ran through `--config` (arm S with `strengths: equal`). Two
+    Runs at a time, `RAYON_NUM_THREADS=2`, `nice -n 5`. Data: `docs/pilot-step2/` (README,
+    `pilot.json`, the outputs of the analysis and the recount, the driver and its log).
+  - **Checks.** All 60 Runs pass `--verify`. Seed 901 ran again in all five arms, one process at
+    a time: the five record files of each are byte-equal to the pilot's. Every Run of arm N has
+    no `soul` field, no `souls` event and no `soul` group. `examples/soul_comparison.rs` and
+    `reference_rule.py --pilot 901-912` give the same pass times, outcomes, evidence values and
+    divergence generations on all 12 triples (`pilot.py` checks every row); the step 1 analysis
+    gives the arm-N Runs the same pass times and refuses an arm-S Run.
+  - **Numbers.** Pass rates by generation 1000: S, K, E and N 12 of 12, V 9 of 12. Y_V: S first
+    4, V first 4, ties 4; Y_K: S first 3, K first 3, ties 6; so both estimates of P(S first |
+    untied) are 1/2. Against E and N (description only): S first 0, E first 4, ties 8; S first
+    0, N first 5, ties 7. Divergence generations: S-V 4 to 246, S-K 12 to 564, V-K 4 to 246, S-E
+    12 to 536, S-N 12 to 263; every tie of either claim is a tie by construction (S and the
+    control passed before their Runs first differed), and in 4 triples (901, 906, 908, 911) all
+    three Runs passed before any two differed. Shares of complex votes: flipped 5.2 % (S), 1.0 %
+    (V), 5.4 % (K), 9.7 % (E); tied 5.7 %, 37.6 %, 6.1 %, 0 %. `sim_decided` over all newborns:
+    2 912 (S), 6 049 (V), 3 423 (K), 3 824 (E). At most 1 264 833 calls per Run (K-908); no Run
+    at the cap, no integrity alarm, no invention candidate. A Run took 9.3 to 14.7 min with
+    Souls, 7.2 to 10.1 min in arm N, two at a time.
+  - **Degenerate? No; no second batch.** Votes flip in 45 of the 48 Runs with Souls (not in
+    V-902, V-904, V-909), the phases decide simulated replies in all 48, and S, V and K part on
+    every seed. The hint (seed 901, 60 generations, the same 484 newborns in S, V and K) has a
+    mechanism: arms with the same genes share every random number (spec 15) until a vote flips
+    or the phases decide a simulated reply; on seed 901 the first flip came in generation 197 in
+    S, V, K and E alike and the first phase-decided reply at 242 to 269, and up to generation 60
+    each arm had 32 complex votes, none flipped. `diagnose.py` confirms the mechanism on all 60
+    first differences (12 seeds, 5 pairs). Such chances need split verdicts or two-family
+    circuits, which come from the genes and the tasks; the placeholders only decide which
+    chances turn into a flip. So no placeholder changed, no second batch ran, and seeds 913 to
+    920 stay unused. Whether larger phase steps would give the Soul more effect the pilot does
+    not answer; those seeds are free if the owner wants to ask.
+  - **Proposals** (for ticket 10; the owner decides): G = 1000, M = 13 000 000, p₁ = 3/4, N_max
+    = 120, and the four placeholders unchanged (200, 20, 512, 1). Reasons in the README, section
+    "Proposals for ticket 10". So no preset changes, and the acceptance triples of ticket 10 are
+    the pilot triples 901 to 903, run again at the frozen commit; seeds 921 to 923 stay
+    reserved. Seeds 901 to 923 are pilot seeds and never count.
+  - **Operating characteristics** of the proposed rule (`oc.py`; `own_check.py`, written apart,
+    prints the same figures to the last digit): worst-case false proof of one claim at the cap
+    2617038152666572495921938445760671/664613997892457936451903530140172288 = 0.003938 (some
+    claim at most 0.007875); a wrong failure at P(S first | untied) = 3/4 without ties 0.036848;
+    power at the pilot's estimate 0.0038 (V) and 0.0034 (K); averaged over the uncertainty
+    0.1485 and 0.1528; no claim proven with probability 0.9929; 53.01 triples on average, 90 %
+    need at most 102; 28.55 hours on average and at most 75.32 hours for Runs one at a time at 2
+    threads (32.32 min per triple on average), plus about 2.7 hours for the acceptance and
+    thread checks. `oc.py` also compares p₁ = 3/5, 2/3, 7/10 and 4/5 and caps of 60 to 120: no
+    design reaches an averaged power of 0.16.
+  - **Power.** With N_max = 120 the power of each claim at the pilot's estimate is far below 0.5
+    (0.0038 and 0.0034). As this ticket asks, the README says so plainly and proposes not to run
+    the counted experiment as designed (dropping both claims comes to the same). One claim
+    reaches power 0.5 only if P(S first | untied) is about 0.68 or more at the pilot's tie rate.
+    The owner decides before ticket 10 is frozen.

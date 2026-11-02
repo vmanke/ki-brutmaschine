@@ -150,3 +150,63 @@ control of the breeder, not about real models, not about inventions, and not abo
   freezes the document, and its commit hash is recorded, before the first counted seed starts.
 
 ## Comments
+
+- 2026-11-02, tooling and draft. Built test-first, not committed (this work makes no commits).
+  The status stays: the owner decides the numbers, and the document is frozen only by the squash
+  merge of its pull request.
+  - `examples/soul_comparison.rs`, the analysis, with `test = true` in `Cargo.toml`. It reads
+    finished Runs of arms S, V and K (and, for description, E and N), refuses a Run whose
+    settings differ from its arm's preset in anything but the seed, the generations and the call
+    cap (the presets of `--soul`; `--preset <file>` takes another arm S for pilot batches and
+    then makes no claim), and checks each `rediscovery.json` against its own target list. It
+    computes T, Y_V and Y_K (section 5), the rule of section 8 with every decision in exact
+    natural numbers, gate G1, the claim (withheld on pilot seeds, on another G or M, at the cap
+    and with `--preset`; refused for a seed off the list, a gap, a mixture of pilot and counted
+    seeds, a missing arm, a seed twice in an arm, and more than N_max triples), and the
+    descriptive results of section 12: pass rates, D, the first generation per target, the
+    divergence generation of the pairs S-V, S-K, V-K, S-E and S-N, the vote tallies per Run and
+    per arm, the trajectories of the `soul` group, calls and wall time. It reads each file once
+    from start to end, so the pilot's compressed logs could be read through named pipes. G =
+    1000, M = 13 000 000, N_max = 120 and p₁ = 3/4 are constants marked as the pilot's
+    proposals.
+  - Its 30 tests, by the "Done when" list: pass times from `rediscovery.json`
+    (`pass_time_is_the_kth_bred_only_first_generation`, and
+    `the_pass_time_of_a_step1_run_is_the_one_step1_counted`, which reads the A-310 file of step
+    1 in `.scratch/universum-erfinden/sequential-rule/` and gets 336 as step 1's `oc.txt`);
+    exact evidence values of hand-made sequences for p₁ = 3/4 and 7/10
+    (`the_evidence_of_hand_made_triples_is_exact`, `evidence_boundaries_in_count_form`,
+    `the_integer_tests_agree_with_u128_where_it_fits`); refusals of other settings
+    (`run_directories_must_have_the_settings_of_their_arm`, on finished Runs written to disk);
+    refusals of seeds and arms (`the_counted_seeds_run_from_1001_without_gaps`,
+    `a_seed_needs_a_run_in_each_arm_of_the_triple`, `more_triples_than_n_max_are_refused`); no
+    claim on pilot seeds (`pilot_seeds_never_make_a_claim`); and the divergence generation
+    (`the_divergence_generation_is_the_first_generation_whose_newborns_differ`, and
+    `two_short_runs_built_to_agree_never_diverge`: an S Run and the same Run with `kappa_seed`
+    700 while Observations and imprinting are off, and an S and a V Run with `vote` and
+    `simulator` off, give none, although their `born` events and `state` lines differ; a
+    positive control with another crossover rate diverges at generation 1). The other tests
+    cover gate G1, ties, the stop, the first crossing, the cap, the next seed, R_seed, the
+    counts, the presets and the arguments.
+  - `.scratch/seele-und-kappa/rule/reference_rule.py`, the independent recount, standard library
+    only, run with `python3 -I`: written apart from the Rust code, with exact fractions, its own
+    settings table written out from spec 12.2 and step 1's section 6, and gene ids computed from
+    the logged genomes. Its canonical JSON reproduced all 8004 member ids of the pilot Runs
+    S-901 and N-901, a check made during the build. `--pilot` reads pilot triples, `--runs` the
+    counted folder; it reads `events.jsonl` or `events.jsonl.xz`.
+  - Checks on the pilot. On the 60 pilot Runs, `soul_comparison` and `reference_rule.py --pilot
+    901-912` give the same pass times, outcomes, evidence values, pass rates and divergence
+    generations (`.scratch/seele-und-kappa/rule/pilot.py` checks every row and stops at a
+    difference). The step 1 analysis `circuit_positive_control` gives the 12 arm-N Runs the same
+    pass times as `soul_comparison`, and it refuses an arm-S Run ("its settings are not the
+    pre-registered ones of arm A"). The counted mode was checked on three short real Runs on
+    seed 1001 (3 generations): both tools withhold the claim and agree; the recount refuses a
+    gap, a seed off the list and a pilot seed there.
+  - `docs/PREREG_STEP2_SOUL.md`: the 13 sections of the outline, every number fixed or marked
+    "proposal". The presets of `--soul` in the code are unchanged and equal the numbers of its
+    section 2, since the pilot proposes to keep every placeholder (ticket 11).
+  - The operating characteristics of the proposed rule and their independent recount are in
+    ticket 11's comment of today. In short: p₁ = 3/4 and N_max = 120 keep a false proof of one
+    claim at 0.003938 at worst (below 1/200), but at the pilot's estimates, 1/2 for both claims,
+    the power is 0.0038 for claim V and 0.0034 for claim K (0.1485 and 0.1528 averaged over
+    their uncertainty). Ticket 11 therefore proposes not to run the counted experiment as
+    designed; the owner decides before this ticket is frozen.

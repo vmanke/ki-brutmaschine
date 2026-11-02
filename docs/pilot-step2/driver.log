@@ -1,0 +1,259 @@
+2026-11-02T13:30:38Z start batch1/V-901 threads=unset 
+2026-11-02T13:30:38Z start batch1/S-901 threads=unset 
+2026-11-02T13:41:32Z done batch1/V-901 exit=0 wall_seconds=653.634
+2026-11-02T13:41:33Z verify batch1/V-901 exit=0 brut-breed: 45049 events, hash chain intact, head ed80da4475f8e9bec8927028e0d5e6395f6be15c9b4ba28fdc2022005181647e; checkpoint at entry 45049 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T13:41:44Z done batch1/S-901 exit=0 wall_seconds=666.115
+2026-11-02T13:41:45Z verify batch1/S-901 exit=0 brut-breed: 45680 events, hash chain intact, head 28b06c5345a72507ed2cf920f0cc9094a87a7a21d8f2abc998be592525b8d0c1; checkpoint at entry 45680 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T13:43:33Z driver start queue=queue1.txt
+2026-11-02T13:43:33Z SKIP batch1/S-901 exists
+2026-11-02T13:43:35Z SKIP batch1/V-901 exists
+2026-11-02T13:43:37Z start batch1/K-901 threads=unset 
+2026-11-02T13:43:39Z start batch1/E-901 threads=unset 
+2026-11-02T13:55:02Z done batch1/K-901 exit=0 wall_seconds=684.982
+2026-11-02T13:55:03Z verify batch1/K-901 exit=0 brut-breed: 44962 events, hash chain intact, head 1db9b573c96eacfab073ff9568be26fa55dea3ccf7168a878acde49ae8a2fba9; checkpoint at entry 44962 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T13:55:09Z done batch1/E-901 exit=0 wall_seconds=689.708
+2026-11-02T13:55:10Z verify batch1/E-901 exit=0 brut-breed: 44579 events, hash chain intact, head 11d8766a3cf3f9e9f8c4285edb358efb51e1123b6da4bee55fe73420f123283d; checkpoint at entry 44579 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T13:55:28Z compressed batch1/K-901 6197701
+2026-11-02T13:55:32Z start batch1/N-901 threads=unset 
+2026-11-02T13:55:41Z compressed batch1/E-901 8271949
+2026-11-02T13:55:44Z start batch1/S-902 threads=unset 
+2026-11-02T14:04:28Z done batch1/N-901 exit=0 wall_seconds=536.193
+2026-11-02T14:04:29Z verify batch1/N-901 exit=0 brut-breed: 43574 events, hash chain intact, head 31ce391feeb458ed1e33f8e7e7684dbc4ac11268a08248168c45a4b1f456db6e; checkpoint at entry 43574 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:04:44Z compressed batch1/N-901 3911625
+2026-11-02T14:04:46Z start batch1/V-902 threads=unset 
+2026-11-02T14:06:41Z done batch1/S-902 exit=0 wall_seconds=657.356
+2026-11-02T14:06:42Z verify batch1/S-902 exit=0 brut-breed: 38778 events, hash chain intact, head 47ed5e13eb45ce81ad30906818ce08b1809b84876945a7a7a3672ae6402a9cfa; checkpoint at entry 38778 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:07:11Z compressed batch1/S-902 7950175
+2026-11-02T14:07:14Z start batch1/K-902 threads=unset 
+2026-11-02T14:15:02Z done batch1/V-902 exit=0 wall_seconds=615.806
+2026-11-02T14:15:03Z verify batch1/V-902 exit=0 brut-breed: 39091 events, hash chain intact, head 03200fb52b507c101dc0d06f36542c43c758419f8ad6b73b564aa94cb09ad766; checkpoint at entry 39091 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:15:33Z compressed batch1/V-902 7883335
+2026-11-02T14:15:36Z start batch1/E-902 threads=unset 
+2026-11-02T14:17:53Z done batch1/K-902 exit=0 wall_seconds=639.618
+2026-11-02T14:17:54Z verify batch1/K-902 exit=0 brut-breed: 38791 events, hash chain intact, head ab5b78598a11934c5c9633d616ccc75f9a982f097c23ff52fb8f586ba7ec2c45; checkpoint at entry 38791 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:18:18Z compressed batch1/K-902 5842138
+2026-11-02T14:18:23Z start batch1/N-902 threads=unset 
+2026-11-02T14:26:06Z done batch1/E-902 exit=0 wall_seconds=630.313
+2026-11-02T14:26:08Z verify batch1/E-902 exit=0 brut-breed: 39196 events, hash chain intact, head e739cfde14d7ce389677a14ec09ed8c16f478e76fff8f829df0e295bb48c5603; checkpoint at entry 39196 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:26:15Z done batch1/N-902 exit=0 wall_seconds=472.053
+2026-11-02T14:26:16Z verify batch1/N-902 exit=0 brut-breed: 37084 events, hash chain intact, head 52a44f21383b39488a174edf8b928d0fb582253e24d7eb0231fccbc0da6fc2ca; checkpoint at entry 37084 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:26:29Z compressed batch1/N-902 3505300
+2026-11-02T14:26:31Z start batch1/S-903 threads=unset 
+2026-11-02T14:26:37Z compressed batch1/E-902 7919539
+2026-11-02T14:26:38Z start batch1/V-903 threads=unset 
+2026-11-02T14:37:45Z done batch1/V-903 exit=0 wall_seconds=667.097
+2026-11-02T14:37:46Z verify batch1/V-903 exit=0 brut-breed: 46077 events, hash chain intact, head 826905011ed6a18e824294e9df21b63e48d35231c76ff0cf6cf149d033b8afe0; checkpoint at entry 46077 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:38:17Z compressed batch1/V-903 8233559
+2026-11-02T14:38:21Z start batch1/K-903 threads=unset 
+2026-11-02T14:39:22Z done batch1/S-903 exit=0 wall_seconds=771.391
+2026-11-02T14:39:24Z verify batch1/S-903 exit=0 brut-breed: 47196 events, hash chain intact, head 76561f89e72b557e9e4955190838310483e2c0845b96b319f0c6799a19fd6baf; checkpoint at entry 47196 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:39:57Z compressed batch1/S-903 8473704
+2026-11-02T14:39:58Z start batch1/E-903 threads=unset 
+2026-11-02T14:53:01Z done batch1/K-903 exit=0 wall_seconds=880.683
+2026-11-02T14:53:03Z verify batch1/K-903 exit=0 brut-breed: 47555 events, hash chain intact, head 7eefe0a0d971e713946c4a3e1cc76619800ec1441af9221daf4e8548358222f8; checkpoint at entry 47555 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:53:29Z compressed batch1/K-903 6445840
+2026-11-02T14:53:33Z start batch1/N-903 threads=unset 
+2026-11-02T14:54:41Z done batch1/E-903 exit=0 wall_seconds=883.330
+2026-11-02T14:54:43Z verify batch1/E-903 exit=0 brut-breed: 47256 events, hash chain intact, head 5144020864ff49b1bf8364801978e676828fe877527ad56e66cf768ab50fdb88; checkpoint at entry 47256 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T14:55:17Z compressed batch1/E-903 8458523
+2026-11-02T14:55:20Z start batch1/S-904 threads=unset 
+2026-11-02T15:03:40Z done batch1/N-903 exit=0 wall_seconds=607.761
+2026-11-02T15:03:42Z verify batch1/N-903 exit=0 brut-breed: 46183 events, hash chain intact, head 2f63154083d9a32bea957d707d38f674e0d4c096de6928ba3d9e9295b31f58c6; checkpoint at entry 46183 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:03:59Z compressed batch1/N-903 4194173
+2026-11-02T15:04:02Z start batch1/V-904 threads=unset 
+2026-11-02T15:04:55Z done batch1/S-904 exit=0 wall_seconds=575.815
+2026-11-02T15:04:57Z verify batch1/S-904 exit=0 brut-breed: 24257 events, hash chain intact, head f06ef24162df014bd47763ac17bcafec21817ec2b03da18060ea37a775a82b4e; checkpoint at entry 24257 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:05:20Z compressed batch1/S-904 6415992
+2026-11-02T15:05:24Z start batch1/K-904 threads=unset 
+2026-11-02T15:11:28Z compressed batch1/S-901 8367047 (after development use)
+2026-11-02T15:11:59Z compressed batch1/V-901 8314864 (after development use)
+2026-11-02T15:13:55Z done batch1/V-904 exit=0 wall_seconds=593.216
+2026-11-02T15:13:57Z verify batch1/V-904 exit=0 brut-breed: 23649 events, hash chain intact, head 2ca80f20e95a196cc790010bcbdf1a4bd62d922edaf0bfd2f0ee9b7ea76628a7; checkpoint at entry 23649 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:14:20Z compressed batch1/V-904 6368882
+2026-11-02T15:14:22Z start batch1/E-904 threads=unset 
+2026-11-02T15:15:31Z done batch1/K-904 exit=0 wall_seconds=606.307
+2026-11-02T15:15:32Z verify batch1/K-904 exit=0 brut-breed: 24557 events, hash chain intact, head 98093cacc4dc71707b4da8b9a0047e732573bed707648ade1a20856c3cd32e8b; checkpoint at entry 24557 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:15:51Z compressed batch1/K-904 4797328
+2026-11-02T15:15:54Z start batch1/N-904 threads=unset 
+2026-11-02T15:23:26Z done batch1/N-904 exit=0 wall_seconds=452.010
+2026-11-02T15:23:27Z verify batch1/N-904 exit=0 brut-breed: 28087 events, hash chain intact, head 8fb0ab2133e09869b8b7381ad455db23ce1eb4dadca3a55b5f509cc698950115; checkpoint at entry 28087 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:23:38Z compressed batch1/N-904 3017777
+2026-11-02T15:23:41Z start batch1/S-905 threads=unset 
+2026-11-02T15:23:55Z done batch1/E-904 exit=0 wall_seconds=573.182
+2026-11-02T15:23:56Z verify batch1/E-904 exit=0 brut-breed: 24508 events, hash chain intact, head 657be92b7139b6f7df54085edc28b68212ac4e4ebef1046cbe8046128eacac8b; checkpoint at entry 24508 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:24:20Z compressed batch1/E-904 6398955
+2026-11-02T15:24:23Z start batch1/V-905 threads=unset 
+2026-11-02T15:35:22Z done batch1/S-905 exit=0 wall_seconds=700.285
+2026-11-02T15:35:23Z verify batch1/S-905 exit=0 brut-breed: 48072 events, hash chain intact, head a57f8b339ff9fe8cb7b7ab881625876874ca2e9fce04b133ebef07006ceaed28; checkpoint at entry 48072 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:35:33Z done batch1/V-905 exit=0 wall_seconds=669.827
+2026-11-02T15:35:35Z verify batch1/V-905 exit=0 brut-breed: 43090 events, hash chain intact, head c43fbfb7c6f9a108a745eeddde1d7d5b1efe4241eb90cf85bb951ba86584f455; checkpoint at entry 43090 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:35:58Z compressed batch1/S-905 8713771
+2026-11-02T15:36:01Z start batch1/K-905 threads=unset 
+2026-11-02T15:36:07Z compressed batch1/V-905 8215056
+2026-11-02T15:36:08Z start batch1/E-905 threads=unset 
+2026-11-02T15:47:31Z done batch1/E-905 exit=0 wall_seconds=682.750
+2026-11-02T15:47:33Z verify batch1/E-905 exit=0 brut-breed: 47062 events, hash chain intact, head f6a63a1abd613fb7e7e68f8b21c823e37e378f5267637a6e0d1088f1ed1dfde5; checkpoint at entry 47062 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:47:42Z done batch1/K-905 exit=0 wall_seconds=700.515
+2026-11-02T15:47:43Z verify batch1/K-905 exit=0 brut-breed: 46355 events, hash chain intact, head af50addb2662ceb61c5ab15c265537cdd545f6dec0450d4f51e17fc79589f778; checkpoint at entry 46355 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:48:05Z compressed batch1/E-905 8814894
+2026-11-02T15:48:06Z start batch1/N-905 threads=unset 
+2026-11-02T15:48:09Z compressed batch1/K-905 6578513
+2026-11-02T15:48:13Z start batch1/S-906 threads=unset 
+2026-11-02T15:56:23Z done batch1/N-905 exit=0 wall_seconds=497.374
+2026-11-02T15:56:24Z verify batch1/N-905 exit=0 brut-breed: 42010 events, hash chain intact, head 9b9ad4acf5c7f8bb34a769912482b261aa3d588954bda5c7d779a409c56a94ea; checkpoint at entry 42010 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:56:40Z compressed batch1/N-905 3880091
+2026-11-02T15:56:40Z start batch1/V-906 threads=unset 
+2026-11-02T15:58:53Z done batch1/S-906 exit=0 wall_seconds=639.834
+2026-11-02T15:58:54Z verify batch1/S-906 exit=0 brut-breed: 40486 events, hash chain intact, head 9536a2880796c965489980fd1e9f7dabd0df2dce36c78d6a010fdeabd595204e; checkpoint at entry 40486 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T15:59:26Z compressed batch1/S-906 8130618
+2026-11-02T15:59:28Z start batch1/K-906 threads=unset 
+2026-11-02T16:08:58Z done batch1/V-906 exit=0 wall_seconds=737.577
+2026-11-02T16:08:59Z verify batch1/V-906 exit=0 brut-breed: 41693 events, hash chain intact, head 63d0b18f305b272f06d55cdc5eee1b87d460f4156c8af7902921bc2866bba203; checkpoint at entry 41693 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:09:29Z compressed batch1/V-906 8293172
+2026-11-02T16:09:32Z start batch1/E-906 threads=unset 
+2026-11-02T16:11:10Z done batch1/K-906 exit=0 wall_seconds=701.950
+2026-11-02T16:11:11Z verify batch1/K-906 exit=0 brut-breed: 42738 events, hash chain intact, head b7ad953b76bfc1d0912e115336a0004da6e933132a1ddbdef3931ca0b1d5bdc2; checkpoint at entry 42738 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:11:37Z compressed batch1/K-906 6141558
+2026-11-02T16:11:39Z start batch1/N-906 threads=unset 
+2026-11-02T16:19:13Z done batch1/N-906 exit=0 wall_seconds=454.745
+2026-11-02T16:19:14Z verify batch1/N-906 exit=0 brut-breed: 40623 events, hash chain intact, head 25a6ddc09992e9aad00c94b3270e5600af68a1fb614d3c88f7a467ee700ab29d; checkpoint at entry 40623 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:19:29Z compressed batch1/N-906 3776509
+2026-11-02T16:19:31Z start batch1/S-907 threads=unset 
+2026-11-02T16:19:55Z done batch1/E-906 exit=0 wall_seconds=623.205
+2026-11-02T16:19:56Z verify batch1/E-906 exit=0 brut-breed: 45934 events, hash chain intact, head aff2eb7718dabeb4a0a4a0ae679097a83e8b27b78c4567f0a2d1fc77da0d2884; checkpoint at entry 45934 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:20:28Z compressed batch1/E-906 8420866
+2026-11-02T16:20:28Z start batch1/V-907 threads=unset 
+2026-11-02T16:30:14Z done batch1/S-907 exit=0 wall_seconds=642.969
+2026-11-02T16:30:16Z verify batch1/S-907 exit=0 brut-breed: 42769 events, hash chain intact, head 123b822c007c2a5930dca9b5ab36d9e0f23679d56b715f201a77801b40054eb6; checkpoint at entry 42769 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:30:27Z done batch1/V-907 exit=0 wall_seconds=598.942
+2026-11-02T16:30:29Z verify batch1/V-907 exit=0 brut-breed: 40661 events, hash chain intact, head b86e68d471834a5ae3792b91c29aa11b3e413d93da3922dce011f6fec124aab6; checkpoint at entry 40661 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:30:46Z compressed batch1/S-907 8083679
+2026-11-02T16:30:46Z start batch1/K-907 threads=unset 
+2026-11-02T16:30:58Z compressed batch1/V-907 7868418
+2026-11-02T16:31:03Z start batch1/E-907 threads=unset 
+2026-11-02T16:41:13Z done batch1/K-907 exit=0 wall_seconds=627.232
+2026-11-02T16:41:14Z verify batch1/K-907 exit=0 brut-breed: 41750 events, hash chain intact, head 901994d1bb3efce8d6a3b8d70b16746cbd5f135f5452dbb3f6273c3c083d7b3d; checkpoint at entry 41750 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:41:16Z done batch1/E-907 exit=0 wall_seconds=613.186
+2026-11-02T16:41:17Z verify batch1/E-907 exit=0 brut-breed: 41450 events, hash chain intact, head dfc0a78e1ea53c754abdca97be1089344f4ae649724748d65511422cc46d689e; checkpoint at entry 41450 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:41:38Z compressed batch1/K-907 5967493
+2026-11-02T16:41:40Z start batch1/N-907 threads=unset 
+2026-11-02T16:41:46Z compressed batch1/E-907 7923256
+2026-11-02T16:41:47Z start batch1/S-908 threads=unset 
+2026-11-02T16:49:41Z done batch1/N-907 exit=0 wall_seconds=480.432
+2026-11-02T16:49:42Z verify batch1/N-907 exit=0 brut-breed: 40444 events, hash chain intact, head 105565ea54bf2142774c8e01b4b039a62e372ae40107094203f8d9e33bf9ab01; checkpoint at entry 40444 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:49:56Z compressed batch1/N-907 3754539
+2026-11-02T16:50:00Z start batch1/V-908 threads=unset 
+2026-11-02T16:53:31Z done batch1/S-908 exit=0 wall_seconds=703.769
+2026-11-02T16:53:33Z verify batch1/S-908 exit=0 brut-breed: 44778 events, hash chain intact, head 02579adaa042ef688513a995077357382aea2e185d662b8129d3dc46c0276e7e; checkpoint at entry 44778 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T16:54:06Z compressed batch1/S-908 9132190
+2026-11-02T16:54:07Z start batch1/K-908 threads=unset 
+2026-11-02T17:01:25Z done batch1/V-908 exit=0 wall_seconds=684.622
+2026-11-02T17:01:26Z verify batch1/V-908 exit=0 brut-breed: 44615 events, hash chain intact, head b85bcb1659700e02bac1557fc7feb5646fcec85b7eb0653a1b19a1f07cae9849; checkpoint at entry 44615 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:01:59Z compressed batch1/V-908 9139846
+2026-11-02T17:02:00Z start batch1/E-908 threads=unset 
+2026-11-02T17:05:37Z done batch1/K-908 exit=0 wall_seconds=689.838
+2026-11-02T17:05:39Z verify batch1/K-908 exit=0 brut-breed: 43891 events, hash chain intact, head c2cc4d85581949f7010872e772df50fe81a3d71e72ac2c38598205bd3e14ebba; checkpoint at entry 43891 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:06:06Z compressed batch1/K-908 6763120
+2026-11-02T17:06:07Z start batch1/N-908 threads=unset 
+2026-11-02T17:13:22Z done batch1/E-908 exit=0 wall_seconds=682.809
+2026-11-02T17:13:24Z verify batch1/E-908 exit=0 brut-breed: 43922 events, hash chain intact, head 9ef3f44078b244d5b263c2834b45863e2c3c0cc6bfc3ce82764f59ab1f1b0da8; checkpoint at entry 43922 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:13:56Z compressed batch1/E-908 9153566
+2026-11-02T17:13:59Z start batch1/S-909 threads=unset 
+2026-11-02T17:14:46Z done batch1/N-908 exit=0 wall_seconds=519.299
+2026-11-02T17:14:47Z verify batch1/N-908 exit=0 brut-breed: 41221 events, hash chain intact, head dd255b6731de72b6e238ddc08b78b9bed8bb6ed5fa37a12d75f75cabec993196; checkpoint at entry 41221 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:15:02Z compressed batch1/N-908 4039509
+2026-11-02T17:15:06Z start batch1/V-909 threads=unset 
+2026-11-02T17:23:27Z done batch1/S-909 exit=0 wall_seconds=567.299
+2026-11-02T17:23:28Z verify batch1/S-909 exit=0 brut-breed: 41339 events, hash chain intact, head edd03148d79872052af52a3a53ac1a83c4cd67d07f801c97af2070a38b0c6357; checkpoint at entry 41339 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:23:56Z compressed batch1/S-909 7668643
+2026-11-02T17:23:59Z start batch1/K-909 threads=unset 
+2026-11-02T17:24:27Z done batch1/V-909 exit=0 wall_seconds=560.451
+2026-11-02T17:24:28Z verify batch1/V-909 exit=0 brut-breed: 43476 events, hash chain intact, head a00e0eb1bb5eac9f6f67f1691d1e0f32cf73836ff27a356cae633b99fa44b268; checkpoint at entry 43476 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:24:57Z compressed batch1/V-909 7847074
+2026-11-02T17:25:01Z start batch1/E-909 threads=unset 
+2026-11-02T17:33:39Z done batch1/K-909 exit=0 wall_seconds=580.004
+2026-11-02T17:33:40Z verify batch1/K-909 exit=0 brut-breed: 43207 events, hash chain intact, head 12fef9ca976e846f878ae97faf6e9ec2b38a4993cb872c5dbc930780cc231c09; checkpoint at entry 43207 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:34:05Z compressed batch1/K-909 6024614
+2026-11-02T17:34:08Z start batch1/N-909 threads=unset 
+2026-11-02T17:34:28Z done batch1/E-909 exit=0 wall_seconds=567.395
+2026-11-02T17:34:30Z verify batch1/E-909 exit=0 brut-breed: 41512 events, hash chain intact, head df0b3b5bc45816e6a167c71358da32cc040381407ec5a91b931f4fdcca14a660; checkpoint at entry 41512 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:34:59Z compressed batch1/E-909 7697099
+2026-11-02T17:35:01Z start batch1/S-910 threads=unset 
+2026-11-02T17:41:18Z done batch1/N-909 exit=0 wall_seconds=429.095
+2026-11-02T17:41:19Z verify batch1/N-909 exit=0 brut-breed: 40952 events, hash chain intact, head b19a4fbb1d5cba874630db86a86fcef2c64adc0f5628718b0428fcc0e81acfba; checkpoint at entry 40952 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:41:33Z compressed batch1/N-909 3777614
+2026-11-02T17:41:38Z start batch1/V-910 threads=unset 
+2026-11-02T17:46:10Z done batch1/S-910 exit=0 wall_seconds=669.952
+2026-11-02T17:46:12Z verify batch1/S-910 exit=0 brut-breed: 32314 events, hash chain intact, head 93cc97ef1eefbf46a8f3fb59127b300afea86b45c39a13dbea4c15e921bff6cd; checkpoint at entry 32314 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:46:37Z compressed batch1/S-910 7381532
+2026-11-02T17:46:40Z start batch1/K-910 threads=unset 
+2026-11-02T17:52:19Z done batch1/V-910 exit=0 wall_seconds=641.078
+2026-11-02T17:52:20Z verify batch1/V-910 exit=0 brut-breed: 33114 events, hash chain intact, head 42a5ab2d4785df358d1d841459bcef8bc5f0f52057ef2f467ee76d769a386891; checkpoint at entry 33114 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:52:46Z compressed batch1/V-910 7447832
+2026-11-02T17:52:48Z start batch1/E-910 threads=unset 
+2026-11-02T17:57:07Z done batch1/K-910 exit=0 wall_seconds=626.390
+2026-11-02T17:57:08Z verify batch1/K-910 exit=0 brut-breed: 29871 events, hash chain intact, head 68da541d2bfd302599b4788e1dc2277d8a28aeed075efcb2a9650cdf22959818; checkpoint at entry 29871 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T17:57:29Z compressed batch1/K-910 5317572
+2026-11-02T17:57:30Z start batch1/N-910 threads=unset 
+2026-11-02T18:02:51Z done batch1/E-910 exit=0 wall_seconds=603.104
+2026-11-02T18:02:52Z verify batch1/E-910 exit=0 brut-breed: 28200 events, hash chain intact, head ed03330afef5fd2ad33702a0db0ef0d03d63298946dece59c3fccad1b00736f8; checkpoint at entry 28200 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:03:17Z compressed batch1/E-910 7173142
+2026-11-02T18:03:17Z start batch1/S-911 threads=unset 
+2026-11-02T18:05:49Z done batch1/N-910 exit=0 wall_seconds=498.790
+2026-11-02T18:05:49Z verify batch1/N-910 exit=0 brut-breed: 31639 events, hash chain intact, head be0e58d978e65fb1f3fb6e4dd16ccc1d05fe3f731b1cc72d1f73460d1be13cde; checkpoint at entry 31639 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:06:01Z compressed batch1/N-910 3181670
+2026-11-02T18:06:04Z start batch1/V-911 threads=unset 
+2026-11-02T18:15:12Z done batch1/S-911 exit=0 wall_seconds=715.045
+2026-11-02T18:15:14Z verify batch1/S-911 exit=0 brut-breed: 45405 events, hash chain intact, head 25054096835c5d756597f29fd0cc506bbb640e1b04c10ab72709c44889e95ce7; checkpoint at entry 45405 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:15:46Z compressed batch1/S-911 8506578
+2026-11-02T18:15:47Z start batch1/K-911 threads=unset 
+2026-11-02T18:17:48Z done batch1/V-911 exit=0 wall_seconds=703.911
+2026-11-02T18:17:50Z verify batch1/V-911 exit=0 brut-breed: 45024 events, hash chain intact, head e3aa57c0bf29080c3ecc12977969bf48fdfa74e8bbdc3ee3a0017841437dc68a; checkpoint at entry 45024 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:18:22Z compressed batch1/V-911 8594476
+2026-11-02T18:18:24Z start batch1/E-911 threads=unset 
+2026-11-02T18:27:39Z done batch1/K-911 exit=0 wall_seconds=712.604
+2026-11-02T18:27:41Z verify batch1/K-911 exit=0 brut-breed: 45652 events, hash chain intact, head 5993f9c0c4586a8a396769b92e1cbca245732cdbb54a018d95a236430c64d661; checkpoint at entry 45652 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:28:07Z compressed batch1/K-911 6386943
+2026-11-02T18:28:12Z start batch1/N-911 threads=unset 
+2026-11-02T18:30:33Z done batch1/E-911 exit=0 wall_seconds=728.971
+2026-11-02T18:30:35Z verify batch1/E-911 exit=0 brut-breed: 46568 events, hash chain intact, head 377214e7af78bcbdd8ec5ac068e90d2e6fd9d2a44c66dbb6d12efd9e3716f42f; checkpoint at entry 46568 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:31:08Z compressed batch1/E-911 8931058
+2026-11-02T18:31:09Z start batch1/S-912 threads=unset 
+2026-11-02T18:37:35Z done batch1/N-911 exit=0 wall_seconds=563.903
+2026-11-02T18:37:37Z verify batch1/N-911 exit=0 brut-breed: 42312 events, hash chain intact, head 00b1e54c5ecbaafb89dd1c9e76e0d3c2eda549bba4f08f7de9f012e616cfb121; checkpoint at entry 42312 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:37:52Z compressed batch1/N-911 3958588
+2026-11-02T18:37:56Z start batch1/V-912 threads=unset 
+2026-11-02T18:42:13Z done batch1/S-912 exit=0 wall_seconds=664.389
+2026-11-02T18:42:15Z verify batch1/S-912 exit=0 brut-breed: 39223 events, hash chain intact, head e99a3ff6a8bc849b36b43dc6b3b659b9b862c5f650d442c1e145784e4763c161; checkpoint at entry 39223 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:42:42Z compressed batch1/S-912 7930659
+2026-11-02T18:42:43Z start batch1/K-912 threads=unset 
+2026-11-02T18:48:55Z done batch1/V-912 exit=0 wall_seconds=658.892
+2026-11-02T18:48:56Z verify batch1/V-912 exit=0 brut-breed: 38508 events, hash chain intact, head 1226e707f24218bbeef57d44ca0d44ff6c85adca3cb834d76d31ab9805cfffd9; checkpoint at entry 38508 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:49:24Z compressed batch1/V-912 7879214
+2026-11-02T18:49:26Z start batch1/E-912 threads=unset 
+2026-11-02T18:53:56Z done batch1/K-912 exit=0 wall_seconds=672.161
+2026-11-02T18:53:57Z verify batch1/K-912 exit=0 brut-breed: 40815 events, hash chain intact, head 36ee7b3d60513c0fd5857097a1545262d1c0259fe9d54c475fb434ec0db17972; checkpoint at entry 40815 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T18:54:20Z compressed batch1/K-912 6092321
+2026-11-02T18:54:23Z start batch1/N-912 threads=unset 
+2026-11-02T19:00:02Z done batch1/E-912 exit=0 wall_seconds=636.018
+2026-11-02T19:00:03Z verify batch1/E-912 exit=0 brut-breed: 42964 events, hash chain intact, head daffb5b7252f95d19817bd646744694c9482dfef5367f72802620e5bdcfaa276; checkpoint at entry 42964 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:00:32Z compressed batch1/E-912 8241940
+2026-11-02T19:03:03Z done batch1/N-912 exit=0 wall_seconds=520.436
+2026-11-02T19:03:04Z verify batch1/N-912 exit=0 brut-breed: 39143 events, hash chain intact, head 214faada1ad7b7f9a6e658d6c8fa599d8f4e73f2b6598782e5fcf948e162d184; checkpoint at entry 39143 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:03:18Z compressed batch1/N-912 3823348
+2026-11-02T19:03:18Z driver end
+2026-11-02T19:03:48Z start rerun/S-901 threads=unset 
+2026-11-02T19:14:46Z done rerun/S-901 exit=0 wall_seconds=658.461
+2026-11-02T19:14:48Z verify rerun/S-901 exit=0 brut-breed: 45680 events, hash chain intact, head 28b06c5345a72507ed2cf920f0cc9094a87a7a21d8f2abc998be592525b8d0c1; checkpoint at entry 45680 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:14:48Z start rerun/V-901 threads=unset 
+2026-11-02T19:25:30Z done rerun/V-901 exit=0 wall_seconds=642.353
+2026-11-02T19:25:32Z verify rerun/V-901 exit=0 brut-breed: 45049 events, hash chain intact, head ed80da4475f8e9bec8927028e0d5e6395f6be15c9b4ba28fdc2022005181647e; checkpoint at entry 45049 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:25:32Z start rerun/K-901 threads=unset 
+2026-11-02T19:36:24Z done rerun/K-901 exit=0 wall_seconds=652.539
+2026-11-02T19:36:26Z verify rerun/K-901 exit=0 brut-breed: 44962 events, hash chain intact, head 1db9b573c96eacfab073ff9568be26fa55dea3ccf7168a878acde49ae8a2fba9; checkpoint at entry 44962 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:36:26Z start rerun/E-901 threads=unset 
+2026-11-02T19:47:12Z done rerun/E-901 exit=0 wall_seconds=646.363
+2026-11-02T19:47:13Z verify rerun/E-901 exit=0 brut-breed: 44579 events, hash chain intact, head 11d8766a3cf3f9e9f8c4285edb358efb51e1123b6da4bee55fe73420f123283d; checkpoint at entry 44579 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T19:47:13Z start rerun/N-901 threads=unset 
+2026-11-02T19:55:10Z done rerun/N-901 exit=0 wall_seconds=476.937
+2026-11-02T19:55:11Z verify rerun/N-901 exit=0 brut-breed: 43574 events, hash chain intact, head 31ce391feeb458ed1e33f8e7e7684dbc4ac11268a08248168c45a4b1f456db6e; checkpoint at entry 43574 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
