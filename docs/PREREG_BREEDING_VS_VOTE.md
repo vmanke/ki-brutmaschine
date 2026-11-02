@@ -267,7 +267,12 @@ cause is not found.
 
 ## 9. The pilot (not counted)
 
-Pilot seeds 901 to 905 run all chosen arms with the settings of D1 to D5. The pilot
+The pilot runs seeds 901, 902 and 903 at the same time, with all arms and the settings
+of D1 to D5, in one command: `docs/prereg-breeding-vs-vote/pilot.sh`. It starts vLLM, runs
+the three seeds (six breeding runs, the load that filled the measured H200), writes
+`runs/pilot/summary.txt` and stops vLLM; then the VM can be stopped. The VM is rented by
+the hour, so it runs only for the pilot and, after the freeze, for the counted runs.
+Seeds 904 and 905 stay in reserve for a second pilot after a change of model. The pilot
 measures:
 
 - calls, tokens and minutes per run on the H200, with several runs at once;
@@ -380,6 +385,9 @@ and that version was decided.
   for a request that vLLM refuses as longer than the context (HTTP 400, "maximum context
   length"), and the core fills a random child, as for a cut-off answer. Every other failed
   Mutator call stays pending. The refusal stays on file in `llm/mutator-errors.jsonl`.
+- **The pilot** `docs/prereg-breeding-vs-vote/pilot.sh`: section 9 in one command. Its
+  tests run it on stand-in programs: three seeds at once, the summary, and a seed that
+  stops.
 - **The driver** `docs/prereg-breeding-vs-vote/run-seed.sh` for one seed: the procedure of
   section 8, steps 3 to 6. It never deletes anything. Both arms of a seed share the call
   cache `runs/call-cache/seed-S.jsonl`, so arm L takes generation 0 from arm B. Its tests

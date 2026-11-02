@@ -742,3 +742,97 @@ fn a_whole_seed_runs_with_the_real_programs() {
     assert_eq!(recount["primary"], analysis["primary"]);
     assert_eq!(recount["next_seed"], analysis["next_seed"]);
 }
+
+/// Run docs/prereg-breeding-vs-vote/pilot.sh on the stand-ins of `bench`, with a model
+/// server that "already runs" (PILOT_SERVER=external), and the extra `env`.
+fn pilot(bench: &Bench, env: &[(&str, &str)]) -> (Option<i32>, String) {
+    let mut cmd = Command::new("bash");
+
+    cmd.arg(prereg().join("pilot.sh"))
+        .args(["--runs", bench.runs.to_str().expect("path")])
+        .env("PILOT_SERVER", "external")
+        .env("BRUT_BIN_DIR", bench.dir.join("bin"))
+        .env("PREREG_RETRY_SECONDS", "0")
+        .env("FAKE_LOG", bench.dir.join("log"))
+        .env("FAKE_STATE", bench.dir.join("state"))
+        .env("FAKE_CODES_B", "0")
+        .env("FAKE_CODES_L", "0")
+        .env("FAKE_MATCH", "matched 2 1")
+        .env_remove("BRUT_CALL_CACHE")
+        .env_remove("PREREG_FROZEN");
+
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+
+    let o = cmd.output().expect("run the pilot");
+
+    (
+        o.status.code(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+    )
+}
+
+#[test]
+fn the_pilot_runs_three_seeds_at_once_and_writes_a_summary() {
+    let bench = Bench::new("pilot-script");
+    let (code, text) = pilot(&bench, &[]);
+
+    assert_eq!(code, Some(0), "{text}");
+
+    let summary =
+        std::fs::read_to_string(bench.runs.join("pilot").join("summary.txt")).expect("summary");
+
+    assert!(summary.contains("All three seeds finished."), "{summary}");
+    assert!(summary.contains("the analysis of"), "{summary}");
+    assert!(summary.contains("longest Mutator prompt"), "{summary}");
+
+    for s in ["901", "902", "903"] {
+        assert!(summary.contains(&format!("B-{s}")), "{summary}");
+        assert!(summary.contains(&format!("L-{s}")), "{summary}");
+        assert!(
+            bench
+                .runs
+                .join(format!("B-{s}"))
+                .join("report.json")
+                .is_file()
+        );
+        assert!(
+            bench
+                .runs
+                .join("pilot")
+                .join(format!("seed-{s}.log"))
+                .is_file()
+        );
+    }
+
+    assert!(text.contains("stop it in the Nebius console"), "{text}");
+}
+
+#[test]
+fn a_pilot_seed_that_stops_is_named_and_the_pilot_fails() {
+    let bench = Bench::new("pilot-script-stopped");
+    let (code, text) = pilot(&bench, &[("FAKE_CODES_B", "stopped")]);
+
+    assert_eq!(code, Some(1), "{text}");
+
+    let summary =
+        std::fs::read_to_string(bench.runs.join("pilot").join("summary.txt")).expect("summary");
+
+    assert!(
+        summary.contains("Seeds that stopped with a message:"),
+        "{summary}"
+    );
+
+    for s in ["901", "902", "903"] {
+        assert!(summary.contains(&format!("{s} (exit 1)")), "{summary}");
+        assert!(
+            bench.runs.join(format!("B-{s}")).is_dir(),
+            "nothing is deleted"
+        );
+    }
+}
