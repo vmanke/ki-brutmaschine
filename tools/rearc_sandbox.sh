@@ -13,6 +13,8 @@
 # The converter gets the zip on standard input and its own code on file descriptor 3, and
 # its output goes to standard output. So it opens no file by a path outside its tmpfs, and
 # user 65534 needs no staging directory (it cannot read /tmp/claude-0, mode 0700 root).
+# Root writes that output into a private directory beside the target and renames it into
+# place at the end. Relative paths are made absolute first.
 #
 # usage: sudo tools/rearc_sandbox.sh <re_arc.zip> <output.jsonl> [converter options]
 set -euo pipefail
@@ -32,6 +34,11 @@ out=$2
 shift 2
 script="$(cd "$(dirname "$0")" && pwd)/rearc_to_jsonl.py"
 
+# The sandbox below starts in / (cd /), so make both paths absolute first: a relative path
+# would otherwise resolve from /.
+case $zip in /*) ;; *) zip="$PWD/$zip" ;; esac
+case $out in /*) ;; *) out="$PWD/$out" ;; esac
+
 for tool in setpriv unshare prlimit mount python3; do
     if ! command -v "$tool" >/dev/null; then
         echo "rearc_sandbox: $tool is missing" >&2
@@ -44,13 +51,18 @@ if [ ! -f "$zip" ]; then
     exit 2
 fi
 
-if [ -e "$out" ]; then
+if [ -e "$out" ] || [ -L "$out" ]; then
     echo "rearc_sandbox: $out exists; remove it first" >&2
     exit 2
 fi
 
-partial="$out.partial"
-trap 'rm -f "$partial"' EXIT
+# Stage the output in a fresh private directory beside it (mktemp -d: random name, mode
+# 0700, owned by root). Nobody else can place a symlink there, so root never writes through
+# one, and the final rename stays on the same file system. A rename replaces a symlink at
+# the target instead of following it.
+stage=$(mktemp -d "$(dirname "$out")/.rearc_sandbox.XXXXXXXX")
+trap 'rm -rf -- "$stage"' EXIT
+partial="$stage/output.jsonl"
 
 cd /
 setpriv --reuid=65534 --regid=65534 --clear-groups --no-new-privs -- \
@@ -60,4 +72,4 @@ setpriv --reuid=65534 --regid=65534 --clear-groups --no-new-privs -- \
         python3 -I /dev/fd/3 "$@"' rearc-sandbox "$@" \
     3<"$script" <"$zip" >"$partial"
 
-mv "$partial" "$out"
+mv -T -- "$partial" "$out"
