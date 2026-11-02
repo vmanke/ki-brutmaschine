@@ -1,6 +1,6 @@
 # Schreibstil der deutschen Berichte
 
-Diese Vorgabe gilt für die deutschen Berichte des Repositorys: README.md,
+Diese Vorgabe gilt für die deutschen Berichte des Repositorys: README.de.md,
 docs/ARCHITEKTUR.md, docs/SICHERHEIT_UND_RECHT.md, docs/PLAN_GENERALISIERUNG.md,
 docs/ERGEBNISSE_STUFE1.md, docs/ENTSCHEIDUNGEN_STUFE2A.md,
 docs/POSITIVKONTROLLE.md, docs/STUFE2A_PILOT.md,
