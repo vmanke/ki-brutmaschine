@@ -63,13 +63,13 @@ after seeing it.
 | Item | Frozen as |
 |---|---|
 | Code | The whole tree of the freeze commit. Its hash is recorded with the results. |
-| Programs | `brut-breed-ollama` and `vote-control` of `backend-ollama/`, built with `cargo build --release` at that commit. |
+| Programs | `brut-breed-ollama`, `brut-mutator`, `vote-control` and `breeding-vs-vote` of `backend-ollama/`, built with `cargo build --release` at that commit. |
 | Toolchain | rustc 1.97.0 on x86_64 Linux. |
-| Model | Decision D1: name, weights revision (Hugging Face commit hash) and served name. |
-| Model server | vLLM 0.32.0 on 127.0.0.1, bf16, the start command written into `docs/prereg-breeding-vs-vote/`. `VLLM_USE_FLASHINFER_SAMPLER=0`, as measured on 2026-10-31. |
+| Model | Decision D1: name, weights revision (Hugging Face commit hash, written into `vllm-start.sh` from the pilot) and served name. |
+| Model server | vLLM 0.32.0 on 127.0.0.1, bf16, the start command `docs/prereg-breeding-vs-vote/vllm-start.sh`. `VLLM_USE_FLASHINFER_SAMPLER=0`, as measured on 2026-10-31. |
 | Settings | One `config.json` per arm in `docs/prereg-breeding-vs-vote/`, from decisions D2 to D4. Every setting not named there stays at `BreedConfig::default()`. The Soul of step 2 stays off. |
 | Seeds | The counted list 1, 2, 3, ... up to the cap of D6, in this order. Pilot seeds are 901 to 905; they are not on the list. |
-| Analysis | An analysis program and an independent recount, both to be built before the freeze (section 11). |
+| Analysis | The analysis program `breeding-vs-vote` and the independent recount `docs/prereg-breeding-vs-vote/recount.py` (section 11). |
 | Rule | Sections 5 to 8. |
 
 A change after the freeze is a deviation. It is reported with the results, with its
@@ -104,7 +104,37 @@ For every counted seed s, in the order of the list:
 
 Generation 0 is the same in every arm of a seed, since parent choice starts in
 generation 1. The analysis refuses a seed where the seed Cascades' search answers differ
-between arms.
+between arms. With a real model this holds only because arm L takes the generation-0 answers of arm
+B from the seed's call cache `runs/call-cache/seed-S.jsonl`: vLLM is not bit-reproducible
+across batches (contract I7), so fresh calls could differ.
+
+**Length and call cap (D4).** Every run breeds 30 generations of 8 children on 40 search
+puzzles and ends with the select phase on 100 puzzles; there is no early stop. The cap
+`max_calls` comes from the call bounds in `src/cascade/arena.rs`. A Stage of w Workers
+makes at most w + w · w(w - 1)/2 Worker calls on one puzzle: every Worker answers, then
+every Worker judges every pair of distinct answers (`stage_call_bound`). A Cascade has at
+most 4 Stages of at most 3 Workers (the hard ceilings), so it makes at most
+4 · (3 + 3 · 3) = 48 calls per puzzle. The 4 seed Cascades have one Worker each, so 1 call.
+A peer round makes at most one judge call per new member, opponent and puzzle
+(`peer_call_bound`), with 3 opponents and 2 puzzles per pair.
+
+- Generation 0: the 4 seeds on 40 puzzles, 160 calls, and at most 4 · 3 · 2 = 24 peer
+  calls: 184.
+- Each of the 30 bred generations: at most 8 children of 48 calls on 40 puzzles, 15 360
+  calls, and at most 8 · 3 · 2 = 48 peer calls: 15 408. Children written by the Mutator
+  must fit the same ceilings.
+- The select phase: every seed and at most 3 finalists of 48 calls, on 100 puzzles:
+  (4 + 3 · 48) · 100 = 14 800.
+
+A run thus makes at most 184 + 30 · 15 408 + 14 800 = 477 224 Worker calls. The cap is
+480 000, so it cannot end a run early: before each generation the arena checks that the
+calls so far, the generation's worst case and the select phase's worst case fit, and here
+they always do. Mutator calls do not count toward `max_calls`. The Mutator's answers reach
+the run as answer files, not as Worker calls; `brut-mutator` records its calls apart, in
+`llm/mutator-calls.jsonl`, and the report counts the answers used. The same holds for the
+vote's calls, which `vote-control` makes after the run. `worst_case_calls` in
+`backend-ollama/src/breeding_vs_vote.rs` computes this bound from a run's settings, and a
+test pins it to `config-B.json`.
 
 ## 5. Definitions
 
@@ -113,7 +143,9 @@ between arms.
   search panel. The select panel is the unseen panel.
 - **Overlap.** A select puzzle overlaps when its content id equals the id of a puzzle of
   the same seed's search panel. Overlapping select puzzles are left out of every count
-  below. Their number is reported.
+  below. Their number is reported. The test misses only a select puzzle that equals a
+  search puzzle and also repeats within the select panel, where the panel salts its id;
+  with generated puzzles this has not been seen.
 - **Champion c(s).** The bred finalist of run B-s with the best search fitness, as
   `vote.rs` (`champion`) defines it. No select result enters this choice.
 - **C(s).** The number of select puzzles that c(s) solves exactly in the select phase of
@@ -196,22 +228,38 @@ wall time.
 
 ## 8. Procedure and validity
 
-1. Build both programs at the freeze commit. Run `cargo test` in the root package and in
-   `backend-ollama/`. All must pass.
-2. Start vLLM with the frozen command. Record `nvidia-smi` and the vLLM version.
-3. Run the counted seeds in list order. Several runs may run at once; the evidence values
-   still take the pairs in list order.
-4. A run with any failed call is not counted. It is deleted and run again from scratch on
-   the same seed. `vote-control` refuses such a run anyway.
+1. Build the programs at the freeze commit: `cd backend-ollama && cargo build --release`.
+   Run `cargo test` in the root package and in `backend-ollama/`. All must pass.
+2. Start vLLM with the frozen command: `docs/prereg-breeding-vs-vote/vllm-start.sh`. It
+   prints the vLLM version and `nvidia-smi`; record both.
+3. Run the counted seeds in list order, each with
+   `docs/prereg-breeding-vs-vote/run-seed.sh --seed S` from the repository root, which
+   writes `runs/B-S` and `runs/L-S`. Several seeds may run at once; the evidence values
+   still take the pairs in list order. The driver breeds arm B, runs arm V on it (the call
+   matching of section 4, then `vote-control --run runs/B-S --temperature 0.7 --samples N`
+   for N_up and for N_down), breeds arm L, and writes `runs/B-S/panels.json`.
+4. A run with any failed call is not counted. The driver stops as soon as a run has
+   filed one. The run is deleted (`rm -r runs/B-S` or `rm -r runs/L-S`) and run again
+   from scratch on the same seed with the same command. `vote-control` refuses such a run
+   anyway. "From scratch" means a new run directory, not new model answers: the run takes
+   every answer already in the seed's call cache, and only its failed calls go to the
+   model again. So deleting a run cannot draw new answers for a seed, and no seed can be
+   rolled again until it looks better.
 5. A run that is killed or interrupted is not resumed. It is deleted and run again from
    scratch. A pause for Mutator answers (exit code 3), answered by `brut-mutator` and
-   continued with `--resume`, is part of the design, not an interruption (D2).
-6. After each run: `brut-breed-ollama --out <dir> --verify` must pass. The standalone
-   `brut-breed` knows only the simulated models, and its `--verify` refuses a run whose
-   allow-list names a `vllm:` model. After each pair: run the
-   analysis on all finished pairs. It names the next seed or gives the verdict.
-7. Before the result is reported, the independent recount must give the same outcomes,
-   evidence values, stop pair and verdicts.
+   continued with `--resume`, is part of the design, not an interruption (D2). The driver
+   resumes a run only after such a pause; its journal `driver.log` in each run directory
+   tells the two apart, and for any other unfinished run it stops and says what to delete.
+6. After each run: `brut-breed-ollama --out <dir> --verify` must pass; the driver runs it
+   and stops when it fails. The standalone `brut-breed` knows only the simulated models,
+   and its `--verify` refuses a run whose allow-list names a `vllm:` model. After each
+   pair: run the analysis on all finished pairs,
+   `backend-ollama/target/release/breeding-vs-vote --runs runs`; the driver runs it last.
+   It names the next seed or gives the verdict, and writes `runs/analysis.json` and
+   `runs/analysis.txt`.
+7. Before the result is reported, the independent recount
+   `python3 -I docs/prereg-breeding-vs-vote/recount.py --runs runs` must give the same
+   outcomes, evidence values, stop pair and verdicts.
 
 **The experiment is void** when a frozen item changes during the counted runs (model,
 weights, server version, code), or when the recount and the analysis disagree and the
@@ -225,7 +273,9 @@ measures:
 - calls, tokens and minutes per run on the H200, with several runs at once;
 - the best seed Cascade's search rate;
 - the tie rate of Y(s), which section 6 assumes to be 0.2;
-- that Mutator rounds (if D2 is on) pass `--verify` and replay byte-identically.
+- that Mutator rounds (if D2 is on) pass `--verify` and replay byte-identically;
+- the longest Mutator prompt in tokens, and how many Mutator requests vLLM refused as too
+  long (`llm/mutator-errors.jsonl`).
 
 **Pilot gate for the model.** If the best seed Cascade solves fewer than 15 % of the search
 puzzles in the median pilot seed, the model has no selection signal. Then D1 changes to a
@@ -247,24 +297,103 @@ and that version was decided.
 | D1 | Model | `Qwen2.5-32B-Instruct`, bf16, on vLLM | Measured on this H200: 40 times the throughput of Ollama. Its seeds left the floor (6 of 24 unseen). `qwen2.5:7b` stayed at the floor. Alternatives: `Qwen2.5-72B-Instruct` (stronger, slower) or the thinking model `qwen3.8-27b` (contract I5; more tokens per call). |
 | D2 | Mutator rounds | On: `--llm-every 2`, answered by `brut-mutator` with the same model | The machine's idea is that a model rewrites the prompts. Without the Mutator, breeding only recombines phrases. The pilot checks the pause and resume loop. |
 | D3 | Arms | B, V and L | The simulation of PR #45 predicts a lexicase lead (S2); uniform choice showed no difference there. Each breeding arm adds one run per seed, so U does not run. L needs PR #45 merged before the freeze. |
-| D4 | Panels and length | 40 search, 100 select, 8 children, 30 generations; a call cap that cannot bind | 100 unseen puzzles make each pair's count finer and ties rarer. A fixed number of generations gives every arm the same number of children, as in step 1. The cap is set from the worst case per generation, as step 1 did (its section 6). |
+| D4 | Panels and length | 40 search, 100 select, 8 children, 30 generations; a call cap that cannot bind | 100 unseen puzzles make each pair's count finer and ties rarer. A fixed number of generations gives every arm the same number of children, as in step 1. The cap is set from the worst case per generation, as step 1 did (its section 6): a run makes at most 477 224 Worker calls, and the cap is 480 000 (section 4). |
 | D5 | Vote temperature | T = 0.7 | Wang et al. (2023) used T = 0.7 for PaLM and GPT-3 and found self-consistency robust between 0.3 and 0.7. A seed's own temperature (0.2) would make the samples near copies and weaken the control. |
 | D6 | Cap on pairs | 60, confirmed after the pilot | At a win rate of 3/4, the chance of a proof is 0.78 with cap 60 and 0.95 with cap 120 (section 6). |
 
 ## 11. Work before the freeze
 
-- The analysis program (Rust, like `examples/circuit_positive_control.rs`) and an
-  independent recount (Python, run with `python3 -I`, like step 1's `reference_rule.py`).
-  Both read the run directories and `vote-control.json`, check the frozen settings,
-  compute Y(s), the evidence values and the verdicts.
-- The overlap check of section 5, in the analysis.
-- The call matching of section 4: read K_c(s) from the run's call record, and find
-  N_up(s) and N_down(s) from the vote's call record.
-- `config-B.json` and `config-L.json`, the vLLM start command and the model's weights
-  revision, in `docs/prereg-breeding-vs-vote/`.
-- A driver script for one seed: arm B and arm L with the Mutator loop of D2, `--verify`,
-  the call matching and `vote-control`, as the procedure of section 8 says.
-- The worst-case call bound per generation for D4, written down with its arithmetic.
+**Built.** Everything below lies in this repository; the tests run with `cargo test` in
+`backend-ollama/`.
+
+- **The analysis program** `breeding-vs-vote`: the module
+  `backend-ollama/src/breeding_vs_vote.rs` with its unit tests, and the thin binary
+  `backend-ollama/src/bin/breeding-vs-vote.rs`. It takes the champion, the voted seed, the
+  select panel and the vote's sample seeds from `backend-ollama/src/vote.rs`, so its
+  definitions are those of `vote-control`. `--runs <dir>` reads the pairs of the counted
+  list in its order (`--pilot`: the pilot seeds, without a claim), checks them, computes
+  the values of sections 4 to 7 and runs the rule of section 6. It prints a table and the
+  verdict lines and writes `analysis.json` and `analysis.txt`. `--match <run B-s>` is the
+  call matching for the driver; `--panels <run B-s>` writes `panels.json`.
+- **What it refuses.** A run whose `config.json` differs from the frozen file of its arm
+  in anything but the seed; a run whose name and seed disagree; a run with a failed
+  Worker call; a finished run that did not breed all 30 generations; a broken event log,
+  a checkpoint not at its end, logged panels or select results that differ from the
+  regenerated or reported ones; a seed whose arms differ in generation 0 (section 4); a
+  record that lacks a call of the champion's select phase; a kept vote result that is not
+  the vote its record gives with N_up or N_down samples; a `panels.json` that differs from
+  the regenerated panels; a seed off the list 1 to 60, a pilot seed among counted ones, a
+  gap in the list, and a 61st pair. An unfinished run is not counted: its pair and every
+  later pair wait, as a pair with no kept vote yet does.
+- **The overlap check of section 5** in both programs: a select puzzle whose id is an id
+  of the seed's search panel counts nowhere, neither in C, V, C_L and the plain run nor in
+  K_c and K_v. The analysis reports the overlapping ids per pair.
+- **The call matching of section 4.** K_c(s) replays the champion's select phase on the
+  counted puzzles from the run's record `llm/worker-calls.jsonl`; every call must be on
+  file, and the replayed answers must be the snapshot's. K_v(s, N) replays the first N
+  samples from the vote's record `vote-control/worker-calls.jsonl`. A sample makes at
+  least one call per Worker and puzzle, so K_v grows with every sample, and N_down is
+  N_up when K_v(s, N_up) = K_c(s) and N_up - 1 otherwise (none when that is 0). The
+  analysis checks that N_up is the smallest and N_down the largest N that section 4
+  allows.
+- **How the vote is kept.** `vote-control` writes its result to
+  `runs/B-s/vote-control.json`, and a later control overwrites it. The driver therefore
+  copies it right after `vote-control --samples N_down` to `runs/B-s/vote-down.json` and
+  right after `--samples N_up` to `runs/B-s/vote-up.json`. A larger N reuses the samples
+  of a smaller one, so both controls only replay the record. The analysis reads only these
+  two copies and checks each one against the record, puzzle by puzzle. No
+  `vote-down.json` exists when no N_down exists.
+- **The independent recount** `docs/prereg-breeding-vs-vote/recount.py`, for
+  `python3 -I` and the standard library alone. It shares no code with the analysis. It
+  reads the same files and computes the same outcomes, evidence values, stop pair and
+  verdicts by other means: it counts calls by their request seeds instead of replaying
+  Cascades, and it grades every answer itself against the puzzles of `panels.json`, which
+  it checks against their logged content ids. The analysis tests run it on the test runs
+  and compare its result with their own, and run its rule on 300 random and 9 chosen
+  outcome sequences.
+- **The settings** `docs/prereg-breeding-vs-vote/config-B.json` and `config-L.json`.
+  D1: the one model `vllm:qwen2.5-32b`, at 0.002 fitness units per call, the price of the
+  first real runs (ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md, section 2). D2: `llm_every` 2 and
+  `llm_children` 8. D3: `"selection": "lexicase"` in `config-L.json` only. D4: 40 search
+  and 100 select puzzles, 8 children, 30 generations and `max_calls` 480 000 (section 4).
+  Everything else is `BreedConfig::default()` as it serialises; a test pins both files to
+  that, byte for byte, and another runs `brut-breed-ollama` on both.
+- **Why `llm_children` 8.** A Mutator round plans `min(llm_children,
+  children_per_generation)` children written by the Mutator, alternately a rewrite of one
+  parent and a merge of two, and fills the rest of the 8 children by random mutation and
+  crossover; an answer that is no valid new Cascade is replaced by a random child. With
+  the default of 2, only 2 of the 8 children in every second generation, one child in 8,
+  would come from the model, and breeding would still mostly recombine phrases, which is
+  what D2 wants to go beyond. With 8, every child of a Mutator round comes from the model,
+  so half of all children do, and the generations in between recombine what it wrote.
+  Mutator calls are no Worker calls (section 4), so the larger share changes neither the
+  cap nor the call matching. A round asks 8 requests, which `brut-mutator` answers in one
+  batch.
+- **The vLLM start command** `docs/prereg-breeding-vs-vote/vllm-start.sh`, as measured
+  on 2026-10-31: vLLM 0.32.0, `Qwen/Qwen2.5-32B-Instruct` in bf16, served as
+  `qwen2.5-32b` on 127.0.0.1:8000, `VLLM_USE_FLASHINFER_SAMPLER=0`. It reads the weights
+  from the local Hugging Face cache only. The context is 32 768 tokens, the model's native
+  length, not the 8 192 of the measurement: a Mutator prompt that merges two large Cascades
+  measured about 20 000 characters, roughly 5 000 tokens, and with 4 096 answer tokens it
+  would not fit 8 192. vLLM would refuse it every time, and the run would never finish.
+- **Too-long Mutator requests.** As a second guard, `brut-mutator` writes an empty answer
+  for a request that vLLM refuses as longer than the context (HTTP 400, "maximum context
+  length"), and the core fills a random child, as for a cut-off answer. Every other failed
+  Mutator call stays pending. The refusal stays on file in `llm/mutator-errors.jsonl`.
+- **The driver** `docs/prereg-breeding-vs-vote/run-seed.sh` for one seed: the procedure of
+  section 8, steps 3 to 6. It never deletes anything. Both arms of a seed share the call
+  cache `runs/call-cache/seed-S.jsonl`, so arm L takes generation 0 from arm B. Its tests
+  run it on stand-in programs and once on the real programs with a stand-in model server.
+- **The worst-case call bound of D4**, with its arithmetic: section 4.
+
+**Chosen by Claude, open to the owner.** `llm_children` 8, the price 0.002 per call, the
+context of 32 768 tokens and the too-long rule above are not part of D1 to D6. Claude
+chose them for the reasons given; the owner can change any of them before the freeze.
+
+**Still open before the freeze.** The weights revision: the pilot reads it from the VM's
+Hugging Face cache and writes it into `vllm-start.sh`, which refuses counted use without
+it. PR #45 must be merged (arm L). The pilot of section 9 runs, and the owner confirms
+the cap of D6.
 
 ## 12. Sources
 
