@@ -26,10 +26,13 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{GenRequest, GenResponse, ModelBackend, StopReason, approx_tokens};
-use crate::cascade::domain::{Domain, DomainConfig, GenePool, GridDomain};
+use crate::cascade::domain::{Domain, DomainConfig, GenePool, Grade, GridDomain};
 use crate::cascade::genome::{Cascade, CascadeLimits, Worker, adapt_seeds};
 use crate::cascade::observe::{ObserveInput, UniverseState, observe};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
+use crate::cascade::selection::{
+    SelectionParams, lexicase_pick, lexicase_weights, tournament_pick, tournament_weights,
+};
 use crate::cascade::variation::{
     Op, llm_crossover_request_with, llm_mutate_request_with, mutate_with, parse_llm_cascade,
     section_crossover, stage_crossover,
@@ -541,6 +544,9 @@ pub struct BreedConfig {
     /// hashes of earlier runs are unchanged.
     #[serde(default, skip_serializing_if = "ParentSelection::is_dgm")]
     pub selection: ParentSelection,
+    /// Settings of the lexicase and tournament strategies; left out at their defaults.
+    #[serde(default, skip_serializing_if = "SelectionParams::is_default")]
+    pub selection_params: SelectionParams,
 }
 
 /// How a generation draws its parents and crossover partners.
@@ -553,11 +559,95 @@ pub enum ParentSelection {
     /// The control arm of step 1: every member weighs the same, and a partner is the
     /// first valid draw, whatever its peer rating.
     Uniform,
+    /// Epsilon-lexicase selection over the search tasks (see `selection.rs`): the
+    /// candidates are filtered task by task in a fresh random order, so the aggregate
+    /// fitness plays no part. A partner is the first valid draw.
+    Lexicase,
+    /// Tournament selection: the best-ranked of `selection_params.tournament_size` uniform
+    /// draws. A partner is the first valid draw.
+    Tournament,
 }
 
 impl ParentSelection {
     pub fn is_dgm(&self) -> bool {
         matches!(self, ParentSelection::Dgm)
+    }
+
+    /// The name used on command lines and in reports.
+    pub fn name(&self) -> &'static str {
+        match self {
+            ParentSelection::Dgm => "dgm",
+            ParentSelection::Uniform => "uniform",
+            ParentSelection::Lexicase => "lexicase",
+            ParentSelection::Tournament => "tournament",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<ParentSelection> {
+        [
+            ParentSelection::Dgm,
+            ParentSelection::Uniform,
+            ParentSelection::Lexicase,
+            ParentSelection::Tournament,
+        ]
+        .into_iter()
+        .find(|s| s.name() == name)
+    }
+}
+
+/// How one generation draws parents: the strategy with what it needs, computed once from
+/// the archive.
+pub(crate) struct Selector {
+    kind: ParentSelection,
+    params: SelectionParams,
+    /// Dgm and Uniform: the weight of each member.
+    weights: Vec<f64>,
+    /// Lexicase: the value of each member on each search task (0 where it gave no answer).
+    scores: Vec<Vec<f64>>,
+    /// Tournament: each member's position in the ranking, 0 for the best.
+    rank_of: Vec<usize>,
+    members: usize,
+    /// Seed for the estimate of the lexicase parent distribution that the logged
+    /// observables use; the generation's own `rng` is never touched by it.
+    observe_seed: u64,
+}
+
+/// Selections used to estimate the lexicase parent distribution for the logged observables.
+const LEXICASE_OBSERVE_DRAWS: usize = 256;
+
+impl Selector {
+    /// One parent. Dgm and Uniform consume the `rng` exactly as before this type existed.
+    pub(crate) fn pick(&self, rng: &mut ChaCha8Rng) -> Option<usize> {
+        match self.kind {
+            ParentSelection::Dgm | ParentSelection::Uniform => draw(&self.weights, rng),
+            ParentSelection::Lexicase => {
+                let pool: Vec<usize> = (0..self.members).collect();
+
+                lexicase_pick(&self.scores, &pool, self.params.lexicase_epsilon, rng)
+            }
+            ParentSelection::Tournament => {
+                tournament_pick(&self.rank_of, self.params.tournament_size, rng)
+            }
+        }
+    }
+
+    /// The chance of each member to be drawn as a parent, as the observables log it:
+    /// exact for Dgm, Uniform and Tournament, an estimate from a fixed seed for Lexicase.
+    pub(crate) fn observed_weights(&self) -> Vec<f64> {
+        match self.kind {
+            ParentSelection::Dgm | ParentSelection::Uniform => self.weights.clone(),
+            ParentSelection::Tournament => tournament_weights(&self.rank_of, self.params.tournament_size),
+            ParentSelection::Lexicase => {
+                let mut rng = ChaCha8Rng::seed_from_u64(self.observe_seed);
+
+                lexicase_weights(
+                    &self.scores,
+                    self.params.lexicase_epsilon,
+                    LEXICASE_OBSERVE_DRAWS,
+                    &mut rng,
+                )
+            }
+        }
     }
 }
 
@@ -584,6 +674,7 @@ impl Default for BreedConfig {
             limits: CascadeLimits::default(),
             domain: DomainConfig::Grid,
             selection: ParentSelection::Dgm,
+            selection_params: SelectionParams::default(),
         }
     }
 }
@@ -607,6 +698,10 @@ impl BreedConfig {
 
         if !(self.dgm_lambda > 0.0 && self.dgm_lambda.is_finite() && self.dgm_alpha0.is_finite()) {
             return bad("dgm_lambda must be positive and dgm_alpha0 finite");
+        }
+
+        if let Err(e) = self.selection_params.check() {
+            return bad(&e);
         }
 
         if self.limits.models.is_empty() {
@@ -941,6 +1036,23 @@ impl<'a, D: Domain> Breeder<'a, D> {
         &self.search
     }
 
+    /// The tasks of the select panel (held out: no selection, mutation or recombination
+    /// reads its results; only finalists, seeds and outside observers are scored on it).
+    pub fn select_panel(&self) -> &[D::Task] {
+        &self.select
+    }
+
+    /// The settings of this run.
+    pub fn config(&self) -> &BreedConfig {
+        &self.cfg
+    }
+
+    /// Archive indices best first by fitness, then peer rating, then id: the order that
+    /// finalists and reports use.
+    pub fn ranking(&self) -> Vec<usize> {
+        rank(&self.archive)
+    }
+
     /// The state after the last committed generation.
     pub fn snapshot(&self) -> Snapshot<D::Answer> {
         self.snapshot_with(0)
@@ -1222,7 +1334,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         // The observables of the committed state, with the weights the next generation
         // draws its parents by.
-        let weights = self.selection_weights();
+        let weights = self.selector().observed_weights();
 
         events.push(Event::State(observe(&ObserveInput {
             generation: g,
@@ -1624,7 +1736,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
         let mut events = Vec::new();
         let mut answers_used = 0u64;
         let mut seen: HashSet<String> = self.archive.iter().map(|m| m.id.clone()).collect();
-        let weights = self.selection_weights();
+        let sel = self.selector();
 
         let llm_round = self.cfg.llm_every > 0 && g.is_multiple_of(self.cfg.llm_every);
 
@@ -1633,11 +1745,11 @@ impl<'a, D: Domain> Breeder<'a, D> {
             let mut planned: Vec<(GenRequest, Vec<String>, Op)> = Vec::new();
 
             for i in 0..n {
-                let Some(a) = draw(&weights, rng) else {
+                let Some(a) = sel.pick(rng) else {
                     break;
                 };
                 let seed = derive_seed(self.cfg.seed, &format!("llm/{g}/{i}"));
-                let partner = if i % 2 == 1 { self.partner(a, &weights, rng) } else { None };
+                let partner = if i % 2 == 1 { self.partner(a, &sel, rng) } else { None };
                 let pa = &self.archive[a];
 
                 match partner {
@@ -1682,7 +1794,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 // the cheapest generation the answers can give (see step_with).
                 let mut random = Vec::new();
 
-                self.fill_random(&mut random, planned.len(), &mut seen, &weights, rng);
+                self.fill_random(&mut random, planned.len(), &mut seen, &sel, rng);
 
                 return Ok(Drafted::Pending(missing, planned.len(), random));
             }
@@ -1730,7 +1842,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             }
         }
 
-        self.fill_random(&mut drafts, 0, &mut seen, &weights, rng);
+        self.fill_random(&mut drafts, 0, &mut seen, &sel, rng);
 
         Ok(Drafted::Ready(drafts, events, answers_used))
     }
@@ -1743,7 +1855,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
         drafts: &mut Vec<Draft>,
         others: usize,
         seen: &mut HashSet<String>,
-        weights: &[f64],
+        sel: &Selector,
         rng: &mut ChaCha8Rng,
     ) {
         let mut attempts = 0;
@@ -1753,14 +1865,14 @@ impl<'a, D: Domain> Breeder<'a, D> {
         {
             attempts += 1;
 
-            let Some(a) = draw(weights, rng) else {
+            let Some(a) = sel.pick(rng) else {
                 break;
             };
             let parent = &self.archive[a];
             let crossover = rng.random_bool(self.cfg.crossover_rate);
             let mut child: Option<(Cascade, Vec<String>, Op)> = None;
 
-            if crossover && let Some(b) = self.partner(a, weights, rng) {
+            if crossover && let Some(b) = self.partner(a, sel, rng) {
                 let other = &self.archive[b];
                 let by_stage = rng.random_bool(0.5);
                 let made = if by_stage {
@@ -1794,9 +1906,10 @@ impl<'a, D: Domain> Breeder<'a, D> {
     }
 
     /// Parent selection weights over the archive: DGM weights from fitness and children
-    /// counts, or the same weight for every member under uniform selection.
+    /// counts, or the same weight for every member under uniform selection. The lexicase
+    /// and tournament strategies do not use weights (see `selector`).
     fn selection_weights(&self) -> Vec<f64> {
-        if self.cfg.selection == ParentSelection::Uniform {
+        if self.cfg.selection != ParentSelection::Dgm {
             return vec![1.0; self.archive.len()];
         }
 
@@ -1806,19 +1919,63 @@ impl<'a, D: Domain> Breeder<'a, D> {
         dgm_weights(&scores, &children, self.cfg.dgm_lambda, self.cfg.dgm_alpha0)
     }
 
+    /// The parent selector of the next generation, from the archive as it stands.
+    fn selector(&self) -> Selector {
+        let scores = if self.cfg.selection == ParentSelection::Lexicase {
+            self.case_scores()
+        } else {
+            Vec::new()
+        };
+        let mut rank_of = vec![0; self.archive.len()];
+
+        for (pos, i) in rank(&self.archive).into_iter().enumerate() {
+            rank_of[i] = pos;
+        }
+
+        Selector {
+            kind: self.cfg.selection,
+            params: self.cfg.selection_params,
+            weights: self.selection_weights(),
+            scores,
+            rank_of,
+            members: self.archive.len(),
+            observe_seed: derive_seed(self.cfg.seed, &format!("observe/{}", self.next_generation)),
+        }
+    }
+
+    /// The graded value of each member on each search task, 0 where it gave no answer.
+    /// A grade error cannot occur here: it would have stopped the member's birth.
+    fn case_scores(&self) -> Vec<Vec<f64>> {
+        self.archive
+            .iter()
+            .map(|m| {
+                self.search
+                    .iter()
+                    .zip(&m.answers)
+                    .map(|(task, answer)| {
+                        answer
+                            .as_ref()
+                            .and_then(|a| self.domain.grade(task, a).ok())
+                            .map_or(0.0, |g| g.value)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     /// A crossover partner for member `a`: draw a few by selection weight and take the
     /// one the peers rate highest (Q2: peer judgment decides who mates with whom). Under
-    /// uniform selection, the first draw other than `a`, so ratings play no part.
-    fn partner(&self, a: usize, weights: &[f64], rng: &mut ChaCha8Rng) -> Option<usize> {
+    /// the other strategies, the first draw other than `a`, so ratings play no part.
+    fn partner(&self, a: usize, sel: &Selector, rng: &mut ChaCha8Rng) -> Option<usize> {
         let candidates = match self.cfg.selection {
             ParentSelection::Dgm => PARTNER_CANDIDATES,
-            ParentSelection::Uniform => 1,
+            _ => 1,
         };
         let mut best: Option<usize> = None;
 
         for _ in 0..candidates {
             for _ in 0..DRAW_ATTEMPTS {
-                let b = draw(weights, rng)?;
+                let b = sel.pick(rng)?;
 
                 if b != a {
                     let better = best.is_none_or(|x| self.archive[b].rating > self.archive[x].rating);
@@ -1887,6 +2044,26 @@ impl Kinship {
     }
 }
 
+/// The grade of `answer` on `task`. An error is the domain's integrity alarm, or a value
+/// outside [0, 1]: a broken grader must not reach fitness, the log or a measurement.
+pub(crate) fn checked_grade<D: Domain>(
+    domain: &D,
+    task: &D::Task,
+    answer: &D::Answer,
+) -> Result<Grade> {
+    let grade = domain.grade(task, answer)?;
+
+    if !(0.0..=1.0).contains(&grade.value) {
+        return Err(BrutError::Integrity(format!(
+            "task {} was graded {}, outside [0, 1]",
+            domain.task_id(task),
+            grade.value
+        )));
+    }
+
+    Ok(grade)
+}
+
 /// The number of tasks of `panel` that `answers` solve and, for a graded domain, their
 /// summed value. An error is the domain's integrity alarm, or a value outside [0, 1]: a
 /// broken grader must not reach fitness or the log.
@@ -1902,15 +2079,7 @@ fn tally<D: Domain>(
         let Some(a) = answer else {
             continue;
         };
-        let grade = domain.grade(task, a)?;
-
-        if !(0.0..=1.0).contains(&grade.value) {
-            return Err(BrutError::Integrity(format!(
-                "task {} was graded {}, outside [0, 1]",
-                domain.task_id(task),
-                grade.value
-            )));
-        }
+        let grade = checked_grade(domain, task, a)?;
 
         if grade.solved {
             solved += 1;
@@ -2949,6 +3118,40 @@ mod tests {
     }
 
     #[test]
+    fn lexicase_and_tournament_breed_deterministically_and_record_their_settings() {
+        let pool = sim_pool();
+
+        for sel in [ParentSelection::Lexicase, ParentSelection::Tournament] {
+            let cfg = BreedConfig {
+                selection: sel,
+                selection_params: SelectionParams { lexicase_epsilon: 0.05, tournament_size: 2 },
+                ..small_config(23)
+            };
+            let json = serde_json::to_string(&cfg).expect("json");
+
+            assert!(json.contains(sel.name()) && json.contains("selection_params"), "{json}");
+            assert_ne!(cfg.fixed_hash(), small_config(23).fixed_hash());
+
+            let (r1, e1) = breed_to_end(cfg.clone(), &pool, None).expect("run");
+            let (r2, e2) = breed_to_end(cfg.clone(), &pool, None).expect("run");
+
+            assert_eq!(e1, e2);
+            assert_eq!(r1.calls_used, r2.calls_used);
+            assert!(r1.archive_size > seed_cascades().len());
+        }
+
+        // Settings that cannot select are refused.
+        let bad = BreedConfig {
+            selection_params: SelectionParams { tournament_size: 0, ..Default::default() },
+            ..small_config(1)
+        };
+
+        assert!(bad.check().is_err());
+        assert!(ParentSelection::parse("lexicase") == Some(ParentSelection::Lexicase));
+        assert!(ParentSelection::parse("nope").is_none());
+    }
+
+    #[test]
     fn uniform_selection_is_uniform_and_ignores_ratings() {
         let pool = sim_pool();
         let never = || false;
@@ -2969,6 +3172,7 @@ mod tests {
 
         // The partner is the first draw other than the parent, whatever the ratings.
         let weights = b.selection_weights();
+        let sel = b.selector();
 
         for seed in 0..32u64 {
             let mut replay = ChaCha8Rng::seed_from_u64(seed);
@@ -2983,7 +3187,7 @@ mod tests {
                     m.rating = flip * i as f64;
                 }
 
-                assert_eq!(b.partner(0, &weights, &mut rng), first);
+                assert_eq!(b.partner(0, &sel, &mut rng), first);
             }
         }
 
@@ -2992,7 +3196,7 @@ mod tests {
 
         dgm.step(&never).expect("gen 0");
 
-        let weights = dgm.selection_weights();
+        let sel = dgm.selector();
         let mut follows_ratings = false;
 
         for seed in 0..32u64 {
@@ -3005,7 +3209,7 @@ mod tests {
                     m.rating = flip * i as f64;
                 }
 
-                picks.push(dgm.partner(0, &weights, &mut rng));
+                picks.push(dgm.partner(0, &sel, &mut rng));
             }
 
             follows_ratings |= picks[0] != picks[1];
