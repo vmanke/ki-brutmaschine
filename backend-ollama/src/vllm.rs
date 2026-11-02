@@ -303,6 +303,7 @@ impl VllmBackend {
         let cut = choice.finish_reason.as_deref() == Some("length") || completion > req.max_tokens;
 
         GenResponse {
+            soul_decided: false,
             prompt_tokens: prompt,
             completion_tokens: completion,
             text: answer,
@@ -324,6 +325,7 @@ impl VllmBackend {
             None => (0, counts.reasoning.saturating_add(counts.answer)),
         };
         let response = GenResponse {
+            soul_decided: false,
             prompt_tokens: prompt,
             completion_tokens: completion,
             text: answer,
@@ -453,6 +455,7 @@ mod tests {
 
     fn req(max_tokens: u32) -> GenRequest {
         GenRequest {
+            phases: None,
             system: "sys".to_string(),
             prompt: "hello".to_string(),
             max_tokens,
@@ -914,6 +917,7 @@ mod tests {
         // A seed above i64::MAX, as the core draws them: the server must accept it.
         let out = b
             .generate(&GenRequest {
+                phases: None,
                 system: "Answer with the number only.".to_string(),
                 prompt: "What is 17 times 23?".to_string(),
                 max_tokens: 16,
@@ -942,6 +946,7 @@ mod tests {
         for think in [0, 512, 4096] {
             let (out, t) = b
                 .generate_detailed(&GenRequest {
+                    phases: None,
                     system: "Answer with the number only.".to_string(),
                     prompt: "What is 17 times 23?".to_string(),
                     max_tokens: 32,
