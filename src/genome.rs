@@ -72,7 +72,10 @@ impl Arch {
     }
 }
 
+/// A JSON key that is not a field of the genome is refused, as in the parts of a CNN genome.
+/// No field of a genome was ever removed, so every genome this code wrote still parses.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Genome {
     /// The kind of network: an MLP, or a CNN with its stem, stages and head.
     #[serde(default, skip_serializing_if = "Arch::is_mlp")]
@@ -573,6 +576,26 @@ mod tests {
 
         assert_ne!(typo, text);
         assert!(serde_json::from_str::<Genome>(&typo).is_err());
+    }
+
+    #[test]
+    fn a_genome_with_an_unknown_top_level_field_does_not_parse() {
+        for genome in [sample(), testing::lenet()] {
+            let text = serde_json::to_string(&genome).expect("json");
+            let extra = text.replacen("\"seed\":", "\"sead\":1,\"seed\":", 1);
+
+            assert_ne!(extra, text);
+            assert_eq!(
+                serde_json::from_str::<Genome>(&text).expect("parse"),
+                genome
+            );
+
+            let message = serde_json::from_str::<Genome>(&extra)
+                .expect_err("refused")
+                .to_string();
+
+            assert!(message.contains("unknown field `sead`"), "{message}");
+        }
     }
 
     #[test]

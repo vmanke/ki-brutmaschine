@@ -9,8 +9,18 @@
 //! `{"limits": {"models": [{"tag": "ollama:qwen2.5:7b", "cost_per_call": 0.01}], ...}}`.
 //! The seeds then take the first allowed model (`adapt_seeds`).
 //!
-//! Environment: `OLLAMA_URL` (default http://127.0.0.1:11434, loopback only) and
-//! `OLLAMA_TIMEOUT_SECS` (default 300).
+//! Tags `vllm:<served model name>` go to a vLLM server instead (module `vllm`), which
+//! decodes the parallel requests of a panel in one batch. The thinking model
+//! `vllm:qwen3.8-27b` files its reasoning beside each answer in the same record.
+//!
+//! Answers are shared across runs through a call cache (`SharedCache`): a request that any
+//! run on this machine already answered is taken from there, filed in this run's record
+//! with `"cached": true`, and not sent to the model again.
+//!
+//! Environment: `OLLAMA_URL` (default http://127.0.0.1:11434), `VLLM_URL` (default
+//! http://127.0.0.1:8000), both loopback only, `OLLAMA_TIMEOUT_SECS` (default 300, for
+//! both servers), and `BRUT_CALL_CACHE`: the cache file (default
+//! `~/.cache/brut/calls.jsonl`), or `off` for no cache.
 #![forbid(unsafe_code)]
 
 #[path = "../../src/bin/brut-breed.rs"]
@@ -20,37 +30,59 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use backend_ollama::{DEFAULT_BASE, OllamaBackend, Recorded, TAG_PREFIX};
+use backend_ollama::vllm::{self, VllmBackend};
+use backend_ollama::{DEFAULT_BASE, Detailed, OllamaBackend, Recorded, TAG_PREFIX};
 use brutmaschine::backend::ModelBackend;
 
 struct Settings {
     base: String,
+    vllm_base: String,
     timeout: Duration,
     record: Option<PathBuf>,
+    cache: Option<PathBuf>,
 }
 
 static SETTINGS: OnceLock<Settings> = OnceLock::new();
 
-/// The backend for an `ollama:` tag; None for any other tag, or when it cannot be built
-/// (then `ModelPool::covers` fails the run with the tag named).
+/// The backend for an `ollama:` or `vllm:` tag; None for any other tag, or when it cannot
+/// be built (then `ModelPool::covers` fails the run with the tag named).
 fn ollama(tag: &str) -> Option<Box<dyn ModelBackend>> {
-    if !tag.starts_with(TAG_PREFIX) {
-        return None;
-    }
-
     let s = SETTINGS.get()?;
-    let backend = match OllamaBackend::new(tag, &s.base, s.timeout) {
+
+    if tag.starts_with(TAG_PREFIX) {
+        recorded(OllamaBackend::new(tag, &s.base, s.timeout), s)
+    } else if tag.starts_with(vllm::TAG_PREFIX) {
+        recorded(VllmBackend::new(tag, &s.vllm_base, s.timeout), s)
+    } else {
+        None
+    }
+}
+
+/// `backend`, wrapped in `Recorded` when the run has a directory (I7).
+fn recorded<B: Detailed + 'static>(
+    backend: brutmaschine::util::Result<B>,
+    s: &Settings,
+) -> Option<Box<dyn ModelBackend>> {
+    let backend = match backend {
         Ok(b) => b,
         Err(e) => {
             eprintln!("brut-breed-ollama: {e}");
             return None;
         }
     };
+    let tag = backend.name().to_string();
 
     match &s.record {
-        Some(path) => match Recorded::open(backend, path) {
+        Some(path) => match match &s.cache {
+            Some(cache) => Recorded::open_with_cache(backend, path, cache),
+            None => Recorded::open(backend, path),
+        } {
             Ok(r) => {
-                eprintln!("brut-breed-ollama: {tag}: {} recorded call(s) loaded", r.len());
+                eprintln!(
+                    "brut-breed-ollama: {tag}: {} recorded call(s) loaded; call cache: {}",
+                    r.len(),
+                    s.cache.as_ref().map_or("off".to_string(), |c| c.display().to_string())
+                );
                 Some(Box::new(r))
             }
             Err(e) => {
@@ -76,8 +108,16 @@ fn main() {
 
     let _ = SETTINGS.set(Settings {
         base: std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_BASE.to_string()),
+        vllm_base: std::env::var("VLLM_URL").unwrap_or_else(|_| vllm::DEFAULT_BASE.to_string()),
         timeout: Duration::from_secs(timeout),
         record: out.map(|o| o.join("llm").join("worker-calls.jsonl")),
+        cache: match std::env::var("BRUT_CALL_CACHE") {
+            Ok(v) if v == "off" => None,
+            Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
+            _ => std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".cache").join("brut").join("calls.jsonl")),
+        },
     });
     let _ = breed::EXTRA_BACKENDS.set(ollama);
 

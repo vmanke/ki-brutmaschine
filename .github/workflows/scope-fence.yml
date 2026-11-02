@@ -2,8 +2,9 @@ name: scope-fence
 
 # Mutation pull requests (ADR 0004) come from a `mutate/` branch and may change files
 # under candidates/ only. This job runs for those branches alone, so ordinary development
-# pull requests are not affected. It enforces two gates: the scope fence (no file outside
-# candidates/) and candidate validity (parse, check, id matches file name).
+# pull requests are not affected. It enforces three gates: the scope fence (no file outside
+# candidates/), the add-only fence (no file that the base branch holds is changed or
+# removed) and candidate validity (parse, check, id matches file name).
 #
 # Trust: the checker (brut-ingest) is built from the BASE revision, never from the pull
 # request's code, and the pull request's own files are read only as data (changed-path
@@ -44,6 +45,21 @@ jobs:
           git diff --no-renames --name-only "origin/${{ github.base_ref }}...HEAD" \
             | ../base/target/debug/brut-ingest --scope-check
 
+      # A candidate file is only ever added (scripts/propose-pr.sh). Its name is its content
+      # id, which for a promoted model hashes the genome alone, so a change to a file that
+      # the base branch holds could rewrite a pooled model's provenance unseen by the gates
+      # below. The lower-case filter "a" lists every changed path except the added ones.
+      - name: Add-only fence (no changed or removed files)
+        working-directory: pr
+        run: |
+          changed="$(git diff --no-renames --diff-filter=a --name-only "origin/${{ github.base_ref }}...HEAD")"
+          if [ -n "${changed}" ]; then
+            echo "scope-fence: a mutation pull request may only add candidate files; it changes or removes:"
+            echo "${changed}"
+            exit 1
+          fi
+          echo "scope-fence: every changed path is an added file"
+
       - name: Validate candidates (as data)
         run: ./base/target/debug/brut-ingest --candidates pr/candidates
 
@@ -51,4 +67,10 @@ jobs:
         run: |
           if [ -d pr/candidates/cascades ]; then
             ./base/target/debug/brut-ingest --cascades pr/candidates/cascades
+          fi
+
+      - name: Validate promoted models (as data, ADR 0008)
+        run: |
+          if [ -d pr/candidates/models ]; then
+            ./base/target/debug/brut-ingest --models pr/candidates/models
           fi

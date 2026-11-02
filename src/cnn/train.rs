@@ -211,7 +211,41 @@ impl Learner for CnnLearner<'_> {
 /// Helpers for the tests of the crate.
 #[cfg(test)]
 pub(crate) mod testing {
-    use crate::task::{Dataset, Targets};
+    use super::CnnLearner;
+    use crate::genome::{Arch, Genome};
+    use crate::task::{Dataset, Targets, TaskSpec};
+    use crate::train::Learner;
+    use crate::util::Result;
+
+    /// One step of the CNN `genome` on all rows of `data` gives a finite loss and an update,
+    /// and its model then gives finite outputs. A failure names the genome.
+    pub(crate) fn trains_one_step(genome: &Genome, spec: &TaskSpec, data: &Dataset) {
+        fn ok<T>(name: &str, result: Result<T>) -> T {
+            result.unwrap_or_else(|e| panic!("{name}: {e}"))
+        }
+
+        let name = genome.summary();
+        let Arch::Cnn(cnn) = &genome.arch else {
+            panic!("{name}: not a CNN");
+        };
+        let rows: Vec<usize> = (0..data.n).collect();
+        let mut learner = ok(&name, CnnLearner::new(genome, cnn, spec, data));
+        let loss = ok(&name, learner.loss_and_grad(&rows));
+
+        assert!(loss.is_finite(), "{name}: loss {loss}");
+
+        ok(&name, learner.update(genome.learning_rate, 0.0));
+
+        let outputs = ok(
+            &name,
+            learner
+                .into_model()
+                .and_then(|model| model.evaluator(spec))
+                .and_then(|eval| eval.outputs(&data.x, data.n)),
+        );
+
+        assert!(outputs.iter().all(|v| v.is_finite()), "{name}");
+    }
 
     /// The first `rows` samples of `data`.
     pub(crate) fn head(data: &Dataset, rows: usize) -> Dataset {
@@ -496,13 +530,144 @@ mod tests {
         }
     }
 
-    /// VGG-like with batch norm and max pooling, a 1-D CNN with every norm and pool, and a
-    /// 2-D CNN of the blocks of ticket 03.
-    fn thread_test_genomes() -> [(TaskKind, Genome); 3] {
+    /// A 2-D CNN of the 2-D blocks of ticket 04: a dense layer, an Inception block with
+    /// squeeze-and-excitation, a Fire module with the input as shortcut, a ShuffleNet unit
+    /// with 2 groups and the input as shortcut, a transition that pools by average, a
+    /// ConvNeXt block with layer norm and GELU, and a decoder that upsamples by a transposed
+    /// convolution and joins the map before the transition's pooling. Batch norm and ReLU
+    /// elsewhere. With a stem of 8 channels and blocks of 12 and 16 the time model gave
+    /// 28.8 s for 5 epochs, above the budget of 20 s, so the blocks are narrow.
+    fn mixed_blocks_b() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let relu = CnnActivation::Relu;
+        let unit = |block: Block, width: usize| Stage {
+            norm: Norm::Batch,
+            ..genomes::stage(block, width, 3, relu)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: relu,
+            },
+            stages: vec![
+                unit(Block::Dense, 4),
+                Stage {
+                    se: true,
+                    ..unit(Block::Inception, 8)
+                },
+                Stage {
+                    residual: true,
+                    ..unit(Block::Fire, 8)
+                },
+                Stage {
+                    groups: 2,
+                    residual: true,
+                    ..unit(Block::Shuffle, 8)
+                },
+                Stage {
+                    stride: 2,
+                    down: Downsample::AvgPool,
+                    ..unit(Block::Transition, 8)
+                },
+                Stage {
+                    residual: true,
+                    norm: Norm::Layer,
+                    activation: CnnActivation::Gelu,
+                    ..unit(Block::ConvNext, 8)
+                },
+                Stage {
+                    stride: 2,
+                    ..unit(Block::Decoder, 4)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        Genome {
+            epochs: 5,
+            ..genomes::genome(cnn, vec![8], Activation::Relu)
+        }
+    }
+
+    /// A 1-D CNN of TCN blocks and the 1-D blocks of ticket 04: a causal block with dilation
+    /// 2, an Inception block, a ShuffleNet unit that moves by 2, a decoder that upsamples by a
+    /// transposed convolution along the sequence and joins the unit's input, and a ConvNeXt
+    /// block with a depthwise kernel of 7.
+    fn mixed_sequence_b() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let relu = CnnActivation::Relu;
+        let unit = |block: Block, width: usize| Stage {
+            norm: Norm::Batch,
+            ..genomes::stage(block, width, 3, relu)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::OneD,
+            stem: Stem {
+                width: 8,
+                kernel: 5,
+                stride: 2,
+                down: Downsample::MaxPool,
+                norm: Norm::Batch,
+                activation: relu,
+            },
+            stages: vec![
+                Stage {
+                    dilation: 2,
+                    residual: true,
+                    ..unit(Block::Tcn, 8)
+                },
+                unit(Block::Inception, 8),
+                Stage {
+                    stride: 2,
+                    groups: 2,
+                    ..unit(Block::Shuffle, 8)
+                },
+                Stage {
+                    stride: 2,
+                    ..unit(Block::Decoder, 8)
+                },
+                Stage {
+                    kernel: 7,
+                    residual: true,
+                    norm: Norm::Layer,
+                    activation: CnnActivation::Gelu,
+                    ..unit(Block::ConvNext, 8)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        Genome {
+            epochs: 5,
+            ..genomes::genome(cnn, Vec::new(), Activation::Relu)
+        }
+    }
+
+    /// VGG-like with batch norm and max pooling, a 1-D CNN with every norm and pool, a 2-D
+    /// CNN of the blocks of ticket 03, a 2-D and a 1-D CNN of the blocks of ticket 04, and a
+    /// U-Net with both upsamplings and the per-cell head on the mirror grid.
+    fn thread_test_genomes() -> [(TaskKind, Genome); 6] {
         [
             (TaskKind::Shapes, genomes::vgg()),
             (TaskKind::Motif1d, normed_1d()),
             (TaskKind::Shapes, mixed_blocks()),
+            (TaskKind::Shapes, mixed_blocks_b()),
+            (TaskKind::Motif1d, mixed_sequence_b()),
+            (
+                TaskKind::MirrorGrid,
+                block_genome(
+                    "a u-net with a transposed convolution, nearest upsampling and a per-cell \
+                     head",
+                )
+                .1,
+            ),
         ]
     }
 
@@ -586,7 +751,7 @@ mod tests {
         };
         let one = run("1");
 
-        assert_eq!(one.len(), 3, "{one:?}");
+        assert_eq!(one.len(), 6, "{one:?}");
         assert_eq!(one, run("3"));
     }
 
@@ -691,7 +856,9 @@ mod tests {
 
     #[test]
     fn fire_modules_learn_a_toy_batch() {
-        learns_a_toy_batch("fire modules, one with squeeze-and-excitation and an identity shortcut");
+        learns_a_toy_batch(
+            "fire modules, one with squeeze-and-excitation and an identity shortcut",
+        );
     }
 
     #[test]
@@ -711,12 +878,119 @@ mod tests {
 
     #[test]
     fn a_u_net_learns_a_toy_batch() {
-        learns_a_toy_batch("a u-net with a transposed convolution, nearest upsampling and a per-cell head");
+        learns_a_toy_batch(
+            "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
+        );
     }
 
     #[test]
-    fn the_1d_blocks_of_ticket_04_learn_a_toy_batch() {
+    fn the_blocks_of_ticket_04_learn_a_toy_batch_along_a_sequence() {
         learns_a_toy_batch("1-D inception, shufflenet, dense, decoder and convnext blocks");
+    }
+
+    #[test]
+    fn an_inverted_residual_that_pools_its_batch_norm_learns_a_toy_batch() {
+        learns_a_toy_batch("an inverted residual that downsamples by max pooling, without options");
+    }
+
+    #[test]
+    fn inverted_residuals_that_pool_their_batch_norm_learn_a_toy_batch_along_a_sequence() {
+        learns_a_toy_batch("1-D inverted residuals that downsample by max and by average pooling");
+    }
+
+    /// Every block kind on `task`, as a stage that moves by 2 with every downsampling,
+    /// every norm and every pair of options, at a width that keeps the 8 channels of the stem
+    /// and at one that changes them, after a stem that moves by 2 and by 4 (some blocks fit
+    /// the time budget only on the smaller map): each such genome that passes the shape check
+    /// trains (`trains_one_step`). Returns how many genomes passed the shape check.
+    ///
+    /// The shape check promises that a valid genome trains. Two layouts once broke that
+    /// promise: an inverted residual that pooled the output of its batch norm, and the group
+    /// norm of the projection of a ConvNeXt block.
+    fn every_valid_stage_trains_one_step(dims: Dims, task: TaskKind) -> usize {
+        use crate::cnn::genome::{BLOCKS, DOWNSAMPLES, NORMS};
+
+        let spec = task.spec();
+        let data = head(&generate(&spec, Split::Train, 1), 4);
+        let limits = Limits::default();
+        let mut layouts = Vec::new();
+
+        for block in BLOCKS {
+            for down in DOWNSAMPLES {
+                for norm in NORMS {
+                    for (se, residual) in
+                        [(false, false), (true, false), (false, true), (true, true)]
+                    {
+                        for (stem_stride, width) in [(2, 6), (2, 8), (4, 6), (4, 8)] {
+                            let stage = Stage {
+                                block,
+                                width,
+                                kernel: 3,
+                                stride: 2,
+                                down,
+                                dilation: 1,
+                                groups: 1,
+                                se,
+                                residual,
+                                norm,
+                                activation: CnnActivation::Relu,
+                            };
+
+                            layouts.push((stem_stride, stage));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut valid = 0;
+
+        for (stem_stride, stage) in layouts {
+            let cnn = CnnGenome {
+                dims,
+                stem: Stem {
+                    width: 8,
+                    kernel: 3,
+                    stride: stem_stride,
+                    down: Downsample::MaxPool,
+                    norm: Norm::Batch,
+                    activation: CnnActivation::Relu,
+                },
+                stages: vec![stage],
+                head: Head::GlobalAvgPool,
+            };
+            let mut genome = genomes::genome(cnn, Vec::new(), crate::genome::Activation::Relu);
+
+            genome.epochs = 5;
+
+            if genome.validate(&limits, &spec).is_ok() {
+                super::testing::trains_one_step(&genome, &spec, &data);
+                valid += 1;
+            }
+        }
+
+        eprintln!(
+            "{dims:?} on {}: {valid} valid stages trained one step",
+            task.name()
+        );
+
+        valid
+    }
+
+    // The bounds keep the tests from passing on a shape check that refuses almost all
+    // layouts; 1300 of the 2-D and 1672 of the 1-D layouts passed it when they were written.
+    #[test]
+    fn every_valid_2d_stage_trains_one_step() {
+        let valid = every_valid_stage_trains_one_step(Dims::TwoD, TaskKind::Shapes);
+
+        assert!(valid > 650, "only {valid} valid stages");
+    }
+
+    #[test]
+    fn every_valid_1d_stage_trains_one_step() {
+        let valid = every_valid_stage_trains_one_step(Dims::OneD, TaskKind::Motif1d);
+
+        assert!(valid > 830, "only {valid} valid stages");
     }
 
     #[test]
@@ -739,6 +1013,8 @@ mod tests {
             "tcn blocks with dilations 1, 2 and 4, the last strided",
             "a u-net with a transposed convolution, nearest upsampling and a per-cell head",
             "1-D inception, shufflenet, dense, decoder and convnext blocks",
+            "an inverted residual that downsamples by max pooling, without options",
+            "1-D inverted residuals that downsample by max and by average pooling",
         ];
         let names: Vec<&str> = genomes::block_genomes()
             .into_iter()
@@ -747,14 +1023,28 @@ mod tests {
 
         assert_eq!(names, tested);
 
-        // Together they hold every block kind and both options.
-        for block in crate::cnn::genome::BLOCKS {
-            let used = genomes::block_genomes().into_iter().any(|(_, _, g)| {
-                matches!(&g.arch, crate::genome::Arch::Cnn(cnn)
-                    if cnn.stages.iter().any(|s| s.block == block))
-            });
+        // Together they hold every block kind, both options and the per-cell head.
+        let cnns: Vec<CnnGenome> = genomes::block_genomes()
+            .into_iter()
+            .filter_map(|(_, _, g)| match g.arch {
+                crate::genome::Arch::Cnn(cnn) => Some(cnn),
+                crate::genome::Arch::Mlp => None,
+            })
+            .collect();
+        let any = |f: &dyn Fn(&Stage) -> bool| cnns.iter().any(|cnn| cnn.stages.iter().any(f));
 
-            assert!(used, "{block:?}");
+        for block in crate::cnn::genome::BLOCKS {
+            assert!(any(&|s| s.block == block), "{block:?}");
+        }
+
+        assert!(any(&|s| s.se) && any(&|s| s.residual));
+        assert!(cnns.iter().any(|cnn| cnn.head == Head::PerCell));
+
+        // Each fits the default limits, so a run could train it as it is.
+        for (name, task, genome) in genomes::block_genomes() {
+            let checked = genome.validate(&Limits::default(), &task.spec());
+
+            assert!(checked.is_ok(), "{name}: {checked:?}");
         }
     }
 
@@ -880,16 +1170,151 @@ mod tests {
         genomes::genome(cnn, vec![5], Activation::Tanh)
     }
 
+    /// The 2-D blocks of ticket 04 with smooth activations and average pooling, so that
+    /// finite differences apply: a dense layer, an Inception block with GELU, a Fire module,
+    /// a ShuffleNet unit with 2 groups and a projection, a transition with group norm that
+    /// pools by average, a ConvNeXt block with layer norm and the input as shortcut, and a
+    /// decoder that upsamples by a transposed convolution and joins the map before the
+    /// transition's pooling. The max pooling branch of the Inception block is its only kink.
+    fn smooth_blocks_b() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let unit = |block: Block, width: usize, norm: Norm, activation: CnnActivation| Stage {
+            norm,
+            ..genomes::stage(block, width, 3, activation)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::AvgPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![
+                unit(Block::Dense, 4, Norm::Batch, CnnActivation::Silu),
+                unit(Block::Inception, 8, Norm::Batch, CnnActivation::Gelu),
+                unit(Block::Fire, 8, Norm::Batch, CnnActivation::Tanh),
+                Stage {
+                    groups: 2,
+                    residual: true,
+                    ..unit(Block::Shuffle, 16, Norm::Batch, CnnActivation::Silu)
+                },
+                Stage {
+                    stride: 2,
+                    down: Downsample::AvgPool,
+                    ..unit(Block::Transition, 8, Norm::Group, CnnActivation::Tanh)
+                },
+                Stage {
+                    residual: true,
+                    ..unit(Block::ConvNext, 8, Norm::Layer, CnnActivation::Gelu)
+                },
+                Stage {
+                    stride: 2,
+                    ..unit(Block::Decoder, 8, Norm::Batch, CnnActivation::Tanh)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        genomes::genome(cnn, vec![5], Activation::Tanh)
+    }
+
+    /// TCN blocks and a 1-D decoder with smooth activations: a causal block with batch norm
+    /// and SiLU and the input as shortcut, a causal block with group norm and tanh that moves
+    /// by 2 with dilation 2 and a projection, and a decoder that upsamples by a transposed
+    /// convolution along the sequence and joins that block's input.
+    fn smooth_sequence_b() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let unit = |block: Block, width: usize, norm: Norm, activation: CnnActivation| Stage {
+            norm,
+            ..genomes::stage(block, width, 3, activation)
+        };
+        let cnn = CnnGenome {
+            dims: Dims::OneD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 2,
+                down: Downsample::AvgPool,
+                norm: Norm::Batch,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![
+                Stage {
+                    residual: true,
+                    ..unit(Block::Tcn, 4, Norm::Batch, CnnActivation::Silu)
+                },
+                Stage {
+                    stride: 2,
+                    dilation: 2,
+                    residual: true,
+                    ..unit(Block::Tcn, 8, Norm::Group, CnnActivation::Tanh)
+                },
+                Stage {
+                    stride: 2,
+                    ..unit(Block::Decoder, 4, Norm::Batch, CnnActivation::Gelu)
+                },
+            ],
+            head: Head::GlobalAvgPool,
+        };
+
+        genomes::genome(cnn, vec![5], Activation::Tanh)
+    }
+
+    /// A U-Net with smooth activations on the mirror grid, so the loss is the mean squared
+    /// error: a stage with group norm and SiLU that pools 8x8 to 4x4 by average, a decoder
+    /// that upsamples by repeating cells and joins the map before that pooling, and the
+    /// per-cell head with a dense layer of 3 per cell.
+    fn smooth_unet() -> Genome {
+        use crate::cnn::genome::Block;
+
+        let cnn = CnnGenome {
+            dims: Dims::TwoD,
+            stem: Stem {
+                width: 4,
+                kernel: 3,
+                stride: 1,
+                down: Downsample::Conv,
+                norm: Norm::Batch,
+                activation: CnnActivation::Tanh,
+            },
+            stages: vec![
+                Stage {
+                    stride: 2,
+                    down: Downsample::AvgPool,
+                    norm: Norm::Group,
+                    ..genomes::plain(8, 3, CnnActivation::Silu)
+                },
+                Stage {
+                    stride: 2,
+                    down: Downsample::MaxPool,
+                    norm: Norm::Batch,
+                    ..genomes::stage(Block::Decoder, 4, 3, CnnActivation::Tanh)
+                },
+            ],
+            head: Head::PerCell,
+        };
+
+        genomes::genome(cnn, vec![3], Activation::Tanh)
+    }
+
     #[test]
     fn loss_and_grad_matches_finite_differences() {
         // f32 throughout, so the step is large and the bound loose; the gradient check of
         // `ops` runs every operation in f64 with a bound of 1e-6. The deeper genome of the
         // blocks bends within 1e-2 (at 1e-2, 1 of its 162 values missed the bound, while 1e-3
-        // matched), so it takes the smaller step.
+        // matched), so it takes the smaller step, and so do the genomes of ticket 04.
         for (task, genome, step) in [
             (TaskKind::Shapes, smooth(Dims::TwoD), 1e-2),
             (TaskKind::Motif1d, smooth(Dims::OneD), 1e-2),
             (TaskKind::Shapes, smooth_blocks(), 1e-3),
+            (TaskKind::Shapes, smooth_blocks_b(), 1e-3),
+            (TaskKind::Motif1d, smooth_sequence_b(), 1e-3),
+            (TaskKind::MirrorGrid, smooth_unet(), 1e-3),
         ] {
             let spec = task.spec();
             let data = head(&generate(&spec, Split::Train, 1), 16);
@@ -1304,9 +1729,6 @@ mod tests {
     #[test]
     #[ignore]
     fn slow_valid_block_cnns_train_within_the_time_budget() {
-        let limits = Limits::default();
-        let budget =
-            limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
         let cnns = slow_valid_block_cnns();
 
         for (name, task, genome) in &cnns {
@@ -1314,6 +1736,17 @@ mod tests {
         }
 
         assert_eq!(cnns.len(), 12);
+
+        time_layouts(cnns);
+    }
+
+    /// Train each CNN on the whole Train split of its task and score the Hidden split, and
+    /// require both within the estimates of the time model; print each time as a share of
+    /// its estimate.
+    fn time_layouts(cnns: Vec<(&'static str, TaskKind, Genome)>) {
+        let limits = Limits::default();
+        let budget =
+            limits.max_train_flops as f64 / crate::cnn::shape::TIME_BUDGET_FLOPS_PER_SECOND;
 
         for (name, task, genome) in cnns {
             let spec = task.spec();
@@ -1327,12 +1760,13 @@ mod tests {
             let seconds = started.elapsed().as_secs_f64();
             let scoring = plan.eval_nanos(spec.n_hidden, score::cnn_chunk_rows(&plan)) / 1e9;
             let started = Instant::now();
-            let accuracy = score::evaluate(&model, &spec, &hidden).primary;
+            let primary = score::evaluate(&model, &spec, &hidden).primary;
             let scored = started.elapsed().as_secs_f64();
 
             eprintln!(
                 "TIMED {name}: {} layers, {} epochs, train {seconds:.1} s of {estimate:.1} s \
-                 ({:.2}), score {scored:.2} s of {scoring:.2} s ({:.2}), accuracy {accuracy:.2}",
+                 ({:.2}), score {scored:.2} s of {scoring:.2} s ({:.2}), primary score \
+                 {primary:.2}",
                 plan.steps.len(),
                 genome.epochs,
                 seconds / estimate,
@@ -1344,6 +1778,283 @@ mod tests {
             assert!(seconds < budget, "{name}: {seconds} s");
             assert!(scored < scoring, "{name}: {scored} s");
         }
+    }
+
+    /// Valid CNNs of the blocks of ticket 04 that come as close to the time budget as
+    /// `validate` allows, one per layout that may run slowly per FLOP: dense layers at full
+    /// size and with a large growth rate, Inception blocks of 1 and 2 channels per branch,
+    /// Fire modules, ShuffleNet units with 2 and 4 groups, ConvNeXt blocks at 8x8 and wide
+    /// ones at 4x4, TCN blocks with growing dilations, U-Nets with transposed convolutions
+    /// and with nearest upsampling, wide transposed convolutions, the per-cell head on the
+    /// mirror grid, and 1-D decoders. Each takes the most stages that are valid at 5 epochs,
+    /// then the most epochs that are valid.
+    fn slow_valid_family_b_cnns() -> Vec<(&'static str, TaskKind, Genome)> {
+        use crate::cnn::genome::Block;
+
+        let relu = CnnActivation::Relu;
+        let unit = move |block: Block, width: usize, kernel: usize, norm: Norm| Stage {
+            norm,
+            ..genomes::stage(block, width, kernel, relu)
+        };
+        let stem = move |width: usize, stride: usize, norm: Norm| Stem {
+            width,
+            kernel: 3,
+            stride,
+            down: Downsample::MaxPool,
+            norm,
+            activation: relu,
+        };
+        let residual = |stage: Stage| Stage {
+            residual: true,
+            ..stage
+        };
+        let same = |stage: Stage| move |n: usize| vec![stage.clone(); n];
+        // A U-Net of n stages: n / 2 encoder stages that pool by 2, the rest at the bottom,
+        // then n / 2 decoders. `bottom` is the stage at the lowest resolution.
+        let unet = move |encoder: Stage, bottom: Stage, decoder: Stage| {
+            move |n: usize| {
+                let levels = n / 2;
+                let mut stages = vec![
+                    Stage {
+                        stride: 2,
+                        down: Downsample::MaxPool,
+                        ..encoder.clone()
+                    };
+                    levels
+                ];
+
+                stages.extend(vec![bottom.clone(); n - 2 * levels]);
+                stages.extend(vec![
+                    Stage {
+                        stride: 2,
+                        ..decoder.clone()
+                    };
+                    levels
+                ]);
+
+                stages
+            }
+        };
+        let nearest = |stage: Stage| Stage {
+            down: Downsample::MaxPool,
+            ..stage
+        };
+
+        // The name, task, stem, stages for a count, and head of each layout.
+        type Stages = Box<dyn Fn(usize) -> Vec<Stage>>;
+        let layouts: Vec<(&'static str, TaskKind, Stem, Stages, Head)> = vec![
+            (
+                "dense layers of growth 4 at 16x16",
+                TaskKind::Shapes,
+                stem(4, 1, Norm::Batch),
+                Box::new(same(unit(Block::Dense, 4, 3, Norm::Batch))),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "dense layers of growth 16 at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(same(unit(Block::Dense, 16, 3, Norm::Batch))),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "inception blocks of 1 channel per branch at 16x16",
+                TaskKind::Shapes,
+                stem(4, 1, Norm::Batch),
+                Box::new(same(residual(unit(Block::Inception, 4, 3, Norm::Batch)))),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "inception blocks with groups at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(same(Stage {
+                    groups: 2,
+                    ..residual(unit(Block::Inception, 8, 3, Norm::Batch))
+                })),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "fire modules at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(same(residual(unit(Block::Fire, 8, 3, Norm::Batch)))),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "shufflenet units with 2 groups at 16x16",
+                TaskKind::Shapes,
+                stem(8, 1, Norm::Batch),
+                Box::new(same(Stage {
+                    groups: 2,
+                    ..residual(unit(Block::Shuffle, 8, 3, Norm::Batch))
+                })),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "shufflenet units with 4 groups at 8x8",
+                TaskKind::Shapes,
+                stem(16, 2, Norm::Batch),
+                Box::new(same(Stage {
+                    groups: 4,
+                    ..residual(unit(Block::Shuffle, 16, 3, Norm::Batch))
+                })),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "convnext blocks of 7x7 at 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Layer),
+                Box::new(same(Stage {
+                    activation: CnnActivation::Gelu,
+                    ..residual(unit(Block::ConvNext, 8, 7, Norm::Layer))
+                })),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "wide convnext blocks at 4x4",
+                TaskKind::Shapes,
+                stem(16, 4, Norm::Layer),
+                Box::new(same(Stage {
+                    activation: CnnActivation::Gelu,
+                    ..residual(unit(Block::ConvNext, 64, 3, Norm::Layer))
+                })),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "tcn blocks with dilations 1 to 16",
+                TaskKind::Motif1d,
+                Stem {
+                    kernel: 5,
+                    ..stem(8, 1, Norm::Batch)
+                },
+                Box::new(move |n: usize| {
+                    (0..n)
+                        .map(|i| Stage {
+                            dilation: 1 << (i % 5),
+                            ..residual(unit(Block::Tcn, 8, 3, Norm::Batch))
+                        })
+                        .collect()
+                }),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "u-nets with transposed convolutions from 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(unet(
+                    unit(Block::Plain, 8, 3, Norm::Batch),
+                    unit(Block::Plain, 8, 1, Norm::Batch),
+                    unit(Block::Decoder, 8, 3, Norm::Batch),
+                )),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "u-nets with nearest upsampling from 8x8",
+                TaskKind::Shapes,
+                stem(8, 2, Norm::Batch),
+                Box::new(unet(
+                    unit(Block::Plain, 8, 3, Norm::Batch),
+                    unit(Block::Plain, 8, 1, Norm::Batch),
+                    nearest(unit(Block::Decoder, 8, 3, Norm::Batch)),
+                )),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "wide transposed convolutions from 4x4",
+                TaskKind::Shapes,
+                stem(16, 4, Norm::Batch),
+                Box::new(unet(
+                    unit(Block::Plain, 64, 1, Norm::Batch),
+                    unit(Block::Plain, 64, 1, Norm::Batch),
+                    unit(Block::Decoder, 64, 1, Norm::Batch),
+                )),
+                Head::GlobalAvgPool,
+            ),
+            (
+                "u-nets with the per-cell head on the mirror grid",
+                TaskKind::MirrorGrid,
+                stem(8, 1, Norm::Batch),
+                Box::new(unet(
+                    unit(Block::Plain, 8, 3, Norm::Batch),
+                    unit(Block::Plain, 8, 1, Norm::Batch),
+                    unit(Block::Decoder, 8, 3, Norm::Batch),
+                )),
+                Head::PerCell,
+            ),
+            (
+                "1-D u-nets with transposed convolutions",
+                TaskKind::Motif1d,
+                stem(8, 1, Norm::Batch),
+                Box::new(unet(
+                    unit(Block::Plain, 8, 3, Norm::Batch),
+                    unit(Block::Plain, 8, 3, Norm::Batch),
+                    unit(Block::Decoder, 8, 3, Norm::Batch),
+                )),
+                Head::GlobalAvgPool,
+            ),
+        ];
+        let limits = Limits::default();
+
+        layouts
+            .into_iter()
+            .filter_map(|(name, task, first, stages, head)| {
+                let spec = task.spec();
+                let dims = match task {
+                    TaskKind::Motif1d => Dims::OneD,
+                    _ => Dims::TwoD,
+                };
+                let layout = |n: usize| Genome {
+                    batch_size: 16,
+                    epochs: 5,
+                    ..genomes::genome(
+                        CnnGenome {
+                            dims,
+                            stem: first.clone(),
+                            stages: stages(n),
+                            head,
+                        },
+                        Vec::new(),
+                        Activation::Relu,
+                    )
+                };
+                let n = (1..=crate::cnn::genome::MAX_STAGES)
+                    .filter(|&n| layout(n).validate(&limits, &spec).is_ok())
+                    .max()?;
+                let mut genome = layout(n);
+
+                while genome.epochs < limits.max_epochs {
+                    genome.epochs += 1;
+
+                    if genome.validate(&limits, &spec).is_err() {
+                        genome.epochs -= 1;
+                        break;
+                    }
+                }
+
+                Some((name, task, genome))
+            })
+            .collect()
+    }
+
+    /// The time model keeps the blocks of ticket 04 from the clock: each of
+    /// `slow_valid_family_b_cnns` trains on the whole Train split within its time budget,
+    /// and its scoring of the Hidden split stays within the scoring estimate. It prints each
+    /// measured time as a share of its estimate. This takes about four minutes and measures
+    /// time, so it runs only on request, alone, at one thread:
+    /// `RAYON_NUM_THREADS=1 cargo test --lib slow_valid_family_b -- --ignored --test-threads 1`.
+    #[test]
+    #[ignore]
+    fn slow_valid_family_b_cnns_train_within_the_time_budget() {
+        let cnns = slow_valid_family_b_cnns();
+
+        for (name, task, genome) in &cnns {
+            eprintln!("LAYOUT {name} on {}: {}", task.name(), genome.summary());
+        }
+
+        assert_eq!(cnns.len(), 15);
+
+        time_layouts(cnns);
     }
 
     #[test]

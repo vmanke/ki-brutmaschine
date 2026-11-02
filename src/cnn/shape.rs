@@ -31,9 +31,39 @@
 //! | `Bottleneck` | 1x1, c to m; act; k x k, m to m, groups; act; 1x1, m to w |
 //! | `Separable` | depthwise k x k, c to c; act; 1x1, c to w, groups |
 //! | `InvertedResidual` | 1x1, c to e, groups; act; depthwise k x k, e to e; act; 1x1, e to w, groups |
+//! | `Inception` | four branches: 1x1, c to b; 1x1, c to b, act, k x k, b to b, groups; 1x1, c to b, act, (k + 2) x (k + 2), b to b, groups; max pooling of k x k at stride 1, then 1x1, c to b |
+//! | `Dense` | k x k at stride 1, c to w, groups; then the join with its input |
+//! | `Transition` | 1x1, c to w, groups |
+//! | `Fire` | 1x1, c to q; act; then two branches: 1x1, q to w / 2; k x k, q to w / 2, groups |
+//! | `Shuffle` | 1x1, c to m, groups; act; the channel shuffle; depthwise k x k, m to m; 1x1, m to w, groups |
+//! | `ConvNext` | depthwise k x k, c to c; 1x1, c to x, groups, with a bias; act; 1x1, x to w, groups, with a bias |
+//! | `Tcn` | causal k, c to w, groups; act; causal k at stride 1, w to w, groups |
+//! | `Decoder` | upsampling and the join (see "U-Net" below); k x k at stride 1, to w, groups |
 //!
-//! Here m = w / `BOTTLENECK_RATIO`, e = `EXPANSION` * c, and a depthwise convolution has
-//! one group per channel. Then come, in this order:
+//! Here m = w / `BOTTLENECK_RATIO`, e = `EXPANSION` * c, b = w / `INCEPTION_BRANCHES`, q =
+//! w / `FIRE_SQUEEZE_RATIO` and x = `CONVNEXT_EXPANSION` * c. A depthwise convolution has
+//! one group per channel. In an Inception block the last convolution of each branch moves
+//! by s, and so do both convolutions of a Fire module after its squeeze. The max pooling of
+//! the Inception block has `(k - 1) / 2` cells on each side, which never win, so it keeps
+//! the size (`Layer::MaxPoolSame`). A transition is always 1x1 without dilation, as in
+//! DenseNet; its kernel gene has no effect. The channel shuffle (`Layer::Shuffle`) runs
+//! only with more than one group. The depthwise convolution of a ShuffleNet unit has no
+//! activation, as in ShuffleNet. The 1x1 convolutions of ConvNeXt's inverted MLP have no
+//! normalization; the block normalizes after its depthwise convolution only. A causal
+//! convolution (`Layer::CausalConv`) runs along a sequence with all its padding on the
+//! left, so an output reads no later input; a TCN block needs a 1-D genome. A dense layer
+//! does not move by a stride, so it downsamples by pooling only, and it keeps at most
+//! `MAX_CHANNELS` channels after its join.
+//!
+//! Branches. A block with parallel branches marks them as a skip connection does:
+//! `Layer::Fork` keeps the values, `Layer::Branch` ends a branch and starts the next from
+//! those values, and `Layer::Concat` joins the outputs of all branches along the channels,
+//! in their order. The last convolution of each branch has its normalization but no
+//! activation. The activation of step 7 follows the join; since it acts on each value
+//! alone, this equals an activation at the end of each branch. A dense layer is one branch
+//! that ends after step 7: its new w channels come first in the join, its input after them.
+//!
+//! After the convolutions of the block come, in this order:
 //!
 //! 5. With `Stage::se`: squeeze-and-excitation of the w channels (`Layer::SqueezeExcite`).
 //! 6. With `Stage::residual`: the skip connection. A `Layer::Fork` before the first
@@ -42,9 +72,9 @@
 //!    shortcut is the input itself when the block keeps the channels and the size.
 //!    Otherwise it is a 1x1 convolution from c to w that moves by s, with the
 //!    normalization (ResNet's projection shortcut).
-//! 7. The activation, as in step 3. An inverted residual has none: its output stays
-//!    linear, as in MobileNetV2.
-//! 8. The pooling of step 4.
+//! 7. The activation, as in step 3. An inverted residual and a ConvNeXt block have none:
+//!    their output stays linear, as in MobileNetV2 and ConvNeXt.
+//! 8. The pooling of step 4. A decoder has none: its stride upsamples.
 //!
 //! A plain stage with options follows the same rule, so its activation comes after the
 //! join. A 1-D genome runs its kernels and windows along the sequence only (1 x k), a 2-D
@@ -52,14 +82,39 @@
 //! dense layers of `Genome::hidden`, each followed by `Genome::activation`, and a dense
 //! output layer of `n_out` units without activation.
 //!
+//! U-Net. A decoder joins the map of an earlier unit, its skip point. Every unit with a
+//! stride above 1, except a decoder, makes a skip point: its input when its convolution
+//! moves by the stride, else its map before the pooling of step 8. Each decoder joins the
+//! latest skip point that no decoder has joined yet, as a closing bracket matches the
+//! latest open one. A skip point that no decoder joins keeps nothing, so a genome without
+//! decoders has the plan it had before ticket 04. A joined skip point is a `Layer::Fork`
+//! that stays open until its decoder. The decoder then:
+//!
+//! 1. upsamples by its stride: with `Downsample::Conv` a transposed convolution from c to w
+//!    channels whose kernel side and stride are both the stride (`Layer::ConvTranspose`,
+//!    U-Net's up-convolution), with the normalization; with a pooling kind it repeats each
+//!    cell (`Layer::Upsample`) and keeps c;
+//! 2. joins the map of its skip point along the channels, after the upsampled values; both
+//!    must have the same size (`Layer::Branch`, then `Layer::Concat`);
+//! 3. runs the k x k convolution of the table on the joined channels, then steps 5 to 7.
+//!    Its skip connection (`Stage::residual`) starts after the join.
+//!
+//! The per-cell head (`Head::PerCell`) is the head of U-Net. It needs a task with a grid of
+//! outputs (`OutputShape::Grid`), and the last map must have the size of that grid. The
+//! dense layers of `Genome::hidden`, each followed by `Genome::activation`, and the output
+//! layer are 1x1 convolutions with a bias, so every cell gets the same small network. The
+//! output layer has the channels of the grid. Then `Layer::Flatten` lays the outputs out as
+//! the task stores them, channel by channel and row by row.
+//!
 //! Counting. Every trainable value costs 2 FLOPs, one multiply-add, each time the forward
-//! pass uses it. A convolution and a normalization use each of their values once per
-//! output position, a dense layer and a squeeze-and-excitation once per sample.
-//! Activations, pooling, the statistics of a normalization, the scaling by the gate of a
-//! squeeze-and-excitation, sums and concatenations cost nothing, as the activations cost
-//! nothing in the MLP rule. Training costs 3 times the forward pass, since the backward
-//! pass costs twice the forward pass. For a dense layer this gives the MLP's 6 FLOPs per
-//! parameter and sample.
+//! pass uses it. A convolution and a normalization use each of their values once per output
+//! position, a dense layer and a squeeze-and-excitation once per sample. A transposed
+//! convolution uses each kernel value once per input position and each bias once per output
+//! position. Activations, pooling, the statistics of a normalization, the scaling by the
+//! gate of a squeeze-and-excitation, sums, concatenations, upsampling and the channel
+//! shuffle cost nothing, as the activations cost nothing in the MLP rule. Training costs 3
+//! times the forward pass, since the backward pass costs twice the forward pass. For a
+//! dense layer this gives the MLP's 6 FLOPs per parameter and sample.
 //!
 //! Time. A FLOP of a CNN takes longer than a FLOP of an MLP, and how much longer depends on
 //! the layout: candle copies the kernel cells of every output position before it
@@ -87,6 +142,18 @@
 //! 0.64 of its estimate and scored in 0.19 to 0.34, at one thread, on a machine where the
 //! seven slow layouts of ticket 02 trained in 0.36 to 0.66 of theirs (ticket 03,
 //! `slow_valid_block_cnns_train_within_the_time_budget`).
+//!
+//! The blocks of ticket 04 use the same prices as well. A causal convolution counts as a
+//! convolution. A transposed convolution counts as the convolution that its backward pass
+//! runs, from its outputs back to its input positions: its kernel cells times its output
+//! channels times its input positions as taps, a tile per `TILE_POSITIONS` input positions,
+//! and one call. Max pooling that keeps the size counts as pooling, its window cells times
+//! its values. An upsampling, a channel shuffle and a join count their values and one call.
+//! No price changed, so every plan without these layers keeps its estimate to the bit. The
+//! slowest valid CNN of each of 15 layouts of these blocks trained in 0.29 to 0.62 of its
+//! estimate and scored in 0.22 to 0.50, at one thread, on a machine where the seven slow
+//! layouts of ticket 02 trained in 0.37 to 0.66 of theirs (ticket 04,
+//! `slow_valid_family_b_cnns_train_within_the_time_budget`).
 
 use crate::cnn::genome::{
     BOTTLENECK_RATIO, Block, CONVNEXT_EXPANSION, CnnActivation, CnnGenome, ConvGenes, Dims,
@@ -246,6 +313,10 @@ pub struct Plan {
     pub params: usize,
     /// Forward FLOPs for one sample: the sum over the steps.
     pub forward_flops: u64,
+    /// The shape after the stem and after each stage, in order: `units[0]` is the output of
+    /// the stem, `units[i]` that of stage i. Crossover reads the resolutions here
+    /// (`cnn::variation`).
+    pub units: Vec<Shape>,
 }
 
 impl Plan {
@@ -317,9 +388,7 @@ impl Plan {
                     let taps = cells.saturating_mul(outputs as u64).saturating_mul(inputs);
 
                     counts.taps = counts.taps.saturating_add(taps);
-                    counts.tiles = counts
-                        .tiles
-                        .saturating_add(inputs.div_ceil(TILE_POSITIONS));
+                    counts.tiles = counts.tiles.saturating_add(inputs.div_ceil(TILE_POSITIONS));
                     counts.calls = counts.calls.saturating_add(1);
                 }
                 Layer::Pool { window, .. } | Layer::MaxPoolSame { window } => {
@@ -516,7 +585,18 @@ impl CnnGenome {
             forks: Vec::new(),
         };
 
-        builder.unit("stem", Block::Plain, &self.stem.conv_genes(), false, false, skips[0])?;
+        builder.unit(
+            "stem",
+            Block::Plain,
+            &self.stem.conv_genes(),
+            false,
+            false,
+            skips[0],
+        )?;
+
+        let mut units = Vec::with_capacity(self.stages.len() + 1);
+
+        units.push(builder.shape.clone());
 
         for (i, stage) in self.stages.iter().enumerate() {
             builder.unit(
@@ -527,6 +607,7 @@ impl CnnGenome {
                 stage.residual,
                 skips[i + 1],
             )?;
+            units.push(builder.shape.clone());
         }
 
         builder.head(self.head, hidden, activation, spec)?;
@@ -541,6 +622,7 @@ impl CnnGenome {
             steps: builder.steps,
             params: builder.params,
             forward_flops: builder.flops,
+            units,
         })
     }
 }
@@ -858,9 +940,22 @@ impl Builder {
     }
 
     /// The normalization of `channels` channels, unless it is `Norm::None`.
+    ///
+    /// `check_parts` checks the group norms of a block's convolutions first, with the name of
+    /// the convolution. This check also covers the norm of a projection shortcut, which no
+    /// part lists: in a ConvNeXt block only the depthwise convolution has a norm.
     fn norm(&mut self, at: &str, norm: Norm, channels: usize) -> Result<()> {
         if norm == Norm::None {
             return Ok(());
+        }
+
+        if norm == Norm::Group && !channels.is_multiple_of(GROUP_NORM_GROUPS) {
+            return Err(invalid(
+                at,
+                format!(
+                    "group norm needs a width divisible by {GROUP_NORM_GROUPS}, not {channels}"
+                ),
+            ));
         }
 
         let params = 2 * channels;
@@ -1175,7 +1270,12 @@ impl Builder {
     /// `hidden`, each followed by `activation`, and the output layer, all as 1x1
     /// convolutions with a bias, so every cell gets the same small network. Then all
     /// outputs of the sample as one vector, channel by channel.
-    fn per_cell(&mut self, hidden: &[usize], activation: Activation, spec: &TaskSpec) -> Result<()> {
+    fn per_cell(
+        &mut self,
+        hidden: &[usize],
+        activation: Activation,
+        spec: &TaskSpec,
+    ) -> Result<()> {
         let at = "head";
         let task = spec.kind.name();
         let OutputShape::Grid {
@@ -2601,8 +2701,7 @@ mod tests {
         assert_eq!(plan.params, 88 + first + second + 68);
 
         // The first 1x1 of the second unit runs at 8x8, the rest at 4x4.
-        let forward =
-            2 * 88 * 256 + 2 * first * 64 + 2 * 24 * 64 + 2 * (second - 24) * 16 + 2 * 68;
+        let forward = 2 * 88 * 256 + 2 * first * 64 + 2 * 24 * 64 + 2 * (second - 24) * 16 + 2 * 68;
 
         assert_eq!(plan.forward_flops, forward as u64);
     }
@@ -2664,12 +2763,7 @@ mod tests {
     }
 
     /// A causal convolution without a bias.
-    fn causal(
-        inputs: usize,
-        outputs: usize,
-        stride: usize,
-        dilation: usize,
-    ) -> Layer {
+    fn causal(inputs: usize, outputs: usize, stride: usize, dilation: usize) -> Layer {
         Layer::CausalConv {
             inputs,
             outputs,
@@ -2739,7 +2833,11 @@ mod tests {
         );
 
         let stem = 5 * 4 * 8 + 16;
-        let blocks = [416, 384 + 32 + 768 + 32 + 128 + 32, 768 + 32 + 768 + 32 + 256 + 32];
+        let blocks = [
+            416,
+            384 + 32 + 768 + 32 + 128 + 32,
+            768 + 32 + 768 + 32 + 256 + 32,
+        ];
 
         assert_eq!(blocks, [416, 1376, 1888]);
         assert_eq!(plan.params, stem + blocks.iter().sum::<usize>() + 34);
@@ -3064,6 +3162,107 @@ mod tests {
             plan.counts().taps,
             9 * 256 + 9 * 8 * 16 + 9 * 16 * 16 + 8 * 16
         );
+    }
+
+    #[test]
+    fn the_time_model_counts_the_layers_of_ticket_04_by_hand() {
+        let step = |layer: Layer, channels: usize, size: Vec<usize>| Step {
+            layer,
+            output: Shape { channels, size },
+            params: 0,
+            flops: 0,
+        };
+        let plan = |input: Shape, steps: Vec<Step>| Plan {
+            input,
+            steps,
+            params: 0,
+            forward_flops: 0,
+            units: Vec::new(),
+        };
+
+        // On 4 channels at 8x8: max pooling of 3x3 that keeps the size reads 9 cells for
+        // each of its 256 values. A shuffle hands on 256 values. A transposed convolution by
+        // 2 to 2 channels counts as the convolution of its backward pass: 2x2 cells of 2
+        // channels at each of the 64 input positions, one tile. Then an upsampling by 2 to
+        // 32x32 and a join of 6 channels there. Each layer is one call.
+        let image = plan(
+            Shape {
+                channels: 4,
+                size: vec![8, 8],
+            },
+            vec![
+                step(Layer::MaxPoolSame { window: 3 }, 4, vec![8, 8]),
+                step(Layer::Shuffle { groups: 2 }, 4, vec![8, 8]),
+                step(
+                    Layer::ConvTranspose {
+                        inputs: 4,
+                        outputs: 2,
+                        factor: 2,
+                        bias: false,
+                    },
+                    2,
+                    vec![16, 16],
+                ),
+                step(Layer::Upsample { factor: 2 }, 2, vec![32, 32]),
+                step(Layer::Concat, 6, vec![32, 32]),
+            ],
+        );
+
+        assert_eq!(
+            image.counts(),
+            Counts {
+                taps: 4 * 2 * 64,
+                values: 256 + 256 + 2 * 256 + 2 * 1024 + 6 * 1024,
+                pool_taps: 9 * 256,
+                group_inputs: 0,
+                tiles: 1,
+                calls: 5,
+            }
+        );
+
+        // A causal convolution counts as a convolution with the same genes: 3 cells of 4
+        // channels at each of its 8 outputs, 2 groups of one tile each, and 2 copies of the
+        // 4 x 16 input values for the groups.
+        let causal = Layer::CausalConv {
+            inputs: 4,
+            outputs: 8,
+            kernel: 3,
+            stride: 2,
+            dilation: 2,
+            groups: 2,
+            bias: false,
+        };
+        let conv = Layer::Conv {
+            inputs: 4,
+            outputs: 8,
+            kernel: 3,
+            stride: 2,
+            padding: 2,
+            dilation: 2,
+            groups: 2,
+            bias: false,
+        };
+        let sequence = |layer: Layer| {
+            plan(
+                Shape {
+                    channels: 4,
+                    size: vec![16],
+                },
+                vec![step(layer, 8, vec![8])],
+            )
+            .counts()
+        };
+        let counts = Counts {
+            taps: 3 * 4 * 8,
+            values: 8 * 8,
+            pool_taps: 0,
+            group_inputs: 4 * 16 * 2,
+            tiles: 2,
+            calls: 2,
+        };
+
+        assert_eq!(sequence(causal), counts);
+        assert_eq!(sequence(conv), counts);
     }
 
     #[test]
@@ -3404,9 +3603,8 @@ mod tests {
                 let plan = g
                     .cnn_plan(&task.spec())
                     .unwrap_or_else(|e| panic!("{block:?}: {e}"));
-                let number = |f: &dyn Fn(&Layer) -> bool| {
-                    plan.steps.iter().filter(|s| f(&s.layer)).count()
-                };
+                let number =
+                    |f: &dyn Fn(&Layer) -> bool| plan.steps.iter().filter(|s| f(&s.layer)).count();
 
                 (
                     number(&|l| matches!(l, Layer::SqueezeExcite { .. })),
@@ -3486,6 +3684,16 @@ mod tests {
                 }),
                 TaskKind::Shapes,
                 "",
+            ),
+            // With a skip connection, the projection from 8 to 6 channels has a norm as well.
+            (
+                set(Block::ConvNext, &|s| {
+                    s.norm = Norm::Group;
+                    s.width = 6;
+                    s.residual = true;
+                }),
+                TaskKind::Shapes,
+                "stage 2: group norm needs a width divisible by 4, not 6",
             ),
             (
                 set(Block::Tcn, &|_| {}),
@@ -3591,7 +3799,10 @@ mod tests {
         .expect_err("refused")
         .to_string();
 
-        assert!(message.contains("does not hold its 63 outputs"), "{message}");
+        assert!(
+            message.contains("does not hold its 63 outputs"),
+            "{message}"
+        );
     }
 
     #[test]

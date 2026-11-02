@@ -60,8 +60,17 @@ Validierungswert zu optimistisch.
 - Die verdeckte Bewertung ist endgültig: Danach lehnt `brut run` weitere
   Generationen ab (`evolve::check_not_final`). Bewertet wird eine feste Liste
   der besten Kandidaten nach Validierungs-Fitness (`evolve::hidden_set`).
-  Gesperrte Kandidaten bleiben darin, damit ein erneuter Aufruf nicht so
-  lange weitere Kandidaten prüft, bis einer besteht.
+  Ein Lauf, welcher CNNs züchtet oder mit beförderten Modellen beginnt,
+  nimmt zusätzlich sein bestes Basismodell in die Liste, falls es nicht schon
+  darin steht (`Config::can_promote`). Das kostet höchstens eine Abfrage mehr.
+  Jeder andere Lauf, etwa ein MLP-Lauf wie vor den CNNs, behält die Liste wie
+  bisher. Gesperrte Kandidaten bleiben darin, damit ein erneuter Aufruf nicht
+  so lange weitere Kandidaten prüft, bis einer besteht.
+- Nach dieser Bewertung wählt `brut promote` aus der Liste höchstens zwei
+  Modelle nach ihrem verdeckten Wert (ADR 0008). Die verdeckten Daten des
+  Laufs steuern also, welche Modelle in den Pool gehen, jedoch erst nach dem
+  Ende des Laufs und nur über einen PR, den ein Mensch prüft. Ein späterer
+  Lauf zieht einen neuen Seed für seine verdeckten Daten.
 
 ### 3. Abfluss des Geheimnisses
 

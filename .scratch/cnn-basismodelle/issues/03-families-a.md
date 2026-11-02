@@ -179,3 +179,17 @@ its runs, so this machine is not slower than the one that wrote the model.
 - Each base model passes the shape check and learns the shapes task above chance: yes
   (`every_base_model_passes_the_shape_check_on_every_image_task` and the nine learning
   tests; table above).
+
+**2026-10-31, Claude (subagent fix), after the review of tickets 03 to 05 and 07.**
+
+- Ticket 04 renamed four tests named above:
+  `the_16_families_have_names_and_ticket_03_built_9_of_them` is now
+  `the_16_families_have_names_and_distinct_base_models`,
+  `every_base_model_passes_the_shape_check_on_every_image_task` is now
+  `every_base_model_passes_the_shape_check_on_every_task_of_its_kind`,
+  `rejects_every_block_kind_not_yet_built` is now `every_block_kind_and_head_is_built`, and
+  `every_built_block_takes_both_options` is now `every_block_takes_both_options`.
+- An inverted residual that downsamples by pooling and has no option passed the shape check
+  but could not train. It ends with a norm and no activation, so its pooling read the output
+  of a batch norm. In training mode that is a transposed view, which candle's `index_select`
+  refuses. Ticket 04's note of the same date describes the fix and its tests.

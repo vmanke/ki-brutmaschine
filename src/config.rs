@@ -28,6 +28,46 @@ pub const HARD_MAX_EPOCHS: usize = 100_000;
 /// Hard cap on `population_init` and `children_per_generation`.
 pub const HARD_MAX_POPULATION: usize = 10_000;
 
+/// The kinds of model a run breeds (`Config::models`, ADR 0008).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModelKinds {
+    /// MLPs only, as before CNNs: random MLPs and their children.
+    #[default]
+    Mlp,
+    /// CNNs only: the base models of the CNN families that fit the task, random CNNs, and
+    /// their children.
+    Cnn,
+    /// Both kinds side by side: the base models, random MLPs and CNNs, and their children.
+    Both,
+}
+
+/// Every model kind, in the order of the CLI help.
+pub const MODEL_KINDS: [ModelKinds; 3] = [ModelKinds::Mlp, ModelKinds::Cnn, ModelKinds::Both];
+
+impl ModelKinds {
+    /// True for `Mlp`, the default. A config leaves it out of its JSON, so the configs of
+    /// MLP runs keep their bytes and the configs written before CNN runs still parse.
+    pub fn is_mlp(&self) -> bool {
+        matches!(self, ModelKinds::Mlp)
+    }
+
+    /// The CLI name: "mlp", "cnn" or "both".
+    pub fn name(self) -> &'static str {
+        match self {
+            ModelKinds::Mlp => "mlp",
+            ModelKinds::Cnn => "cnn",
+            ModelKinds::Both => "both",
+        }
+    }
+
+    /// The kind of a CLI name, the inverse of `name`.
+    pub fn from_name(name: &str) -> Option<ModelKinds> {
+        MODEL_KINDS
+            .into_iter()
+            .find(|kinds| kinds.name() == name.trim().to_ascii_lowercase())
+    }
+}
+
 /// Hard limits. A candidate or a run that would exceed them is stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -120,6 +160,20 @@ pub struct Config {
     /// their bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_genomes: Vec<Genome>,
+    /// The kinds of model this run breeds. With CNNs, generation 0 also holds the base
+    /// models of the CNN families that fit the task (`cnn::families::base_models_for`), and
+    /// the random genomes are CNNs, or MLPs and CNNs in turn. The JSON leaves `Mlp` out, so
+    /// configs of MLP runs keep their bytes.
+    #[serde(default, skip_serializing_if = "ModelKinds::is_mlp")]
+    pub models: ModelKinds,
+    /// Promoted models (`candidates/models/`, ADR 0008), as `brut init --promoted` copied
+    /// them from the pool. They join generation 0 after the base models of the CNN families.
+    /// The run checks each one: a model of a kind the run does not breed, or one that fails
+    /// `Genome::validate` for `limits` and the task, stays out with a log line. So unlike a
+    /// base genome, a promoted model that does not fit does not make the config invalid. The
+    /// JSON leaves an empty list out, so configs without promoted models keep their bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub promoted: Vec<Genome>,
 }
 
 impl Default for Config {
@@ -139,11 +193,53 @@ impl Default for Config {
             hidden_score_step: 0.01,
             threads: 0,
             base_genomes: Vec::new(),
+            models: ModelKinds::Mlp,
+            promoted: Vec::new(),
         }
     }
 }
 
 impl Config {
+    /// The default config of a run that breeds `models` (what `brut init --models` writes).
+    ///
+    /// An MLP run gets `Config::default`. A run with CNNs takes the shapes task, since a CNN
+    /// cannot read the flat inputs of the default task. It is smaller, since a CNN trains for
+    /// seconds where an MLP of the same budget trains for milliseconds: 8 random genomes next
+    /// to the base models, 8 children per generation, 5 generations, and up to an hour of
+    /// run time.
+    pub fn for_models(models: ModelKinds) -> Config {
+        let config = Config {
+            models,
+            ..Config::default()
+        };
+
+        if models.is_mlp() {
+            return config;
+        }
+
+        Config {
+            task: TaskKind::Shapes,
+            population_init: 8,
+            generations: 5,
+            children_per_generation: 8,
+            limits: Limits {
+                max_total_seconds: 3600.0,
+                ..config.limits
+            },
+            ..config
+        }
+    }
+
+    /// True when a run of this config can promote its winners (`crate::promote`, ADR 0008):
+    /// its model kinds include CNNs (`models` is `Cnn` or `Both`), or it holds promoted
+    /// models. Only such a run puts its best base model into the hidden set
+    /// (`evolve::hidden_set`), so that a promotion can compare with it. A config that uses
+    /// neither field, as every config before CNNs, keeps its hidden set and its hidden
+    /// queries, base genomes or not; such a run promotes nothing.
+    pub fn can_promote(&self) -> bool {
+        !self.models.is_mlp() || !self.promoted.is_empty()
+    }
+
     /// Read and validate a JSON config file.
     pub fn load(path: &Path) -> Result<Config> {
         let text = std::fs::read_to_string(path)?;
@@ -332,6 +428,36 @@ impl Config {
             }
         }
 
+        // Each promoted model is checked when the run starts; see `promoted`.
+        if self.promoted.len() > HARD_MAX_POPULATION {
+            return fail(format!(
+                "{} promoted models > {HARD_MAX_POPULATION}",
+                self.promoted.len()
+            ));
+        }
+
+        // A run with CNNs needs a task that a CNN can read, and limits that leave room for
+        // one, so that random CNNs always exist (`cnn::variation::random`).
+        if !self.models.is_mlp() {
+            if spec.input.is_flat() {
+                return fail(format!(
+                    "models {} needs a task with images or sequences, and task {} gives a \
+                     flat vector",
+                    self.models.name(),
+                    self.task.name()
+                ));
+            }
+
+            let fits = crate::cnn::variation::smallest(&spec)
+                .is_some_and(|genome| genome.validate(l, &spec).is_ok());
+
+            if !fits {
+                return fail(
+                    "limits too small: even the smallest CNN with MIN_EPOCHS does not fit".into(),
+                );
+            }
+        }
+
         Ok(())
     }
 }
@@ -426,6 +552,124 @@ mod tests {
             }
             .validate()
             .is_err()
+        );
+    }
+
+    #[test]
+    fn promoted_models_are_left_out_when_empty_and_checked_by_the_run() {
+        let text = serde_json::to_string(&Config::default()).expect("json");
+
+        assert!(!text.contains("promoted"), "{text}");
+
+        // A CNN does not fit two spirals, yet the config stays valid: the run leaves the
+        // model out with a log line (`evolve`), as it does a base model that does not fit.
+        let cnn = crate::cnn::genome::testing::lenet();
+        let with_promoted = Config {
+            promoted: vec![cnn.clone()],
+            ..Config::default()
+        };
+        let text = serde_json::to_string(&with_promoted).expect("json");
+
+        assert!(with_promoted.validate().is_ok());
+        assert!(text.ends_with(&format!(
+            ",\"promoted\":[{}]}}",
+            serde_json::to_string(&cnn).expect("json")
+        )));
+        assert_eq!(
+            serde_json::from_str::<Config>(&text).expect("parse"),
+            with_promoted
+        );
+        assert_eq!(
+            with_promoted.resume_conflicts(&Config::default()),
+            vec!["promoted".to_string()]
+        );
+
+        let crowded = Config {
+            promoted: vec![cnn; HARD_MAX_POPULATION + 1],
+            ..Config::default()
+        };
+
+        assert!(crowded.validate().is_err());
+    }
+
+    #[test]
+    fn only_a_run_with_cnns_or_promoted_models_can_promote() {
+        let base = Config {
+            base_genomes: vec![crate::cnn::genome::testing::lenet()],
+            ..Config::default()
+        };
+        let promoted = Config {
+            promoted: vec![crate::cnn::genome::testing::lenet()],
+            ..Config::default()
+        };
+
+        // The configs of the runs before CNNs, with or without base genomes, cannot.
+        assert!(!Config::default().can_promote());
+        assert!(!base.can_promote());
+        assert!(promoted.can_promote());
+        assert!(Config::for_models(ModelKinds::Cnn).can_promote());
+        assert!(Config::for_models(ModelKinds::Both).can_promote());
+    }
+
+    #[test]
+    fn model_kinds_are_left_out_for_mlp_runs_and_checked_for_cnns() {
+        let text = serde_json::to_string(&Config::default()).expect("json");
+
+        assert!(!text.contains("\"models\""), "{text}");
+        assert_eq!(Config::for_models(ModelKinds::Mlp), Config::default());
+
+        for kinds in MODEL_KINDS {
+            assert_eq!(ModelKinds::from_name(kinds.name()), Some(kinds));
+        }
+
+        assert_eq!(ModelKinds::from_name(" CNN "), Some(ModelKinds::Cnn));
+        assert_eq!(ModelKinds::from_name("rnn"), None);
+
+        // A CNN run writes its kinds, reads them back, and may not change them on resume.
+        let cnn = Config::for_models(ModelKinds::Cnn);
+        let text = serde_json::to_string(&cnn).expect("json");
+
+        assert!(cnn.validate().is_ok());
+        assert_eq!(cnn.task, TaskKind::Shapes);
+        assert!(text.contains("\"models\":\"Cnn\""), "{text}");
+        assert_eq!(serde_json::from_str::<Config>(&text).expect("parse"), cnn);
+        assert_eq!(
+            cnn.resume_conflicts(&Config {
+                models: ModelKinds::Both,
+                ..cnn.clone()
+            }),
+            vec!["models".to_string()]
+        );
+
+        // CNNs need images or sequences, and limits that leave room for the smallest CNN:
+        // here the linear MLP fits the FLOP limit, but the time it buys a CNN, 0.04 s, is
+        // shorter than the estimate of the smallest CNN.
+        let flat = Config {
+            task: TaskKind::Parity,
+            ..cnn.clone()
+        };
+        let tight = Config {
+            limits: Limits {
+                max_train_flops: 40_000_000,
+                ..cnn.limits
+            },
+            ..cnn.clone()
+        };
+        let message = |c: &Config| c.validate().expect_err("refused").to_string();
+
+        assert!(message(&flat).contains("needs a task with images or sequences"));
+        assert!(
+            message(&tight).contains("even the smallest CNN"),
+            "{}",
+            message(&tight)
+        );
+        assert!(
+            Config {
+                models: ModelKinds::Mlp,
+                ..tight.clone()
+            }
+            .validate()
+            .is_ok()
         );
     }
 

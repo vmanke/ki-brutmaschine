@@ -33,11 +33,14 @@ Pull-Request-Text, womit sich die Mutation Bit für Bit wiedergeben lässt (ADR 
 
 ## 3. Umfangs-Zaun
 
-Ein Mutations-Pull-Request darf nur Dateien unter `candidates/` ändern. Die eine Regel
+Ein Mutations-Pull-Request darf nur Dateien unter `candidates/` hinzufügen. Die eine Regel
 liegt in der Bibliothek (`hitl::path_in_scope`); Git liegt in `scripts/scope-fence.sh`,
 welches die geänderten Pfade an `brut-ingest --scope-check` reicht. Die CI
 (`.github/workflows/scope-fence.yml`) läuft nur für `mutate/`-Zweige und weist jeden
-solchen Pull Request ab, der einen Pfad außerhalb von `candidates/` berührt. So kann ein
+solchen Pull Request ab, der einen Pfad außerhalb von `candidates/` berührt. Sie weist
+auch jeden ab, der eine Datei des Zielzweigs ändert oder entfernt, da eine Kandidaten-Datei
+nur hinzukommt (ADR 0008). Der Prüfer liest nur gewöhnliche Dateien bis 16 MiB, und seine
+Ausgabe maskiert Zeilenumbrüche aus Dateinamen und Meldungen. So kann ein
 Mutant nie den Auswerter, das Kostenmodell (`dsl.rs`), die verdeckte Grammatik, die
 Abnahme oder ein Geheimnis ändern. Das ist der direkte Schutz gegen den Fall, den die
 Darwin-Gödel-Maschine berichtet (angenommen bei der ICLR 2026): ein Agent schaltete seinen
