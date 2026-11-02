@@ -10,3 +10,7 @@ secret/
 
 # Agent worktrees (Claude Code); never part of the repository.
 .claude/worktrees/
+
+# The selection study writes runs.json beside its report; only report.md is tracked
+# (docs/SELECTION_STUDY.md).
+docs/selection-study/*/runs.json

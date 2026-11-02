@@ -17,5 +17,7 @@ pub mod genome;
 pub mod observe;
 pub mod puzzle;
 pub mod qubit;
+pub mod selection;
 pub mod sim;
+pub mod study;
 pub mod variation;
