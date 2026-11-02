@@ -27,7 +27,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::cascade::arena::{
-    Breeder, BreedConfig, Event, Finalist, Member, ModelPool, Report, Snapshot, Status,
+    BreedConfig, Breeder, Event, Finalist, Member, ModelPool, Report, Snapshot, Status,
     run_cascade_in,
 };
 use crate::cascade::domain::{Domain, GenePool};
@@ -82,7 +82,11 @@ pub fn slope(ys: &[f64]) -> f64 {
 
     let mx = (n - 1.0) / 2.0;
     let my = ys.iter().sum::<f64>() / n;
-    let num: f64 = ys.iter().enumerate().map(|(i, y)| (i as f64 - mx) * (y - my)).sum();
+    let num: f64 = ys
+        .iter()
+        .enumerate()
+        .map(|(i, y)| (i as f64 - mx) * (y - my))
+        .sum();
     let den: f64 = (0..ys.len()).map(|i| (i as f64 - mx).powi(2)).sum();
 
     num / den
@@ -112,11 +116,21 @@ pub fn kendall_tau(a: &[f64], b: &[f64]) -> f64 {
 
     let denom = ((conc + disc + ta) * (conc + disc + tb)).sqrt();
 
-    if denom == 0.0 { 0.0 } else { (conc - disc) / denom }
+    if denom == 0.0 {
+        0.0
+    } else {
+        (conc - disc) / denom
+    }
 }
 
 fn tie_sign(d: f64) -> i32 {
-    if d.abs() <= TIE_SLACK { 0 } else if d > 0.0 { 1 } else { -1 }
+    if d.abs() <= TIE_SLACK {
+        0
+    } else if d > 0.0 {
+        1
+    } else {
+        -1
+    }
 }
 
 /// How a ranking made on a random subset of the tasks agrees with the ranking on all
@@ -162,7 +176,9 @@ pub fn subset_rank_quality(
         return None;
     }
 
-    let mean_of = |row: &Vec<f64>, cols: &[usize]| cols.iter().map(|&c| row[c]).sum::<f64>() / cols.len() as f64;
+    let mean_of = |row: &Vec<f64>, cols: &[usize]| {
+        cols.iter().map(|&c| row[c]).sum::<f64>() / cols.len() as f64
+    };
     let all: Vec<usize> = (0..tasks).collect();
     let full: Vec<f64> = scores.iter().map(|r| mean_of(r, &all)).collect();
     let full_best = full.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -171,7 +187,8 @@ pub fn subset_rank_quality(
     let (mut tau, mut hit, mut regret, mut overlap) = (0.0, 0.0, 0.0, 0.0);
 
     for rep in 0..repetitions {
-        let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(seed, &format!("subset/{subset}/{rep}")));
+        let mut rng =
+            ChaCha8Rng::seed_from_u64(derive_seed(seed, &format!("subset/{subset}/{rep}")));
         let mut cols = all.clone();
 
         cols.shuffle(&mut rng);
@@ -252,13 +269,24 @@ pub fn compare(new: &[f64], old: &[f64], epsilon: f64) -> Result<Versus> {
         Verdict::Match
     };
 
-    Ok(Versus { wins, ties, losses, mean_diff, verdict })
+    Ok(Versus {
+        wins,
+        ties,
+        losses,
+        mean_diff,
+        verdict,
+    })
 }
 
 /// A hash of an answer list: two Cascades with the same signature behaved identically on
 /// the panel.
 pub fn behaviour_signature<A: Serialize>(answers: &[Option<A>]) -> String {
-    sha256_hex(serde_json::to_string(answers).unwrap_or_default().as_bytes())[..16].to_string()
+    sha256_hex(
+        serde_json::to_string(answers)
+            .unwrap_or_default()
+            .as_bytes(),
+    )[..16]
+        .to_string()
 }
 
 /// A frozen historical champion. Its fields are private and it has no mutating method; the
@@ -308,7 +336,11 @@ impl Champion {
 }
 
 fn mean(xs: &[f64]) -> f64 {
-    if xs.is_empty() { 0.0 } else { xs.iter().sum::<f64>() / xs.len() as f64 }
+    if xs.is_empty() {
+        0.0
+    } else {
+        xs.iter().sum::<f64>() / xs.len() as f64
+    }
 }
 
 /// Append-only store of champions.
@@ -562,9 +594,14 @@ pub fn run_study<D: Domain>(
             .map(|m| values(b.domain(), b.search_panel(), &m.answers))
             .collect();
         let rate = |i: usize| mean(&train[i]);
-        let sigs: Vec<String> = archive.iter().map(|m| behaviour_signature(&m.answers)).collect();
+        let sigs: Vec<String> = archive
+            .iter()
+            .map(|m| behaviour_signature(&m.answers))
+            .collect();
         let inc = b.ranking().first().copied().ok_or_else(|| {
-            BrutError::Invalid("study: the archive is empty after a committed generation".to_string())
+            BrutError::Invalid(
+                "study: the archive is empty after a committed generation".to_string(),
+            )
         })?;
         let inc_id = archive[inc].id.clone();
 
@@ -584,18 +621,20 @@ pub fn run_study<D: Domain>(
         rediscoveries += redisc;
 
         for i in 0..archive.len() {
-            seen_sig.entry(sigs[i].clone()).or_insert_with(|| archive[i].id.clone());
+            seen_sig
+                .entry(sigs[i].clone())
+                .or_insert_with(|| archive[i].id.clone());
         }
 
         // Newborns against the champions frozen before this generation.
         let mut counts = VerdictCounts::default();
         let mut beating_all = 0;
 
-        for i in first_new..archive.len() {
+        for row in &train[first_new..] {
             let mut all = !vault.is_empty();
 
             for c in vault.champions() {
-                let v = compare(&train[i], c.search_values(), epsilon)?.verdict;
+                let v = compare(row, c.search_values(), epsilon)?.verdict;
 
                 counts.add(v);
                 all &= v == Verdict::Outperform;
@@ -624,7 +663,13 @@ pub fn run_study<D: Domain>(
             new_champion = true;
 
             // Back to the behaviour of a champion before the last one: a cycle.
-            if vault.champions().iter().rev().skip(1).any(|c| c.signature() == sigs[inc]) {
+            if vault
+                .champions()
+                .iter()
+                .rev()
+                .skip(1)
+                .any(|c| c.signature() == sigs[inc])
+            {
                 champion_cycles += 1;
             }
 
@@ -634,7 +679,14 @@ pub fn run_study<D: Domain>(
                 }
             }
 
-            vault.freeze(&inc_id, g, &archive[inc].cascade, sigs[inc].clone(), &train[inc], &hv);
+            vault.freeze(
+                &inc_id,
+                g,
+                &archive[inc].cascade,
+                sigs[inc].clone(),
+                &train[inc],
+                &hv,
+            );
         }
 
         let st = last_state.as_ref();
@@ -650,7 +702,11 @@ pub fn run_study<D: Domain>(
             train_rate,
             best_train_rate: (0..archive.len()).map(rate).fold(0.0, f64::max),
             heldout_rate,
-            gap: if track_heldout { train_rate - heldout_rate } else { 0.0 },
+            gap: if track_heldout {
+                train_rate - heldout_rate
+            } else {
+                0.0
+            },
             behaviours,
             archive_size: archive.len(),
             parent_entropy_bits: st.map_or(0.0, |s| s.diversity.parent_entropy_bits),
@@ -672,7 +728,8 @@ pub fn run_study<D: Domain>(
     let archive = b.archive();
 
     // Lineage of the last generation, for champion retention.
-    let by_id: HashMap<&str, &Member<D::Answer>> = archive.iter().map(|m| (m.id.as_str(), m)).collect();
+    let by_id: HashMap<&str, &Member<D::Answer>> =
+        archive.iter().map(|m| (m.id.as_str(), m)).collect();
     let newest = archive.iter().map(|m| m.generation).max().unwrap_or(0);
     let mut ancestors: BTreeSet<String> = BTreeSet::new();
     let mut todo: Vec<&str> = archive
@@ -724,7 +781,10 @@ pub fn run_study<D: Domain>(
         completion_tokens: completion,
         model_cost,
         wall_seconds: 0.0,
-        best_train_rate: records.iter().map(|r| r.best_train_rate).fold(0.0, f64::max),
+        best_train_rate: records
+            .iter()
+            .map(|r| r.best_train_rate)
+            .fold(0.0, f64::max),
         final_train_rate: last.as_ref().map_or(0.0, |r| r.train_rate),
         final_heldout_rate: last.as_ref().map_or(0.0, |r| r.heldout_rate),
         final_gap: last.as_ref().map_or(0.0, |r| r.gap),
@@ -802,7 +862,14 @@ pub fn reevaluate_finalists<D: Domain>(
             .map(|task| {
                 let tid = full.domain().task_id(task);
                 let seed = derive_seed(full.config().seed, &format!("search/{}/{tid}", m.id));
-                let run = run_cascade_in(full.domain(), pool, &full.config().limits, &m.cascade, task, seed);
+                let run = run_cascade_in(
+                    full.domain(),
+                    pool,
+                    &full.config().limits,
+                    &m.cascade,
+                    task,
+                    seed,
+                );
 
                 calls += run.usage.calls;
 
@@ -812,7 +879,11 @@ pub fn reevaluate_finalists<D: Domain>(
 
         out.push(Reevaluated {
             id: m.id.clone(),
-            subset_rate: mean(&values(full.domain(), &full.search_panel()[..m.answers.len()], &m.answers)),
+            subset_rate: mean(&values(
+                full.domain(),
+                &full.search_panel()[..m.answers.len()],
+                &m.answers,
+            )),
             full_rate: mean(&values(full.domain(), full.search_panel(), &answers)),
             heldout_rate: f.select_solved as f64 / f.select_puzzles.max(1) as f64,
         });
@@ -856,7 +927,10 @@ pub fn search_score_matrix<D: Domain>(b: &Breeder<'_, D>) -> Vec<Vec<f64>> {
 }
 
 /// Mean over `runs` grouped by arm: the distribution of `f` per arm, sorted by arm name.
-pub fn by_arm<F: Fn(&RunRecord) -> f64>(runs: &[RunRecord], f: F) -> BTreeMap<String, Option<Dist>> {
+pub fn by_arm<F: Fn(&RunRecord) -> f64>(
+    runs: &[RunRecord],
+    f: F,
+) -> BTreeMap<String, Option<Dist>> {
     let mut groups: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 
     for r in runs {
@@ -907,7 +981,10 @@ mod tests {
     fn dist_and_slope_and_tau() {
         let d = dist(&[4.0, 1.0, 3.0, 2.0, 5.0]).unwrap();
 
-        assert_eq!((d.min, d.p25, d.median, d.p75, d.max, d.mean), (1.0, 2.0, 3.0, 4.0, 5.0, 3.0));
+        assert_eq!(
+            (d.min, d.p25, d.median, d.p75, d.max, d.mean),
+            (1.0, 2.0, 3.0, 4.0, 5.0, 3.0)
+        );
         assert!(dist(&[]).is_none() && dist(&[f64::NAN]).is_none());
         assert!((slope(&[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-12);
         assert_eq!(slope(&[1.0]), 0.0);
@@ -924,13 +1001,20 @@ mod tests {
             .collect();
         let full = subset_rank_quality(&scores, 8, 5, 2, 1).unwrap();
 
-        assert_eq!((full.tau_mean, full.top1_hit_rate, full.top1_regret_mean), (1.0, 1.0, 0.0));
+        assert_eq!(
+            (full.tau_mean, full.top1_hit_rate, full.top1_regret_mean),
+            (1.0, 1.0, 0.0)
+        );
         assert_eq!(full.cost_fraction, 1.0);
 
         let small = subset_rank_quality(&scores, 2, 50, 2, 1).unwrap();
 
         assert!(small.tau_mean < 1.0, "two tasks cannot rank all four");
-        assert_eq!(small, subset_rank_quality(&scores, 2, 50, 2, 1).unwrap(), "same seed, same subsets");
+        assert_eq!(
+            small,
+            subset_rank_quality(&scores, 2, 50, 2, 1).unwrap(),
+            "same seed, same subsets"
+        );
         assert!(subset_rank_quality(&scores, 9, 5, 2, 1).is_none());
     }
 
@@ -938,10 +1022,22 @@ mod tests {
     fn compare_classifies_with_epsilon() {
         let v = compare(&[1.0, 1.0, 0.0], &[1.0, 0.0, 0.0], 0.0).unwrap();
 
-        assert_eq!((v.wins, v.ties, v.losses, v.verdict), (1, 2, 0, Verdict::Outperform));
-        assert_eq!(compare(&[1.0, 0.0], &[0.0, 1.0], 0.0).unwrap().verdict, Verdict::Match);
-        assert_eq!(compare(&[0.0], &[1.0], 0.0).unwrap().verdict, Verdict::Regress);
-        assert_eq!(compare(&[0.9], &[1.0], 0.2).unwrap().verdict, Verdict::Match);
+        assert_eq!(
+            (v.wins, v.ties, v.losses, v.verdict),
+            (1, 2, 0, Verdict::Outperform)
+        );
+        assert_eq!(
+            compare(&[1.0, 0.0], &[0.0, 1.0], 0.0).unwrap().verdict,
+            Verdict::Match
+        );
+        assert_eq!(
+            compare(&[0.0], &[1.0], 0.0).unwrap().verdict,
+            Verdict::Regress
+        );
+        assert_eq!(
+            compare(&[0.9], &[1.0], 0.2).unwrap().verdict,
+            Verdict::Match
+        );
         assert!(compare(&[1.0], &[1.0, 2.0], 0.0).is_err());
     }
 
@@ -950,7 +1046,10 @@ mod tests {
         let a: Vec<Option<u8>> = vec![Some(1), None];
 
         assert_eq!(behaviour_signature(&a), behaviour_signature(&a.clone()));
-        assert_ne!(behaviour_signature(&a), behaviour_signature(&[Some(1u8), Some(2)]));
+        assert_ne!(
+            behaviour_signature(&a),
+            behaviour_signature(&[Some(1u8), Some(2)])
+        );
     }
 
     #[test]
@@ -988,7 +1087,12 @@ mod tests {
 
         let with = study(cfg(5, ParentSelection::Dgm), true);
         let without = study(cfg(5, ParentSelection::Dgm), false);
-        let ids = |r: &RunRecord| r.generations.iter().map(|g| (g.incumbent.clone(), g.train_rate.to_bits())).collect::<Vec<_>>();
+        let ids = |r: &RunRecord| {
+            r.generations
+                .iter()
+                .map(|g| (g.incumbent.clone(), g.train_rate.to_bits()))
+                .collect::<Vec<_>>()
+        };
 
         assert_eq!(ids(&with), ids(&without));
         assert_eq!(with.worker_calls, without.worker_calls);
@@ -997,7 +1101,11 @@ mod tests {
 
     #[test]
     fn a_study_is_reproducible_and_records_every_generation() {
-        for sel in [ParentSelection::Dgm, ParentSelection::Lexicase, ParentSelection::Tournament] {
+        for sel in [
+            ParentSelection::Dgm,
+            ParentSelection::Lexicase,
+            ParentSelection::Tournament,
+        ] {
             let a = study(cfg(3, sel), true);
             let b = study(cfg(3, sel), true);
 
@@ -1020,8 +1128,14 @@ mod tests {
         assert_eq!(dgm.generations[0].incumbent, lex.generations[0].incumbent);
         assert_eq!(dgm.generations[0].train_rate, lex.generations[0].train_rate);
         assert_ne!(
-            dgm.generations.iter().map(|g| g.incumbent.clone()).collect::<Vec<_>>(),
-            lex.generations.iter().map(|g| g.incumbent.clone()).collect::<Vec<_>>()
+            dgm.generations
+                .iter()
+                .map(|g| g.incumbent.clone())
+                .collect::<Vec<_>>(),
+            lex.generations
+                .iter()
+                .map(|g| g.incumbent.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1039,7 +1153,14 @@ mod tests {
         let train = search_score_matrix(&b)[inc].clone();
         let mut vault = ChampionVault::new();
 
-        vault.freeze(&m.id, 0, &m.cascade, behaviour_signature(&m.answers), &train, &[1.0]);
+        vault.freeze(
+            &m.id,
+            0,
+            &m.cascade,
+            behaviour_signature(&m.answers),
+            &train,
+            &[1.0],
+        );
 
         let frozen = vault.clone();
 
@@ -1065,13 +1186,23 @@ mod tests {
     #[test]
     fn the_select_phase_reuses_the_observer_seeds() {
         let pool = sim_pool();
-        let (rec, _, _) = run_study::<GridDomain>("t", cfg(8, ParentSelection::Dgm), GenePool::grid(), &pool, true, 0.0)
-            .unwrap();
+        let (rec, _, _) = run_study::<GridDomain>(
+            "t",
+            cfg(8, ParentSelection::Dgm),
+            GenePool::grid(),
+            &pool,
+            true,
+            0.0,
+        )
+        .unwrap();
         // The incumbent's held-out rate equals its finalist result when it is a finalist.
         let last = rec.generations.last().unwrap();
 
         if let Some(f) = rec.finalists.iter().find(|f| f.id == last.incumbent) {
-            assert!((f.select_solved as f64 / f.select_puzzles as f64 - last.heldout_rate).abs() < 1e-12);
+            assert!(
+                (f.select_solved as f64 / f.select_puzzles as f64 - last.heldout_rate).abs()
+                    < 1e-12
+            );
         }
     }
 
@@ -1080,13 +1211,20 @@ mod tests {
         let rec = study(cfg(9, ParentSelection::Dgm), true);
 
         assert!(rec.champions_frozen >= 1);
-        assert!(rec.generations[0].born_vs_champions == VerdictCounts::default(), "nothing to compare with in generation 0");
+        assert!(
+            rec.generations[0].born_vs_champions == VerdictCounts::default(),
+            "nothing to compare with in generation 0"
+        );
 
-        let pairs: usize = rec.generations.iter().map(|g| {
-            let c = &g.born_vs_champions;
+        let pairs: usize = rec
+            .generations
+            .iter()
+            .map(|g| {
+                let c = &g.born_vs_champions;
 
-            c.outperform + c.matched + c.regress
-        }).sum();
+                c.outperform + c.matched + c.regress
+            })
+            .sum();
 
         assert!(pairs > 0);
     }
@@ -1094,20 +1232,39 @@ mod tests {
     #[test]
     fn finalists_of_a_down_sampled_run_are_scored_again_on_the_full_panel() {
         let pool = sim_pool();
-        let small = BreedConfig { search_puzzles: 4, finalists: 3, ..cfg(12, ParentSelection::Dgm) };
-        let full = BreedConfig { search_puzzles: 10, ..small.clone() };
+        let small = BreedConfig {
+            search_puzzles: 4,
+            finalists: 3,
+            ..cfg(12, ParentSelection::Dgm)
+        };
+        let full = BreedConfig {
+            search_puzzles: 10,
+            ..small.clone()
+        };
         let (_, report, snap) =
-            run_study::<GridDomain>("t", small.clone(), GenePool::grid(), &pool, false, 0.0).unwrap();
-        let re = reevaluate_finalists::<GridDomain>(full.clone(), GenePool::grid(), &pool, &snap, &report)
-            .unwrap()
-            .expect("bred finalists");
+            run_study::<GridDomain>("t", small.clone(), GenePool::grid(), &pool, false, 0.0)
+                .unwrap();
+        let re = reevaluate_finalists::<GridDomain>(
+            full.clone(),
+            GenePool::grid(),
+            &pool,
+            &snap,
+            &report,
+        )
+        .unwrap()
+        .expect("bred finalists");
 
         assert!(re.calls > 0 && !re.finalists.is_empty());
         assert_eq!(re.pick_changed, re.approx_pick != re.full_pick);
 
         // The subset is a prefix of the full panel: its answers reproduce under the same seeds.
-        let breeder: Breeder<'_, GridDomain> = Breeder::start(full, GenePool::grid(), &pool, None).unwrap();
-        let m = snap.archive.iter().find(|m| m.id == re.finalists[0].id).unwrap();
+        let breeder: Breeder<'_, GridDomain> =
+            Breeder::start(full, GenePool::grid(), &pool, None).unwrap();
+        let m = snap
+            .archive
+            .iter()
+            .find(|m| m.id == re.finalists[0].id)
+            .unwrap();
         let again = replay_on_search(&breeder, &pool, &m.id, &m.cascade);
 
         assert_eq!(&again[..4], m.answers.as_slice());

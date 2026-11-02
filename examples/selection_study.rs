@@ -23,15 +23,15 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use brutmaschine::cascade::arena::Breeder;
 use brutmaschine::cascade::arena::{BreedConfig, ModelPool, ParentSelection, Snapshot};
 use brutmaschine::cascade::domain::{GenePool, GridDomain};
 use brutmaschine::cascade::selection::SelectionParams;
 use brutmaschine::cascade::sim::SimModel;
 use brutmaschine::cascade::study::{
-    Dist, Reevaluation, RankQuality, RunRecord, by_arm, dist, reevaluate_finalists, run_study,
+    Dist, RankQuality, Reevaluation, RunRecord, by_arm, dist, reevaluate_finalists, run_study,
     search_score_matrix, subset_rank_quality,
 };
-use brutmaschine::cascade::arena::Breeder;
 
 const ARMS: [ParentSelection; 4] = [
     ParentSelection::Dgm,
@@ -66,8 +66,14 @@ fn parse(argv: &[String]) -> Result<Args, String> {
 
     while let Some(k) = it.next() {
         let v = it.next().ok_or_else(|| format!("{k} needs a value"))?;
-        let num = |v: &String| v.parse::<f64>().map_err(|_| format!("{k}: not a number: {v}"));
-        let int = |v: &String| v.parse::<u64>().map_err(|_| format!("{k}: not a whole number: {v}"));
+        let num = |v: &String| {
+            v.parse::<f64>()
+                .map_err(|_| format!("{k}: not a number: {v}"))
+        };
+        let int = |v: &String| {
+            v.parse::<u64>()
+                .map_err(|_| format!("{k}: not a whole number: {v}"))
+        };
 
         match k.as_str() {
             "--seeds" => a.seeds = int(v)?,
@@ -140,14 +146,20 @@ fn run_one(
 
 fn cell(d: &Option<Dist>) -> String {
     match d {
-        Some(d) => format!("{:.3} [{:.3}, {:.3}] ({:.3}..{:.3})", d.median, d.p25, d.p75, d.min, d.max),
+        Some(d) => format!(
+            "{:.3} [{:.3}, {:.3}] ({:.3}..{:.3})",
+            d.median, d.p25, d.p75, d.min, d.max
+        ),
         None => "-".to_string(),
     }
 }
 
 /// One table: a row per arm, median [p25, p75] (min..max) of `f` over the seeds.
 fn table(out: &mut String, title: &str, runs: &[RunRecord], f: impl Fn(&RunRecord) -> f64) {
-    let _ = writeln!(out, "**{title}**\n\n| arm | median [p25, p75] (min..max) |\n|---|---|");
+    let _ = writeln!(
+        out,
+        "**{title}**\n\n| arm | median [p25, p75] (min..max) |\n|---|---|"
+    );
 
     for (arm, d) in by_arm(runs, f) {
         let _ = writeln!(out, "| {arm} | {} |", cell(&d));
@@ -165,7 +177,10 @@ fn paired(out: &mut String, title: &str, runs: &[RunRecord], f: impl Fn(&RunReco
         by.insert((r.arm.clone(), r.seed), f(r));
     }
 
-    let _ = writeln!(out, "**{title}** (arm minus dgm, per seed)\n\n| arm | median diff | larger / equal / smaller |\n|---|---|---|");
+    let _ = writeln!(
+        out,
+        "**{title}** (arm minus dgm, per seed)\n\n| arm | median diff | larger / equal / smaller |\n|---|---|---|"
+    );
 
     for arm in ARMS.iter().skip(1).map(ParentSelection::name) {
         let mut diffs = Vec::new();
@@ -179,7 +194,13 @@ fn paired(out: &mut String, title: &str, runs: &[RunRecord], f: impl Fn(&RunReco
         }
 
         let (up, eq, down) = diffs.iter().fold((0, 0, 0), |(u, e, d), x| {
-            if x.abs() <= 1e-12 { (u, e + 1, d) } else if *x > 0.0 { (u + 1, e, d) } else { (u, e, d + 1) }
+            if x.abs() <= 1e-12 {
+                (u, e + 1, d)
+            } else if *x > 0.0 {
+                (u + 1, e, d)
+            } else {
+                (u, e, d + 1)
+            }
         });
         let med = dist(&diffs).map_or("-".to_string(), |d| format!("{:+.3}", d.median));
 
@@ -219,7 +240,8 @@ fn study(args: &Args) -> Study {
         // Offline: rank the final dgm archive on subsets of its own search panel.
         let cfg = cfg_for(&args.base, ParentSelection::Dgm, seed);
         let snap = dgm_snap.expect("dgm arm ran");
-        let b: Breeder<'_, GridDomain> = Breeder::resume_from(cfg, GenePool::grid(), &pool, None, snap).expect("resume");
+        let b: Breeder<'_, GridDomain> =
+            Breeder::resume_from(cfg, GenePool::grid(), &pool, None, snap).expect("resume");
         let scores = search_score_matrix(&b);
         let p = args.base.search_puzzles;
 
@@ -242,16 +264,23 @@ fn study(args: &Args) -> Study {
             }
 
             let arm = format!("dgm-subset-{k}");
-            let small = BreedConfig { search_puzzles: k, ..cfg_for(&args.base, ParentSelection::Dgm, seed) };
+            let small = BreedConfig {
+                search_puzzles: k,
+                ..cfg_for(&args.base, ParentSelection::Dgm, seed)
+            };
             let t = Instant::now();
             let (mut rec, report, snap) =
-                run_study::<GridDomain>(&arm, small, GenePool::grid(), &pool, true, 0.0).expect("run");
+                run_study::<GridDomain>(&arm, small, GenePool::grid(), &pool, true, 0.0)
+                    .expect("run");
 
             rec.wall_seconds = t.elapsed().as_secs_f64();
 
             let full = cfg_for(&args.base, ParentSelection::Dgm, seed);
 
-            if let Some(re) = reevaluate_finalists::<GridDomain>(full, GenePool::grid(), &pool, &snap, &report).expect("reeval") {
+            if let Some(re) =
+                reevaluate_finalists::<GridDomain>(full, GenePool::grid(), &pool, &snap, &report)
+                    .expect("reeval")
+            {
                 reeval.push((arm.clone(), seed, re));
             }
 
@@ -259,7 +288,12 @@ fn study(args: &Args) -> Study {
         }
     }
 
-    Study { runs, quality, reeval, cheap }
+    Study {
+        runs,
+        quality,
+        reeval,
+        cheap,
+    }
 }
 
 fn report(args: &Args, s: &Study) -> String {
@@ -284,33 +318,131 @@ fn report(args: &Args, s: &Study) -> String {
     );
     let _ = writeln!(out, "## Part A: arms at one call budget\n");
 
-    table(&mut out, "Held-out rate of the best bred finalist (select phase)", &s.runs, |r| r.best_finalist_heldout);
-    table(&mut out, "Held-out rate of the best seed Cascade (same in every arm)", &s.runs, |r| r.best_seed_heldout);
-    table(&mut out, "Best training rate in the archive", &s.runs, |r| r.best_train_rate);
-    table(&mut out, "Training rate of the final incumbent", &s.runs, |r| r.final_train_rate);
-    table(&mut out, "Held-out rate of the final incumbent", &s.runs, |r| r.final_heldout_rate);
-    table(&mut out, "Generalisation gap of the final incumbent (train - held-out)", &s.runs, |r| r.final_gap);
-    table(&mut out, "Slope of the gap per generation", &s.runs, |r| r.gap_slope);
-    table(&mut out, "Distinct behaviours in the final archive", &s.runs, |r| r.final_behaviours as f64);
-    table(&mut out, "Behaviours per archive member", &s.runs, |r| r.behaviour_share);
-    table(&mut out, "Mean entropy of the parent draw (bits)", &s.runs, |r| r.mean_parent_entropy_bits);
-    table(&mut out, "Generations completed", &s.runs, |r| r.generations_completed as f64);
-    table(&mut out, "Cascades evaluated on the search panel", &s.runs, |r| r.cascade_evaluations as f64);
-    table(&mut out, "Worker calls (budgeted)", &s.runs, |r| r.worker_calls as f64);
-    table(&mut out, "Completion tokens", &s.runs, |r| r.completion_tokens as f64);
+    table(
+        &mut out,
+        "Held-out rate of the best bred finalist (select phase)",
+        &s.runs,
+        |r| r.best_finalist_heldout,
+    );
+    table(
+        &mut out,
+        "Held-out rate of the best seed Cascade (same in every arm)",
+        &s.runs,
+        |r| r.best_seed_heldout,
+    );
+    table(
+        &mut out,
+        "Best training rate in the archive",
+        &s.runs,
+        |r| r.best_train_rate,
+    );
+    table(
+        &mut out,
+        "Training rate of the final incumbent",
+        &s.runs,
+        |r| r.final_train_rate,
+    );
+    table(
+        &mut out,
+        "Held-out rate of the final incumbent",
+        &s.runs,
+        |r| r.final_heldout_rate,
+    );
+    table(
+        &mut out,
+        "Generalisation gap of the final incumbent (train - held-out)",
+        &s.runs,
+        |r| r.final_gap,
+    );
+    table(&mut out, "Slope of the gap per generation", &s.runs, |r| {
+        r.gap_slope
+    });
+    table(
+        &mut out,
+        "Distinct behaviours in the final archive",
+        &s.runs,
+        |r| r.final_behaviours as f64,
+    );
+    table(&mut out, "Behaviours per archive member", &s.runs, |r| {
+        r.behaviour_share
+    });
+    table(
+        &mut out,
+        "Mean entropy of the parent draw (bits)",
+        &s.runs,
+        |r| r.mean_parent_entropy_bits,
+    );
+    table(&mut out, "Generations completed", &s.runs, |r| {
+        r.generations_completed as f64
+    });
+    table(
+        &mut out,
+        "Cascades evaluated on the search panel",
+        &s.runs,
+        |r| r.cascade_evaluations as f64,
+    );
+    table(&mut out, "Worker calls (budgeted)", &s.runs, |r| {
+        r.worker_calls as f64
+    });
+    table(&mut out, "Completion tokens", &s.runs, |r| {
+        r.completion_tokens as f64
+    });
     table(&mut out, "Model cost", &s.runs, |r| r.model_cost);
-    table(&mut out, "Wall seconds (including the held-out observer)", &s.runs, |r| r.wall_seconds);
-    table(&mut out, "Champions frozen", &s.runs, |r| r.champions_frozen as f64);
-    table(&mut out, "Share of champions in the lineage of the last generation", &s.runs, |r| r.champion_lineage_alive);
-    table(&mut out, "Share of earlier champions surpassed by the final one", &s.runs, |r| r.champions_surpassed);
-    table(&mut out, "Rediscoveries (newborn behaves like an earlier member)", &s.runs, |r| r.rediscoveries as f64);
-    table(&mut out, "Champion cycles", &s.runs, |r| r.champion_cycles as f64);
-    paired(&mut out, "Held-out rate of the best finalist", &s.runs, |r| r.best_finalist_heldout);
+    table(
+        &mut out,
+        "Wall seconds (including the held-out observer)",
+        &s.runs,
+        |r| r.wall_seconds,
+    );
+    table(&mut out, "Champions frozen", &s.runs, |r| {
+        r.champions_frozen as f64
+    });
+    table(
+        &mut out,
+        "Share of champions in the lineage of the last generation",
+        &s.runs,
+        |r| r.champion_lineage_alive,
+    );
+    table(
+        &mut out,
+        "Share of earlier champions surpassed by the final one",
+        &s.runs,
+        |r| r.champions_surpassed,
+    );
+    table(
+        &mut out,
+        "Rediscoveries (newborn behaves like an earlier member)",
+        &s.runs,
+        |r| r.rediscoveries as f64,
+    );
+    table(&mut out, "Champion cycles", &s.runs, |r| {
+        r.champion_cycles as f64
+    });
+    paired(
+        &mut out,
+        "Held-out rate of the best finalist (picked on the held-out panel, so optimistic)",
+        &s.runs,
+        |r| r.best_finalist_heldout,
+    );
+    paired(
+        &mut out,
+        "Held-out rate of the final incumbent (picked on training fitness alone)",
+        &s.runs,
+        |r| r.final_heldout_rate,
+    );
     paired(&mut out, "Generalisation gap", &s.runs, |r| r.final_gap);
-    paired(&mut out, "Distinct behaviours", &s.runs, |r| r.final_behaviours as f64);
+    paired(&mut out, "Distinct behaviours", &s.runs, |r| {
+        r.final_behaviours as f64
+    });
 
-    let _ = writeln!(out, "## Part B: evaluation subsets\n\n**Offline: ranking on a random subset of the search tasks against all of them** (final dgm archives, 200 random subsets per archive; top-3 overlap)\n");
-    let _ = writeln!(out, "| subset | cost share | Kendall tau (median over seeds) | top-1 hit rate | top-1 regret | top-3 overlap |\n|---|---|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "## Part B: evaluation subsets\n\n**Offline: ranking on a random subset of the search tasks against all of them** (final dgm archives, 200 random subsets per archive; top-3 overlap)\n"
+    );
+    let _ = writeln!(
+        out,
+        "| subset | cost share | Kendall tau (median over seeds) | top-1 hit rate | top-1 regret | top-3 overlap |\n|---|---|---|---|---|---|"
+    );
 
     let mut ks: Vec<usize> = s.quality.iter().map(|(_, q)| q.subset).collect();
 
@@ -318,8 +450,15 @@ fn report(args: &Args, s: &Study) -> String {
     ks.dedup();
 
     for k in ks {
-        let qs: Vec<&RankQuality> = s.quality.iter().filter(|(_, q)| q.subset == k).map(|(_, q)| q).collect();
-        let med = |f: &dyn Fn(&RankQuality) -> f64| dist(&qs.iter().map(|q| f(q)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median);
+        let qs: Vec<&RankQuality> = s
+            .quality
+            .iter()
+            .filter(|(_, q)| q.subset == k)
+            .map(|(_, q)| q)
+            .collect();
+        let med = |f: &dyn Fn(&RankQuality) -> f64| {
+            dist(&qs.iter().map(|q| f(q)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median)
+        };
 
         let _ = writeln!(
             out,
@@ -335,15 +474,39 @@ fn report(args: &Args, s: &Study) -> String {
 
     out.push('\n');
 
-    let all: Vec<RunRecord> = s.runs.iter().filter(|r| r.arm == "dgm").cloned().chain(s.cheap.iter().cloned()).collect();
+    let all: Vec<RunRecord> = s
+        .runs
+        .iter()
+        .filter(|r| r.arm == "dgm")
+        .cloned()
+        .chain(s.cheap.iter().cloned())
+        .collect();
 
-    let _ = writeln!(out, "**End to end: dgm on a subset of the search panel at the same call budget** (reference: the full-panel dgm arm)\n");
+    let _ = writeln!(
+        out,
+        "**End to end: dgm on a subset of the search panel at the same call budget** (reference: the full-panel dgm arm)\n"
+    );
 
-    table(&mut out, "Held-out rate of the best bred finalist, as the subset ranking picks it", &all, |r| r.best_finalist_heldout);
-    table(&mut out, "Generations completed", &all, |r| r.generations_completed as f64);
-    table(&mut out, "Cascades evaluated on the search panel", &all, |r| r.cascade_evaluations as f64);
+    table(
+        &mut out,
+        "Held-out rate of the best bred finalist (select phase: best of the finalists on the held-out panel)",
+        &all,
+        |r| r.best_finalist_heldout,
+    );
+    table(&mut out, "Generations completed", &all, |r| {
+        r.generations_completed as f64
+    });
+    table(
+        &mut out,
+        "Cascades evaluated on the search panel",
+        &all,
+        |r| r.cascade_evaluations as f64,
+    );
 
-    let _ = writeln!(out, "| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) |\n|---|---|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "| arm | seeds | finalist pick changed by full re-evaluation | held-out of subset pick (median) | held-out of full-panel pick (median) | tau subset vs full (median) |\n|---|---|---|---|---|---|"
+    );
 
     let mut arms: Vec<&str> = s.reeval.iter().map(|(a, _, _)| a.as_str()).collect();
 
@@ -351,8 +514,15 @@ fn report(args: &Args, s: &Study) -> String {
     arms.dedup();
 
     for arm in arms {
-        let rs: Vec<&Reevaluation> = s.reeval.iter().filter(|(a, _, _)| a == arm).map(|(_, _, r)| r).collect();
-        let med = |f: &dyn Fn(&Reevaluation) -> f64| dist(&rs.iter().map(|r| f(r)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median);
+        let rs: Vec<&Reevaluation> = s
+            .reeval
+            .iter()
+            .filter(|(a, _, _)| a == arm)
+            .map(|(_, _, r)| r)
+            .collect();
+        let med = |f: &dyn Fn(&Reevaluation) -> f64| {
+            dist(&rs.iter().map(|r| f(r)).collect::<Vec<_>>()).map_or(f64::NAN, |d| d.median)
+        };
 
         let _ = writeln!(
             out,
@@ -394,10 +564,23 @@ mod tests {
     use super::*;
 
     fn tiny() -> Args {
-        let argv: Vec<String> = ["--seeds", "2", "--generations", "3", "--children", "3", "--search", "8", "--select", "6", "--max-calls", "100000"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let argv: Vec<String> = [
+            "--seeds",
+            "2",
+            "--generations",
+            "3",
+            "--children",
+            "3",
+            "--search",
+            "8",
+            "--select",
+            "6",
+            "--max-calls",
+            "100000",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
         parse(&argv).expect("args")
     }
@@ -418,13 +601,23 @@ mod tests {
                 r.wall_seconds = 0.0;
             }
 
-            report(&a, &Study { runs: s.runs.clone(), ..s })
+            report(
+                &a,
+                &Study {
+                    runs: s.runs.clone(),
+                    ..s
+                },
+            )
         };
         let first = strip(study(&a));
         let second = strip(study(&a));
 
         assert_eq!(first, second);
-        assert!(first.contains("| lexicase |") && first.contains("| tournament |") && first.contains("| dgm |"));
+        assert!(
+            first.contains("| lexicase |")
+                && first.contains("| tournament |")
+                && first.contains("| dgm |")
+        );
     }
 
     #[test]
@@ -433,7 +626,17 @@ mod tests {
         let s = study(&a);
 
         for seed in a.first_seed..a.first_seed + a.seeds {
-            let g0: Vec<_> = s.runs.iter().filter(|r| r.seed == seed).map(|r| (r.generations[0].incumbent.clone(), r.generations[0].train_rate.to_bits())).collect();
+            let g0: Vec<_> = s
+                .runs
+                .iter()
+                .filter(|r| r.seed == seed)
+                .map(|r| {
+                    (
+                        r.generations[0].incumbent.clone(),
+                        r.generations[0].train_rate.to_bits(),
+                    )
+                })
+                .collect();
 
             assert_eq!(g0.len(), ARMS.len());
             assert!(g0.windows(2).all(|w| w[0] == w[1]));

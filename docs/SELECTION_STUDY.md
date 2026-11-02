@@ -53,7 +53,7 @@ Per seed, all four arms share: panels, seed Cascades (generation 0 identical, te
 
 ## Results (measured; 30 seeds, simulated models)
 
-Held-out rate of the best bred finalist, median [p25, p75]:
+Held-out rate of the best bred finalist, median [p25, p75] (picked on the held-out panel, so optimistic; the clean measure follows the table):
 
 | arm | 40k calls | 12k calls |
 |---|---|---|
@@ -64,6 +64,8 @@ Held-out rate of the best bred finalist, median [p25, p75]:
 
 Paired per seed against dgm at 40k (better / equal / worse): lexicase 18/7/5 (two-sided sign test on untied seeds p ≈ 0.011, unadjusted); tournament 12/7/11 (no evidence); uniform 9/6/15 (no evidence). At 12k: lexicase 19/7/4. Best seed Cascade is ≈0.33 in every arm, so all arms improve on the seeds.
 
+**The headline number is optimistic.** It takes the best of the three bred finalists on the held-out panel itself, so the panel helps to pick what it then scores. Part B shows the size: for dgm-subset-10 the best of the finalists scores 0.700, while a pick made without the held-out panel scores 0.625 (subset pick) or 0.675 (full-panel pick). The final incumbent is chosen on training fitness alone, so its held-out rate is the clean measure. Paired against dgm (better / equal / worse): at 40k lexicase 17/8/5 (sign test p ≈ 0.017, unadjusted; about 0.05 after a Holm correction over the three arms), tournament 13/7/10, uniform 7/9/14; at 12k lexicase 23/4/3 (p < 0.001), tournament 11/10/9, uniform 12/6/12. Medians at 40k: dgm 0.675, lexicase 0.750, tournament 0.700, uniform 0.675; at 12k: dgm 0.625, lexicase 0.700. So the lexicase lead holds on the clean measure. It stays exploratory: simulated models, and both budgets use the same seeds.
+
 Other measurements at 40k, median:
 
 - **Generalisation gap** (final incumbent): 0.025 in every arm; per-seed gap differences vs dgm are balanced. The gap slope is ≈0 in every arm. **No overfitting trend and no arm difference was observed** at this budget.
@@ -71,7 +73,7 @@ Other measurements at 40k, median:
 - **Cost**: calls are budget-matched (~38.4k). Lexicase completed fewer generations (31 vs 37) and evaluated fewer Cascades (9.8k vs 11.7k), i.e. chose more expensive (more tokens: 4.7M vs 4.4M) Cascades. Wall time is similar (≈0.75 s).
 - **Champions**: champions in the final lineage: dgm 0.78, lexicase 0.67, tournament 0.78, uniform 0.43. Lexicase had slightly more champion cycles (median 1 vs 0) and ≈ equal rediscovery counts. Share of earlier champions surpassed by the final: dgm 0.86, lexicase 0.78.
 - **Down-sampling, offline** (40k): 5/40 tasks (12% of cost): tau 0.63, top-1 hit 0.19, regret 0.14; 10/40: tau 0.76, hit 0.53, regret 0.05; 20/40: tau 0.87, hit 0.80, regret 0.01. Subsets do **not** reproduce the full ranking.
-- **Down-sampling, end to end** (same call budget): subset runs complete 1.7–3× more generations, final finalist held-out rates are similar to dgm (10 tasks: 0.700, 20 tasks: 0.675, vs 0.675), but full re-evaluation changed the finalist pick in 8/30 (10 tasks) and 10/30 (20 tasks) seeds at 40k, and the full-panel pick had higher median held-out (0.675 vs 0.625 and 0.650). So the final choice must be re-evaluated on the full set.
+- **Down-sampling, end to end** (same call budget): subset runs complete 1.7–3× more generations, the best of their finalists on the held-out panel scores like dgm (10 tasks: 0.700, 20 tasks: 0.675, vs 0.675; optimistic, as above), but full re-evaluation changed the finalist pick in 8/30 (10 tasks) and 10/30 (20 tasks) seeds at 40k, and the full-panel pick had higher median held-out (0.675 vs 0.625 and 0.650). So the final choice must be re-evaluated on the full set.
 
 ## Limitations
 
@@ -85,4 +87,4 @@ Other measurements at 40k, median:
 
 ## Tests
 
-`selection.rs` (specialist retention, seed reproducibility, epsilon/float ties, degenerate inputs, tournament weights); `arena.rs` (strategy determinism, config hash/serialisation, uniform unchanged); `study.rs` (observer does not change breeding, reproducibility, champion immutability and replay, newborn-vs-champion comparison, subset quality, re-evaluation); `examples/selection_study.rs` (args, same generation 0 across arms, reproducible report). Full `cargo test --release` passed before the study example and re-evaluation were added; those were tested individually (`--lib cascade::study`, `--example selection_study`).
+`selection.rs` (specialist retention, seed reproducibility, epsilon/float ties, degenerate inputs, tournament weights); `arena.rs` (strategy determinism, config hash/serialisation, uniform unchanged); `study.rs` (observer does not change breeding, reproducibility, champion immutability and replay, newborn-vs-champion comparison, subset quality, re-evaluation); `examples/selection_study.rs` (args, same generation 0 across arms, reproducible report). Re-checked on the final state on 2026-11-02: `cargo test` passed on every target (the library: 839 passed, 13 ignored; the five `a_plain_cnn_learns_*` tests hit their 30 s training clock under a load of 15 on 4 cores and passed when run alone), `cargo test` in `backend-ollama` passed, `cargo clippy --all-targets -- -D warnings` is clean, and the three new files pass rustfmt. Running the study again gave the committed reports, apart from wall seconds.

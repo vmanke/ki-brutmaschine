@@ -193,13 +193,21 @@ Seeds 1..30 (30 per arm). Per run: up to 1000 generations, 8 children per genera
 | tournament | 0.000 [0.000, 1.000] (0.000..2.000) |
 | uniform | 0.000 [0.000, 0.000] (0.000..2.000) |
 
-**Held-out rate of the best finalist** (arm minus dgm, per seed)
+**Held-out rate of the best finalist (picked on the held-out panel, so optimistic)** (arm minus dgm, per seed)
 
 | arm | median diff | larger / equal / smaller |
 |---|---|---|
 | uniform | -0.025 | 9 / 6 / 15 |
 | lexicase | +0.050 | 19 / 7 / 4 |
 | tournament | +0.000 | 10 / 8 / 12 |
+
+**Held-out rate of the final incumbent (picked on training fitness alone)** (arm minus dgm, per seed)
+
+| arm | median diff | larger / equal / smaller |
+|---|---|---|
+| uniform | +0.000 | 12 / 6 / 12 |
+| lexicase | +0.050 | 23 / 4 / 3 |
+| tournament | +0.000 | 11 / 10 / 9 |
 
 **Generalisation gap** (arm minus dgm, per seed)
 
@@ -229,7 +237,7 @@ Seeds 1..30 (30 per arm). Per run: up to 1000 generations, 8 children per genera
 
 **End to end: dgm on a subset of the search panel at the same call budget** (reference: the full-panel dgm arm)
 
-**Held-out rate of the best bred finalist, as the subset ranking picks it**
+**Held-out rate of the best bred finalist (select phase: best of the finalists on the held-out panel)**
 
 | arm | median [p25, p75] (min..max) |
 |---|---|

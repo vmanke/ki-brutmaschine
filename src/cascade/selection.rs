@@ -100,7 +100,10 @@ pub fn lexicase_pick(
         }
 
         let at = |i: usize| clean(scores[i].get(t).copied().unwrap_or(0.0));
-        let best = alive.iter().map(|&i| at(i)).fold(f64::NEG_INFINITY, f64::max);
+        let best = alive
+            .iter()
+            .map(|&i| at(i))
+            .fold(f64::NEG_INFINITY, f64::max);
         let cut = best - epsilon - TIE_SLACK;
 
         alive.retain(|&i| at(i) >= cut);
@@ -223,7 +226,10 @@ mod tests {
         };
 
         assert_eq!(count(0.0), 0);
-        assert!(count(0.06) > 100, "a score within epsilon stays in the running");
+        assert!(
+            count(0.06) > 100,
+            "a score within epsilon stays in the running"
+        );
     }
 
     #[test]
@@ -284,9 +290,30 @@ mod tests {
     fn params_check_and_default() {
         assert!(SelectionParams::default().is_default());
         assert!(SelectionParams::default().check().is_ok());
-        assert!(SelectionParams { lexicase_epsilon: -0.1, ..Default::default() }.check().is_err());
-        assert!(SelectionParams { lexicase_epsilon: f64::NAN, ..Default::default() }.check().is_err());
-        assert!(SelectionParams { tournament_size: 0, ..Default::default() }.check().is_err());
+        assert!(
+            SelectionParams {
+                lexicase_epsilon: -0.1,
+                ..Default::default()
+            }
+            .check()
+            .is_err()
+        );
+        assert!(
+            SelectionParams {
+                lexicase_epsilon: f64::NAN,
+                ..Default::default()
+            }
+            .check()
+            .is_err()
+        );
+        assert!(
+            SelectionParams {
+                tournament_size: 0,
+                ..Default::default()
+            }
+            .check()
+            .is_err()
+        );
         assert!(serde_json::from_str::<SelectionParams>(r#"{"bogus":1}"#).is_err());
     }
 }
