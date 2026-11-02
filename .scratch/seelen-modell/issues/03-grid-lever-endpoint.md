@@ -1,6 +1,6 @@
 # 03 Grid track: a pre-specified screen of the step 2 Soul on grids
 
-Status: needs-triage
+Status: resolved
 Blocked by: none (it needs no code; the owner chose this track on 2026-11-02)
 Spec: `../spec.md`, sections 5, 6 and 7
 
@@ -166,3 +166,13 @@ the synthetic Runs of its `--self-test`. It runs once, after all 160 Runs have f
   pre-specification changed; a deviation is reported with its reason.
 - Phase 3, only after a go: a pre-registration of the counted grid experiment, approved by the
   owner before its first Run.
+
+## Comments
+
+- 2026-11-02, phase 2 done: the screen ran as pre-specified at dbbfc7d. All 160 Runs passed
+  `--verify`, and all three gates hold: the Soul flipped a vote by generation 50 on 40 of 40
+  seeds, and S parted from each control before generation 100 on 40 of 40. No comparison
+  earned a go. S against N: 21 to 18 with 1 tie (open). S against V: 20 to 18 with 2 ties
+  (open). S against K: 18 to 20 with 2 ties (stop). The results are in `../grid-screen.md`.
+  So on grids the step 2 Soul acts early and often, but its effect on the endpoint is near a
+  coin toss. Phase 3 does not start without a go; the owner decides on the two open comparisons.
