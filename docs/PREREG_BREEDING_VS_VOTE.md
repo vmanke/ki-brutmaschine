@@ -3,9 +3,10 @@
 Status: **draft, not frozen.** Claude, the AI assistant, wrote it on 2026-11-02 at the
 owner's request. The owner decided the six decisions of section 10 on 2026-11-02, all as
 recommended. A pilot runs next (section 9). After the pilot, this file gets its final
-numbers and is frozen at the squash-merge commit of its pull request, as in step 1
-([PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md), status paragraph). No counted run
-starts before that commit exists.
+numbers in a pull request of its own, and it is frozen at the squash-merge commit of that
+pull request, as in step 1 ([PREREG_STEP1_CIRCUITS.md](PREREG_STEP1_CIRCUITS.md), status
+paragraph). Merging this draft, with its tools, freezes nothing; it puts the pilot's tools
+on the main branch. No counted run starts before the freezing commit exists.
 
 All runs made before the freeze are pilot data. They never count. This includes the
 first real runs of 2026-10-31 and the runs of DGM against uniform selection that a VM
