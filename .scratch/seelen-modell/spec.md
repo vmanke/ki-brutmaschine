@@ -89,7 +89,9 @@ pairs) then proves a claim with these probabilities (our exact calculation):
 | 0.72 | 0.88 | 47 | 0.74 |
 | 0.75 | 0.96 | 40 | 0.88 |
 
-Early parting removes the ties by construction, which helps. Still, a confirmatory test on the
+Early parting removes the ties that came from shared trajectories, which helps. Ties can still
+occur: two Runs can pass in the same generation, and two Runs that do not pass by generation
+1000 tie as well. The screen measures this tie rate. Still, a confirmatory test on the
 pass time needs a speed-up of about 2.5 to 3. A smaller effect can be seen in process measures
 within 8 seeds, but it cannot be confirmed on the pass time within 120 pairs. A process measure
 here is a count along the way to the pass, such as how often a change keeps both families of a
@@ -109,8 +111,11 @@ step 1 and S, V, K, E and N of step 2.
 **Mechanism.** The Soul steers the section operators. For a Worker with birth Soul P, family f
 gets the preference w_f = |u(p_f) + 1|² / 2 = 1 + cos(2π p_f / 65536). It is the intensity of
 the family's phasor added to a fixed reference phasor 1, halved. It lies between 0 and 2, and its
-mean over uniform phases is 1, so the operators stay unbiased on average. With the sign readout
-of arm V it is 0 or 2. A text's lean is L = Σ (w_f − 1) over the families its words name, by the
+mean over uniform phases is 1. With the sign readout of arm V it is 0 or 2. A mean of 1 does not
+make a choice unbiased: after the weights are normalized, a text that names a family is chosen
+less often on average. Against one text that names no family, it is chosen in 42.6 % of the
+cases instead of 50 %, averaged over all phases with the floor ε below. So W0 is a random bias,
+not a neutral arm; N stays the neutral control. A text's lean is L = Σ (w_f − 1) over the families its words name, by the
 stems of `designer::FAMILY_STEMS`; a text that names no family has L = 0. Three choices then
 follow the lean, each weight at least ε = 0.05 (a placeholder), so no choice becomes impossible:
 
@@ -121,7 +126,12 @@ follow the lean, each weight at least ε = 0.05 (a placeholder), so no choice be
    choice 2 for the section that the phrase would overwrite.
 
 Section crossover takes the other source's section with probability (1 + L(theirs)) / ((1 +
-L(mine)) + (1 + L(theirs))) instead of 1/2. The Soul that steers a change is the birth Soul of
+L(mine)) + (1 + L(theirs))) instead of 1/2. Each weight multiplies the probability that today's
+operator gives an option, and the result is normalized again. So W keeps today's rules:
+SectionReplace still draws its phrase with probability 0.7 from the phrases of the same section
+name, otherwise from the whole pool (`replacement_text` in `src/cascade/variation.rs`), and W
+reweights within the pool that is drawn. With every preference 1 the operators are exactly
+today's. The Soul that steers a change is the birth Soul of
 the parent Worker that the operator changes; for section crossover it is the first parent's
 Worker. Souletics then passes that Soul to the child, so the preference that shaped a change
 travels with its result. Everything else stays as in arm S: the complex vote, the designer's
@@ -187,8 +197,9 @@ about 2 hours. The criteria are fixed before the first Run:
    the parents chosen in generations 41 to 50 is above 1.2 in W on at least 6 of 8 seeds, and
    below 1.1 in W0 on at least 6 of 8.
 3. **Protection.** Pooled over the seeds, before the first Worker with all three families, at
-   most 40 % of the draws that change a promising Worker lose one of its families in W; in W0
-   and N the share stays near the pilot's 57.5 %.
+   most 40 % of the draws that change a promising Worker lose one of its families in W, and W's
+   share lies at least 10 percentage points below that of W0 and below that of N. If an arm has
+   fewer than 30 such draws, the criterion fails. The pilot's share was 57.5 %.
 4. **Direction, reported.** The seeds on which W passes before N, and before W0. With no effect,
    W passes first on at least 5 of 8 seeds with probability 0.36, so this is a signal, not a
    test.
@@ -449,8 +460,8 @@ needs no build. The owner decides which of the three tickets start.
 If W passes its screen, a pre-registration in the form of step 1 follows: arm W against W0 (claim:
 the inherited Soul helps) and arm W against N (claim: the model helps), the pass time as the
 endpoint, the sequential rule with p₁ fixed from the screen, a fresh seed list fixed in advance,
-and N_max from the table of section 3. Early parting makes ties rare, so the table's column
-without ties applies. The screen's seeds 913 to 920 never count.
+and N_max from the table of section 3, with the tie rate that the screen measured: early parting
+should make ties rarer, but it does not remove them. The screen's seeds 913 to 920 never count.
 
 ## 9. How we counted
 

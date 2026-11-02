@@ -39,9 +39,9 @@ so that ticket 02 can screen it. It changes `src/`, so it waits for the owner's 
   its recorded head hash.
 - Tests show: the mean preference over 2^20 fresh Souls is 1 within 0.01 per family; no weight
   falls below ε; a Worker with w = 2 on a family overwrites a text naming it less often than
-  uniform, by the expected factor within 3 standard errors over 100 000 draws; with complex
-  phases all at a quarter turn (w = 1) the weighted choices match uniform choices in
-  distribution.
+  today's operator does, by the expected factor within 3 standard errors over 100 000 draws; with complex
+  phases all at a quarter turn (w = 1) the weighted choices match today's choices in
+  distribution, including the draw of `replacement_text` (0.7 from the same section name).
 - A 60-generation circuit Run with `variation: prefer` passes `--verify`, and its five record
   files are byte-equal at 1 and at 4 threads.
 - `CONTEXT.md` is not changed by this ticket: "preference" stays a word of the design note until

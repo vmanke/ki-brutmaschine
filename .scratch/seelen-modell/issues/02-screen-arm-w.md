@@ -49,8 +49,9 @@ The criteria below are fixed before the first Run and never change after it.
    the parents chosen in generations 41 to 50 is above 1.2 in W on at least 6 of 8 seeds, and
    below 1.1 in W0 on at least 6 of 8.
 3. **Protection.** Pooled over the seeds, before the first Worker with all three families, at
-   most 40 % of the draws that change a promising Worker lose one of its families in W, while W0
-   and N stay near the pilot's 57.5 %.
+   most 40 % of the draws that change a promising Worker lose one of its families in W, and W's
+   share lies at least 10 percentage points below that of W0 and below that of N. If an arm has
+   fewer than 30 such draws, the criterion fails. The pilot's share was 57.5 %.
 4. **Direction, reported.** The seeds on which W passes before N, and before W0. With no effect,
    W passes first on at least 5 of 8 seeds with probability 0.36, so this is a signal, not a
    test.
