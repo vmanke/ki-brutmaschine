@@ -1,6 +1,6 @@
 # 13 The counted experiment and its report
 
-Status: needs-triage (starts only after the frozen pre-registration of ticket 10)
+Status: wontfix (the counted experiment is not run; see ticket 10)
 Blocked by: 10, 11, 12
 Spec: `../spec.md`, section 17
 
@@ -26,3 +26,5 @@ Spec: `../spec.md`, section 17
   rung 1 of the ladder.
 
 ## Comments
+- 2026-11-02, wontfix. After the pilot of ticket 11 the owner decided not to run the counted
+  experiment (ticket 10).

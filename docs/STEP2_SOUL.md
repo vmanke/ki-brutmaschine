@@ -245,15 +245,22 @@ is one), `authors` (per search task, the Workers whose answer was chosen) and `v
 of the votes). The genome in the event holds the birth Soul and κ. After each `generation` event
 a `souls` event names every Worker whose current Soul changed at the commit, with its new phases.
 
-## 5. What comes next
+## 5. The pilot and the decision
 
-- **Pilot (ticket 11).** Arms S, V and K, plus E (equal strengths) and N (no Soul, which is arm A
-  of step 1), on the pilot seeds 901 to 912 over 1000 generations. It sets the placeholders and
-  measures how often the Soul changes an outcome.
-- **Pre-registration (ticket 10).** Two separate claims, "S before V" and "S before K", by the
-  pass time of step 1, each wrong with probability at most 1/200, both together at most 1/100
-  [Q74 a]. It is written after the pilot and frozen by the merge of its pull request.
-- **Counted Runs (ticket 13).** We add their results to this report.
+- **Pilot (ticket 11, pull request #50).** Arms S, V and K, plus E (equal strengths) and N (no
+  Soul, which is arm A of step 1), ran on the pilot seeds 901 to 912 over 1000 generations. Its
+  report is [docs/pilot-step2/README.md](pilot-step2/README.md). All 60 Runs passed `--verify`,
+  and seed 901, run again in all five arms, gave the same bytes.
+- **The Soul acts late.** It changes an outcome only through a complex vote that flips its winner
+  or a reply in which the phases decide the simulated designer's choice. Both are rare, and they
+  often come after the pass time. Against arm V, arm S passed first 4 times, arm V 4 times, and 4
+  triples tied. Against arm K the counts were 3, 3 and 6. Arm S never passed before arm N.
+- **Decision.** At the pilot's estimates, the planned comparison of ticket 10 would prove a claim
+  with probability below 0.004. On 2026-11-02 the owner therefore decided not to run the counted
+  experiment (tickets 10 and 13). [docs/PREREG_STEP2_SOUL.md](PREREG_STEP2_SOUL.md) stays as the
+  record of the rejected design.
+- **Next.** A search for a Soul model that changes outcomes early and often, so that its effect
+  can be measured.
 
 ## 6. Limits
 

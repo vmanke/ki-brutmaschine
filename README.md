@@ -14,7 +14,8 @@ promotion of winners (see "CNN models in the MLP mode"). Part 3, ARC grids as ta
 **Step 2** gives every Worker a hidden, inherited **Soul**, which shows itself only in the
 Worker's Character. A judgment becomes an Observation: it pulls the Souls of both sides
 together, as strongly as the observer's **Coupling strength** κ says. It is built and off by
-default (see "The Soul (step 2)"); the pre-registered comparison follows after a pilot.
+default (see "The Soul (step 2)"). Its pilot found no effect on the pass time, so the counted
+comparison is not run; a Soul model that acts earlier comes next.
 
 An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
 with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
@@ -74,6 +75,11 @@ Status on 2026-11-02.
   ([ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md),
   [docs/STEP2_SOUL.md](docs/STEP2_SOUL.md)); see "The Soul (step 2)". Without `--soul` every Run
   writes the same bytes as before.
+- **Step 2, pilot (ticket 11, PR #50).** 60 Runs on the pilot seeds 901 to 912. The Soul
+  changes outcomes rarely and mostly after the pass time: S against V 4:4 with 4 ties, S against
+  K 3:3 with 6 ties ([report](docs/pilot-step2/README.md)). The counted comparison is therefore
+  not run (tickets 10 and 13).
+- **Glossary of step 2 (PR #49).** The new terms of step 2 are in `CONTEXT.md`.
 - **Real language models (PR #33).** The separate package `backend-ollama` with the program
   `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
   are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -83,15 +89,13 @@ Status on 2026-11-02.
 
 **Being built**
 
-- **Glossary of step 2.** The new terms of step 2 reach `CONTEXT.md` in a small pull request of
-  their own, never inside a code pull request (Q53).
+- **A Soul model that works.** A search for a Soul model that changes outcomes early and often,
+  so that its effect can be measured. Its design comes in a pull request of its own.
 
 **Planned**
 
 - **Breeding on ARC grids.** A run (`brut run`) that breeds CNNs on the ARC grid tasks;
   today `brut arc-grid` trains and scores given genomes.
-- **Step 2, comparison.** Pilot (ticket 11), pre-registration (ticket 10) and counted Runs
-  (ticket 13). The pilot comes first: it sets the open numbers of the pre-registration.
 - **LLMs use CNNs (design written, pull request follows).** F1: a CNN as a Worker in a
   Cascade. F2: a language model as Architect that proposes CNN blueprints. F3: a CNN as a
   tool that the language model calls, at most 3 calls per answer.
@@ -859,7 +863,8 @@ froze the pre-registration. Decision 5 is shown in that version:
 
 ## The Soul (step 2)
 
-Status: built and off by default; the comparison follows. Described in
+Status: built and off by default; its pilot found no effect, so the counted comparison is not run
+(PR #50). Described in
 [docs/STEP2_SOUL.md](docs/STEP2_SOUL.md) and
 [ADR 0009](docs/adr/0009-workers-carry-an-inherited-soul-whose-votes-interfere.md).
 Specification: [.scratch/seele-und-kappa/spec.md](.scratch/seele-und-kappa/spec.md), with the
@@ -878,7 +883,7 @@ then a new Soul) and are imprinted toward their parents' current Souls after the
 The simulated models read the phases only where they would otherwise take the first of equally
 good answers or flip a coin, so costs, scores and the calibration of step 1 stay as they are.
 
-`--soul s|v|k` sets one of the three arms of the coming comparison: S, the Soul; V, the same
+`--soul s|v|k` sets one of the three arms of the pilot's comparison: S, the Soul; V, the same
 Soul read only as signs, the real-valued control; K, the Soul with κ fixed at 0. Without `--soul`
 a Run has no Soul and writes the same bytes as before step 2. A reproducible Run on pilot seed
 901:
@@ -906,7 +911,7 @@ brut-breed: 2046 events, hash chain intact, head e38339538f19d85fccd1d1a7a1c3a04
 ```
 
 The numbers of the presets (κ of the seeds 0.2, its step 0.02, a phase step of 512 units, θ = 1)
-are placeholders until the pilot sets them, and then this line changes too. For a finished Run
+are the placeholders, which the pilot kept. For a finished Run
 with Souls, on circuits and on grids, `--verify` also ties every member's Soul records and current
 Souls to the log. Finer settings come as a `soul` object in `--config`; `--soul` next to one is
 wrong usage, and a resume refuses `--soul`. The pilot seeds 901 to 923 never count.
