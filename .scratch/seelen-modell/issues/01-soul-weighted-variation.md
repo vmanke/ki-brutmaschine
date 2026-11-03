@@ -1,6 +1,6 @@
 # 01 Soul-weighted variation behind a switch (arm W)
 
-Status: needs-triage
+Status: resolved
 Blocked by: none
 Spec: `../spec.md`, section 4.1
 
@@ -91,3 +91,5 @@ so that ticket 02 can screen it. It changes `src/`, so it waits for the owner's 
   `--verify`, and their five record files are byte-equal at 1 and 4 threads. The weights
   changed 108 choices in W (1.8 per generation, the first in generation 1) and 77 in WF (1.3
   per generation, the first in generation 1). These Runs are no part of the screen.
+- 2026-11-03, committed in pull request #52 as 65ec9e3; d69b26d fixes a test and this
+  ticket's text and changes no file in `src/`. The screen of ticket 02 ran on 65ec9e3.

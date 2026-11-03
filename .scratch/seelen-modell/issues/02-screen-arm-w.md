@@ -1,6 +1,6 @@
 # 02 Screen arm W against W0 and N on seeds 913 to 920
 
-Status: needs-triage
+Status: resolved
 Blocked by: 01
 Spec: `../spec.md`, sections 3, 4.1 and 5
 
@@ -76,3 +76,16 @@ fails. In every other case the owner decides. A go leads to a pre-registration o
 - `.scratch/seelen-modell/screen-w.md` holds every criterion with its numbers and the verdict,
   and the numbers of arm WF for description.
 - The analysis scripts and their outputs are in `.scratch/seelen-modell/analysis/`.
+
+## Comments
+
+- 2026-11-03, done: the screen ran as fixed at 65ec9e3. All 32 Runs passed `--verify`. The
+  verdict is stop, because criteria 1, 2 and 3 fail. Early: W parted from N before either Run
+  passed on 8 of 8 seeds, but its weights changed a choice in generation 1 or 2 on only 7 of 8;
+  on seed 914 the first change came in generation 5. Self-adaptation: W's mean preference was
+  above 1.2 on 3 of 8 seeds, where 6 were needed; on the other 5 it lay below 1. Protection: W
+  lost a family in 43.6 % of the draws that changed a promising Worker, where at most 40 % was
+  allowed, against 42.3 % in W0 and 51.3 % in N. N passed before W on 6 of 8 seeds. Arm WF, for
+  description: it passed before W on 8 of 8 seeds and before N on 5, and it lost a family in
+  6.0 % of such draws. The results are in `../screen-w.md`. No confirmatory experiment on W
+  follows; the owner adopts or drops ADR 0011.

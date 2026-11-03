@@ -1,0 +1,59 @@
+{
+  "seed": 901,
+  "generations": 1000,
+  "children_per_generation": 8,
+  "search_puzzles": 33,
+  "select_puzzles": 22,
+  "crossover_rate": 0.5,
+  "peer_opponents": 3,
+  "peer_puzzles_per_pair": 2,
+  "judge_weight": 0.2,
+  "token_cost_per_1k": 0.01,
+  "dgm_lambda": 10.0,
+  "dgm_alpha0": 0.5,
+  "llm_every": 0,
+  "llm_children": 2,
+  "pause_for_llm": true,
+  "max_calls": 13000000,
+  "finalists": 3,
+  "limits": {
+    "models": [
+      {
+        "tag": "sim:small",
+        "cost_per_call": 0.0005
+      },
+      {
+        "tag": "sim:large",
+        "cost_per_call": 0.002
+      }
+    ],
+    "max_stages": 4,
+    "max_width": 3,
+    "think_ceiling_per_stage": []
+  },
+  "domain": {
+    "circuits": {
+      "targets": [],
+      "dress": true,
+      "max_gates": 64
+    }
+  },
+  "soul": {
+    "readout": "complex",
+    "strengths": "domain",
+    "vote": true,
+    "simulator": true,
+    "observe_vote": true,
+    "observe_peer": true,
+    "kappa_seed": 200,
+    "kappa_fixed": false,
+    "kappa_drift": 20,
+    "copy": false,
+    "mix": true,
+    "phase_drift": 512,
+    "new_soul_theta": 1.0,
+    "imprint": false,
+    "teach": false,
+    "variation": "prefer"
+  }
+}

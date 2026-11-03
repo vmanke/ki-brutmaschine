@@ -45,4 +45,5 @@ today), when `fixed` meets a Domain without Linear, Phase and Hadamard, and when
 changes the setting.
 
 Status: proposed on 2026-11-02. It applies only to Runs that set `variation`. The owner
-adopts it, or drops it, after the screen of ticket 02.
+adopts it, or drops it, after the screen of ticket 02. That screen ended on 2026-11-03 with
+stop: criteria 1, 2 and 3 failed (`.scratch/seelen-modell/screen-w.md`).
