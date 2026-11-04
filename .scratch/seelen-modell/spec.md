@@ -3,6 +3,11 @@
 Status: needs-triage. This is a design note for the owner. Nothing is built, and no candidate
 is chosen yet. The owner decides which candidate, if any, gets built and screened.
 
+Update of 2026-11-04: two candidates are screened, and neither earned a go. The grid screen of
+ticket 03 found no go (`grid-screen.md`, pull request #53). Arm W was built and screened in
+tickets 01 and 02, and its screen ended with stop (`screen-w.md`, pull request #52). The owner
+decides the next step.
+
 It follows the owner's decision of 2026-11-02 to drop the counted experiment of step 2. The
 pilot and that decision are on the branch `claude/schritt2-pilot`: `docs/pilot-step2/README.md`,
 `docs/PREREG_STEP2_SOUL.md` and `.scratch/seele-und-kappa/rule/diagnose.txt`. The terms are

@@ -15,7 +15,8 @@ promotion of winners (see "CNN models in the MLP mode"). Part 3, ARC grids as ta
 Worker's Character. A judgment becomes an Observation: it pulls the Souls of both sides
 together, as strongly as the observer's **Coupling strength** κ says. It is built and off by
 default (see "The Soul (step 2)"). Its pilot found no effect on the pass time, so the counted
-comparison is not run; a Soul model that acts earlier comes next.
+comparison is not run. Two Soul models that act earlier were screened next; neither earned a
+go.
 
 An illustrated overview is the [Atlas](docs/atlas/index.html), a page in German and English
 with diagrams, a speckle simulator and the result of step 1. Open the file in a browser.
@@ -80,6 +81,17 @@ Status on 2026-11-02.
   K 3:3 with 6 ties ([report](docs/pilot-step2/README.md)). The counted comparison is therefore
   not run (tickets 10 and 13).
 - **Glossary of step 2 (PR #49).** The new terms of step 2 are in `CONTEXT.md`.
+- **Search for a Soul model (PR #51 to #54).** The design names candidates that act early
+  ([spec](.scratch/seelen-modell/spec.md)). On grids the Soul of step 2 acts early and often,
+  but its effect on the endpoint is close to a coin toss: S against N 21 to 18, S against V 20
+  to 18, S against K 18 to 20 ([result](.scratch/seelen-modell/grid-screen.md), PR #53). The
+  owner decides on the two open comparisons. In arm W the birth Soul weights the section operators; it is built and off by default
+  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
+  Its screen ended with stop: the inherited preferences did not turn towards Linear, Phase and
+  Hadamard ([result](.scratch/seelen-modell/screen-w.md), PR #52). A fixed, hand-made
+  preference (arm WF) protected these families; it is reported for description only. A
+  research note collects sources for a chemical QNN-ResNet as the Soul
+  ([note](.scratch/seelen-modell/research-qnn-resnet.md), PR #54, in German).
 - **Real language models (PR #33).** The separate package `backend-ollama` with the program
   `brut-breed-ollama`; see "Real models through Ollama". The first three runs on the H200
   are summarized in [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -90,7 +102,8 @@ Status on 2026-11-02.
 **Being built**
 
 - **A Soul model that works.** A search for a Soul model that changes outcomes early and often,
-  so that its effect can be measured. Its design comes in a pull request of its own.
+  so that its effect can be measured. Two candidates earned no go (see above). The owner
+  decides whether the search goes on, and with which candidate.
 
 **Planned**
 

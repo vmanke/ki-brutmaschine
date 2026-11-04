@@ -43,8 +43,8 @@ erfinden (Schritt 1)“.
 nur in seinem Charakter zeigt. Ein Urteil wird zur Beobachtung: Es rückt die Seelen beider
 Seiten aufeinander zu, so stark, wie die **Kopplungsstärke des Beobachters** κ es sagt. Das ist
 gebaut und in der Voreinstellung aus (siehe „Seele und Kopplungsstärke (Schritt 2)“). Sein Pilot
-fand keine Wirkung auf die Bestehenszeit, deshalb entfällt der gezählte Vergleich; als Nächstes
-kommt ein Seelen-Modell, das früher wirkt.
+fand keine Wirkung auf die Bestehenszeit, deshalb entfällt der gezählte Vergleich. Danach
+wurden zwei Seelen-Modelle vorgetestet, die früher wirken; keines erreichte ein Go.
 
 Einen bebilderten Überblick gibt der [Atlas](docs/atlas/index.html), eine Seite auf
 Deutsch und Englisch mit Diagrammen, einem Speckle-Simulator und dem Ergebnis von Schritt 1.
@@ -93,6 +93,19 @@ Stand: 2026-11-02.
   Gleichständen, S gegen K 3:3 bei 6 ([Bericht](docs/pilot-step2/README.md), Englisch). Der
   gezählte Vergleich entfällt deshalb (Tickets 10 und 13).
 - **Begriffe von Schritt 2 (PR #49).** Die neuen Begriffe von Schritt 2 stehen in `CONTEXT.md`.
+- **Suche nach einem Seelen-Modell (PR #51 bis #54).** Der Entwurf nennt Kandidaten, die früh
+  wirken ([Spezifikation](.scratch/seelen-modell/spec.md), Englisch). Auf Gittern wirkt die
+  Seele von Schritt 2 früh und oft, ihr Einfluss auf den Endpunkt ist aber nah am Münzwurf:
+  S gegen N 21 zu 18, S gegen V 20 zu 18, S gegen K 18 zu 20
+  ([Ergebnis](.scratch/seelen-modell/grid-screen.md), Englisch, PR #53). Über die zwei offenen
+  Vergleiche entscheidet die Eigentümerin bzw. der Eigentümer. Bei Arm W gewichtet
+  die Geburtsseele die Abschnitts-Operatoren; er ist gebaut und in der Voreinstellung aus
+  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
+  Sein Vortest endete mit Stopp: Die vererbten Vorlieben wandten sich nicht Linear, Phase und
+  Hadamard zu ([Ergebnis](.scratch/seelen-modell/screen-w.md), Englisch, PR #52). Eine feste,
+  von Hand gesetzte Vorliebe (Arm WF) schützte diese Familien; sie wird nur beschrieben. Eine
+  Forschungsnotiz sammelt Belege für ein chemisches QNN-Resnet als Seele
+  ([Notiz](.scratch/seelen-modell/research-qnn-resnet.md), PR #54).
 - **Echte Sprachmodelle (PR #33).** Das eigene Paket `backend-ollama` mit dem Programm
   `brut-breed-ollama`, siehe „Echte Modelle über Ollama“. Die ersten drei Läufe auf der H200
   fasst [docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md](docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md)
@@ -103,7 +116,9 @@ Stand: 2026-11-02.
 **Im Bau**
 
 - **Ein Seelen-Modell, das wirkt.** Die Suche nach einem Seelen-Modell, das Ergebnisse früh und
-  oft ändert, sodass seine Wirkung messbar wird. Sein Entwurf kommt in einem eigenen Pull-Request.
+  oft ändert, sodass seine Wirkung messbar wird. Zwei Kandidaten erreichten kein Go (siehe
+  oben). Ob und mit welchem Kandidaten die Suche weitergeht, entscheidet die Eigentümerin bzw.
+  der Eigentümer.
 
 **Geplant**
 
