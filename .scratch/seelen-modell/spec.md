@@ -164,6 +164,14 @@ sources above cover inherited weights on variation in general.
   the effect that Spears (1995) reports in his abstract, an improvement that helps a
   non-adaptive algorithm as well.
 - **N, no Soul.** Today's unweighted operators.
+- **WF, a fixed preference: the upper bound.** Arm W with `"variation": "fixed"`. Every
+  Worker gets the preference 2 for Linear, Phase and Hadamard and 1 for every other family. No
+  Soul gives it, and nothing is inherited. It is a hand-made rule that knows the three
+  families the pass waits for, and it uses the same weighting code as W. It shows whether
+  preferences can shorten the wait for the third family at all. It also shows whether the
+  inherited Soul adds anything beyond a fixed rule: if W does no better than WF, a hand-made
+  rule would serve as well. WF runs in the screen on the same 8 seeds and is reported for
+  description only. It is no part of the criteria below.
 - **Later, if W passes the screen.** WV with the sign readout, and W with current Souls instead
   of birth Souls; then Observations and imprinting move the preference, and κ = 0 is the control.
   Arm K is no control for W itself, since W reads birth Souls, which κ never moves.
@@ -189,7 +197,7 @@ random bias with no gain.
 
 **Screening test.** Arms W, W0 and N on seeds 913 to 920, with the settings of the pilot (1000
 generations, a cap of 13 000 000 calls, two Runs at a time with `RAYON_NUM_THREADS=2`): 24 Runs,
-about 2 hours. The criteria are fixed before the first Run:
+about 2 hours. Arm WF adds 8 Runs for description. The criteria are fixed before the first Run:
 
 1. **Early.** W parts from N before either Run passes on at least 7 of 8 seeds (the divergence
    generation of `diagnose.py`), and the weights change a choice in generation 1 or 2 on all 8.
@@ -234,8 +242,8 @@ every existing config, hash, log and test stays as it is), and one count per gen
   pass needs 5 of 9 targets, so this would hurt the share D more than the pass time.
 - The gain may come from protection as such. A plain rule that never overwrites a text naming a
   family would help every arm, without a Soul. W0 tests the Soul against a random bias, not
-  against such a rule, and a hand-written rule may beat the Soul. An optional fourth arm, every
-  preference fixed at 2 and no inheritance, would show this for 8 more Runs.
+  against such a rule, and a hand-written rule may beat the Soul. Arm WF of the controls shows
+  this for 8 more Runs.
 - `CONTEXT.md` says that a Soul is seen only through its Character. W lets it shape the genome
   through variation, so W needs an amendment of ADR 0009 and of that glossary entry.
 

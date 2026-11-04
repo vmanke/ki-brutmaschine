@@ -1,0 +1,130 @@
+2026-11-02T23:49:12Z driver start queue=/path/to/w-screen/driver/queue.txt
+2026-11-02T23:49:12Z start W-913 threads=2
+2026-11-02T23:49:14Z start W0-913 threads=2
+2026-11-02T23:58:37Z done W0-913 exit=0 wall_seconds=562.241
+2026-11-02T23:58:38Z verify W0-913 exit=0 brut-breed: 28869 events, hash chain intact, head 172552a391fd74288ad73454729debac3c9b86cb3aa61d0402b1bf6a3e2b44bf; checkpoint at entry 28869 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T23:58:55Z done W-913 exit=0 wall_seconds=583.015
+2026-11-02T23:58:57Z verify W-913 exit=0 brut-breed: 33949 events, hash chain intact, head 17a6d7685fa27e9ec006cb9d6fc1cedb59c0c6c42e5b76b61818a234433e84db; checkpoint at entry 33949 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-02T23:58:59Z compressed W0-913 5936143
+2026-11-02T23:59:02Z start N-913 threads=2
+2026-11-02T23:59:20Z compressed W-913 7492052
+2026-11-02T23:59:24Z start WF-913 threads=2
+2026-11-03T00:07:28Z done N-913 exit=0 wall_seconds=505.660
+2026-11-03T00:07:29Z verify N-913 exit=0 brut-breed: 45893 events, hash chain intact, head 83a6d591fdf3f06b53f5c1b1f5021f6e29ade91b57896d98e5df98b1e3f2ebd3; checkpoint at entry 45893 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:07:44Z compressed N-913 4108649
+2026-11-03T00:07:47Z start W-914 threads=2
+2026-11-03T00:10:10Z done WF-913 exit=0 wall_seconds=646.062
+2026-11-03T00:10:12Z verify WF-913 exit=0 brut-breed: 47319 events, hash chain intact, head 00a468e003f8518347929724e11c0e5371bb0a161be965a572de227696d70f01; checkpoint at entry 47319 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:10:41Z compressed WF-913 8545577
+2026-11-03T00:10:44Z start W0-914 threads=2
+2026-11-03T00:16:10Z done W-914 exit=0 wall_seconds=503.716
+2026-11-03T00:16:11Z verify W-914 exit=0 brut-breed: 23307 events, hash chain intact, head 0428bb6baa75f31d19b1ee98e11c84897af85c3ee83c0eeb3f1ec2196a1d26ec; checkpoint at entry 23307 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:16:31Z compressed W-914 6468308
+2026-11-03T00:16:31Z start N-914 threads=2
+2026-11-03T00:19:48Z done W0-914 exit=0 wall_seconds=544.274
+2026-11-03T00:19:49Z verify W0-914 exit=0 brut-breed: 27915 events, hash chain intact, head c86ddf21509427dad1eb93dbd3a0dfdc9f4dcdf97b76048784e8e69c819c8d3f; checkpoint at entry 27915 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:20:10Z compressed W0-914 5912674
+2026-11-03T00:20:13Z start WF-914 threads=2
+2026-11-03T00:23:13Z done N-914 exit=0 wall_seconds=401.935
+2026-11-03T00:23:14Z verify N-914 exit=0 brut-breed: 37937 events, hash chain intact, head 548e253c88d89021fbfbcd5d76966b82b5dcdf2964d9dfc980ddda7d8f2774aa; checkpoint at entry 37937 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:23:26Z compressed N-914 3545937
+2026-11-03T00:23:30Z start W-915 threads=2
+2026-11-03T00:29:17Z done WF-914 exit=0 wall_seconds=543.335
+2026-11-03T00:29:18Z verify WF-914 exit=0 brut-breed: 28591 events, hash chain intact, head 4a10c6e63fe19eb38344b9d2e3ba2fed0acb6527b70f323ec8407083c4baa982; checkpoint at entry 28591 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:29:39Z compressed WF-914 6951582
+2026-11-03T00:29:43Z start W0-915 threads=2
+2026-11-03T00:32:11Z done W-915 exit=0 wall_seconds=520.660
+2026-11-03T00:32:12Z verify W-915 exit=0 brut-breed: 39829 events, hash chain intact, head 1577f46736b22101959935b04676d5a3273d34e91eefd12a0dea12f909da3c39; checkpoint at entry 39829 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:32:37Z compressed W-915 7742633
+2026-11-03T00:32:40Z start N-915 threads=2
+2026-11-03T00:38:39Z done N-915 exit=0 wall_seconds=359.411
+2026-11-03T00:38:40Z verify N-915 exit=0 brut-breed: 24904 events, hash chain intact, head 293fce011123074ddb853192f2085f72ddc762cb6cfc33fd3b380671421d6a43; checkpoint at entry 24904 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:38:49Z compressed N-915 2714640
+2026-11-03T00:38:52Z start WF-915 threads=2
+2026-11-03T00:38:55Z done W0-915 exit=0 wall_seconds=551.731
+2026-11-03T00:38:56Z verify W0-915 exit=0 brut-breed: 24284 events, hash chain intact, head e0e4553b07b9c1be9ca2ab43d3599263305c2ba144687440435e970673733572; checkpoint at entry 24284 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:39:17Z compressed W0-915 5772747
+2026-11-03T00:39:19Z start W-916 threads=2
+2026-11-03T00:49:41Z done W-916 exit=0 wall_seconds=622.065
+2026-11-03T00:49:43Z verify W-916 exit=0 brut-breed: 40568 events, hash chain intact, head c139d174e789d9b75e86ab1f09d238b65be8041cbc0e7b5e88d8332b9ef753aa; checkpoint at entry 40568 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:50:08Z compressed W-916 8035731
+2026-11-03T00:50:12Z start W0-916 threads=2
+2026-11-03T00:51:03Z done WF-915 exit=0 wall_seconds=730.962
+2026-11-03T00:51:05Z verify WF-915 exit=0 brut-breed: 51569 events, hash chain intact, head 34c98c4196d0b6fc5ea7fcd11fb56a00a435c8b352a911a6c8747f2a8282181b; checkpoint at entry 51569 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:51:36Z compressed WF-915 9944595
+2026-11-03T00:51:39Z start N-916 threads=2
+2026-11-03T00:59:36Z done N-916 exit=0 wall_seconds=476.607
+2026-11-03T00:59:36Z verify N-916 exit=0 brut-breed: 38583 events, hash chain intact, head 07f91b692d7989e81cde0d6f75ec113a4a1bb71d5b0dbcdc2f338ed6e2b14676; checkpoint at entry 38583 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T00:59:48Z compressed N-916 3627389
+2026-11-03T00:59:51Z start WF-916 threads=2
+2026-11-03T01:00:08Z done W0-916 exit=0 wall_seconds=595.977
+2026-11-03T01:00:09Z verify W0-916 exit=0 brut-breed: 35692 events, hash chain intact, head 891a304ef61f2de5503c43995ac173bd8f524c8dafaf5445432973c63642d296; checkpoint at entry 35692 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:00:33Z compressed W0-916 6571082
+2026-11-03T01:00:34Z start W-917 threads=2
+2026-11-03T01:09:27Z done W-917 exit=0 wall_seconds=533.210
+2026-11-03T01:09:28Z verify W-917 exit=0 brut-breed: 33982 events, hash chain intact, head f58f8a1318b438f661bf3528eb262b2a596c9b45c636627ede14a129a3182ba0; checkpoint at entry 33982 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:09:52Z compressed W-917 7610205
+2026-11-03T01:09:56Z start W0-917 threads=2
+2026-11-03T01:10:53Z done WF-916 exit=0 wall_seconds=661.739
+2026-11-03T01:10:55Z verify WF-916 exit=0 brut-breed: 47201 events, hash chain intact, head 688d0129f93c594007e8a34973db353fa2c0b596f3c133e17e61d5dcc75528a5; checkpoint at entry 47201 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:11:23Z compressed WF-916 8678545
+2026-11-03T01:11:23Z start N-917 threads=2
+2026-11-03T01:18:20Z done N-917 exit=0 wall_seconds=417.115
+2026-11-03T01:18:21Z verify N-917 exit=0 brut-breed: 31092 events, hash chain intact, head 3dc23226ad1aa5f84d2e779aa9f3b5973a19b3c22182c2b154ab6758c007cd17; checkpoint at entry 31092 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:18:32Z compressed N-917 3135029
+2026-11-03T01:18:35Z start WF-917 threads=2
+2026-11-03T01:20:10Z done W0-917 exit=0 wall_seconds=614.153
+2026-11-03T01:20:12Z verify W0-917 exit=0 brut-breed: 39949 events, hash chain intact, head a83d2e934ee7f6acc8716c8eb6795905ceee338d753745e0d2fd270309d65897; checkpoint at entry 39949 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:20:38Z compressed W0-917 6902026
+2026-11-03T01:20:43Z start W-918 threads=2
+2026-11-03T01:28:09Z done WF-917 exit=0 wall_seconds=573.834
+2026-11-03T01:28:11Z verify WF-917 exit=0 brut-breed: 41867 events, hash chain intact, head 332147eb76159f33bd9313a64dca3038b57429ad7e9ccf415e15e81e9a87e772; checkpoint at entry 41867 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:28:35Z compressed WF-917 7853312
+2026-11-03T01:28:35Z start W0-918 threads=2
+2026-11-03T01:30:17Z done W-918 exit=0 wall_seconds=573.974
+2026-11-03T01:30:18Z verify W-918 exit=0 brut-breed: 39068 events, hash chain intact, head b25d8f447999ca15e248b558a4e9755a170e9b1614a85a1745e15608d8eb8532; checkpoint at entry 39068 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:30:41Z compressed W-918 7510472
+2026-11-03T01:30:42Z start N-918 threads=2
+2026-11-03T01:36:07Z done N-918 exit=0 wall_seconds=325.317
+2026-11-03T01:36:08Z verify N-918 exit=0 brut-breed: 26523 events, hash chain intact, head d15947b577af888d2b79518ffdea6e14c16a6175aec3c30583cad66fad28ffdf; checkpoint at entry 26523 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:36:16Z compressed N-918 2749344
+2026-11-03T01:36:19Z start WF-918 threads=2
+2026-11-03T01:37:34Z done W0-918 exit=0 wall_seconds=539.351
+2026-11-03T01:37:36Z verify W0-918 exit=0 brut-breed: 29251 events, hash chain intact, head 91a42676c34f6eccee9b71a470aefb37c19526e2157303d6014836d4ac293969; checkpoint at entry 29251 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:37:58Z compressed W0-918 6104336
+2026-11-03T01:38:02Z start W-919 threads=2
+2026-11-03T01:46:43Z done WF-918 exit=0 wall_seconds=624.014
+2026-11-03T01:46:45Z verify WF-918 exit=0 brut-breed: 47408 events, hash chain intact, head 2cb7b5d57868e3fda3e58a496347ca78ef5c9c32913d1591514165ed93bd0e9c; checkpoint at entry 47408 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:47:11Z compressed WF-918 8612037
+2026-11-03T01:47:14Z start W0-919 threads=2
+2026-11-03T01:49:07Z done W-919 exit=0 wall_seconds=665.918
+2026-11-03T01:49:09Z verify W-919 exit=0 brut-breed: 43095 events, hash chain intact, head 7c0fcc32dcaa34b245a6c1e9dc875cba9b1c901a7b5426bf44c0471b140c304b; checkpoint at entry 43095 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:49:36Z compressed W-919 8988569
+2026-11-03T01:49:36Z start N-919 threads=2
+2026-11-03T01:56:50Z done N-919 exit=0 wall_seconds=434.009
+2026-11-03T01:56:51Z verify N-919 exit=0 brut-breed: 35388 events, hash chain intact, head e8d667576651196ff913fc2a7c5233e9a7c7e489489000d2069db9e21ca13093; checkpoint at entry 35388 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T01:57:03Z compressed N-919 3413973
+2026-11-03T01:57:04Z start WF-919 threads=2
+2026-11-03T01:59:31Z done W0-919 exit=0 wall_seconds=737.418
+2026-11-03T01:59:33Z verify W0-919 exit=0 brut-breed: 41264 events, hash chain intact, head a4e9f04a156f02004b1bfe5c0b0cd71af324d8d7c2ea762a277c77fccf1b9e0a; checkpoint at entry 41264 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:00:02Z compressed W0-919 7775000
+2026-11-03T02:00:06Z start W-920 threads=2
+2026-11-03T02:08:53Z done WF-919 exit=0 wall_seconds=709.771
+2026-11-03T02:08:55Z verify WF-919 exit=0 brut-breed: 35902 events, hash chain intact, head bb37dbf70511add2d946b5ae18e6f6832c7d408dad050702bcf420332d65dfa3; checkpoint at entry 35902 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:09:21Z compressed WF-919 8107369
+2026-11-03T02:09:23Z start W0-920 threads=2
+2026-11-03T02:11:27Z done W-920 exit=0 wall_seconds=680.766
+2026-11-03T02:11:28Z verify W-920 exit=0 brut-breed: 47601 events, hash chain intact, head df12612b470dc5e87c567130167cfec36d082aedbc2b99d2405f64908336d272; checkpoint at entry 47601 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:11:54Z compressed W-920 8216490
+2026-11-03T02:11:55Z start N-920 threads=2
+2026-11-03T02:18:30Z done N-920 exit=0 wall_seconds=394.445
+2026-11-03T02:18:31Z verify N-920 exit=0 brut-breed: 27258 events, hash chain intact, head 758ef7ea8ed938dca2aa98e3c8521c72330e5de54ca6c6b5dffb21ccd1e16cf1; checkpoint at entry 27258 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:18:40Z compressed N-920 2895160
+2026-11-03T02:18:43Z start WF-920 threads=2
+2026-11-03T02:18:46Z done W0-920 exit=0 wall_seconds=562.468
+2026-11-03T02:18:47Z verify W0-920 exit=0 brut-breed: 37182 events, hash chain intact, head fe79f28a08b983f91c7be457a0e72e716457cfd630c927ad6562307721d47eb6; checkpoint at entry 37182 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:19:13Z compressed W0-920 6785463
+2026-11-03T02:29:05Z done WF-920 exit=0 wall_seconds=621.932
+2026-11-03T02:29:06Z verify WF-920 exit=0 brut-breed: 44192 events, hash chain intact, head a575fb16543a8e1d1ee420ad6b5b507dfe4cdba75b343ecd9a3bfacf0526db04; checkpoint at entry 44192 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-03T02:29:32Z compressed WF-920 8425099
+2026-11-03T02:29:32Z driver end

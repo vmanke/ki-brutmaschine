@@ -13,6 +13,10 @@
 //! (spec 15). The simulated designer may not reach this module, so it keeps a copy, which a
 //! test here compares bit for bit.
 //!
+//! With the setting `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1), a
+//! birth Soul also gives each family a preference (`preference`), which weights the choices
+//! of the section operators. Then the Soul also shows itself through variation.
+//!
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
 
@@ -203,8 +207,60 @@ impl Strengths {
     }
 }
 
-/// The settings of a Run with Souls (spec 12.2). Every field is required and no other
-/// field is allowed, since they define the experiment; a resume cannot change them.
+/// Whether the Soul steers variation (arm W, `.scratch/seelen-modell/spec.md`, section 4.1).
+/// Off, the default, is left out of the JSON, so every setting written before stays as it
+/// was.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Variation {
+    /// The section operators draw as before: every option of a choice alike.
+    #[default]
+    Off,
+    /// Arm W: the section operators weight their choices by the preference of the birth
+    /// Soul of the parent Worker they change (`preference`).
+    Prefer,
+    /// Arm WF, the upper bound: the same weights with the fixed preference of
+    /// `fixed_preference`, which comes from no Soul.
+    Fixed,
+}
+
+impl Variation {
+    pub fn is_off(&self) -> bool {
+        matches!(self, Variation::Off)
+    }
+}
+
+/// The families that the fixed preference of arm WF favours: the three that the pass of
+/// step 1 waits for (`.scratch/seelen-modell/spec.md`, section 2).
+pub const FIXED_PREFERRED: [&str; 3] = ["Linear", "Phase", "Hadamard"];
+
+/// The preference of the Soul `soul` for each of its families (arm W,
+/// `.scratch/seelen-modell/spec.md`, section 4.1): w_f = |u(p_f) + 1|² / 2 = 1 + Re u(p_f).
+/// With complex phases it is 1 + cos(2π p_f / 65536); with the real readout it is 0 or 2.
+/// It lies in [0, 2], its mean over uniform phases is 1, and a phase at a quarter turn gives
+/// exactly 1.
+pub fn preference(soul: &[u16], r: Readout) -> Vec<f64> {
+    soul.iter().map(|&p| 1.0 + readout(p, r).re).collect()
+}
+
+/// The preference of arm WF over the Domain's families `families`, the same for every
+/// Worker: 2 for the families of `FIXED_PREFERRED` and 1 for every other.
+pub fn fixed_preference(families: &[&str]) -> Vec<f64> {
+    families
+        .iter()
+        .map(|f| {
+            if FIXED_PREFERRED.contains(f) {
+                2.0
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
+/// The settings of a Run with Souls (spec 12.2). Every field is required, except
+/// `variation`, which is off when absent; no other field is allowed. They define the
+/// experiment, so a resume cannot change them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoulConfig {
@@ -238,6 +294,10 @@ pub struct SoulConfig {
     pub imprint: bool,
     /// Teaching (Q59).
     pub teach: bool,
+    /// Whether the Soul steers variation (arm W); off when absent, and then left out of the
+    /// JSON.
+    #[serde(default, skip_serializing_if = "Variation::is_off")]
+    pub variation: Variation,
 }
 
 impl SoulConfig {
@@ -260,6 +320,7 @@ impl SoulConfig {
             new_soul_theta: 1.0,
             imprint: true,
             teach: false,
+            variation: Variation::Off,
         }
     }
 
@@ -1787,5 +1848,130 @@ mod tests {
 
             assert!(err.to_string().contains(field), "{field}: {err}");
         }
+    }
+
+    /// The `soul` object of the pilot of step 2 (`docs/pilot-step2/driver/config-E.json` on
+    /// the branch `claude/schritt2-pilot`), written before the setting `variation` existed.
+    const PILOT_E: &str = r#"{"readout":"complex","strengths":"equal","vote":true,"simulator":true,"observe_vote":true,"observe_peer":true,"kappa_seed":200,"kappa_fixed":false,"kappa_drift":20,"copy":true,"mix":true,"phase_drift":512,"new_soul_theta":1.0,"imprint":true,"teach":false}"#;
+
+    /// `json`, a soul object, with the field `variation` set to `word` at its end.
+    fn with_variation(json: &str, word: &str) -> String {
+        format!(
+            r#"{},"variation":"{word}"}}"#,
+            json.strip_suffix('}').expect("an object")
+        )
+    }
+
+    #[test]
+    fn variation_is_off_by_default_and_left_out() {
+        // Every soul object written before arm W reads with variation off and writes back
+        // byte for byte. The three presets have it off.
+        for json in [ARM_S, PILOT_E] {
+            let cfg: SoulConfig = serde_json::from_str(json).expect("read");
+
+            assert_eq!(cfg.variation, Variation::Off);
+            assert_eq!(serde_json::to_string(&cfg).expect("json"), json);
+        }
+
+        for arm in [
+            SoulConfig::arm_s(),
+            SoulConfig::arm_v(),
+            SoulConfig::arm_k(),
+        ] {
+            assert_eq!(arm.variation, Variation::Off);
+        }
+
+        assert_eq!(Variation::default(), Variation::Off);
+
+        // On, it is written last, it reads back, and it passes the check.
+        for (variation, word) in [(Variation::Prefer, "prefer"), (Variation::Fixed, "fixed")] {
+            let cfg = SoulConfig {
+                variation,
+                ..SoulConfig::arm_s()
+            };
+            let json = serde_json::to_string(&cfg).expect("json");
+
+            assert_eq!(json, with_variation(ARM_S, word));
+            assert_eq!(
+                serde_json::from_str::<SoulConfig>(&json).expect("read"),
+                cfg
+            );
+            assert!(cfg.check().is_ok());
+        }
+
+        // Off written out reads as off; an unknown value is refused.
+        assert_eq!(
+            serde_json::from_str::<SoulConfig>(&with_variation(ARM_S, "off")).expect("read"),
+            SoulConfig::arm_s()
+        );
+        assert!(serde_json::from_str::<SoulConfig>(&with_variation(ARM_S, "steer")).is_err());
+    }
+
+    #[test]
+    fn the_preference_has_mean_one_per_family() {
+        // w_f = |u(p_f) + 1|² / 2 = 1 + Re u(p_f): exactly 2 at no turn, 1 at a quarter turn
+        // and 0 at half a turn; with the sign readout 2 or 0.
+        assert_eq!(
+            preference(&[0, 16384, 32768, 49152], Readout::Complex),
+            vec![2.0, 1.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            preference(&[16383, 16384, 49151, 49152], Readout::Real),
+            vec![2.0, 0.0, 0.0, 2.0]
+        );
+
+        let one = Phasor::new(1.0, 0.0);
+
+        for p in 0..=u16::MAX {
+            for r in READOUTS {
+                let w = preference(&[p], r)[0];
+
+                assert!((w - (readout(p, r) + one).norm_sqr() / 2.0).abs() < 1e-12);
+                assert!((0.0..=2.0).contains(&w), "{p} {r:?}: {w}");
+            }
+        }
+
+        // The mean over 2^20 fresh Souls is 1 within 0.01 for every family, in both readouts
+        // and on both Domains.
+        const SOULS: usize = 1 << 20;
+
+        for (families, tag) in [(8, "circuits"), (7, "grids")] {
+            let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(6, &format!("preference/{tag}")));
+            let mut sums = vec![[0.0f64; 2]; families];
+            let mut soul = vec![0u16; families];
+
+            for _ in 0..SOULS {
+                for p in &mut soul {
+                    *p = rng.random();
+                }
+
+                for (k, r) in READOUTS.into_iter().enumerate() {
+                    for (sum, w) in sums.iter_mut().zip(preference(&soul, r)) {
+                        sum[k] += w;
+                    }
+                }
+            }
+
+            for (f, sum) in sums.iter().enumerate() {
+                for (k, r) in READOUTS.into_iter().enumerate() {
+                    let mean = sum[k] / SOULS as f64;
+
+                    assert!((mean - 1.0).abs() < 0.01, "{tag} family {f} {r:?}: {mean}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_fixed_preference_favours_linear_phase_and_hadamard() {
+        let circuits = CircuitDomain::new(&CircuitConfig::default()).expect("circuit domain");
+
+        assert_eq!(
+            fixed_preference(&circuits.families()),
+            vec![2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        );
+
+        // It comes from no Soul: a Domain without these families gets 1 for every family.
+        assert_eq!(fixed_preference(&GridDomain.families()), vec![1.0; 7]);
     }
 }

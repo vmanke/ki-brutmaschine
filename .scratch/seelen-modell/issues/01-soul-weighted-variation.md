@@ -1,6 +1,6 @@
 # 01 Soul-weighted variation behind a switch (arm W)
 
-Status: needs-triage
+Status: resolved
 Blocked by: none
 Spec: `../spec.md`, section 4.1
 
@@ -46,3 +46,50 @@ so that ticket 02 can screen it. It changes `src/`, so it waits for the owner's 
   files are byte-equal at 1 and at 4 threads.
 - `CONTEXT.md` is not changed by this ticket: "preference" stays a word of the design note until
   the owner adopts the model.
+
+## Comments
+
+- 2026-11-02, built, not committed; the owner reviews and commits. The owner chose W and added
+  arm WF, the upper bound: `"variation": "fixed"` uses the same weights with the preference 2
+  for Linear, Phase and Hadamard and 1 for every other family, from no Soul. WF keeps the rest
+  of arm S, as W does, so W and WF differ only in where the preference comes from. It is off
+  by default, and a Domain without these three families refuses it.
+- Decisions within the spec. Each choice takes one draw. A choice whose weights are all equal
+  makes today's draw (`random_range`, or `random_bool(0.5)` for the crossover coin). Otherwise
+  one u in [0, 1) picks by the summed weights. So with every preference at 1 the operators are
+  exactly today's, draw for draw, and not only in distribution. Arm W draws as arm S until its
+  first choice of unequal weights. `variation_choices` counts the choices of unequal weights in
+  the operator call that made each child of the generation; failed attempts and refused children
+  do not count. `variation_changed` counts those whose pick differs from ⌊u·n⌋, or for the coin
+  from u < 1/2. The lean of a Worker's whole prompt reads its system prompt, section names
+  included; the lean of a section or a phrase reads its text, since an overwrite keeps the name.
+  In choice 1 each candidate Worker is weighed by its own birth Soul; choices 2 and 3 use the
+  chosen Worker's. Each factor of a SectionAdd weight and their product are at least ε. The hook
+  is `designer::named_families`: the families of `designer::knowledge`, in family order. The
+  grid gene pool has none, so a grid Run with `variation` exits with code 1 before it writes
+  a record. Like every other refusal of a fresh Run's settings, it leaves only the empty run
+  directory and its LOCK file (found in the review of PR #52).
+- Tests. `soul.rs`: `variation_is_off_by_default_and_left_out` (the pilot's soul object of
+  `config-E.json` reads and writes back byte for byte), `the_preference_has_mean_one_per_family`
+  (2^20 fresh Souls per Domain, both readouts) and
+  `the_fixed_preference_favours_linear_phase_and_hadamard`. `variation.rs`:
+  `no_weight_falls_below_the_floor`, `a_preferring_worker_protects_its_family_by_the_expected_factor`
+  (100 000 draws), `each_choice_follows_its_weights`,
+  `with_every_preference_one_the_operators_are_todays` (the 0.7 draw included),
+  `a_choice_changes_when_the_uniform_pick_of_its_draw_differs` and
+  `steered_operators_see_genes_only`. `arena.rs`: `variation_needs_a_gene_pool_that_names_families`,
+  `the_birth_soul_steers_variation` (current Souls do not steer) and
+  `a_run_with_variation_logs_its_choices_and_resumes_like_a_straight_one`. `tests/soul.rs`:
+  `a_run_whose_soul_steers_variation_reproduces` (60 generations, `--verify`, five record
+  files at 1 and 4 threads), `variation_needs_circuits`, and the release test
+  `the_readme_run_of_arm_s_is_unchanged` (head e38339538f…).
+- Gate, 2026-11-02. `cargo test` and `cargo clippy --all-targets -- -D warnings` pass; the
+  fixtures are unchanged; both release tests pass. The protection test measured the factor
+  0.072 for 0.073 (SectionReplace) and 0.095 for 0.095 (SectionAdd) at w = 2, and 0.600 for
+  0.600 and 0.666 for 0.667 at w ≈ 1.5, each within 3 standard errors. Smoke Runs on pilot
+  seed 913, 60 generations, the settings of ticket 02, release binary: W, W0, WF and N pass
+  `--verify`, and their five record files are byte-equal at 1 and 4 threads. The weights
+  changed 108 choices in W (1.8 per generation, the first in generation 1) and 77 in WF (1.3
+  per generation, the first in generation 1). These Runs are no part of the screen.
+- 2026-11-03, committed in pull request #52 as 65ec9e3; d69b26d fixes a test and this
+  ticket's text and changes no file in `src/`. The screen of ticket 02 ran on 65ec9e3.

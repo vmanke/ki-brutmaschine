@@ -15,6 +15,14 @@
 //! also name the source of every child Worker: the parent Worker it was built from, or one
 //! Worker of each parent where the operator pairs Workers. Souletics in the breeder writes
 //! the child's Souls from these sources.
+//!
+//! With the setting `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1),
+//! the `_steered` variants of SectionReplace, SectionAdd and section crossover weight their
+//! choices. Beside the genes they get a preference per Worker of the parent they change,
+//! and the gene pool's rule that names the families of a text. A weight multiplies the
+//! chance that today's operator gives an option, and the result is normalised again. Each
+//! choice takes one draw. With every preference 1 the weights are equal, and the operators
+//! make exactly today's draws.
 #![forbid(unsafe_code)]
 
 use rand::Rng;
@@ -91,6 +99,81 @@ pub type Sources = Vec<Vec<Source>>;
 
 /// The sources of every Worker, stage by stage, while an operator edits the child.
 type SourceMap = Vec<Vec<Vec<Source>>>;
+
+/// The floor ε of every weight of arm W (`.scratch/seelen-modell/spec.md`, section 4.1), so
+/// that no choice becomes impossible. The spec marks it as a placeholder.
+pub const WEIGHT_FLOOR: f64 = 0.05;
+
+/// What steers the section operators in arm W: the gene pool's rule that names the families
+/// of a text, in the Domain's family order, and a preference per Worker of the parent that
+/// the operator changes, by the Worker's index over the parent's Stages. A preference holds
+/// one number w_f in [0, 2] per family; 1 neither favours nor disfavours the family. For
+/// section crossover the preferences are those of the first parent.
+#[derive(Clone, Copy, Debug)]
+pub struct Steer<'a> {
+    pub families_of: fn(&str) -> Vec<usize>,
+    pub preferences: &'a [Vec<f64>],
+}
+
+impl Steer<'_> {
+    /// The lens of the parent's Worker `k`; a Worker without a preference leans nowhere.
+    fn lens(&self, k: usize) -> Lens<'_> {
+        Lens {
+            families_of: self.families_of,
+            pref: self.preferences.get(k).map_or(&[], Vec::as_slice),
+        }
+    }
+}
+
+/// The choices that the weights of arm W decided in one operator call, and those they
+/// changed. Only a choice among options of unequal weight counts; one of equal weights
+/// makes today's uniform draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Steered {
+    /// Choices among options whose weights differ.
+    pub choices: u64,
+    /// Those of them whose pick differs from the uniform pick of the same draw.
+    pub changed: u64,
+}
+
+impl Steered {
+    /// Add the counts of `other`.
+    pub fn add(&mut self, other: Steered) {
+        self.choices += other.choices;
+        self.changed += other.changed;
+    }
+}
+
+/// One Worker's preference with the rule that names families: what weighs the choices of an
+/// operator that changes this Worker.
+#[derive(Clone, Copy, Debug)]
+struct Lens<'a> {
+    families_of: fn(&str) -> Vec<usize>,
+    pref: &'a [f64],
+}
+
+impl Lens<'_> {
+    /// The lean L of `text`: w_f − 1 summed over the families it names, each once, in
+    /// family order. A text that names no family has L = 0.
+    fn lean(&self, text: &str) -> f64 {
+        (self.families_of)(text)
+            .into_iter()
+            .filter_map(|f| self.pref.get(f))
+            .fold(0.0, |l, w| l + (w - 1.0))
+    }
+
+    /// 1 + L, at least ε: the weight of a Worker by its whole prompt, of a phrase, and of
+    /// each side of the coin of section crossover.
+    fn favour(&self, text: &str) -> f64 {
+        (1.0 + self.lean(text)).max(WEIGHT_FLOOR)
+    }
+
+    /// 1 − L, at least ε: the weight of a section that SectionReplace may overwrite, so a
+    /// Worker protects the texts it prefers.
+    fn protect(&self, text: &str) -> f64 {
+        (1.0 - self.lean(text)).max(WEIGHT_FLOOR)
+    }
+}
 
 /// Prompt-text gene pool: (section name, text). Mutation draws section texts from here.
 ///
@@ -459,13 +542,41 @@ pub fn mutate_sourced(
     phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op, Sources)> {
+    mutate_inner(parent, limits, phrases, None, rng)
+        .map(|(child, op, sources, _)| (child, op, sources))
+}
+
+/// `mutate_sourced` for arm W: SectionReplace and SectionAdd weight their choices by the
+/// preferences of `steer`, one per Worker of `parent`. Also returns the choices the
+/// weights decided in the attempt that made the child.
+pub fn mutate_steered(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: &Steer<'_>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources, Steered)> {
+    mutate_inner(parent, limits, phrases, Some(steer), rng)
+}
+
+/// `mutate_sourced`, weighted by `steer` when it is given.
+fn mutate_inner(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources, Steered)> {
     let parent = parent.genes();
     let parents = [parent.id()];
 
     for _ in 0..MUTATE_ATTEMPTS {
         let op = draw_op(rng);
+        let mut steered = Steered::default();
 
-        let Some((mut child, map)) = apply_sourced(&parent, op, limits, phrases, rng) else {
+        let Some((mut child, map)) =
+            apply_steered(&parent, op, limits, phrases, steer, &mut steered, rng)
+        else {
             continue;
         };
 
@@ -474,7 +585,7 @@ pub fn mutate_sourced(
         if acceptable(&child, limits, &parents) {
             let sources = flatten_sources(map, &child);
 
-            return Some((child, op, sources));
+            return Some((child, op, sources, steered));
         }
     }
 
@@ -569,6 +680,30 @@ pub fn section_crossover_sourced(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Sources)> {
+    section_crossover_inner(a, b, limits, None, rng).map(|(child, sources, _)| (child, sources))
+}
+
+/// `section_crossover_sourced` for arm W: the coin of each section weighs the two texts by
+/// the preferences of `steer`, one per Worker of the first parent `a`. Also returns the
+/// choices the weights decided in the attempt that made the child.
+pub fn section_crossover_steered(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    steer: &Steer<'_>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    section_crossover_inner(a, b, limits, Some(steer), rng)
+}
+
+/// `section_crossover_sourced`, weighted by `steer` when it is given.
+fn section_crossover_inner(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
     let (a, b) = (&a.genes(), &b.genes());
 
     if a.stages.is_empty() || b.stages.is_empty() {
@@ -579,11 +714,14 @@ pub fn section_crossover_sourced(
 
     for _ in 0..CROSSOVER_ATTEMPTS {
         let mut child = a.clone();
+        let mut steered = Steered::default();
 
         for (s, stage) in child.stages.iter_mut().enumerate() {
             for (w, worker) in stage.workers.iter_mut().enumerate() {
                 if let Some(other) = partner(b, s, w) {
-                    cross_worker(worker, other, rng);
+                    let lens = steer.map(|st| st.lens(worker_index(a, s, w)));
+
+                    cross_worker(worker, other, lens, &mut steered, rng);
                 }
             }
         }
@@ -613,7 +751,7 @@ pub fn section_crossover_sourced(
         if acceptable(&child, limits, &parents) {
             let sources = flatten_sources(map, &child);
 
-            return Some((child, sources));
+            return Some((child, sources, steered));
         }
     }
 
@@ -820,14 +958,40 @@ fn apply_with(
     apply_sourced(parent, op, limits, phrases, rng).map(|(child, _)| child)
 }
 
-/// `apply_with` with the source of every child Worker, stage by stage. A Worker that keeps
-/// its position keeps its source; the operators that add, remove or move Workers or
-/// Stages edit the map as they edit the child.
+/// `apply_with` with the source of every child Worker, stage by stage.
+#[cfg(test)]
 fn apply_sourced(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
     phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, SourceMap)> {
+    apply_steered(
+        parent,
+        op,
+        limits,
+        phrases,
+        None,
+        &mut Steered::default(),
+        rng,
+    )
+}
+
+/// Apply one mutation operator to a copy of `parent`, with the source of every child
+/// Worker, stage by stage. A Worker that keeps its position keeps its source; the operators
+/// that add, remove or move Workers or Stages edit the map as they edit the child.
+///
+/// With `steer` (arm W), SectionReplace and SectionAdd weight their choices by its
+/// preferences, and `steered` counts the choices the weights decided. Without it every
+/// operator draws as before.
+fn apply_steered(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    steered: &mut Steered,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, SourceMap)> {
     let mut child = parent.clone();
@@ -901,29 +1065,42 @@ fn apply_sourced(
 
         Op::SectionReplace => {
             let slots = worker_slots(parent, |_, w| !w.sections.is_empty());
-            let (s, w) = pick(rng, &slots)?;
+            let (s, w) = pick_worker(rng, parent, &slots, steer, steered)?;
+            let lens = steer.map(|st| st.lens(worker_index(parent, s, w)));
             let worker = worker_mut(&mut child, s, w)?;
-            let i = rng.random_range(0..worker.sections.len());
+            let i = match lens {
+                None => rng.random_range(0..worker.sections.len()),
+                Some(lens) => {
+                    let weights: Vec<f64> = worker
+                        .sections
+                        .iter()
+                        .map(|x| lens.protect(&x.text))
+                        .collect();
+
+                    weighted_index(rng, &weights, steered)?
+                }
+            };
             let section = worker.sections.get_mut(i)?;
 
             section.text =
-                replacement_text(rng, phrases, &section.name, &section.text)?.to_string();
+                replacement_text(rng, phrases, &section.name, &section.text, lens, steered)?
+                    .to_string();
         }
 
         Op::SectionAdd => {
-            let (s, w) = pick(rng, &worker_slots(parent, |_, _| true))?;
+            let slots = worker_slots(parent, |_, _| true);
+            let (s, w) = pick_worker(rng, parent, &slots, steer, steered)?;
+            let lens = steer.map(|st| st.lens(worker_index(parent, s, w)));
             let worker = worker_mut(&mut child, s, w)?;
-            let options: Vec<(&str, &str)> = phrases
-                .iter()
-                .copied()
-                .filter(
-                    |(name, text)| match worker.sections.iter().find(|x| x.name == *name) {
-                        Some(existing) => existing.text != *text,
-                        None => worker.sections.len() < MAX_SECTIONS,
-                    },
-                )
-                .collect();
-            let (name, text) = pick(rng, &options)?;
+            let options = add_options(worker, phrases);
+            let (name, text) = match lens {
+                None => pick(rng, &options)?,
+                Some(lens) => {
+                    let weights = add_weights(worker, &options, lens);
+
+                    *options.get(weighted_index(rng, &weights, steered)?)?
+                }
+            };
 
             set_section(&mut worker.sections, name, text);
         }
@@ -1057,6 +1234,134 @@ fn pick<T: Copy>(rng: &mut ChaCha8Rng, items: &[T]) -> Option<T> {
     items.get(rng.random_range(0..items.len())).copied()
 }
 
+/// The index of one of the options whose weights are `weights`, by one draw (arm W), or
+/// None without an option. When every weight is the same, the draw is today's uniform one
+/// and nothing is counted. Otherwise u is uniform in [0, 1), and the pick is the first
+/// option whose summed weight passes u times the total. `steered` counts the choice, and
+/// counts it as changed when the pick differs from ⌊u·n⌋, the pick of equal weights.
+fn weighted_index(rng: &mut ChaCha8Rng, weights: &[f64], steered: &mut Steered) -> Option<usize> {
+    let n = weights.len();
+    let first = *weights.first()?;
+
+    if weights.iter().all(|&w| w == first) {
+        return Some(rng.random_range(0..n));
+    }
+
+    let u: f64 = rng.random();
+    let total = weights.iter().fold(0.0, |sum, &w| sum + w);
+    let target = u * total;
+    let mut summed = 0.0;
+    // Rounding may leave the target at the total; then the last option, whose weight is at
+    // least ε, takes it.
+    let mut chosen = n - 1;
+
+    for (i, &w) in weights.iter().enumerate() {
+        summed += w;
+
+        if target < summed {
+            chosen = i;
+            break;
+        }
+    }
+
+    let uniform = ((u * n as f64) as usize).min(n - 1);
+
+    steered.choices += 1;
+
+    if chosen != uniform {
+        steered.changed += 1;
+    }
+
+    Some(chosen)
+}
+
+/// The coin of section crossover in arm W: true takes the partner's section, whose weight
+/// is `theirs` against `mine`. With equal weights it is today's coin of p = 1/2 and counts
+/// nothing. Otherwise u is uniform in [0, 1), and the coin is u < theirs / (mine + theirs);
+/// `steered` counts it, and counts it as changed when it differs from u < 1/2.
+fn weighted_coin(rng: &mut ChaCha8Rng, mine: f64, theirs: f64, steered: &mut Steered) -> bool {
+    if mine == theirs {
+        return rng.random_bool(0.5);
+    }
+
+    let u: f64 = rng.random();
+    let take = u < theirs / (mine + theirs);
+
+    steered.choices += 1;
+
+    if take != (u < 0.5) {
+        steered.changed += 1;
+    }
+
+    take
+}
+
+/// The Worker that SectionReplace or SectionAdd changes, among `slots` of `parent`:
+/// uniform without `steer`, otherwise with the weight 1 + L of each Worker's whole prompt
+/// under its own preference (choice 1 of spec 4.1).
+fn pick_worker(
+    rng: &mut ChaCha8Rng,
+    parent: &Cascade,
+    slots: &[(usize, usize)],
+    steer: Option<&Steer<'_>>,
+    steered: &mut Steered,
+) -> Option<(usize, usize)> {
+    let Some(steer) = steer else {
+        return pick(rng, slots);
+    };
+    let weights: Vec<f64> = slots
+        .iter()
+        .map(|&(s, w)| {
+            let prompt = parent
+                .stages
+                .get(s)
+                .and_then(|stage| stage.workers.get(w))
+                .map(Worker::system_prompt)
+                .unwrap_or_default();
+
+            steer.lens(worker_index(parent, s, w)).favour(&prompt)
+        })
+        .collect();
+
+    slots.get(weighted_index(rng, &weights, steered)?).copied()
+}
+
+/// The phrases SectionAdd may write into `worker`: one whose name a section has, if its
+/// text differs, or one of a new name while the Worker has room for another section.
+fn add_options(
+    worker: &Worker,
+    phrases: &'static [(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    phrases
+        .iter()
+        .copied()
+        .filter(
+            |(name, text)| match worker.sections.iter().find(|x| x.name == *name) {
+                Some(existing) => existing.text != *text,
+                None => worker.sections.len() < MAX_SECTIONS,
+            },
+        )
+        .collect()
+}
+
+/// The weights of the `options` of SectionAdd for `worker` (choice 3 of spec 4.1): 1 + L of
+/// the phrase, times the protection 1 − L of the section it would write over, if any; each
+/// factor and the product at least ε.
+fn add_weights(worker: &Worker, options: &[(&str, &str)], lens: Lens<'_>) -> Vec<f64> {
+    options
+        .iter()
+        .map(|(name, text)| {
+            let over = worker
+                .sections
+                .iter()
+                .find(|x| x.name == *name)
+                .map_or(1.0, |x| lens.protect(&x.text));
+
+            (lens.favour(text) * over).max(WEIGHT_FLOOR)
+        })
+        .collect()
+}
+
 /// Positions (stage, worker) of the Workers of `c` that satisfy `ok(stage, worker)`.
 fn worker_slots(c: &Cascade, ok: impl Fn(usize, &Worker) -> bool) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
@@ -1156,12 +1461,15 @@ fn model_tags(limits: &CascadeLimits) -> Vec<&str> {
 }
 
 /// A text of `phrases` other than `current`: with p = 0.7 one of the phrases named `name`
-/// (when there is such a phrase), otherwise one of the whole pool.
+/// (when there is such a phrase), otherwise one of the whole pool. Within the pool that is
+/// drawn, each text weighs alike, or with `lens` 1 + L of the text (arm W, choice 3).
 fn replacement_text(
     rng: &mut ChaCha8Rng,
     phrases: &'static [(&'static str, &'static str)],
     name: &str,
     current: &str,
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
 ) -> Option<&'static str> {
     let same_name: Vec<&'static str> = phrases
         .iter()
@@ -1170,7 +1478,7 @@ fn replacement_text(
         .collect();
 
     if !same_name.is_empty() && rng.random_bool(SAME_NAME_P) {
-        return pick(rng, &same_name);
+        return pick_text(rng, &same_name, lens, steered);
     }
 
     let any: Vec<&'static str> = phrases
@@ -1179,7 +1487,22 @@ fn replacement_text(
         .map(|(_, t)| *t)
         .collect();
 
-    pick(rng, &any)
+    pick_text(rng, &any, lens, steered)
+}
+
+/// One of `texts`: uniform without `lens`, otherwise with the weight 1 + L of each text.
+fn pick_text(
+    rng: &mut ChaCha8Rng,
+    texts: &[&'static str],
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
+) -> Option<&'static str> {
+    let Some(lens) = lens else {
+        return pick(rng, texts);
+    };
+    let weights: Vec<f64> = texts.iter().map(|t| lens.favour(t)).collect();
+
+    texts.get(weighted_index(rng, &weights, steered)?).copied()
 }
 
 /// Write `text` over the first section named `name`, or append a new section.
@@ -1222,10 +1545,28 @@ fn partner_at(b: &Cascade, s: usize, w: usize) -> Option<(usize, usize)> {
 /// partner also has, the model and each Trait field come from the partner with p = 0.5.
 /// The Soul and the Coupling strength are no genes and are never crossed (spec 9.1): the
 /// operators see genes only, and Souletics gives the child its Souls.
-fn cross_worker(child: &mut Worker, other: &Worker, rng: &mut ChaCha8Rng) {
+///
+/// With `lens` (arm W), the coin of each section takes the partner's text with the
+/// probability (1 + L(theirs)) / ((1 + L(mine)) + (1 + L(theirs))), each weight at least ε;
+/// `steered` counts the coins the weights decided. The other coins stay as they are.
+fn cross_worker(
+    child: &mut Worker,
+    other: &Worker,
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
+    rng: &mut ChaCha8Rng,
+) {
     for section in &mut child.sections {
         if let Some(theirs) = other.sections.iter().find(|s| s.name == section.name)
-            && rng.random_bool(0.5)
+            && match lens {
+                None => rng.random_bool(0.5),
+                Some(lens) => weighted_coin(
+                    rng,
+                    lens.favour(&section.text),
+                    lens.favour(&theirs.text),
+                    steered,
+                ),
+            }
         {
             section.text = theirs.text.clone();
         }
@@ -1389,9 +1730,12 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
+    use crate::cascade::circuit_genes::{CIRCUIT_PHRASES, circuit_seed_cascades};
+    use crate::cascade::designer::named_families;
     use crate::cascade::genome::{
         COUPLING_MAX, ModelSpec, PhaseState, THINK_TOKENS_CEILING, seed_cascades,
     };
+    use crate::cascade::soul::{QUARTER_TURN, Readout, preference};
 
     /// Every Op, in declaration order.
     const ALL_OPS: [Op; 19] = [
@@ -2908,10 +3252,613 @@ mod tests {
         for seed in 0..50 {
             let mut child = mine.clone();
 
-            cross_worker(&mut child, &theirs, &mut rng(seed));
+            cross_worker(
+                &mut child,
+                &theirs,
+                None,
+                &mut Steered::default(),
+                &mut rng(seed),
+            );
 
             assert_eq!(child.traits.phase_state, mine.traits.phase_state);
             assert_eq!(child.traits.coupling, 100);
         }
+    }
+
+    /// The places of three circuit families in `designer::FAMILY_STEMS`.
+    const LINEAR: usize = 0;
+    const PHASE: usize = 1;
+    const SEARCH: usize = 4;
+
+    /// Draws of the statistical tests of arm W.
+    const DRAWS: u32 = 100_000;
+
+    /// The circuit seed Cascade `k` (linear, phase, hadamard, search), without its name.
+    fn circuit_seed(k: usize) -> Cascade {
+        circuit_seed_cascades().remove(k % 4).1
+    }
+
+    /// Circuit seed `k` after `steps` mutations with the circuit phrases.
+    fn evolved_circuit(
+        k: usize,
+        steps: usize,
+        limits: &CascadeLimits,
+        rng: &mut ChaCha8Rng,
+    ) -> Cascade {
+        let mut c = circuit_seed(k);
+
+        for _ in 0..steps {
+            if let Some((child, _)) = mutate_with(&c, limits, CIRCUIT_PHRASES, rng) {
+                c = child;
+            }
+        }
+
+        c
+    }
+
+    /// The preference of a circuit Soul with every phase at a quarter turn, which gives 1,
+    /// except the phases `given` as (family, phase).
+    fn prefer(given: &[(usize, u16)]) -> Vec<f64> {
+        let mut soul = [QUARTER_TURN; 8];
+
+        for &(f, p) in given {
+            soul[f] = p;
+        }
+
+        preference(&soul, Readout::Complex)
+    }
+
+    /// True when `got` lies within 3 standard errors of the share `p` over `n` draws.
+    fn within_3_se(got: f64, p: f64, n: u32) -> bool {
+        (got - p).abs() < 3.0 * (p * (1.0 - p) / f64::from(n)).sqrt()
+    }
+
+    /// A small pool for the protection test: strategies that name Search or no family, and
+    /// two texts that a new section takes.
+    const PROTECTION_PHRASES: &[(&str, &str)] = &[
+        (
+            "strategy",
+            "Search through all short gate sequences and stop at the first one that matches every row.",
+        ),
+        (
+            "strategy",
+            "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.",
+        ),
+        (
+            "check",
+            "If your circuit fails on even one input, drop it and test the next idea.",
+        ),
+        ("style", "Be concise."),
+    ];
+
+    #[test]
+    fn no_weight_falls_below_the_floor() {
+        let limits = CascadeLimits::default();
+        let mut souls = rng(31);
+        let mut walk = rng(32);
+        // The extremes, every family at 0 and at 2, and the preferences of random Souls in
+        // both readouts.
+        let mut prefs = vec![vec![0.0; 8], vec![2.0; 8], prefer(&[])];
+
+        for _ in 0..200 {
+            let soul: Vec<u16> = (0..8).map(|_| souls.random()).collect();
+
+            prefs.push(preference(&soul, Readout::Complex));
+            prefs.push(preference(&soul, Readout::Real));
+        }
+
+        let workers: Vec<Worker> = (0..60)
+            .flat_map(|k| evolved_circuit(k, k % 9, &limits, &mut walk).stages)
+            .flat_map(|s| s.workers)
+            .collect();
+        let mut lowest = f64::INFINITY;
+
+        for pref in &prefs {
+            let lens = Lens {
+                families_of: named_families,
+                pref,
+            };
+
+            for w in &workers {
+                let options = add_options(w, CIRCUIT_PHRASES);
+                let weights = [lens.favour(&w.system_prompt())]
+                    .into_iter()
+                    .chain(w.sections.iter().map(|s| lens.protect(&s.text)))
+                    .chain(CIRCUIT_PHRASES.iter().map(|(_, t)| lens.favour(t)))
+                    .chain(add_weights(w, &options, lens));
+
+                for x in weights {
+                    assert!(x >= WEIGHT_FLOOR, "{x} below the floor");
+                    lowest = lowest.min(x);
+                }
+            }
+        }
+
+        assert_eq!(lowest, WEIGHT_FLOOR, "the floor binds");
+    }
+
+    #[test]
+    fn a_preferring_worker_protects_its_family_by_the_expected_factor() {
+        let limits = CascadeLimits::default();
+        // The linear seed: a role and a format that name no family, and a strategy that
+        // names Linear.
+        let parent = circuit_seed(0);
+        let strategy = parent.stages[0].workers[0].sections[1].text.clone();
+
+        assert_eq!(named_families(&strategy), [LINEAR]);
+
+        // Its Soul prefers Linear at 2 (no turn), where the floor ε protects the strategy,
+        // and at about 1.5 (a sixth of a turn), where 1 − L does.
+        for phase in [0, 10923] {
+            let prefs = vec![prefer(&[(LINEAR, phase)])];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let protect = (2.0 - prefs[0][LINEAR]).max(WEIGHT_FLOOR);
+
+            assert!(prefs[0][LINEAR] > 1.49);
+
+            // The share of draws that overwrite the strategy, today and with the Soul.
+            // SectionReplace draws one of three sections with the weights 1, 1 − L and 1;
+            // SectionAdd writes one of two strategies over it, each with the weight
+            // 1 · (1 − L), or one of two new sections with the weight 1.
+            let cases = [
+                (Op::SectionReplace, 1.0 / 3.0, protect / (2.0 + protect)),
+                (Op::SectionAdd, 0.5, 2.0 * protect / (2.0 + 2.0 * protect)),
+            ];
+
+            for (op, today, steered) in cases {
+                let share = |steer: Option<&Steer<'_>>| {
+                    let mut r = rng(33);
+                    let hits = (0..DRAWS)
+                        .filter(|_| {
+                            let (child, _) = apply_steered(
+                                &parent,
+                                op,
+                                &limits,
+                                PROTECTION_PHRASES,
+                                steer,
+                                &mut Steered::default(),
+                                &mut r,
+                            )
+                            .expect("applies");
+
+                            child.stages[0].workers[0].sections[1].text != strategy
+                        })
+                        .count();
+
+                    hits as f64 / f64::from(DRAWS)
+                };
+                let (n, w) = (share(None), share(Some(&steer)));
+                let factor = steered / today;
+                // The standard error of a ratio of two independent shares, by the delta
+                // method.
+                let se = (w / n)
+                    * ((1.0 - w) / (w * f64::from(DRAWS)) + (1.0 - n) / (n * f64::from(DRAWS)))
+                        .sqrt();
+
+                eprintln!(
+                    "{op:?}, phase {phase}: overwritten {n:.4} today, {w:.4} with the Soul; factor {:.4} for {factor:.4}, 3 standard errors {:.4}",
+                    w / n,
+                    3.0 * se
+                );
+                assert!(w < n, "{op:?}: {w} against {n}");
+                assert!(
+                    (w / n - factor).abs() < 3.0 * se,
+                    "{op:?}, phase {phase}: factor {} for {factor}, standard error {se}",
+                    w / n
+                );
+                assert!(within_3_se(n, today, DRAWS), "{op:?} today: {n}");
+                assert!(within_3_se(w, steered, DRAWS), "{op:?} with the Soul: {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_choice_follows_its_weights() {
+        let limits = CascadeLimits::default();
+        let n = f64::from(DRAWS);
+
+        // Choice 1: SectionReplace changes the Worker whose prompt names Linear, with
+        // preference 2, by the weight 1 + 1 against 1 for the Worker that names no family
+        // the Soul leans to (Search, at preference 1).
+        let mut two = circuit_seed(0);
+        let other = circuit_seed(3).stages[0].workers[0].clone();
+
+        assert_eq!(
+            named_families(&two.stages[0].workers[0].system_prompt()),
+            [LINEAR]
+        );
+        assert_eq!(named_families(&other.system_prompt()), [SEARCH]);
+        two.stages[0].workers.push(other);
+
+        let prefs = vec![prefer(&[(LINEAR, 0)]); 2];
+        let steer = Steer {
+            families_of: named_families,
+            preferences: &prefs,
+        };
+        let mut r = rng(34);
+        let first = (0..DRAWS)
+            .filter(|_| {
+                let (child, _) = apply_steered(
+                    &two,
+                    Op::SectionReplace,
+                    &limits,
+                    CIRCUIT_PHRASES,
+                    Some(&steer),
+                    &mut Steered::default(),
+                    &mut r,
+                )
+                .expect("applies");
+
+                child.stages[0].workers[0] != two.stages[0].workers[0]
+            })
+            .count() as f64;
+
+        assert!(within_3_se(first / n, 2.0 / 3.0, DRAWS), "{}", first / n);
+
+        // Choice 3: the phrase, still from its section's name with probability 0.7 and from
+        // the whole pool otherwise, and within either by 1 + L. With Phase at 2, a strategy
+        // text that names Phase weighs 2 and every other 1.
+        let pref = prefer(&[(PHASE, 0)]);
+        let lens = Lens {
+            families_of: named_families,
+            pref: &pref,
+        };
+        let current = "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.";
+        let weight = |t: &str| {
+            if named_families(t).contains(&PHASE) {
+                2.0
+            } else {
+                1.0
+            }
+        };
+        let same: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(m, t)| *m == "strategy" && *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let any: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(_, t)| *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let total = |texts: &[&str]| texts.iter().map(|t| weight(t)).sum::<f64>();
+        let (phase_same, phase_any): (Vec<&str>, Vec<&str>) = (
+            same.iter().copied().filter(|t| weight(t) > 1.0).collect(),
+            any.iter().copied().filter(|t| weight(t) > 1.0).collect(),
+        );
+        let p_same = SAME_NAME_P + (1.0 - SAME_NAME_P) * total(&same) / total(&any);
+        let p_phase = SAME_NAME_P * total(&phase_same) / total(&same)
+            + (1.0 - SAME_NAME_P) * total(&phase_any) / total(&any);
+        let mut r = rng(35);
+        let (mut by_name, mut by_phase) = (0u32, 0u32);
+
+        assert!(!phase_same.is_empty() && phase_any.len() > phase_same.len());
+
+        for _ in 0..DRAWS {
+            let t = replacement_text(
+                &mut r,
+                CIRCUIT_PHRASES,
+                "strategy",
+                current,
+                Some(lens),
+                &mut Steered::default(),
+            )
+            .expect("a text");
+
+            by_name += u32::from(same.contains(&t));
+            by_phase += u32::from(weight(t) > 1.0);
+        }
+
+        assert!(within_3_se(f64::from(by_name) / n, p_same, DRAWS));
+        assert!(within_3_se(f64::from(by_phase) / n, p_phase, DRAWS));
+
+        // The coin of section crossover: the partner's text, which names no family, against
+        // a text that names Linear at 2, so with probability 1 / (1 + 2).
+        let pref = prefer(&[(LINEAR, 0)]);
+        let lens = Lens {
+            families_of: named_families,
+            pref: &pref,
+        };
+        let mine = circuit_seed(0).stages[0].workers[0].clone();
+        let mut theirs = mine.clone();
+
+        theirs.sections[1].text = current.to_string();
+
+        let mut r = rng(36);
+        let taken = (0..DRAWS)
+            .filter(|_| {
+                let mut child = mine.clone();
+
+                cross_worker(
+                    &mut child,
+                    &theirs,
+                    Some(lens),
+                    &mut Steered::default(),
+                    &mut r,
+                );
+
+                child.sections[1].text == current
+            })
+            .count() as f64;
+
+        assert!(within_3_se(taken / n, 1.0 / 3.0, DRAWS), "{}", taken / n);
+    }
+
+    #[test]
+    fn with_every_preference_one_the_operators_are_todays() {
+        // Complex phases all at a quarter turn give every family the preference 1.
+        let neutral = preference(&[QUARTER_TURN; 8], Readout::Complex);
+
+        assert_eq!(neutral, vec![1.0; 8]);
+
+        let limits = staged_limits();
+        let mut walk = rng(37);
+        let none = Steered::default();
+
+        for k in 0..400 {
+            let a = evolved_circuit(k, k % 9, &limits, &mut walk);
+            let b = evolved_circuit(k + 1 + k % 3, k % 6, &limits, &mut walk);
+            let prefs = vec![neutral.clone(); a.worker_count()];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let seed = k as u64;
+
+            // Each section operator alone gives the same child, sources and place in the
+            // stream, and counts no weighted choice.
+            for op in [Op::SectionReplace, Op::SectionAdd] {
+                let (mut today, mut steered) = (rng(seed), rng(seed));
+                let mut tally = Steered::default();
+
+                assert_eq!(
+                    apply_sourced(&a, op, &limits, CIRCUIT_PHRASES, &mut today),
+                    apply_steered(
+                        &a,
+                        op,
+                        &limits,
+                        CIRCUIT_PHRASES,
+                        Some(&steer),
+                        &mut tally,
+                        &mut steered
+                    ),
+                    "{op:?} {k}"
+                );
+                assert_eq!(today.get_word_pos(), steered.get_word_pos(), "{op:?} {k}");
+                assert_eq!(tally, none);
+            }
+
+            // So do the operators as the breeder calls them.
+            let (mut today, mut steered) = (rng(seed), rng(seed));
+            let plain = mutate_sourced(&a, &limits, CIRCUIT_PHRASES, &mut today);
+            let weighted = mutate_steered(&a, &limits, CIRCUIT_PHRASES, &steer, &mut steered);
+
+            assert_eq!(
+                plain,
+                weighted.map(|(c, op, s, tally)| {
+                    assert_eq!(tally, none);
+                    (c, op, s)
+                })
+            );
+            assert_eq!(today.get_word_pos(), steered.get_word_pos());
+
+            let (mut today, mut steered) = (rng(seed), rng(seed));
+            let plain = section_crossover_sourced(&a, &b, &limits, &mut today);
+            let weighted = section_crossover_steered(&a, &b, &limits, &steer, &mut steered);
+
+            assert_eq!(
+                plain,
+                weighted.map(|(c, s, tally)| {
+                    assert_eq!(tally, none);
+                    (c, s)
+                })
+            );
+            assert_eq!(today.get_word_pos(), steered.get_word_pos());
+        }
+
+        // So the choices match today's in distribution: SectionReplace takes a phrase of the
+        // section's name with probability 0.7 plus that name's share of the whole pool, and
+        // each phrase within the pool that is drawn alike.
+        let lens = Lens {
+            families_of: named_families,
+            pref: &neutral,
+        };
+        let current = "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.";
+        let same: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(m, t)| *m == "strategy" && *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let any: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(_, t)| *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let mut r = rng(38);
+        let mut counts: HashMap<&str, u32> = HashMap::new();
+
+        for _ in 0..DRAWS {
+            let t = replacement_text(
+                &mut r,
+                CIRCUIT_PHRASES,
+                "strategy",
+                current,
+                Some(lens),
+                &mut Steered::default(),
+            )
+            .expect("a text");
+
+            *counts.entry(t).or_default() += 1;
+        }
+
+        let p_same = SAME_NAME_P + (1.0 - SAME_NAME_P) * same.len() as f64 / any.len() as f64;
+        let by_name: u32 = same
+            .iter()
+            .map(|t| counts.get(t).copied().unwrap_or(0))
+            .sum();
+
+        assert!(within_3_se(
+            f64::from(by_name) / f64::from(DRAWS),
+            p_same,
+            DRAWS
+        ));
+
+        // Each phrase: a strategy has 0.7 / |same| + 0.3 / |any|, any other text 0.3 / |any|.
+        // The bound is 4 standard errors, since 60 phrases are tested at once.
+        for t in &any {
+            let p = (1.0 - SAME_NAME_P) / any.len() as f64
+                + if same.contains(t) {
+                    SAME_NAME_P / same.len() as f64
+                } else {
+                    0.0
+                };
+            let got = f64::from(counts.get(t).copied().unwrap_or(0)) / f64::from(DRAWS);
+            let se = (p * (1.0 - p) / f64::from(DRAWS)).sqrt();
+
+            assert!((got - p).abs() < 4.0 * se, "{t}: {got} for {p}");
+        }
+    }
+
+    #[test]
+    fn a_choice_changes_when_the_uniform_pick_of_its_draw_differs() {
+        // Equal weights make today's draw and count nothing.
+        for seed in 0..200 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+
+            assert_eq!(
+                weighted_index(&mut steered, &[0.4; 5], &mut tally),
+                Some(today.random_range(0..5))
+            );
+            assert_eq!(
+                weighted_coin(&mut steered, 3.0, 3.0, &mut tally),
+                today.random_bool(0.5)
+            );
+            assert_eq!(steered.get_word_pos(), today.get_word_pos());
+            assert_eq!(tally, Steered::default());
+        }
+
+        // Unequal weights draw one u in [0, 1): the pick is the first option whose summed
+        // weight passes u times the total, and the choice changed when ⌊u·n⌋ differs.
+        let weights = [1.0, 2.0, 0.25, 0.75];
+        let mut changed = 0;
+
+        for seed in 0..2000 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+            let pick = weighted_index(&mut steered, &weights, &mut tally).expect("a pick");
+            let u: f64 = today.random();
+            let x = 4.0 * u;
+            let expected = match x {
+                x if x < 1.0 => 0,
+                x if x < 3.0 => 1,
+                x if x < 3.25 => 2,
+                _ => 3,
+            };
+            let moved = expected != (4.0 * u) as usize;
+
+            assert_eq!(pick, expected);
+            assert_eq!(
+                tally,
+                Steered {
+                    choices: 1,
+                    changed: u64::from(moved)
+                }
+            );
+            assert_eq!(steered.get_word_pos(), today.get_word_pos());
+            changed += usize::from(moved);
+        }
+
+        // The weighted picks take u in [0, 0.25), [0.25, 0.75), [0.75, 0.8125) and [0.8125,
+        // 1), the uniform ones in quarters. They differ for u in [0.5, 0.8125): 5 / 16 of the
+        // draws change.
+        assert!(within_3_se(
+            f64::from(changed as u32) / 2000.0,
+            0.3125,
+            2000
+        ));
+
+        // The coin takes the partner's text when u lies below theirs / (mine + theirs), and
+        // it changed when that differs from u < 1/2.
+        for seed in 0..2000 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+            let take = weighted_coin(&mut steered, 2.0, 1.0, &mut tally);
+            let u: f64 = today.random();
+
+            assert_eq!(take, u < 1.0 / 3.0);
+            assert_eq!(
+                tally,
+                Steered {
+                    choices: 1,
+                    changed: u64::from((1.0 / 3.0..0.5).contains(&u))
+                }
+            );
+        }
+
+        // Without an option nothing is drawn.
+        let mut r = rng(1);
+        let mut tally = Steered::default();
+
+        assert_eq!(weighted_index(&mut r, &[], &mut tally), None);
+        assert_eq!((r.get_word_pos(), tally), (0, Steered::default()));
+    }
+
+    #[test]
+    fn steered_operators_see_genes_only() {
+        let limits = staged_limits();
+        let mut walk = rng(39);
+        let mut souls = rng(40);
+        let mut steered_some = 0;
+
+        for k in 0..300 {
+            let a = evolved_circuit(k, 1 + k % 6, &limits, &mut walk);
+            let b = evolved_circuit(k + 2, 1 + k % 4, &limits, &mut walk);
+            let prefs: Vec<Vec<f64>> = (0..a.worker_count())
+                .map(|_| {
+                    let soul: Vec<u16> = (0..8).map(|_| souls.random()).collect();
+
+                    preference(&soul, Readout::Complex)
+                })
+                .collect();
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let (sa, sb) = (
+                with_random_souls(&a, 8, &mut souls),
+                with_random_souls(&b, 8, &mut souls),
+            );
+            let seed = k as u64;
+            let mutated =
+                |x: &Cascade| mutate_steered(x, &limits, CIRCUIT_PHRASES, &steer, &mut rng(seed));
+            let crossed = |x: &Cascade, y: &Cascade| {
+                section_crossover_steered(x, y, &limits, &steer, &mut rng(seed))
+            };
+            let (m, c) = (mutated(&a), crossed(&a, &b));
+
+            // Parents with Souls give the same children as without, and no child carries a
+            // Soul.
+            assert_eq!(m, mutated(&sa), "{k}");
+            assert_eq!(c, crossed(&sa, &sb), "{k}");
+
+            for child in [m.as_ref().map(|x| &x.0), c.as_ref().map(|x| &x.0)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(!child.carries_soul(), "{k}");
+            }
+
+            steered_some += [m.map(|x| x.3), c.map(|x| x.2)]
+                .into_iter()
+                .flatten()
+                .filter(|t| t.choices > 0)
+                .count();
+        }
+
+        assert!(steered_some > 100, "{steered_some}");
     }
 }
