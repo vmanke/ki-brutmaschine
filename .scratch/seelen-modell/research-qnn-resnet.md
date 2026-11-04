@@ -14,6 +14,14 @@ Die Speichertabelle in Frage 4 stimmt. Zwei Stellen haben wir geändert:
   Arm W noch nicht gebaut und nicht gelaufen: Ticket `issues/01` und `issues/02` stehen auf
   `needs-triage`. Ein Ergebnis von Arm W liegt hier also nicht vor. Die Stelle ist als offen
   markiert.
+- **Nachtrag vom 2026-11-04 zu Arm W.** Arm W ist inzwischen gebaut und gelaufen (PR #52,
+  `screen-w.md`). Sein Vortest endete mit Stopp. Kriterium 2, die Selbstanpassung, ist
+  verfehlt: Die mittlere Vorliebe für Linear, Phase und Hadamard lag in W nur auf 3 von 8
+  Seeds über 1,2, auf den anderen 5 unter 1. Das Ziel war dabei fest, denn die Suchaufgaben
+  werden einmal je Lauf aus dem Seed gezogen (`src/cascade/arena.rs`). Der Befund widerspricht
+  der Erwartung aus Kashtan und Alon 2005 also nicht. Ihre Erklärung prüft er aber nicht, denn
+  kein Arm hatte wechselnde Ziele. Eine feste, von Hand gesetzte Vorliebe (Arm WF) schützte
+  die drei Familien; sie wird nur beschrieben.
 
 Die Quellenangaben selbst haben wir nicht erneut abgerufen. Der Stand je Zeile ist der des
 ursprünglichen Rechercheberichts.
@@ -234,8 +242,8 @@ Folgende Quellen sprechen gegen Teile der Hypothese.
 * Kashtan und Alon 2005 zeigen, dass Modularität unter festen Zielen schnell verloren geht.
   [arxiv](https://arxiv.org/pdf/1204.5999) [pnas](https://www.pnas.org/doi/10.1073/pnas.0503610102)
   Bleibt die Aufgabe in den 57 bestandenen Pilotläufen fest, ist nicht zu erwarten, dass eine
-  vererbte Variationssteuerung erhalten bleibt. Ein Ergebnis von Arm W liegt im Repository noch
-  nicht vor (offen, siehe Prüfvermerk); ob es zu dieser Erwartung passt, ist ungeprüft.
+  vererbte Variationssteuerung erhalten bleibt. Der Vortest von Arm W widerspricht dieser
+  Erwartung nicht, prüft ihre Erklärung aber nicht (siehe Nachtrag im Prüfvermerk).
 * Stanley und Miikkulainen 2002 warnen, dass nicht funktionale Struktur eventuell nie angebunden
   wird. [gwern](https://gwern.net/doc/reinforcement-learning/exploration/2002-stanley.pdf) Eine
   Kopplung, die exakt bei 0 startet, ist für die Selektion unsichtbar, bis eine Mutation sie
@@ -269,7 +277,6 @@ Folgende Quellen sprechen gegen Teile der Hypothese.
 * Ein Beschleunigungsfaktor bei Kashtan und Alon 2005 und bei Kashtan, Noor und Alon 2007.
 * Inhalte von Wagner 2008 und Wagner und Altenberg 1996.
 * Die Zeitschriftenfassungen der Vorabdrucke arXiv:2207.09056 und 2110.10721.
-* Ein Ergebnis von Arm W im Repository.
 
 ## Vorbehalte
 
