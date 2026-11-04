@@ -14,16 +14,19 @@ Spec: `../spec-imagination.md`, sections 3.1 to 3.3 and 3.5
   None, grids today), and refuse a resume that changes it.
 - Experience (spec 3.1): learned values per Worker and family in the Member, not in the genome.
   Store them as integers (thousandths) so that bytes and hashes cannot depend on float printing.
+  Use the exact rounding of spec 3.3: step = (e + sign(e) · 2n) / (4n), integer division towards
+  zero, then clamp to [−1000, 1000] after each step.
   A child Worker copies the values of its source Worker; a Worker without a source starts at 0.
 - Imagination (spec 3.2): for SectionReplace, SectionAdd, SectionDrop and section crossover, draw
   the operator 4 times on the same parent. Draw 1 uses today's stream; draws 2 to 4 use streams
   derived with the tag `imagine/{g}/{i}/{j}`, so the main stream advances exactly as today. Take
   the draw with the highest prediction; a tie goes to the earliest draw.
 - Learning (spec 3.3): after a newborn is evaluated, compute s on the current goal (all tasks
-  while ticket 05 is off), the error e = s − p and the update of each gained or lost family,
-  clamped to [−1, 1]. The child's Worker learns before its Born event. Each parent's Worker learns
-  at commit, from its children in birth order, logged as a new event that `--verify` replays, as
-  it replays `Souls`. Draw nothing from the generation's random stream.
+  while ticket 05 is off), the one error e = s − p over all changed Workers, and the normalized
+  step of each gained or lost family. The child's Workers learn before the Born event. Their
+  source Workers in the parents learn the same steps at commit, from each child in birth order,
+  logged as a new event that `--verify` replays, as it replays `Souls`. Draw nothing from the
+  generation's random stream.
 - Logs (spec 3.5): the `mind` group of the state line, and the new fields of the Born event.
   Every new field is left out when off.
 
@@ -35,7 +38,8 @@ Spec: `../spec-imagination.md`, sections 3.1 to 3.3 and 3.5
   without it, and the generation's random stream ends at the same word.
 - Unit tests: the prediction, the update, the clamp, the tie rule, the copy of values at birth
   (mutation, section crossover, stage crossover, new Worker), and the parent's learning in birth
-  order.
+  order. The rounding: negative errors, steps that end in exactly one half, and n above 1. A
+  section crossover that changes two Workers: one p over both, one e, and the steps of both.
 - A Run with `imagination` over 60 generations is byte-equal at 1 and at 4 threads, passes
   `--verify`, and a resumed Run equals a straight one.
 - `cargo test` and `cargo clippy --all-targets -- -D warnings` are clean.

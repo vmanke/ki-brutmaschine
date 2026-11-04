@@ -5,7 +5,9 @@ Blocked by: 04, 05
 Spec: `../spec-imagination.md`, sections 4 and 5
 
 A screen, not a test: it decides whether a confirmatory experiment on arm IG is worth its cost.
-The criteria below are fixed before any part is built, and they never change after it.
+The criteria below were fixed before any part was built (ccf059e). Criterion 3 was revised on
+2026-11-04 after review, while ticket 04 was being built and before any Run. They never change
+after the first Run.
 
 ## What to do
 
@@ -38,7 +40,7 @@ The criteria below are fixed before any part is built, and they never change aft
   `.scratch/seelen-modell/screen-ig.md`. Report a failed criterion as plainly as a met one. Give
   the numbers of arms I and G beside them, marked as description.
 
-## Criteria (fixed before any part is built)
+## Criteria (fixed before the first Run)
 
 1. **Early.** In IG, imagination changes a pick (the chosen draw is not the first) in generation 5
    or earlier, on 8 of 8 seeds.
@@ -46,9 +48,14 @@ The criteria below are fixed before any part is built, and they never change aft
    parents chosen in generations 41 to 50 is higher than the mean value of the other five
    families, on at least 6 of 8 seeds. A parent counts once per child, and both parents of a
    crossover count.
-3. **Imagination measures the effect.** Pooled over the seeds of IG, among newborns chosen by
-   imagination with p ≠ 0 and s ≠ 0, the sign of p equals s in more than half, with a one-sided
-   binomial p-value below 0.05. With fewer than 30 such newborns, the criterion fails.
+3. **Imagination measures the effect.** On each seed of IG, among all newborns with p ≠ 0, take
+   the mean s of those with p > 0 minus the mean s of those with p < 0. This difference is above
+   0 on at least 7 of 8 seeds. A seed with fewer than 5 newborns in either group counts as not
+   above. The test works on seeds, because newborns of one Run share ancestry and values, but
+   seeds are independent. With no information in p, the difference is above 0 with probability
+   at most one half, so 7 of 8 seeds has probability at most 9/256 = 0.035. A plain match of
+   signs is not used: it can be high from the base rate alone, when most changes do harm and most
+   predictions are negative. The pooled numbers are reported too.
 4. **Protection.** Pooled over the seeds, before the first Worker with all three families, at
    most 40 % of the draws that change a promising Worker lose one of its families in IG, and IG's
    share lies at least 10 percentage points below N's. If an arm has fewer than 30 such draws, the

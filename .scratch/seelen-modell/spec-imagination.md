@@ -75,9 +75,12 @@ The combination below has no published model that we know of. It is our own cons
 - The operator is drawn k = 4 times on the same parent. The first draw uses today's random
   stream. Draws 2 to 4 each use their own stream, derived from the seed with the tag
   `imagine/{g}/{i}/{j}`.
-- For each draw, the families that the changed Worker gains and loses are known before any model
-  call. The prediction is p = (the sum of v_f over gained families) − (the sum of v_f over lost
-  families), with the values of the parent's Worker.
+- For each draw, the families that each changed Worker gains and loses are known before any
+  model call. A draw can change several Workers: a section crossover crosses every Worker with
+  its partner (`src/cascade/variation.rs`, lines 717 to 723).
+- The prediction p of a draw is the sum over its changed Workers of (the sum of v_f over the
+  Worker's gained families) − (the sum of v_f over its lost families). Each Worker uses the
+  values of its source Worker.
 - The child is the draw with the highest p. A tie goes to the earliest draw. So while all values
   are 0, the first draw wins, and the Run stays today's Run byte for byte.
 - Imagination costs no model call. It only reads the learned values.
@@ -87,14 +90,20 @@ The combination below has no published model that we know of. It is our own cons
 - After a newborn is evaluated, its real effect is s = the sign of (its solved count on the
   current goal − its first parent's solved count on the current goal). So s is −1, 0 or +1.
   Both counts use the same tasks; the parent's answers are stored from its birth.
-- The error is e = s − p. Each family the child's Worker gained moves by +e/4, and each family it
-  lost moves by −e/4. Values are clamped to [−1, 1]. This is the delta rule with rate 1/4.
+- The error is e = s − p, one number for the newborn. Let n be the number of gained and lost
+  families over all its changed Workers. Each gained family moves by +e/(4n), and each lost
+  family by −e/(4n). This is the delta rule with rate 1/4, normalized by n, so a change of many
+  families takes no larger step than a change of one.
+- Values, p and e are kept in integer thousandths. A step is rounded half away from zero:
+  step = (e + sign(e) · 2n) / (4n), with integer division towards zero. After each step the value
+  is clamped to [−1000, 1000].
 - Every newborn learns this way, whichever operator made it. Gained and lost families are those
-  of each child Worker against its source Worker.
-- The child's Worker learns at once. The parent's Worker learns too: at the commit of the
-  generation, from each of its children in birth order. This is the owner's "parents and
-  children learn". The parent's change after birth is logged as an event and replayed by
-  `--verify`, as the `Souls` event is today.
+  of each child Worker against its source Worker. A newborn whose Workers name the same families
+  as their sources has n = 0 and learns nothing.
+- The child's Workers learn at once. Their source Workers in the parents learn the same steps:
+  at the commit of the generation, from each child in birth order, each step clamped on its own.
+  This is the owner's "parents and children learn". The change of a parent after its birth is
+  logged as an event and replayed by `--verify`, as the `Souls` event is today.
 
 ### 3.4 Changing goals
 
@@ -108,8 +117,9 @@ The combination below has no published model that we know of. It is our own cons
 - The sequence is G0, G−f1, G0, G−f2, and so on, over the families in index order, and then it
   starts again. Each goal lasts E = 20 generations, as in Kashtan, Noor and Alon (2007).
   Generations 1 to 20 have G0.
-- So each new goal shares all sub-problems but one module with the full goal, and half of the
-  time is spent on the full goal.
+- Each variant leaves out the targets that name one family. Most targets name several families,
+  so a variant can leave out targets of other modules too: G−Linear keeps only cs and ch. Half of
+  the time is spent on the full goal.
 - On today's circuit library, this gives seven variants: G−Linear (cs, ch), G−Phase (cz, swap,
   ch), G−Hadamard (swap, cs, ch, ccz), G−Compose and G−Simplify (all targets but fredkin),
   G−Search (all but cz and ch) and G−Meet (all but ch). G−Previous equals G0 and is left out. A
