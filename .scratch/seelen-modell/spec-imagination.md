@@ -74,7 +74,13 @@ The combination below has no published model that we know of. It is our own cons
   operators that can change the families a Worker names.
 - The operator is drawn k = 4 times on the same parent. The first draw uses today's random
   stream. Draws 2 to 4 each use their own stream, derived from the seed with the tag
-  `imagine/{g}/{i}/{j}`.
+  `imagine/{g}/{i}/{j}`. Here i is the child's index in birth order, as in `soul/{g}/{i}`, and j
+  is the draw number, 2 to 4.
+- Draw 1 is the child that today's code makes, after all of today's checks (validity,
+  admission and novelty). If today's attempt fails, it fails as today, and draws 2 to 4 are not
+  made. Each of draws 2 to 4 is one application of the same operator on the same parent, or one
+  full section crossover on the same two parents. A draw that fails one of these checks is no
+  candidate.
 - For each draw, the families that each changed Worker gains and loses are known before any
   model call. A draw can change several Workers: a section crossover crosses every Worker with
   its partner (`src/cascade/variation.rs`, lines 717 to 723).
@@ -132,8 +138,12 @@ The combination below has no published model that we know of. It is our own cons
   the imagination choices (operator calls with at least one p ≠ 0), the changed picks (the chosen
   draw is not the first), and two mean values over the Workers of this generation's parents: one
   for Linear, Phase and Hadamard, one for the other families.
-- The Born event of each newborn holds its values after its own learning step, and, when
-  imagination chose it, p, s, the index of the chosen draw and the gained and lost families.
+- The Born event of each newborn holds its values after its own learning step.
+- It also holds p, s and the gained and lost families of every newborn whose Workers gained or
+  lost families (n > 0), whichever operator made it, and of every newborn that imagination
+  chose. A stage operator can add families too, for example when it writes a phrase into a
+  copied Worker. The index of the chosen draw is logged only when imagination chose the child.
+  So criterion 3 of the screen can be computed from the log alone.
 
 ## 4 Arms
 
