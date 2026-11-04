@@ -33,8 +33,9 @@ Schlüsse sind als solche markiert.
   Hacking trat nach Angabe der Autoren häufiger auf, wenn die Prüffunktionen sichtbar waren.
   Skalse et al. 2022 beweisen: Auf der Menge aller stationären (auch stochastischen) Strategien
   sind ein Ersatz und die wahre Belohnung nur dann nicht hackbar, wenn eine von beiden trivial
-  ist oder wenn beide äquivalent sind (Satz 1, Korollar 1). Äquivalent heißt: Beide ordnen alle
-  Strategien gleich.
+  ist oder wenn beide äquivalent sind (Satz 1, Korollar 1). Trivial heißt: Eine Belohnung gibt
+  allen Strategien denselben Wert. Äquivalent heißt: Beide bringen alle Strategien in dieselbe
+  Reihenfolge.
 * Ein faires Urteil über einen äußeren Sucher braucht einen gleich teuren Vergleich. Li und
   Talwalkar 2019 zeigen, dass Zufallssuche bei gleicher Rechenzeit ein harter Vergleich ist.
   POET gibt seinem Lehrplan-Vergleich je Zielumgebung so viele ES-Schritte, wie POET entlang der
@@ -255,10 +256,10 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
 * Skalse et al. zeigen: Auf jeder Strategiemenge, die eine offene Teilmenge enthält, etwa allen
   stationären oder allen ε-suboptimalen Strategien, sind ein nicht trivialer Ersatz und eine nicht
   triviale wahre Belohnung stets hackbar, wenn sie nicht äquivalent sind (Satz 1, Korollare 1 und
-  2). Auf endlichen Mengen gibt es dagegen stets nicht hackbare, nicht triviale Paare (Satz 2). Sie
-  raten, die Menge einzuschränken oder die Optimierung zu begrenzen (Abschnitt 7). Für die
-  Brutmaschine heißt das: wenige Gesetze, enge und möglichst diskrete Bereiche, wenige Generationen
-  des Gottes.
+  2). Auf endlichen Mengen gibt es dagegen stets nicht triviale Paare, die nicht äquivalent und
+  trotzdem nicht hackbar sind (Satz 2). Die Autoren raten, die Menge einzuschränken oder die
+  Optimierung zu begrenzen (Abschnitt 7). Für die Brutmaschine heißt das: wenige Gesetze, enge und
+  möglichst diskrete Bereiche, wenige Generationen des Gottes.
 
 ### G4 Was ein Universum kostet
 
