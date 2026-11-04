@@ -67,11 +67,11 @@ Information in einem Gebiet ist durch Energie und Radius (Bekenstein) bzw. durch
 - **Bérut et al. (2012):** Ein einzelnes Kolloidteilchen (Silikakugel, ~2 µm) in einer optischen Doppelmulde als 1-Bit-Speicher. "the mean dissipated heat saturates at the Landauer bound in the limit of long erasure cycles." — [Bérut et al., Nature 483, 187–189 (2012)](https://www.nature.com/articles/nature10872)
 - **Details Bérut:** Fit ⟨Q⟩ = A + B/τ ergibt A = 0,72 k_BT, nahe k_BT ln 2 ≈ 0,693 k_BT. Wärme fällt etwa wie 1/τ (Löschdauer τ). Bei unvollständiger Löschung (Erfolgsquote p) gilt die verallgemeinerte Schranke k_BT[ln2 + p ln p + (1−p)ln(1−p)]. — [Bérut et al., ausführliche Fassung, arXiv:1503.06537 (Preprint)](https://arxiv.org/html/1503.06537v1)
 - **Weitere Bestätigungen:** Jun, Gavrilov, Bechhoefer, "High-precision test of Landauer's principle in a feedback trap" (PRL 2014) und weitere klassische und Quanten-Experimente. Gaudenzi et al. (2018) erreichten Landauer-limitiertes Löschen in einem Quantensystem mehrere Größenordnungen schneller, aber noch nicht an der Quantengeschwindigkeitsgrenze; dort gilt Q·τ_QSL = πħ/2. — [Deffner & Campbell 2017](https://arxiv.org/abs/1705.08023)
-- **Landauer-Grenze nur im Grenzfall langsamer Prozesse:** "Landauer's limit applies only when the resetting is done infinitely slowly". — [Nature News 2012](https://www.nature.com/articles/nature.2012.10186)
+- **Erreichbar nur im Grenzfall langsamer Prozesse:** Die Meldung schreibt: "Landauer's limit applies only when the resetting is done infinitely slowly". Gemeint ist das Erreichen der Grenze. Als Untergrenze gilt sie unter ihren thermodynamischen Voraussetzungen auch für schnelles Löschen. — [Nature News 2012](https://www.nature.com/articles/nature.2012.10186)
 
 ### Inferences
 - Eigene Rechnung: k_B·300 K·ln 2 = 2,871·10⁻²¹ J (≈ 0,018 eV). Kehrwert: 3,48·10²⁰ gelöschte Bit pro Joule. Bei 20 °C (293,15 K): 2,805·10⁻²¹ J.
-- Langsamkeit kostet: Landauer gilt nur für quasistatisches Löschen; schnelles Löschen kostet ~B/τ zusätzlich. Das ist ein echter Zeit-Energie-Tausch.
+- Langsamkeit kostet: Die Landauer-Grenze gilt für jedes Löschen, auch für schnelles. Erreichen lässt sie sich nur im Grenzfall quasistatischen Löschens. Im Experiment von Bérut et al. lag die Wärme bei kürzerer Löschdauer τ um B/τ höher. Das beschreibt dieses Experiment, kein allgemeines Gesetz. Es zeigt aber einen echten Tausch von Zeit gegen Energie.
 
 ### Gaps
 - Originalpapiere Landauer 1961, Jun 2014, Hong 2016 (Nanomagnete), Yan 2018 (Ion) nicht im Volltext gelesen.
@@ -103,7 +103,7 @@ Nein. Alle Schranken gelten für das gesamte physikalische System. Die Gesamtrat
 ## 5. Rechenbeispiel: NVIDIA H200 vs. Margolus–Levitin und Landauer
 
 ### Takeaway
-Ein H200 SXM braucht ≈ 7·10⁻¹³ J pro dichtem BF16-FLOP. Das ist ≈ 2,5·10⁸-mal mehr als die Landauer-Energie für ein gelöschtes Bit bei 300 K. Gegenüber ML liegt die GPU, je nach Lesart, 10²¹ (700 J als Energiebudget) bis 10³⁵ (Ruhemasse) Größenordnungen-Faktoren unter der Grenze. Landauer ist die praktisch aussagekräftigere Grenze.
+Ein H200 SXM verbraucht ≈ 7·10⁻¹³ J pro dichtem BF16-FLOP. Das ist ≈ 2,5·10⁸-mal mehr als die Landauer-Energie für ein gelöschtes Bit bei 300 K. Da ein FLOP viele Bits löscht, ist der Abstand je Bit kleiner. Einen Abstand zur ML-Grenze kann man für die GPU nicht angeben. ML braucht die mittlere Energie der rechnenden Freiheitsgrade über ihrem Grundzustand, und die Energie je FLOP ist verbrauchte Energie, nicht diese Größe. Außerdem ist ein FLOP kein einzelner Zustandswechsel. Landauer ist die praktisch aussagekräftigere Grenze.
 
 ### Cited Findings
 - **NVIDIA H200 SXM:** BFLOAT16 Tensor Core 1 979 TFLOPS, FP16 Tensor Core 1 979 TFLOPS, FP8 3 958 TFLOPS, TF32 989 TFLOPS – Fußnote 2: "With sparsity". FP32 67 TFLOPS. Max TDP "Up to 700W (configurable)". 141 GB HBM3e, 4,8 TB/s. "Preliminary specifications." — [NVIDIA H200 Produktseite](https://www.nvidia.com/en-us/data-center/h200/)
@@ -115,10 +115,8 @@ Ein H200 SXM braucht ≈ 7·10⁻¹³ J pro dichtem BF16-FLOP. Das ist ≈ 2,5·
 - **Landauer bei 300 K:** k_BT ln 2 = 1,380649·10⁻²³ × 300 × 0,693147 = **2,871·10⁻²¹ J/Bit**.
 - **Verhältnis:** 7,07·10⁻¹³ / 2,871·10⁻²¹ = **2,46·10⁸** (dicht); 1,23·10⁸ (Sparsity). Achtung: FLOP ≠ Bit-Löschung. Ein BF16-FMA löscht viele Bits (Größenordnung nicht belegt), der Abstand pro Bit ist also kleiner als 2,5·10⁸. Wie viel kleiner, ist ohne Gatterzählung nicht seriös angebbar.
 - **Landauer-Leistung für 9,9·10¹⁴ Löschungen/s:** 9,895·10¹⁴ × 2,871·10⁻²¹ J = 2,84·10⁻⁶ W (≈ 3 µW statt 700 W). Umgekehrt: 700 W reichen landauer-theoretisch für 700 / 2,871·10⁻²¹ = **2,44·10²³ Bit-Löschungen/s**.
-- **ML, Lesart A (E = Energie pro Operation):** Mit E_op = 7,07·10⁻¹³ J: τ_min = πħ/(2E) = 1,6565·10⁻³⁴ J·s / 7,07·10⁻¹³ J = **2,34·10⁻²² s**. Ein Transistor schaltet in ~10⁻¹¹…10⁻¹⁰ s (Größenordnung, nicht in den Quellen belegt). Die ML-Grenze ist hier völlig irrelevant.
-- **ML, Lesart B (E = 700 J, also Energie einer Sekunde):** 4E/h = 4 × 700 / 6,626·10⁻³⁴ = 4,23·10³⁶ ops/s (2E/h: 2,11·10³⁶). Verhältnis zu 9,9·10¹⁴ FLOP/s: **≈ 4,3·10²¹**. Diese Lesart ist physikalisch unsauber: ML braucht die mittlere Energie des rechnenden Zustands, nicht verbrauchte Energie pro Sekunde.
-- **ML, Lesart C (Ruhemasse, Lloyds Lesart):** Pro kg 5,43·10⁵⁰ ops/s (4E/h) bzw. 2,71·10⁵⁰ (2E/h). Masse des H200-SXM-Moduls wurde nicht recherchiert; bei hypothetisch 1 kg wäre das Verhältnis 5,43·10⁵⁰ / 9,9·10¹⁴ ≈ 5,5·10³⁵.
-- Fazit für die Folie: Heutige GPUs sind thermodynamisch (Landauer) etwa 8 Größenordnungen pro FLOP vom Minimum entfernt und quantenmechanisch (ML) so weit, dass ML für Engineering keine Rolle spielt. Die echten Grenzen heute sind Leistung, Kühlung, Speicherbandbreite und Kommunikation.
+- **ML für die GPU: keine belastbare Zahl.** Die ML-Grenze braucht die mittlere Energie ⟨E⟩ − E₀ des rechnenden Systems über seinem Grundzustand. Die Energie je FLOP (Leistung durch Rate) ist verbrauchte Energie und nicht diese Größe. Ein FLOP besteht zudem aus vielen Zustandswechseln. Rechnungen mit 7,07·10⁻¹³ J als E, mit 700 J als E oder mit einer angenommenen Masse von 1 kg vergleichen darum ungleiche Größen. Wir geben keine von ihnen als Ergebnis an. Lloyds Ruhemassen-Schranke (5,43·10⁵⁰ Wechsel je Sekunde und kg bei 4E/h) bleibt eine gültige, sehr lockere obere Schranke für jedes System dieser Masse. Die Masse des H200-Moduls wurde nicht recherchiert.
+- Fazit für die Folie: Heutige GPUs verbrauchen je FLOP etwa 2,5·10⁸-mal die Landauer-Energie eines Bits. Je gelöschtem Bit ist der Abstand kleiner und ohne Gatterzählung unbekannt. Für ML lässt sich ohne ein Modell der rechnenden Freiheitsgrade keine Zahl angeben. Die echten Grenzen heute sind Leistung, Kühlung, Speicherbandbreite und Kommunikation (eigene Einschätzung).
 
 ### Gaps
 - Offizielles NVIDIA-Datenblatt-PDF nicht geladen (nur Produktseite mit identischer Tabelle). Dichte BF16-Zahl nicht direkt von NVIDIA.

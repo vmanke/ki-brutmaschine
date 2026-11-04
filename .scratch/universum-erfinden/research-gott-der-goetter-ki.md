@@ -229,7 +229,11 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
 * Die Zielgröße sollte nicht allein aus dem Universe state kommen. Diversität oder Entropie lassen
   sich leicht aufblähen, ohne dass etwas erfunden wird. OMNI erwartet genau das für jedes Maß, gegen
   das optimiert wird (Zhang et al., Abschnitt 7). Lehman et al. berichten es vielfach.
-* Der Gott sieht nur öffentliche Zahlen: Search panel und Select panel. Er sieht nie die
+* Der Gott sieht nur das Search panel. Das Select panel bleibt während der Zucht ungesehen
+  (`CONTEXT.md`, Eintrag Select panel), und auch Menschen sehen es nie (Q35 in `spec.md`).
+  Bekäme der Gott Select-Zahlen, würde das zurückgehaltene Panel zu seinem Optimierungsziel.
+  Soll ein Panel eigens als Trainingspanel für den Gott dienen, braucht das eine eigene
+  Entscheidung und eine weitere, unabhängige Bewertung. Er sieht auch nie die
   Hidden evaluation. Sonst wird er zu einem Kanal, über den verborgene Aufgaben in die Suche
   gelangen (ADR 0004, Absatz zur Blindheit).
 * Die Prüfungen, die Betrug erkennen, bleiben vor dem Gott verborgen. Dazu zählen Canary tasks,
