@@ -31,3 +31,36 @@ Spec: `../spec-imagination.md`, sections 3.4 and 3.5
 - A Run with `goals` over 60 generations is byte-equal at 1 and at 4 threads, passes `--verify`,
   and a resumed Run equals a straight one. Its `rediscovery.json` is computed as today.
 - `cargo test` and `cargo clippy --all-targets -- -D warnings` are clean.
+
+## Comments
+
+- 2026-11-04, built together with ticket 04; committed in #57 for the owner to review.
+- The setting: `"goals": {"length": 20}` at the top level of `BreedConfig`
+  (`src/cascade/mind.rs`, `GoalsConfig`). Its one field is required and no other is allowed; it
+  is left out of the JSON when off. A Run with it is refused unless its selection is lexicase
+  and its Domain circuits, and exits with code 1 before it writes a record. A resume refuses a
+  change through the fixed hash.
+- What was built. At the start the breeder builds one cycle of goals from the search panel
+  (`mind::goal_cycle`): G0, then, for each family in index order whose G−f is neither empty nor
+  G0, G0 and G−f in turn, with no G0 before the first variant. G−f holds the tasks whose Family
+  strength for f, from `LibraryTarget.fits`, is 0. Generation g ≥ 1 has the goal at place
+  ((g − 1) div length) mod (the cycle's length); generation 0, which draws no parent, has G0.
+  Lexicase reads only the goal's tasks as cases, in panel order: when generation g drafts, and
+  for the state line's estimate of the parent draw of generation g + 1. So the state line of
+  generation 20 already reads the weights of goal G−Linear. Every newborn is still evaluated on
+  the whole panel; fitness, the ranking, the select phase and `rediscovery.json` are as before.
+  With ticket 04 on, s compares the solved counts on the goal of the newborn's generation. The
+  `mind` group logs the goal as `all` or `-Linear`.
+- Tests. `mind.rs`: `the_goals_of_todays_circuit_library` pins G0, G−Linear, G0, G−Phase, G0,
+  G−Hadamard, G0, G−Compose, G0, G−Search, G0, G−Meet, G0, G−Simplify with the targets of each
+  goal of spec 3.4, and the generations of each goal; `goals_that_equal_all_tasks_or_none_are_left_out`.
+  `arena.rs`: `lexicase_with_a_goal_draws_only_on_the_tasks_of_that_goal` (a member that does
+  well only outside the goal is never drawn, and the breeder's cases are the goal's columns of
+  its scores), and the refusals, the mind group, s on the goal and the resume. `tests/mind.rs`:
+  Runs of 60 generations in arms G and IG are byte-equal at 1 and at 4 threads and pass
+  `--verify`; their `rediscovery.json` equals the count recomputed from the logged answers, as
+  `tests/circuits.rs` recomputes it; the goals of generations 0 to 20, 21 to 40 and 41 to 60;
+  Runs resumed at generation 30 equal straight ones.
+- Gate and smoke Runs: see ticket 04. In the smoke Run of arm G on seed 4242 the goals were all
+  tasks in generations 0 to 20, G−Linear in 21 to 40 and all tasks in 41 to 60; its events equal
+  arm N's up to the state line of generation 20.

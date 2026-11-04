@@ -2958,6 +2958,8 @@ mod tests {
                 teaching: None,
                 authors: None,
                 votes: None,
+                values: None,
+                effect: None,
             };
 
             log.push_str(&serde_json::json!({ "event": event }).to_string());

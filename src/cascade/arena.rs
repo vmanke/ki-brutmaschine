@@ -34,6 +34,17 @@
 //! nothing. With `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1), the
 //! section operators also get the preference of each parent Worker's birth Soul, which
 //! weights their choices; they still see genes only.
+//!
+//! With `imagination` on (arm I, `.scratch/seelen-modell/spec-imagination.md`, sections 3.1 to
+//! 3.3), every Worker carries learned values in its member, never in its genome
+//! (`mind.rs`). An operator that can change the families a Worker names is drawn several
+//! times on the same parents, and the draw whose prediction from these values is highest
+//! becomes the child; the draws after the first take their own streams, so the generation's
+//! stream advances as without imagination. Each newborn's real effect on the current goal then
+//! moves the values of its Workers before its Born event, and those of their source Workers
+//! at the commit, which a `learned` event after the generation event lists. With `goals` on
+//! (arm G, section 3.4), the tasks that count for lexicase selection and for that effect
+//! change every few generations; every newborn is still evaluated on the whole search panel.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -49,7 +60,13 @@ use crate::cascade::domain::{Domain, DomainConfig, GenePool, Grade, GridDomain};
 use crate::cascade::genome::{
     COUPLING_MAX, Cascade, CascadeLimits, PhaseState, Worker, adapt_seeds, check_section_text,
 };
-use crate::cascade::observe::{ObserveInput, SoulInput, UniverseState, observe, strength_counts};
+use crate::cascade::mind::{
+    ALL_TASKS, Change, Effect, Goal, GoalsConfig, IMAGINING_OPS, ImaginationConfig, VALUE_MAX,
+    choose, error, goal_cycle, goal_index, named, prediction, step,
+};
+use crate::cascade::observe::{
+    ImaginationCounts, MindInput, ObserveInput, SoulInput, UniverseState, observe, strength_counts,
+};
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::selection::{
     SelectionParams, lexicase_pick, lexicase_weights, tournament_pick, tournament_weights,
@@ -61,7 +78,7 @@ use crate::cascade::soul::{
 };
 use crate::cascade::upbringing::{imprinted, section_block, teaching};
 use crate::cascade::variation::{
-    Op, Sources, Steer, Steered, llm_crossover_request_with, llm_mutate_request_with,
+    Op, Sources, Steer, Steered, llm_crossover_request_with, llm_mutate_request_with, mutate_once,
     mutate_sourced, mutate_steered, parse_llm_cascade, partner_sources, read_llm_cascade,
     section_crossover_sourced, section_crossover_steered, stage_crossover_sourced,
 };
@@ -849,6 +866,18 @@ pub struct BreedConfig {
     /// are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soul: Option<SoulConfig>,
+    /// Experience and imagination (arm I, `.scratch/seelen-modell/spec-imagination.md`,
+    /// sections 3.1 to 3.3): learned values per Worker and family, imagined draws of the
+    /// section operators, and learning from each newborn's real effect. It needs no Soul.
+    /// None, the default, is a Run without them; it is left out of the JSON then, so configs
+    /// and fixed hashes of earlier runs are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imagination: Option<ImaginationConfig>,
+    /// Changing goals (arm G, spec 3.4): the tasks that count for lexicase selection and for
+    /// the real effect of imagination change every `length` generations. None, the default,
+    /// is a Run whose goal is always every task; it is left out of the JSON then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goals: Option<GoalsConfig>,
 }
 
 /// How a generation draws its parents and crossover partners.
@@ -978,6 +1007,8 @@ impl Default for BreedConfig {
             selection: ParentSelection::Dgm,
             selection_params: SelectionParams::default(),
             soul: None,
+            imagination: None,
+            goals: None,
         }
     }
 }
@@ -1024,6 +1055,14 @@ impl BreedConfig {
 
         if let Some(soul) = &self.soul {
             soul.check()?;
+        }
+
+        if let Some(imagination) = &self.imagination {
+            imagination.check()?;
+        }
+
+        if let Some(goals) = &self.goals {
+            goals.check()?;
         }
 
         Ok(())
@@ -1089,6 +1128,23 @@ pub struct Member<A = Grid> {
     /// Souls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub votes: Option<VoteTally>,
+    /// The learned values of each Worker, in Stage order, one per family of the Domain in
+    /// thousandths, after the member's own learning step at birth: what its Born event logs
+    /// (`.scratch/seelen-modell/spec-imagination.md`, sections 3.1, 3.3 and 3.5). A seed's are
+    /// 0. They are no gene. None without imagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<Vec<i16>>>,
+    /// The current learned values of each Worker, in Stage order (spec 3.3). They start as
+    /// `values`; at each commit the member learns the steps of its children whose Workers
+    /// have their sources in it, which the `learned` event of that commit logs. None without
+    /// imagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values_now: Option<Vec<Vec<i16>>>,
+    /// What the member's learning step at birth read, as its Born event logs it (spec 3.5):
+    /// when its Workers gained or lost families, and whenever imagination chose it. None
+    /// otherwise, and without imagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
 }
 
 /// One Worker of one member: the member's id and the Worker's index over its Stages in
@@ -1106,6 +1162,16 @@ pub struct SoulChange {
     pub member: String,
     pub worker: usize,
     pub phases: PhaseState,
+}
+
+/// A Worker whose learned values changed at a commit, as a source Worker of the
+/// generation's newborns (`.scratch/seelen-modell/spec-imagination.md`, section 3.3): its
+/// member's id, its index over the member's Stages, and its new values in thousandths.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValueChange {
+    pub member: String,
+    pub worker: usize,
+    pub values: Vec<i16>,
 }
 
 /// Where a Worker's birth Soul came from (step 2, spec 9 and 13.2).
@@ -1187,6 +1253,17 @@ pub enum Event {
         /// The tally of the Stage votes at birth (spec 7.7, 13.2); left out without Souls.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         votes: Option<VoteTally>,
+        /// The learned values of each Worker after the newborn's own learning step, in
+        /// thousandths (`.scratch/seelen-modell/spec-imagination.md`, section 3.5); left out
+        /// without imagination.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        values: Option<Vec<Vec<i16>>>,
+        /// What that learning step read: p, s and the families each Worker gained and lost,
+        /// for a newborn whose Workers gained or lost families or that imagination chose, and
+        /// the chosen draw for the latter (spec 3.5). Left out otherwise, and without
+        /// imagination.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<Effect>,
     },
     LlmExchange {
         generation: usize,
@@ -1211,6 +1288,15 @@ pub enum Event {
     Souls {
         generation: usize,
         changed: Vec<SoulChange>,
+    },
+    /// The Workers whose learned values changed at the commit of `generation`, in archive
+    /// order, each once with its new values: the source Workers of the generation's newborns,
+    /// which learn their steps in birth order (`.scratch/seelen-modell/spec-imagination.md`,
+    /// section 3.3). In a Run with imagination, one after each `Generation` event and its
+    /// `Souls` event.
+    Learned {
+        generation: usize,
+        changed: Vec<ValueChange>,
     },
     /// The universe observables of a committed generation: the last event of its step.
     State(UniverseState),
@@ -1319,6 +1405,106 @@ struct Draft {
     /// The choices the preferences decided in the operator that made the child (arm W);
     /// none for a seed, a Mutator's child, or with `variation` off.
     steered: Steered,
+    /// How imagination chose the child (`.scratch/seelen-modell/spec-imagination.md`,
+    /// section 3.2); None when no imagining operator made it, or with `imagination` off.
+    imagined: Option<Imagined>,
+    /// What the child brings to its learning, once `experiences` gave it (Runs with
+    /// imagination; spec 3.1 to 3.3).
+    experience: Option<Experience>,
+}
+
+/// How imagination chose a child among the draws of its operator (spec 3.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Imagined {
+    /// The chosen draw: 1 for today's draw, up to the setting's `draws`.
+    draw: usize,
+    /// True when some draw that was a candidate had a prediction other than 0: an
+    /// imagination choice of the `mind` group (spec 3.5).
+    choice: bool,
+}
+
+/// What a child brings to its learning (spec 3.1 to 3.3): for each of its Workers, in Stage
+/// order, the values it copies at birth, its source Worker, and what it gained and lost
+/// against that source; and the prediction p over all of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Experience {
+    /// The values of each Worker's source Worker when the child was drafted, or 0 for a
+    /// Worker without a source.
+    start: Vec<Vec<i16>>,
+    /// The source Worker of each Worker that has one, as its member's place in the archive
+    /// and its index over that member's Stages: the first of its sources, the Worker that
+    /// passes on the birth Soul too.
+    sources: Vec<Option<(usize, usize)>>,
+    changes: Vec<Change>,
+    p: i64,
+    /// The first parent's place in the archive: the parent the real effect compares the
+    /// child with. None for a seed.
+    first_parent: Option<usize>,
+}
+
+impl Experience {
+    /// The families gained and lost over all Workers: n of spec 3.3.
+    fn families(&self) -> usize {
+        self.changes.iter().map(Change::families).sum()
+    }
+
+    /// The child's learning step for the real effect `s` at the rate `rate` in thousandths
+    /// (spec 3.3): one error e = s − p for the whole child, one step for its n families
+    /// (`mind::step`), and every gained family of every Worker moved by the step and every
+    /// lost one by minus the step, each clamped on its own. Returns the values of its Workers
+    /// after the step, and the step.
+    fn learn(&self, s: i8, rate: u16) -> (Vec<Vec<i16>>, i64) {
+        let step = step(error(s, self.p), self.families(), rate);
+        let mut values = self.start.clone();
+
+        for (v, change) in values.iter_mut().zip(&self.changes) {
+            change.learn(v, step);
+        }
+
+        (values, step)
+    }
+
+    /// What the child teaches its source Workers at the commit with the step `step` (spec
+    /// 3.3): the change of each of its Workers that gained or lost families, with the
+    /// source Worker that learns it.
+    fn lesson(&self, step: i64) -> Lesson {
+        Lesson {
+            step,
+            changes: self
+                .sources
+                .iter()
+                .zip(&self.changes)
+                .filter(|(_, change)| change.families() > 0)
+                .filter_map(|(source, change)| Some(((*source)?, change.clone())))
+                .collect(),
+        }
+    }
+}
+
+/// One candidate draw of an operator: the child, the sources of its Workers, and the
+/// choices the preferences decided (arm W).
+struct Drawn {
+    cascade: Cascade,
+    sources: Sources,
+    steered: Steered,
+}
+
+/// What a newborn's learning step at birth gave (spec 3.3, 3.5): the values of its Workers
+/// after the step, what its Born event logs of it, and what it teaches its source Workers at
+/// the commit; a seed teaches nothing.
+struct LearnedAtBirth {
+    values: Vec<Vec<i16>>,
+    effect: Option<Effect>,
+    lesson: Option<Lesson>,
+}
+
+/// What one newborn teaches its source Workers at the commit (spec 3.3): its step, and for
+/// each of its Workers that changed families, the source Worker (its member's place in the
+/// archive and its Worker index) with the change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Lesson {
+    step: i64,
+    changes: Vec<((usize, usize), Change)>,
 }
 
 /// Receives a snapshot to store before calls are made (see `Breeder::step_with`).
@@ -1345,6 +1531,9 @@ pub struct Breeder<'a, D: Domain = GridDomain> {
     /// seeds and the last tie-break of the ranking go by genes. Without Souls these are the
     /// ids.
     gene_ids: Vec<String>,
+    /// One cycle of the goals on the search panel (`.scratch/seelen-modell/spec-imagination.md`,
+    /// section 3.4); empty with `goals` off.
+    goals: Vec<Goal>,
 }
 
 impl<'a> Breeder<'a, GridDomain> {
@@ -1418,6 +1607,28 @@ impl<'a, D: Domain> Breeder<'a, D> {
             }
         }
 
+        // Experience and imagination read the families a Worker names (spec-imagination 3.1,
+        // 3.2), so they need a gene pool that names the families of a text.
+        if cfg.imagination.is_some()
+            && (genes.families_of.is_none() || domain.families().is_empty())
+        {
+            return Err(BrutError::Invalid(
+                "breed config: imagination needs a gene pool that names the families of a text, and this Domain's gene pool does not"
+                    .to_string(),
+            ));
+        }
+
+        // Changing goals leave out the targets that name a family, and only lexicase reads
+        // single tasks (spec-imagination 3.4).
+        if cfg.goals.is_some()
+            && (cfg.selection != ParentSelection::Lexicase
+                || !matches!(cfg.domain, DomainConfig::Circuits(_)))
+        {
+            return Err(BrutError::Invalid(
+                "breed config: goals need lexicase selection and the circuits Domain".to_string(),
+            ));
+        }
+
         // A seed brings no Soul and no Coupling strength (spec 4.4): a Run without Souls has
         // none, and in a Run with Souls Souletics gives every seed Worker its own.
         if let Some((name, _)) = seeds.iter().find(|(_, c)| c.carries_soul()) {
@@ -1433,6 +1644,14 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         let search = domain.panel(derive_seed(cfg.seed, "panel/search"), cfg.search_puzzles);
         let select = domain.panel(derive_seed(cfg.seed, "panel/select"), cfg.select_puzzles);
+        let goals = match cfg.goals {
+            Some(_) => {
+                let strengths: Vec<Vec<f64>> = search.iter().map(|t| domain.strengths(t)).collect();
+
+                goal_cycle(&domain.families(), &strengths)
+            }
+            None => Vec::new(),
+        };
 
         Ok(Breeder {
             cfg,
@@ -1450,6 +1669,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             select_answers: BTreeMap::new(),
             finished: false,
             gene_ids: Vec::new(),
+            goals,
         })
     }
 
@@ -1498,6 +1718,32 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
                 for m in &snap.archive {
                     check_souls(m, n, tasks, soul).map_err(|why| {
+                        BrutError::Invalid(format!("resume refused: member {}: {why}", m.id))
+                    })?;
+                }
+            }
+        }
+
+        // A Run without imagination has no learned values; in a Run with it every Worker has
+        // a value per family in range (spec-imagination 3.1).
+        match &b.cfg.imagination {
+            None => {
+                let learned = |m: &Member<D::Answer>| {
+                    m.values.is_some() || m.values_now.is_some() || m.effect.is_some()
+                };
+
+                if let Some(m) = snap.archive.iter().find(|m| learned(m)) {
+                    return Err(BrutError::Invalid(format!(
+                        "resume refused: member {} carries learned values, but this Run has no imagination",
+                        m.id
+                    )));
+                }
+            }
+            Some(imagination) => {
+                let n = b.domain.families().len();
+
+                for m in &snap.archive {
+                    check_values(m, n, imagination).map_err(|why| {
                         BrutError::Invalid(format!("resume refused: member {}: {why}", m.id))
                     })?;
                 }
@@ -1838,6 +2084,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     imprinted: None,
                     teaching: None,
                     steered: Steered::default(),
+                    imagined: None,
+                    experience: None,
                 })
                 .collect();
 
@@ -1877,6 +2125,21 @@ impl<'a, D: Domain> Breeder<'a, D> {
             self.upbringing(g, &mut drafts, soul)?;
         }
 
+        // Experience (`.scratch/seelen-modell/spec-imagination.md`, section 3.1): what each
+        // child copies from its source Workers, what it gained and lost against them, and its
+        // prediction. Then what the `mind` group of this generation's state line reads from
+        // the children (spec 3.5): how imagination chose them, and the learned values of their
+        // parents' Workers when the parents were chosen, before this commit's learning.
+        if self.cfg.imagination.is_some() {
+            self.experiences(&mut drafts)?;
+        }
+
+        let imagination_counts = self
+            .cfg
+            .imagination
+            .as_ref()
+            .map(|_| self.imagination_counts(&drafts));
+
         // The choices the preferences decided in this generation's children (arm W).
         let steered = drafts.iter().fold(Steered::default(), |mut sum, d| {
             sum.add(d.steered);
@@ -1904,6 +2167,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
         // The Observations of the newborns' Stage votes, in log order (spec 8.4).
         let mut vote_observations: Vec<Observation> = Vec::new();
+        // What each newborn teaches its source Workers at the commit, in birth order
+        // (spec-imagination 3.3).
+        let mut lessons: Vec<Lesson> = Vec::new();
 
         for d in drafts {
             let id = d.cascade.id();
@@ -1960,6 +2226,24 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 .iter()
                 .map(|a| a.as_ref().and_then(|a| self.domain.artefact(a)))
                 .collect();
+            // Its Workers learn at once from the real effect on this generation's goal, before
+            // its Born event; their source Workers learn the same steps at the commit
+            // (spec-imagination 3.3).
+            let (values, effect) = match &d.experience {
+                Some(exp) => match self.learn_at_birth(g, &d, exp, &answers) {
+                    Ok(birth) => {
+                        lessons.extend(birth.lesson);
+
+                        (Some(birth.values), birth.effect)
+                    }
+                    Err(e) => {
+                        self.calls = calls;
+
+                        return Err(e);
+                    }
+                },
+                None => (None, None),
+            };
 
             generation_usage.add(&usage);
 
@@ -1985,10 +2269,14 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 teaching: d.teaching.clone(),
                 authors: authors.clone(),
                 votes,
+                values: values.clone(),
+                effect: effect.clone(),
             });
 
-            // The imprinted Souls start the current Souls (spec 4.3, 10.1).
+            // The imprinted Souls start the current Souls (spec 4.3, 10.1), and the values
+            // after the newborn's own learning step its current values (spec-imagination 3.3).
             let soul_now = d.imprinted.clone();
+            let values_now = values.clone();
 
             gene_ids.push(gene_id);
 
@@ -2013,6 +2301,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 teaching: d.teaching,
                 authors,
                 votes,
+                values,
+                values_now,
+                effect,
             });
         }
 
@@ -2068,6 +2359,25 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
             applied
         });
+
+        // The source Workers of the newborns learn their steps, from each newborn in birth
+        // order (spec-imagination 3.3). The `learned` event lists the Workers whose values
+        // changed. Values reach no answer, so the select answers stay.
+        if self.cfg.imagination.is_some() {
+            let changed = match learn_at_commit(&mut archive, &lessons) {
+                Ok(changed) => changed,
+                Err(e) => {
+                    self.calls = calls;
+
+                    return Err(e);
+                }
+            };
+
+            events.push(Event::Learned {
+                generation: g,
+                changed,
+            });
+        }
 
         // A member votes on the select panel with its current Souls (spec 8.6). So the
         // select answers kept from an earlier select phase are dropped for every member
@@ -2126,6 +2436,14 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 variation: (!soul.variation.is_off()).then_some(steered),
             });
 
+        // With imagination or goals on, the mind of the Run (spec-imagination 3.5): the goal of
+        // this generation, and how imagination chose its children.
+        let mind =
+            (self.cfg.imagination.is_some() || self.cfg.goals.is_some()).then(|| MindInput {
+                goal: self.goal(g).map_or(ALL_TASKS, |goal| goal.name.as_str()),
+                imagination: imagination_counts,
+            });
+
         events.push(Event::State(observe(&ObserveInput {
             generation: g,
             archive: &self.archive,
@@ -2135,9 +2453,124 @@ impl<'a, D: Domain> Breeder<'a, D> {
             generation_usage,
             tasks: self.search.len(),
             soul,
+            mind,
         })));
 
         Ok((Status::Continue, events))
+    }
+
+    /// The goal of generation `g` (`.scratch/seelen-modell/spec-imagination.md`, section
+    /// 3.4); None with `goals` off, when every task counts.
+    fn goal(&self, g: usize) -> Option<&Goal> {
+        let goals = self.cfg.goals?;
+
+        self.goals
+            .get(goal_index(g, goals.length, self.goals.len()))
+    }
+
+    /// The tasks of the search panel, by their places, that `answers` solve among `tasks`,
+    /// or among all tasks when `tasks` is None. An error is the domain's integrity alarm.
+    fn solved_on(&self, answers: &[Option<D::Answer>], tasks: Option<&[usize]>) -> Result<usize> {
+        let mut solved = 0;
+
+        for (t, (answer, task)) in answers.iter().zip(&self.search).enumerate() {
+            if tasks.is_some_and(|tasks| tasks.binary_search(&t).is_err()) {
+                continue;
+            }
+
+            if let Some(a) = answer
+                && checked_grade(&self.domain, task, a)?.solved
+            {
+                solved += 1;
+            }
+        }
+
+        Ok(solved)
+    }
+
+    /// The learning step of the newborn `d` of generation `g` with the search-panel answers
+    /// `answers` (`.scratch/seelen-modell/spec-imagination.md`, section 3.3): its real effect
+    /// s on the goal of the generation against its first parent, the one error e = s − p, and
+    /// the step of `mind::step` for its n changed families. Returns the values of its Workers
+    /// after they learned the step, what its Born event logs of it (when n > 0 or imagination
+    /// chose it), and what its source Workers learn at the commit. A seed has no parent: it
+    /// keeps the values it starts with and learns nothing.
+    fn learn_at_birth(
+        &self,
+        g: usize,
+        d: &Draft,
+        exp: &Experience,
+        answers: &[Option<D::Answer>],
+    ) -> Result<LearnedAtBirth> {
+        let Some(first) = exp.first_parent else {
+            return Ok(LearnedAtBirth {
+                values: exp.start.clone(),
+                effect: None,
+                lesson: None,
+            });
+        };
+        let parent = self.archive.get(first).ok_or_else(|| {
+            BrutError::Integrity(format!("learning: parent {first} is not archived"))
+        })?;
+        let rate = self.cfg.imagination.map_or(0, |i| i.rate);
+        let tasks = self.goal(g).map(|goal| goal.tasks.as_slice());
+        let s = crate::cascade::mind::effect(
+            self.solved_on(answers, tasks)?,
+            self.solved_on(&parent.answers, tasks)?,
+        );
+        let n = exp.families();
+        let (values, step) = exp.learn(s, rate);
+        let effect = (n > 0 || d.imagined.is_some()).then(|| Effect {
+            p: exp.p,
+            s,
+            gained: exp.changes.iter().map(|c| c.gained.clone()).collect(),
+            lost: exp.changes.iter().map(|c| c.lost.clone()).collect(),
+            draw: d.imagined.map(|i| i.draw),
+        });
+
+        Ok(LearnedAtBirth {
+            values,
+            effect,
+            lesson: Some(exp.lesson(step)),
+        })
+    }
+
+    /// What the `mind` group reads from the children `drafts` of a generation with
+    /// imagination (spec-imagination 3.5): the children imagination chose with some
+    /// prediction other than 0, those whose chosen draw is not the first, and the current
+    /// learned values of their parents' Workers, for Linear, Phase and Hadamard and for the
+    /// other families. Each parent counts once per child, and both parents of a crossover
+    /// count.
+    fn imagination_counts(&self, drafts: &[Draft]) -> ImaginationCounts {
+        let families = self.domain.families();
+        let preferred: Vec<bool> = families
+            .iter()
+            .map(|f| FIXED_PREFERRED.contains(f))
+            .collect();
+        let at: HashMap<&str, &Member<D::Answer>> =
+            self.archive.iter().map(|m| (m.id.as_str(), m)).collect();
+        let mut counts = ImaginationCounts::default();
+
+        for d in drafts {
+            if let Some(imagined) = d.imagined {
+                counts.choices += u64::from(imagined.choice);
+                counts.changed += u64::from(imagined.draw != 1);
+            }
+
+            for parent in d.parents.iter().filter_map(|p| at.get(p.as_str())) {
+                for values in parent.values_now.iter().flatten() {
+                    for (f, &v) in values.iter().enumerate() {
+                        if preferred.get(f).copied().unwrap_or(false) {
+                            counts.linear_phase_hadamard.add(v);
+                        } else {
+                            counts.other_families.add(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        counts
     }
 
     /// `finish_with` without storing the reservation (for in-memory runs and tests).
@@ -2668,7 +3101,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                 // the cheapest generation the answers can give (see step_with).
                 let mut random = Vec::new();
 
-                self.fill_random(&mut random, planned.len(), &mut seen, &sel, rng);
+                self.fill_random(g, &mut random, planned.len(), &mut seen, &sel, rng)?;
 
                 return Ok(Drafted::Pending(missing, planned.len(), random));
             }
@@ -2722,6 +3155,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
                             imprinted: None,
                             teaching: None,
                             steered: Steered::default(),
+                            imagined: None,
+                            experience: None,
                         });
 
                         (true, "ok".to_string())
@@ -2740,22 +3175,30 @@ impl<'a, D: Domain> Breeder<'a, D> {
             }
         }
 
-        self.fill_random(&mut drafts, 0, &mut seen, &sel, rng);
+        self.fill_random(g, &mut drafts, 0, &mut seen, &sel, rng)?;
 
         Ok(Drafted::Ready(drafts, events, answers_used))
     }
 
     /// Add random children (mutation and crossover, all distinct, new and admitted by the
-    /// gene pool) to `drafts` until they and `others` other children reach
+    /// gene pool) to `drafts` of generation `g` until they and `others` other children reach
     /// `children_per_generation`, or the draws run out.
+    ///
+    /// With `imagination` on (`.scratch/seelen-modell/spec-imagination.md`, section 3.2), a
+    /// child that SectionReplace, SectionAdd, SectionDrop or section crossover made, and that
+    /// passed every check, is draw 1 of its operator. Draws 2 and on apply the same operator
+    /// to the same parents, each with its own stream, and the draw with the highest
+    /// prediction becomes the child (`imagine`). They never touch `rng`, so the generation's
+    /// stream advances exactly as without imagination.
     fn fill_random(
         &self,
+        g: usize,
         drafts: &mut Vec<Draft>,
         others: usize,
         seen: &mut HashSet<String>,
         sel: &Selector,
         rng: &mut ChaCha8Rng,
-    ) {
+    ) -> Result<()> {
         let mut attempts = 0;
 
         while others + drafts.len() < self.cfg.children_per_generation
@@ -2768,7 +3211,8 @@ impl<'a, D: Domain> Breeder<'a, D> {
             };
             let parent = &self.archive[a];
             let crossover = rng.random_bool(self.cfg.crossover_rate);
-            let mut child: Option<(Cascade, Vec<String>, Op, Sources, Steered)> = None;
+            // The child with its parents' places in the archive.
+            let mut child: Option<(Cascade, Vec<usize>, Op, Sources, Steered)> = None;
             // Arm W: the preference of each of the parent's Workers, which weights the
             // choices of the section operators.
             let preferences = self.preferences(parent);
@@ -2807,9 +3251,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     .map(|(c, s, steered)| (c, Op::SectionCrossover, s, steered))
                 };
 
-                child = made.map(|(c, op, s, steered)| {
-                    (c, vec![parent.id.clone(), other.id.clone()], op, s, steered)
-                });
+                child = made.map(|(c, op, s, steered)| (c, vec![a, b], op, s, steered));
             }
 
             if child.is_none() {
@@ -2820,27 +3262,248 @@ impl<'a, D: Domain> Breeder<'a, D> {
                         .map(|(c, op, s)| (c, op, s, Steered::default())),
                 };
 
-                child =
-                    made.map(|(c, op, s, steered)| (c, vec![parent.id.clone()], op, s, steered));
+                child = made.map(|(c, op, s, steered)| (c, vec![a], op, s, steered));
             }
 
             if let Some((c, parents, op, sources, steered)) = child
-                && c.check(&self.cfg.limits).is_ok()
-                && (self.genes.admit)(&c).is_ok()
-                && seen.insert(c.id())
+                && self.admissible(&c, seen)
             {
-                drafts.push(Draft {
+                let first = Drawn {
                     cascade: c,
-                    parents,
-                    op,
                     sources,
+                    steered,
+                };
+                let (drawn, imagined) =
+                    if self.cfg.imagination.is_some() && IMAGINING_OPS.contains(&op) {
+                        let i = others + drafts.len();
+
+                        self.imagine((g, i), &parents, op, first, steer.as_ref(), seen)?
+                    } else {
+                        (first, None)
+                    };
+
+                seen.insert(drawn.cascade.id());
+                drafts.push(Draft {
+                    cascade: drawn.cascade,
+                    parents: parents
+                        .iter()
+                        .map(|&p| self.archive[p].id.clone())
+                        .collect(),
+                    op,
+                    sources: drawn.sources,
                     soul_sources: None,
                     imprinted: None,
                     teaching: None,
-                    steered,
+                    steered: drawn.steered,
+                    imagined,
+                    experience: None,
                 });
             }
         }
+
+        Ok(())
+    }
+
+    /// True when `c` may become a child: it passes `check(limits)` and the gene pool's
+    /// admission rule, and its id is not in `seen`, the gene ids of the archive and of the
+    /// children drafted so far.
+    fn admissible(&self, c: &Cascade, seen: &HashSet<String>) -> bool {
+        c.check(&self.cfg.limits).is_ok()
+            && (self.genes.admit)(c).is_ok()
+            && !seen.contains(&c.id())
+    }
+
+    /// Imagination (`.scratch/seelen-modell/spec-imagination.md`, section 3.2) for the child
+    /// `first` that today's attempt made with the operator `op` on `parents` (their places
+    /// in the archive), as child `i` in birth order of generation `g`. Draws 2 to `draws`
+    /// apply `op` once more to the same parents (`redraw`), each with its own stream from the
+    /// tag `imagine/{g}/{i}/{j}`, where j is the draw's number; a draw that fails a check of
+    /// `admissible` is no candidate. The candidate with the highest prediction wins, and a
+    /// tie goes to the earliest draw. So with every value 0 the first draw wins, and the Run
+    /// is today's. No model is called.
+    fn imagine(
+        &self,
+        (g, i): (usize, usize),
+        parents: &[usize],
+        op: Op,
+        first: Drawn,
+        steer: Option<&Steer<'_>>,
+        seen: &HashSet<String>,
+    ) -> Result<(Drawn, Option<Imagined>)> {
+        let draws = self.cfg.imagination.map_or(1, |i| i.draws);
+        let mut candidates = vec![(1, first)];
+
+        for j in 2..=draws {
+            let tag = format!("imagine/{g}/{i}/{j}");
+            let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(self.cfg.seed, &tag));
+
+            if let Some(drawn) = self.redraw(parents, op, steer, &mut rng)
+                && self.admissible(&drawn.cascade, seen)
+            {
+                candidates.push((j, drawn));
+            }
+        }
+
+        let predictions = candidates
+            .iter()
+            .map(|(_, d)| Ok(self.experience(parents, &d.cascade, &d.sources)?.p))
+            .collect::<Result<Vec<i64>>>()?;
+        let k = choose(&predictions).unwrap_or(0);
+        let choice = predictions.iter().any(|&p| p != 0);
+        let (draw, chosen) = candidates.swap_remove(k);
+
+        Ok((chosen, Some(Imagined { draw, choice })))
+    }
+
+    /// One more draw of the imagining operator `op` on `parents` (spec-imagination 3.2): one
+    /// application of the same mutation operator to the same parent (`mutate_once`), or one
+    /// full section crossover of the same two parents, with the preferences of arm W when
+    /// `steer` is given. None when the draw gives no child.
+    fn redraw(
+        &self,
+        parents: &[usize],
+        op: Op,
+        steer: Option<&Steer<'_>>,
+        rng: &mut ChaCha8Rng,
+    ) -> Option<Drawn> {
+        let limits = &self.cfg.limits;
+        let a = &self.archive.get(*parents.first()?)?.cascade;
+        let (cascade, sources, steered) = match op {
+            Op::SectionCrossover => {
+                let b = &self.archive.get(*parents.get(1)?)?.cascade;
+
+                match steer {
+                    Some(steer) => section_crossover_steered(a, b, limits, steer, rng)?,
+                    None => {
+                        let (c, s) = section_crossover_sourced(a, b, limits, rng)?;
+
+                        (c, s, Steered::default())
+                    }
+                }
+            }
+            _ => mutate_once(a, op, limits, self.genes.phrases, steer, rng)?,
+        };
+
+        Some(Drawn {
+            cascade,
+            sources,
+            steered,
+        })
+    }
+
+    /// What the child `child` with the Worker sources `sources` brings to its learning
+    /// (`.scratch/seelen-modell/spec-imagination.md`, sections 3.1 to 3.3), when its parents
+    /// are the members at `parents` in the archive: for each Worker, the current values of its
+    /// source Worker (the first of its sources), or 0 without a source; what it gained and
+    /// lost against that source; and the prediction p over all Workers. It reads the archive
+    /// as committed after the previous generation.
+    fn experience(
+        &self,
+        parents: &[usize],
+        child: &Cascade,
+        sources: &Sources,
+    ) -> Result<Experience> {
+        let broken = |what: String| BrutError::Integrity(format!("experience: {what}"));
+        let families_of = self
+            .genes
+            .families_of
+            .ok_or_else(|| broken("the gene pool names no families".to_string()))?;
+        let n = self.domain.families().len();
+        let workers = child.worker_count();
+
+        if sources.len() != workers {
+            return Err(broken(format!(
+                "a child has {} source lists for {workers} Workers",
+                sources.len()
+            )));
+        }
+
+        let mut exp = Experience {
+            start: Vec::with_capacity(workers),
+            sources: Vec::with_capacity(workers),
+            changes: Vec::with_capacity(workers),
+            p: 0,
+            first_parent: parents.first().copied(),
+        };
+
+        for (w, from) in child.stages.iter().flat_map(|s| &s.workers).zip(sources) {
+            let Some(src) = from.first() else {
+                exp.start.push(vec![0; n]);
+                exp.sources.push(None);
+                exp.changes.push(Change::default());
+                continue;
+            };
+            let m = *parents
+                .get(src.parent)
+                .ok_or_else(|| broken(format!("a source names parent {}", src.parent)))?;
+            let member = self
+                .archive
+                .get(m)
+                .ok_or_else(|| broken(format!("parent {m} is not archived")))?;
+            let source = member
+                .cascade
+                .stages
+                .iter()
+                .flat_map(|s| &s.workers)
+                .nth(src.worker)
+                .ok_or_else(|| {
+                    broken(format!("member {} has no Worker {}", member.id, src.worker))
+                })?;
+            let values = member
+                .values_now
+                .as_ref()
+                .and_then(|v| v.get(src.worker))
+                .ok_or_else(|| {
+                    broken(format!(
+                        "Worker {} of member {} has no learned values",
+                        src.worker, member.id
+                    ))
+                })?;
+
+            exp.start.push(values.clone());
+            exp.sources.push(Some((m, src.worker)));
+            exp.changes.push(Change::between(
+                &named(w, families_of, n),
+                &named(source, families_of, n),
+            ));
+        }
+
+        exp.p = prediction(
+            exp.changes
+                .iter()
+                .zip(&exp.start)
+                .map(|(c, v)| (c, v.as_slice())),
+        );
+
+        Ok(exp)
+    }
+
+    /// The experience of every draft (spec-imagination 3.1 to 3.3), with its parents found
+    /// in the archive by id.
+    fn experiences(&self, drafts: &mut [Draft]) -> Result<()> {
+        let at: HashMap<&str, usize> = self
+            .archive
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.as_str(), i))
+            .collect();
+
+        for d in drafts.iter_mut() {
+            let parents = d
+                .parents
+                .iter()
+                .map(|p| at.get(p.as_str()).copied())
+                .collect::<Option<Vec<usize>>>()
+                .ok_or_else(|| {
+                    BrutError::Integrity(
+                        "experience: a parent of a child is not archived".to_string(),
+                    )
+                })?;
+
+            d.experience = Some(self.experience(&parents, &d.cascade, &d.sources)?);
+        }
+
+        Ok(())
     }
 
     /// The preference of every Worker of `m`, in Stage order, that weights the choices of the
@@ -2911,8 +3574,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
 
     /// The graded value of each member on each search task, 0 where it gave no answer.
     /// A grade error cannot occur here: it would have stopped the member's birth.
+    ///
+    /// With `goals` on, only the tasks of the goal of the next generation are cases, in panel
+    /// order (`.scratch/seelen-modell/spec-imagination.md`, section 3.4).
     fn case_scores(&self) -> Vec<Vec<f64>> {
-        self.archive
+        let scores = self
+            .archive
             .iter()
             .map(|m| {
                 self.search
@@ -2926,7 +3593,12 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     })
                     .collect()
             })
-            .collect()
+            .collect();
+
+        match self.goal(self.next_generation) {
+            Some(goal) => goal_cases(scores, &goal.tasks),
+            None => scores,
+        }
     }
 
     /// A crossover partner for member `a`: draw a few by selection weight and take the
@@ -3061,6 +3733,57 @@ fn apply_observations<A>(
         vote: applied[0],
         peer: applied[1],
     }
+}
+
+/// The cases of lexicase under a goal (`.scratch/seelen-modell/spec-imagination.md`, section
+/// 3.4): of each member's row of `scores`, only the columns of the tasks `tasks`, in their
+/// order.
+fn goal_cases(scores: Vec<Vec<f64>>, tasks: &[usize]) -> Vec<Vec<f64>> {
+    scores
+        .into_iter()
+        .map(|row| tasks.iter().filter_map(|&t| row.get(t).copied()).collect())
+        .collect()
+}
+
+/// The source Workers in `archive` learn the steps of `lessons`, one newborn after another
+/// in birth order, each step clamped on its own (`.scratch/seelen-modell/spec-imagination.md`,
+/// section 3.3). Returns every Worker whose current values changed, in archive order, each
+/// once with its new values. A source Worker without values is an integrity error: a Run
+/// with imagination gives every Worker values at its birth.
+fn learn_at_commit<A>(archive: &mut [Member<A>], lessons: &[Lesson]) -> Result<Vec<ValueChange>> {
+    let mut before: BTreeMap<(usize, usize), Vec<i16>> = BTreeMap::new();
+
+    for lesson in lessons {
+        for ((m, w), change) in &lesson.changes {
+            let (m, w) = (*m, *w);
+            let now = archive
+                .get_mut(m)
+                .and_then(|member| member.values_now.as_mut())
+                .and_then(|values| values.get_mut(w))
+                .ok_or_else(|| {
+                    BrutError::Integrity(format!(
+                        "learning: Worker {w} of archive member {m} has no learned values"
+                    ))
+                })?;
+
+            before.entry((m, w)).or_insert_with(|| now.clone());
+            change.learn(now, lesson.step);
+        }
+    }
+
+    Ok(before
+        .into_iter()
+        .filter_map(|((m, w), old)| {
+            let member = archive.get(m)?;
+            let now = member.values_now.as_ref()?.get(w)?;
+
+            (*now != old).then(|| ValueChange {
+                member: member.id.clone(),
+                worker: w,
+                values: now.clone(),
+            })
+        })
+        .collect())
 }
 
 /// Children drafted for one generation, or the requests still waiting for answers.
@@ -3378,6 +4101,56 @@ fn check_souls<A>(
     Ok(())
 }
 
+/// Why member `m` breaks the rule of a Run with imagination over `n` families
+/// (`.scratch/seelen-modell/spec-imagination.md`, sections 3.1 and 3.5), if it does: its
+/// values at birth and its current values hold, for each of its Workers, one value per family
+/// in [−1000, 1000], and what its learning read names, for each Worker, families of the
+/// Domain only, an effect s of −1, 0 or 1, and a draw among those the setting makes.
+fn check_values<A>(
+    m: &Member<A>,
+    n: usize,
+    imagination: &ImaginationConfig,
+) -> std::result::Result<(), String> {
+    let workers = m.cascade.worker_count();
+    let in_range =
+        |v: &Vec<i16>| v.len() == n && v.iter().all(|x| (-VALUE_MAX..=VALUE_MAX).contains(x));
+
+    for (what, values) in [
+        ("values at birth", &m.values),
+        ("current values", &m.values_now),
+    ] {
+        match values {
+            Some(v) if v.len() == workers && v.iter().all(in_range) => {}
+            _ => {
+                return Err(format!(
+                    "it does not hold {what} of {n} families in [-{VALUE_MAX}, {VALUE_MAX}] for each of its {workers} Workers"
+                ));
+            }
+        }
+    }
+
+    if let Some(e) = &m.effect {
+        let named = |lists: &Vec<Vec<usize>>| {
+            lists.len() == workers && lists.iter().flatten().all(|&f| f < n)
+        };
+
+        if !named(&e.gained) || !named(&e.lost) {
+            return Err(format!(
+                "its effect does not name the families each of its {workers} Workers gained and lost"
+            ));
+        }
+
+        if !(-1..=1).contains(&e.s)
+            || e.draw
+                .is_some_and(|d| !(1..=imagination.draws).contains(&d))
+        {
+            return Err("its effect holds an s or a draw this Run cannot give".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 fn ranked<A>(m: &Member<A>, puzzles: usize) -> Ranked {
     Ranked {
         id: m.id.clone(),
@@ -3445,6 +4218,7 @@ mod tests {
     use super::*;
     use crate::backend::StubModel;
     use crate::cascade::circuit::CircuitDomain;
+    use crate::cascade::circuit_genes::CIRCUIT_PHRASES;
     use crate::cascade::circuit_genes::{CIRCUIT_BRIEF, circuit_pool};
     use crate::cascade::circuit_text::parse_circuit_prompt;
     use crate::cascade::designer::SimDesigner;
@@ -3453,14 +4227,16 @@ mod tests {
         MAX_SECTION_CHARS, Section, Stage, Traits, seed_cascades, seeds_for,
     };
     use crate::cascade::observe::SoulState;
+    use crate::cascade::observe::{MindState, ValueSums};
     use crate::cascade::puzzle::{generate_panel, parse_prompt};
+    use crate::cascade::qubit::Circuit;
     use crate::cascade::sim::SimModel;
     use crate::cascade::soul::{
         Inheritance, QUARTER_TURN, SoulConfig, SoulDraws, Strengths, imprint, new_soul_chance,
         souletics,
     };
     use crate::cascade::upbringing::{TEACHING_INTRO, UPBRINGING, model_word_in, teaching};
-    use crate::cascade::variation::{GRID_BRIEF, MutatorBrief};
+    use crate::cascade::variation::{GRID_BRIEF, MutatorBrief, Source};
     use std::collections::BTreeSet;
 
     fn sim_pool() -> ModelPool {
@@ -5231,6 +6007,9 @@ mod tests {
             teaching: None,
             authors: None,
             votes: None,
+            values: None,
+            values_now: None,
+            effect: None,
         };
         let mut snap = Snapshot {
             config_hash: "h".to_string(),
@@ -6657,6 +7436,9 @@ mod tests {
             teaching: None,
             authors: None,
             votes: None,
+            values: None,
+            values_now: None,
+            effect: None,
         };
         let archive = [tied("a"), tied("b")];
         let keys = |x: &str, y: &str| [x.to_string(), y.to_string()];
@@ -7476,6 +8258,9 @@ mod tests {
             rating: 0.0,
             authors: Some(vec![authors]),
             votes: Some(VoteTally::default()),
+            values: None,
+            values_now: None,
+            effect: None,
         }
     }
 
@@ -9815,5 +10600,1375 @@ mod tests {
                 .iter()
                 .all(|c| *c == (None, None))
         );
+    }
+
+    // Experience, imagination and changing goals (`.scratch/seelen-modell/spec-imagination.md`,
+    // tickets 04 and 05).
+
+    /// `cfg` with experience and imagination as in arm I.
+    fn imagining(cfg: BreedConfig) -> BreedConfig {
+        BreedConfig {
+            imagination: Some(ImaginationConfig::arm_i()),
+            ..cfg
+        }
+    }
+
+    /// `cfg` with lexicase selection and goals of `length` generations each.
+    fn with_goals(cfg: BreedConfig, length: usize) -> BreedConfig {
+        BreedConfig {
+            selection: ParentSelection::Lexicase,
+            goals: Some(GoalsConfig { length }),
+            ..cfg
+        }
+    }
+
+    /// The mind group of every state line among `events`, in order.
+    fn mind_groups(events: &[Event]) -> Vec<Option<MindState>> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::State(s) => Some(s.mind.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A circuit breeder with the settings `cfg` whose generation 0, the seeds, is committed.
+    fn circuits_after_seeds(cfg: BreedConfig, designers: &ModelPool) -> Breeder<'_, CircuitDomain> {
+        let never = || false;
+        let mut b = Breeder::<CircuitDomain>::start(cfg, circuit_pool(), designers, None)
+            .expect("circuits");
+
+        assert_eq!(b.step(&never).expect("generation 0").0, Status::Continue);
+
+        b
+    }
+
+    /// What generation `g` of `b` drafts from its archive as it stands: each child's id,
+    /// parents, operator, Worker sources and the choices of arm W, then the word position of
+    /// the generation's stream afterwards; and the drafts.
+    fn draft_record<D: Domain>(b: &Breeder<'_, D>, g: usize) -> (String, Vec<Draft>) {
+        let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(b.cfg.seed, &format!("gen/{g}")));
+        let Drafted::Ready(drafts, _, _) = b.draft_children(g, &mut rng).expect("draft") else {
+            panic!("generation {g} waits for answers");
+        };
+        let mut record = String::new();
+
+        for d in &drafts {
+            record.push_str(&format!(
+                "{} {} {:?} {:?} {:?}\n",
+                d.cascade.id(),
+                d.parents.join(","),
+                d.op,
+                d.sources,
+                d.steered
+            ));
+        }
+
+        record.push_str(&format!("pos={}", rng.get_word_pos()));
+
+        (record, drafts)
+    }
+
+    /// A member with the Cascade `cascade` whose values at birth and current values are
+    /// `values`, one row per Worker.
+    fn valued(cascade: Cascade, values: Vec<Vec<i16>>) -> Member<Circuit> {
+        Member {
+            id: cascade.id(),
+            cascade,
+            parents: Vec::new(),
+            op: Op::Seed,
+            generation: 0,
+            answers: Vec::new(),
+            solved: 0,
+            quality: None,
+            usage: Usage::default(),
+            children: 0,
+            judge_correct: 0,
+            judge_wrong: 0,
+            fitness: 0.0,
+            rating: 0.0,
+            soul_sources: None,
+            imprinted: None,
+            soul_now: None,
+            teaching: None,
+            authors: None,
+            votes: None,
+            values: Some(values.clone()),
+            values_now: Some(values),
+            effect: None,
+        }
+    }
+
+    /// The single Worker of each circuit seed: linear, phase, hadamard and search.
+    fn seed_workers() -> Vec<Worker> {
+        (circuit_pool().seeds)()
+            .into_iter()
+            .map(|(_, c)| c.stages[0].workers[0].clone())
+            .collect()
+    }
+
+    /// Eight values, all 0 but those of `given` (family, value).
+    fn eight(given: &[(usize, i16)]) -> Vec<i16> {
+        let mut v = vec![0; 8];
+
+        for &(f, x) in given {
+            v[f] = x;
+        }
+
+        v
+    }
+
+    #[test]
+    fn imagination_and_goals_are_refused_where_they_cannot_work() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let named = GenePool {
+            families_of: Some(|_| vec![0]),
+            ..GenePool::grid()
+        };
+
+        // Imagination reads the families a Worker names, and the grid gene pool names none.
+        let reason = invalid(
+            Breeder::new(imagining(small_config(6101)), &pool, None),
+            "grid",
+        );
+
+        assert!(reason.contains("imagination needs a gene pool"), "{reason}");
+        assert!(
+            Breeder::<CircuitDomain>::start(
+                imagining(circuit_config(6103)),
+                circuit_pool(),
+                &designers,
+                None
+            )
+            .is_ok()
+        );
+        assert!(
+            Breeder::<GridDomain>::start(imagining(small_config(6101)), named, &pool, None).is_ok()
+        );
+
+        // Changing goals need lexicase selection and the circuits Domain.
+        for selection in [
+            ParentSelection::Dgm,
+            ParentSelection::Uniform,
+            ParentSelection::Tournament,
+        ] {
+            let cfg = BreedConfig {
+                selection,
+                ..with_goals(circuit_config(6107), 20)
+            };
+            let reason = invalid(
+                Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None),
+                "selection",
+            );
+
+            assert!(reason.contains("goals need lexicase selection"), "{reason}");
+        }
+
+        let reason = invalid(
+            Breeder::<GridDomain>::start(with_goals(small_config(6109), 20), named, &pool, None),
+            "grid goals",
+        );
+
+        assert!(
+            reason.contains("goals need lexicase selection and the circuits Domain"),
+            "{reason}"
+        );
+        assert!(
+            Breeder::<CircuitDomain>::start(
+                with_goals(circuit_config(6107), 20),
+                circuit_pool(),
+                &designers,
+                None
+            )
+            .is_ok()
+        );
+
+        // A setting out of range fails the check of the whole config.
+        for cfg in [
+            BreedConfig {
+                imagination: Some(ImaginationConfig {
+                    draws: 0,
+                    rate: 250,
+                }),
+                ..circuit_config(6103)
+            },
+            BreedConfig {
+                imagination: Some(ImaginationConfig {
+                    draws: 4,
+                    rate: 1001,
+                }),
+                ..circuit_config(6103)
+            },
+            with_goals(circuit_config(6107), 0),
+        ] {
+            assert!(cfg.check().is_err(), "{cfg:?}");
+            invalid(
+                Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None),
+                "out of range",
+            );
+        }
+
+        // A resume refuses a change of either setting, in both directions.
+        let base = BreedConfig {
+            selection: ParentSelection::Lexicase,
+            ..circuit_config(6113)
+        };
+        let fewer = BreedConfig {
+            imagination: Some(ImaginationConfig {
+                draws: 3,
+                rate: 250,
+            }),
+            ..base.clone()
+        };
+        let arms = [
+            base.clone(),
+            imagining(base.clone()),
+            with_goals(base.clone(), 20),
+            with_goals(imagining(base.clone()), 20),
+            with_goals(imagining(base.clone()), 10),
+            fewer,
+        ];
+
+        for from in &arms {
+            let snap = circuits_after_seeds(from.clone(), &designers).snapshot();
+
+            for to in arms.iter().filter(|to| *to != from) {
+                let reason = invalid(
+                    Breeder::<CircuitDomain>::resume_from(
+                        to.clone(),
+                        circuit_pool(),
+                        &designers,
+                        None,
+                        snap.clone(),
+                    ),
+                    "resume",
+                );
+
+                assert!(reason.contains("resume refused"), "{reason}");
+            }
+        }
+
+        // The archive of a resume keeps the rule of its Run: values of the right shape and in
+        // range with imagination, none without.
+        let cfg = imagining(base.clone());
+        let snap = circuits_after_seeds(cfg.clone(), &designers).snapshot();
+        let tampers: [fn(&mut Member<Circuit>); 5] = [
+            |m| m.values_now.as_mut().expect("values")[0][3] = 1001,
+            |m| m.values.as_mut().expect("values")[0][0] = i16::MIN,
+            |m| m.values.as_mut().expect("values")[0].push(0),
+            |m| m.values_now = None,
+            |m| {
+                m.effect = Some(Effect {
+                    p: 0,
+                    s: 2,
+                    gained: vec![Vec::new()],
+                    lost: vec![Vec::new()],
+                    draw: None,
+                })
+            },
+        ];
+
+        assert!(
+            Breeder::<CircuitDomain>::resume_from(
+                cfg.clone(),
+                circuit_pool(),
+                &designers,
+                None,
+                snap.clone()
+            )
+            .is_ok()
+        );
+
+        for tamper in tampers {
+            let mut changed = snap.clone();
+
+            tamper(&mut changed.archive[0]);
+
+            let reason = invalid(
+                Breeder::<CircuitDomain>::resume_from(
+                    cfg.clone(),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                    changed,
+                ),
+                "tampered values",
+            );
+
+            assert!(reason.contains("resume refused: member"), "{reason}");
+        }
+
+        let mut plain = circuits_after_seeds(base.clone(), &designers).snapshot();
+
+        plain.archive[1].values_now = Some(vec![vec![0; 8]]);
+
+        let reason = invalid(
+            Breeder::<CircuitDomain>::resume_from(base, circuit_pool(), &designers, None, plain),
+            "values without imagination",
+        );
+
+        assert!(reason.contains("no imagination"), "{reason}");
+    }
+
+    #[test]
+    fn with_every_value_zero_imagination_drafts_todays_children() {
+        let designers = designer_pool();
+        let never = || false;
+
+        for selection in [ParentSelection::Dgm, ParentSelection::Lexicase] {
+            let cfg = BreedConfig {
+                selection,
+                children_per_generation: 24,
+                ..circuit_config(6121)
+            };
+            let mut today = circuits_after_seeds(cfg.clone(), &designers);
+            let mut imagined = circuits_after_seeds(imagining(cfg), &designers);
+
+            // The seeds start at 0.
+            assert!(
+                imagined
+                    .archive
+                    .iter()
+                    .flat_map(|m| m.values_now.iter().flatten().flatten())
+                    .all(|&v| v == 0)
+            );
+
+            for g in 1..=3 {
+                // Generation 1 drafts from the seeds as they are; later generations after
+                // their values are set back to 0.
+                for v in imagined
+                    .archive
+                    .iter_mut()
+                    .flat_map(|m| m.values_now.iter_mut().flatten())
+                {
+                    v.fill(0);
+                }
+
+                let (want, _) = draft_record(&today, g);
+                let (got, drafts) = draft_record(&imagined, g);
+
+                // The same children, and the generation's stream ends at the same word.
+                assert_eq!(got, want, "{selection:?}, generation {g}");
+
+                // Imagination drew for every child of an imagining operator, and with every
+                // prediction 0 each chose today's first draw.
+                for d in &drafts {
+                    assert_eq!(
+                        d.imagined.is_some(),
+                        IMAGINING_OPS.contains(&d.op),
+                        "{:?}",
+                        d.op
+                    );
+                }
+
+                assert!(
+                    drafts.iter().any(|d| d.imagined.is_some()),
+                    "generation {g}"
+                );
+                assert!(drafts.iter().filter_map(|d| d.imagined).all(|i| i
+                    == Imagined {
+                        draw: 1,
+                        choice: false
+                    }));
+
+                assert_eq!(today.step(&never).expect("step").0, Status::Continue);
+                assert_eq!(imagined.step(&never).expect("step").0, Status::Continue);
+            }
+
+            // Both Runs bred the same members; only the learned values set them apart, and
+            // learning gave some Workers values other than 0.
+            let ids = |b: &Breeder<'_, CircuitDomain>| -> Vec<String> {
+                b.archive.iter().map(|m| m.id.clone()).collect()
+            };
+
+            assert_eq!(ids(&today), ids(&imagined));
+            assert!(
+                imagined
+                    .archive
+                    .iter()
+                    .flat_map(|m| m.values_now.iter().flatten().flatten())
+                    .any(|&v| v != 0)
+            );
+        }
+    }
+
+    #[test]
+    fn imagination_chooses_the_draw_with_the_highest_prediction() {
+        let designers = designer_pool();
+        let cfg = BreedConfig {
+            selection: ParentSelection::Lexicase,
+            children_per_generation: 24,
+            ..circuit_config(6131)
+        };
+        let today = circuits_after_seeds(cfg.clone(), &designers);
+        let mut b = circuits_after_seeds(imagining(cfg), &designers);
+
+        // Every seed Worker values Hadamard at 1 and Linear at −1.
+        for v in b
+            .archive
+            .iter_mut()
+            .flat_map(|m| m.values_now.iter_mut().flatten())
+        {
+            *v = eight(&[(0, -1000), (2, 1000)]);
+        }
+
+        let (_, drafts) = draft_record(&b, 1);
+        let (_, firsts) = draft_record(&today, 1);
+        let at: HashMap<String, usize> = b
+            .archive
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.clone(), i))
+            .collect();
+        let mut seen: HashSet<String> = b.gene_ids.iter().cloned().collect();
+        let mut changed = 0;
+
+        // Draw 1 comes from the generation's stream, so it is the child of today's Run at the
+        // same place as long as both Runs made their children by the same attempts.
+        assert_eq!(drafts.len(), firsts.len());
+        assert!(
+            drafts
+                .iter()
+                .zip(&firsts)
+                .all(|(d, f)| d.parents == f.parents && d.op == f.op),
+            "the Runs part; choose another seed"
+        );
+
+        for (i, (d, first)) in drafts.iter().zip(&firsts).enumerate() {
+            let parents: Vec<usize> = d.parents.iter().map(|p| at[p]).collect();
+            let p_of =
+                |c: &Cascade, s: &Sources| b.experience(&parents, c, s).expect("experience").p;
+
+            if let Some(imagined) = d.imagined {
+                let mut predictions = vec![p_of(&first.cascade, &first.sources)];
+                let mut ids = vec![first.cascade.id()];
+
+                for j in 2..=4 {
+                    let tag = format!("imagine/1/{i}/{j}");
+                    let mut rng = ChaCha8Rng::seed_from_u64(derive_seed(b.cfg.seed, &tag));
+
+                    if let Some(drawn) = b.redraw(&parents, d.op, None, &mut rng)
+                        && b.admissible(&drawn.cascade, &seen)
+                    {
+                        predictions.push(p_of(&drawn.cascade, &drawn.sources));
+                        ids.push(drawn.cascade.id());
+                    } else {
+                        predictions.push(i64::MIN);
+                        ids.push(String::new());
+                    }
+                }
+
+                // The chosen draw has the highest prediction, and no earlier draw has it.
+                let best = *predictions.iter().max().expect("a prediction");
+                let k = imagined.draw - 1;
+
+                assert_eq!(predictions[k], best, "child {i}: {predictions:?}");
+                assert!(
+                    predictions[..k].iter().all(|&p| p < best),
+                    "{predictions:?}"
+                );
+                assert_eq!(ids[k], d.cascade.id());
+                assert_eq!(
+                    imagined.choice,
+                    predictions.iter().any(|&p| p != 0 && p != i64::MIN)
+                );
+
+                changed += usize::from(imagined.draw != 1);
+            } else {
+                // Without imagination the child is today's.
+                assert_eq!(d.cascade.id(), first.cascade.id());
+            }
+
+            seen.insert(d.cascade.id());
+        }
+
+        // The values changed picks.
+        assert!(changed > 0);
+    }
+
+    #[test]
+    fn a_child_worker_copies_the_values_of_its_source_worker() {
+        let designers = designer_pool();
+        let mut b = circuits_after_seeds(imagining(circuit_config(6137)), &designers);
+        let w = seed_workers();
+        let limits = b.cfg.limits.clone();
+
+        // A seed has no source: its Workers start at 0, and nothing changed.
+        for m in &b.archive {
+            assert_eq!(m.values, Some(vec![vec![0; 8]]));
+            assert_eq!(m.values_now, m.values);
+            assert_eq!(m.effect, None);
+        }
+
+        // Parent A: the linear and the phase Worker in one Stage, then the hadamard Worker.
+        // Parent B: the search and the phase Worker. Each Worker's values mark it: Previous
+        // holds 100 times its place plus 100, and Simplify its parent.
+        let a = Cascade {
+            stages: vec![
+                Stage {
+                    workers: vec![w[0].clone(), w[1].clone()],
+                },
+                Stage {
+                    workers: vec![w[2].clone()],
+                },
+            ],
+        };
+        let other = Cascade {
+            stages: vec![Stage {
+                workers: vec![w[3].clone(), w[1].clone()],
+            }],
+        };
+        let mark = |parent: i16, k: i16| eight(&[(6, parent), (7, 100 * (k + 1))]);
+
+        b.archive
+            .push(valued(a.clone(), vec![mark(1, 0), mark(1, 1), mark(1, 2)]));
+        b.archive
+            .push(valued(other.clone(), vec![mark(2, 0), mark(2, 1)]));
+
+        let (ia, ib) = (b.archive.len() - 2, b.archive.len() - 1);
+        let values_of =
+            |m: usize, k: usize| b.archive[m].values_now.as_ref().expect("values")[k].clone();
+        let check = |parents: &[usize], child: &Cascade, sources: &Sources| {
+            let exp = b.experience(parents, child, sources).expect("experience");
+
+            for (k, from) in sources.iter().enumerate() {
+                let src = from[0];
+                let m = parents[src.parent];
+
+                assert_eq!(exp.start[k], values_of(m, src.worker), "Worker {k}");
+                assert_eq!(exp.sources[k], Some((m, src.worker)));
+            }
+
+            exp
+        };
+        let mut grown = BTreeSet::new();
+
+        // A mutation: each Worker copies its source, the parent's Worker it was built from,
+        // also a Worker that WorkerAdd cloned or StageAdd copied.
+        let mutations = [
+            Op::ThinkUp,
+            Op::ThinkDown,
+            Op::TemperatureShift,
+            Op::SelfCheckFlip,
+            Op::AnswerTokensShift,
+            Op::ModelSwitch,
+            Op::SectionReplace,
+            Op::SectionAdd,
+            Op::SectionDrop,
+            Op::SectionSwap,
+            Op::WorkerAdd,
+            Op::WorkerDrop,
+            Op::StageAdd,
+            Op::StageDrop,
+        ];
+
+        for op in mutations {
+            for seed in 0..12 {
+                let mut rng = ChaCha8Rng::seed_from_u64(6137 + seed);
+
+                if let Some((child, sources, _)) =
+                    mutate_once(&a, op, &limits, CIRCUIT_PHRASES, None, &mut rng)
+                {
+                    check(&[ia], &child, &sources);
+
+                    if child.worker_count() > a.worker_count() {
+                        grown.insert(format!("{op:?}"));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            grown,
+            BTreeSet::from(["StageAdd".to_string(), "WorkerAdd".to_string()])
+        );
+
+        // A section crossover: each Worker copies the first parent's Worker at its place,
+        // never the partner's.
+        for seed in 0..12 {
+            let mut rng = ChaCha8Rng::seed_from_u64(6151 + seed);
+
+            if let Some((child, sources)) = section_crossover_sourced(&a, &other, &limits, &mut rng)
+            {
+                let exp = check(&[ia, ib], &child, &sources);
+
+                assert!(exp.start.iter().all(|v| v[6] == 1), "{:?}", exp.start);
+            }
+        }
+
+        // A stage crossover: the prefix copies A's Workers and the suffix B's.
+        let mut suffixed = 0;
+
+        for seed in 0..24 {
+            let mut rng = ChaCha8Rng::seed_from_u64(6163 + seed);
+
+            if let Some((child, sources)) = stage_crossover_sourced(&a, &other, &limits, &mut rng) {
+                let exp = check(&[ia, ib], &child, &sources);
+
+                assert_eq!(exp.start.last().map(|v| v[6]), Some(2));
+                suffixed += 1;
+            }
+        }
+
+        assert!(suffixed > 0);
+
+        // A new Worker, one without a source, starts at 0 and gains and loses nothing.
+        let exp = b
+            .experience(&[ia], &a, &vec![Vec::new(); 3])
+            .expect("experience");
+
+        assert_eq!(exp.start, vec![vec![0; 8]; 3]);
+        assert_eq!(exp.changes, vec![Change::default(); 3]);
+        assert_eq!((exp.p, exp.families()), (0, 0));
+    }
+
+    #[test]
+    fn a_section_crossover_that_changes_two_workers_learns_one_error() {
+        let designers = designer_pool();
+        let mut b = circuits_after_seeds(imagining(circuit_config(6173)), &designers);
+        let w = seed_workers();
+        let limits = b.cfg.limits.clone();
+
+        // A: the linear and the phase Worker; B: the hadamard and the search Worker, each with
+        // a style section that A lacks, so a child of A's shape never equals B.
+        let a = Cascade {
+            stages: vec![Stage {
+                workers: vec![w[0].clone(), w[1].clone()],
+            }],
+        };
+        let mut other = Cascade {
+            stages: vec![Stage {
+                workers: vec![w[2].clone(), w[3].clone()],
+            }],
+        };
+
+        for worker in &mut other.stages[0].workers {
+            worker.sections.push(Section {
+                name: "style".to_string(),
+                text: "Be concise.".to_string(),
+            });
+        }
+
+        // The child takes both strategies from B, as the coins of section crossover may.
+        let mut child = a.clone();
+
+        for (mine, theirs) in child.stages[0]
+            .workers
+            .iter_mut()
+            .zip(&other.stages[0].workers)
+        {
+            mine.sections[1] = theirs.sections[1].clone();
+        }
+
+        assert!(child.check(&limits).is_ok() && child.id() != a.id() && child.id() != other.id());
+
+        // Its sources are those that section crossover names for this pair: each Worker of A
+        // with its partner in B.
+        let mut rng = ChaCha8Rng::seed_from_u64(6173);
+        let (_, sources) =
+            section_crossover_sourced(&a, &other, &limits, &mut rng).expect("a crossover");
+        let own = |worker| Source { parent: 0, worker };
+        let partner = |worker| Source { parent: 1, worker };
+
+        assert_eq!(
+            sources,
+            vec![vec![own(0), partner(0)], vec![own(1), partner(1)]]
+        );
+
+        // A's first Worker values Linear at 0.4 and Hadamard at 0.1, its second Phase at −0.2
+        // and Search at 0.3. B's values play no part.
+        let a0 = eight(&[(0, 400), (2, 100)]);
+        let a1 = eight(&[(1, -200), (4, 300)]);
+
+        b.archive.push(valued(a, vec![a0.clone(), a1.clone()]));
+        b.archive
+            .push(valued(other, vec![vec![900; 8], vec![-900; 8]]));
+
+        let (ia, ib) = (b.archive.len() - 2, b.archive.len() - 1);
+        let exp = b
+            .experience(&[ia, ib], &child, &sources)
+            .expect("experience");
+
+        // Worker 0 lost Linear and gained Hadamard; Worker 1 lost Phase and gained Search.
+        assert_eq!(
+            exp.changes,
+            vec![
+                Change {
+                    gained: vec![2],
+                    lost: vec![0]
+                },
+                Change {
+                    gained: vec![4],
+                    lost: vec![1]
+                },
+            ]
+        );
+        assert_eq!(exp.families(), 4);
+
+        // One p over both Workers, each read in its own source: (0.1 − 0.4) + (0.3 + 0.2).
+        assert_eq!(exp.p, 200);
+
+        // One error for the child, one step for its four families: with s = 1, e = 800 and
+        // the step 800 / 16 = 50; with s = −1, e = −1200 and the step −75; with s = 0,
+        // e = −200 and −200 / 16 = −12.5, which rounds away from zero to −13.
+        let moved = |step: i16| {
+            vec![
+                eight(&[(0, 400 - step), (2, 100 + step)]),
+                eight(&[(1, -200 - step), (4, 300 + step)]),
+            ]
+        };
+
+        for (s, step) in [(1, 50), (-1, -75), (0, -13)] {
+            let (values, got) = exp.learn(s, 250);
+
+            assert_eq!(got, i64::from(step), "s {s}");
+            assert_eq!(values, moved(step), "s {s}");
+        }
+
+        // At the commit A's two Workers learn the same step; B, the partner, does not.
+        let mut archive = b.archive.clone();
+        let changed = learn_at_commit(&mut archive, &[exp.lesson(50)]).expect("learn");
+        let new = moved(50);
+
+        assert_eq!(
+            changed,
+            vec![
+                ValueChange {
+                    member: archive[ia].id.clone(),
+                    worker: 0,
+                    values: new[0].clone(),
+                },
+                ValueChange {
+                    member: archive[ia].id.clone(),
+                    worker: 1,
+                    values: new[1].clone(),
+                },
+            ]
+        );
+        assert_eq!(archive[ib].values_now, b.archive[ib].values_now);
+    }
+
+    #[test]
+    fn source_workers_learn_the_steps_of_their_children_in_birth_order() {
+        let designers = designer_pool();
+        let mut b = circuits_after_seeds(imagining(circuit_config(6179)), &designers);
+
+        // The linear seed's Worker values Hadamard at 0.9.
+        b.archive[0].values_now = Some(vec![eight(&[(2, 900)])]);
+
+        let gained = |f: usize| Change {
+            gained: vec![f],
+            lost: Vec::new(),
+        };
+        let lost = |f: usize| Change {
+            gained: Vec::new(),
+            lost: vec![f],
+        };
+        // In birth order: a child whose step raises Hadamard on the linear Worker by 250,
+        // then one whose step lowers it by 250 and that lost Phase against the phase
+        // Worker, then one whose step is 0.
+        let lessons = [
+            Lesson {
+                step: 250,
+                changes: vec![((0, 0), gained(2))],
+            },
+            Lesson {
+                step: -250,
+                changes: vec![((0, 0), gained(2)), ((1, 0), lost(1))],
+            },
+            Lesson {
+                step: 0,
+                changes: vec![((2, 0), gained(5))],
+            },
+        ];
+        let mut archive = b.archive.clone();
+        let changed = learn_at_commit(&mut archive, &lessons).expect("learn");
+
+        // 900 + 250 stops at 1000, and then 1000 − 250 = 750. Lost Phase moves by minus the
+        // step: −(−250) = +250.
+        assert_eq!(
+            changed,
+            vec![
+                ValueChange {
+                    member: archive[0].id.clone(),
+                    worker: 0,
+                    values: eight(&[(2, 750)]),
+                },
+                ValueChange {
+                    member: archive[1].id.clone(),
+                    worker: 0,
+                    values: eight(&[(1, 250)]),
+                },
+            ]
+        );
+
+        // The hadamard seed, whose step was 0, did not change and is not listed.
+        assert_eq!(archive[2].values_now, b.archive[2].values_now);
+
+        // In the other order the clamp acts last: 900 − 250 = 650, then 900.
+        let mut reversed = b.archive.clone();
+
+        learn_at_commit(&mut reversed, &[lessons[1].clone(), lessons[0].clone()]).expect("learn");
+        assert_eq!(reversed[0].values_now, Some(vec![eight(&[(2, 900)])]));
+
+        // A source Worker without values is an integrity error.
+        let mut none = b.archive.clone();
+
+        none[0].values_now = None;
+        assert!(matches!(
+            learn_at_commit(&mut none, &lessons),
+            Err(BrutError::Integrity(_))
+        ));
+    }
+
+    /// The operators whose children keep their first parent's shape, each Worker built from
+    /// the parent's Worker at its place.
+    const POSITIONAL: [Op; 10] = [
+        Op::SectionReplace,
+        Op::SectionAdd,
+        Op::SectionDrop,
+        Op::SectionSwap,
+        Op::ThinkUp,
+        Op::ThinkDown,
+        Op::TemperatureShift,
+        Op::SelfCheckFlip,
+        Op::AnswerTokensShift,
+        Op::SectionCrossover,
+    ];
+
+    /// Check that the log `events` holds what learning read and did (spec-imagination 3.3,
+    /// 3.5), from the log alone: every newborn's values are its source Workers' values after
+    /// the previous commit moved by its one step, its p is the sum over its changed Workers,
+    /// and each `learned` event holds the steps of the generation's children applied to their
+    /// source Workers in birth order. Children of operators that move Workers are checked
+    /// where their Workers keep their places, and their parents' learning is not checked when
+    /// such a child changed families. Returns the newborns that learned something.
+    fn check_learning_in(events: &[Event], rate: u16) -> usize {
+        let mut now: HashMap<String, Vec<Vec<i16>>> = HashMap::new();
+        let mut taught: BTreeMap<String, Vec<(i64, Vec<Change>)>> = BTreeMap::new();
+        let mut unknown: BTreeSet<String> = BTreeSet::new();
+        let mut learned = 0;
+
+        for e in events {
+            match e {
+                Event::Born {
+                    generation,
+                    parents,
+                    op,
+                    cascade,
+                    values,
+                    effect,
+                    id,
+                    ..
+                } => {
+                    let values = values.clone().expect("values");
+
+                    assert_eq!(values.len(), cascade.worker_count());
+
+                    if *generation == 0 {
+                        assert!(values.iter().flatten().all(|&v| v == 0));
+                        assert_eq!(*effect, None);
+                    } else if POSITIONAL.contains(op) {
+                        let start = now[&parents[0]].clone();
+                        let changes: Vec<Change> = match effect {
+                            Some(e) => e
+                                .gained
+                                .iter()
+                                .zip(&e.lost)
+                                .map(|(gained, lost)| Change {
+                                    gained: gained.clone(),
+                                    lost: lost.clone(),
+                                })
+                                .collect(),
+                            None => vec![Change::default(); values.len()],
+                        };
+                        let n: usize = changes.iter().map(Change::families).sum();
+                        let p =
+                            prediction(changes.iter().zip(&start).map(|(c, v)| (c, v.as_slice())));
+                        let step = effect
+                            .as_ref()
+                            .map_or(0, |e| step(error(e.s, e.p), n, rate));
+                        let mut expected = start.clone();
+
+                        for (v, c) in expected.iter_mut().zip(&changes) {
+                            c.learn(v, step);
+                        }
+
+                        if let Some(e) = effect {
+                            assert_eq!(e.p, p, "{id}");
+                            assert!((-1..=1).contains(&e.s));
+                            assert!(n > 0 || e.draw.is_some(), "{id}");
+                        }
+
+                        assert_eq!(
+                            effect.is_some(),
+                            n > 0 || IMAGINING_OPS.contains(op),
+                            "{id}"
+                        );
+                        assert_eq!(values, expected, "{id}");
+
+                        if n > 0 {
+                            learned += 1;
+                            taught
+                                .entry(parents[0].clone())
+                                .or_default()
+                                .push((step, changes));
+                        }
+                    } else if effect
+                        .as_ref()
+                        .is_some_and(|e| e.gained.iter().chain(&e.lost).any(|f| !f.is_empty()))
+                    {
+                        learned += 1;
+                        unknown.extend(parents.iter().cloned());
+                    }
+
+                    now.insert(id.clone(), values);
+                }
+                Event::Learned { changed, .. } => {
+                    let listed: BTreeMap<(String, usize), Vec<i16>> = changed
+                        .iter()
+                        .map(|c| ((c.member.clone(), c.worker), c.values.clone()))
+                        .collect();
+
+                    for (parent, lessons) in std::mem::take(&mut taught) {
+                        if unknown.contains(&parent) {
+                            continue;
+                        }
+
+                        let mut expected = now[&parent].clone();
+
+                        for (step, changes) in &lessons {
+                            for (v, c) in expected.iter_mut().zip(changes) {
+                                c.learn(v, *step);
+                            }
+                        }
+
+                        for (k, v) in expected.iter().enumerate() {
+                            match listed.get(&(parent.clone(), k)) {
+                                Some(got) => assert_eq!(got, v, "{parent} Worker {k}"),
+                                None => assert_eq!(&now[&parent][k], v, "{parent} Worker {k}"),
+                            }
+                        }
+                    }
+
+                    for c in changed {
+                        now.get_mut(&c.member).expect("a member")[c.worker] = c.values.clone();
+                    }
+
+                    unknown.clear();
+                }
+                _ => {}
+            }
+        }
+
+        learned
+    }
+
+    #[test]
+    fn the_log_holds_what_learning_read_and_did() {
+        let designers = designer_pool();
+        let base = BreedConfig {
+            generations: 8,
+            children_per_generation: 12,
+            selection: ParentSelection::Lexicase,
+            ..circuit_config(6181)
+        };
+
+        for cfg in [
+            imagining(base.clone()),
+            with_goals(imagining(base.clone()), 2),
+        ] {
+            let start =
+                Breeder::<CircuitDomain>::start(cfg.clone(), circuit_pool(), &designers, None)
+                    .expect("circuits");
+            let (b, events) = bred_with_events(start);
+
+            // One `learned` event after each generation event, and the learning the log
+            // records adds up.
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| matches!(e, Event::Learned { .. }))
+                    .count(),
+                cfg.generations + 1
+            );
+
+            for (i, e) in events.iter().enumerate() {
+                if matches!(e, Event::Learned { .. }) {
+                    let before = &events[i - 1];
+
+                    assert!(matches!(before, Event::Generation { .. }), "{before:?}");
+                    assert!(matches!(events[i + 1], Event::State(_)));
+                }
+            }
+
+            assert!(check_learning_in(&events, 250) > 0, "nothing was learned");
+
+            // The real effect s compares the solved counts on the goal of the newborn's
+            // generation, its own and its first parent's.
+            let by_id: HashMap<&str, &Member<Circuit>> =
+                b.archive.iter().map(|m| (m.id.as_str(), m)).collect();
+            let mut effects = 0;
+
+            for m in &b.archive {
+                let Some(effect) = &m.effect else {
+                    continue;
+                };
+                let parent = by_id[m.parents[0].as_str()];
+                let tasks = b.goal(m.generation).map(|goal| goal.tasks.as_slice());
+                let s = crate::cascade::mind::effect(
+                    b.solved_on(&m.answers, tasks).expect("grade"),
+                    b.solved_on(&parent.answers, tasks).expect("grade"),
+                );
+
+                assert_eq!(effect.s, s, "{}", m.id);
+
+                if cfg.goals.is_none() {
+                    assert_eq!(s, crate::cascade::mind::effect(m.solved, parent.solved));
+                }
+
+                effects += 1;
+            }
+
+            assert!(effects > 0);
+        }
+    }
+
+    #[test]
+    fn the_mind_group_holds_the_goal_and_how_imagination_chose() {
+        let designers = designer_pool();
+        let base = BreedConfig {
+            generations: 6,
+            children_per_generation: 12,
+            selection: ParentSelection::Lexicase,
+            ..circuit_config(6191)
+        };
+        let run = |cfg: BreedConfig| {
+            let b = Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None)
+                .expect("circuits");
+
+            bred_with_events(b).1
+        };
+
+        // Off, there is no mind group, and no state line names one.
+        let off = run(base.clone());
+
+        assert!(mind_groups(&off).iter().all(Option::is_none));
+        assert!(
+            !serde_json::to_string(&off)
+                .expect("json")
+                .contains("\"mind\"")
+        );
+        assert!(!off.iter().any(|e| matches!(e, Event::Learned { .. })));
+
+        // Goals of two generations: generations 0 to 2 have all tasks, 3 and 4 the targets
+        // without Linear, 5 and 6 all tasks again. Nothing of imagination is logged.
+        let goals: Vec<MindState> = mind_groups(&run(with_goals(base.clone(), 2)))
+            .into_iter()
+            .map(|m| m.expect("a mind group"))
+            .collect();
+
+        assert_eq!(
+            goals.iter().map(|m| m.goal.as_str()).collect::<Vec<_>>(),
+            ["all", "all", "all", "-Linear", "-Linear", "all", "all"]
+        );
+
+        for m in &goals {
+            assert_eq!(
+                (
+                    m.imagination_choices,
+                    m.imagination_changed,
+                    m.linear_phase_hadamard_mean,
+                    m.other_families_mean
+                ),
+                (None, None, None, None)
+            );
+        }
+
+        // Imagination alone: the goal is all tasks; the seeds have no parents, and from
+        // generation 1 on the parents' values have means. In generation 1 every value is 0.
+        let events = run(imagining(base.clone()));
+        let imagined: Vec<MindState> = mind_groups(&events)
+            .into_iter()
+            .map(|m| m.expect("a mind group"))
+            .collect();
+
+        assert_eq!(imagined.len(), 7);
+        assert_eq!(
+            (
+                imagined[0].imagination_choices,
+                imagined[0].imagination_changed,
+                imagined[0].linear_phase_hadamard_mean
+            ),
+            (Some(0), Some(0), None)
+        );
+        assert_eq!(
+            (
+                imagined[1].imagination_choices,
+                imagined[1].imagination_changed,
+                imagined[1].linear_phase_hadamard_mean,
+                imagined[1].other_families_mean
+            ),
+            (Some(0), Some(0), Some(0.0), Some(0.0))
+        );
+
+        for m in &imagined {
+            assert_eq!(m.goal, "all");
+            assert!(m.imagination_changed <= m.imagination_choices);
+        }
+
+        for m in &imagined[1..] {
+            assert!(m.linear_phase_hadamard_mean.is_some() && m.other_families_mean.is_some());
+        }
+
+        assert!(
+            imagined.iter().any(|m| m.imagination_choices > Some(0)),
+            "{imagined:?}"
+        );
+
+        // The log alone gives the changed picks, the Born events whose chosen draw is not the
+        // first, and the means: the values of the parents' Workers before the generation's
+        // commit, which the Born events and the earlier `learned` events hold.
+        let mut now: HashMap<String, Vec<Vec<i16>>> = HashMap::new();
+        let mut parents: Vec<String> = Vec::new();
+        let mut changed = 0u64;
+        let mut sums = (ValueSums::default(), ValueSums::default());
+        let mut checked = 0;
+
+        for e in &events {
+            match e {
+                Event::Born {
+                    id,
+                    parents: p,
+                    values,
+                    effect,
+                    ..
+                } => {
+                    parents.extend(p.iter().cloned());
+                    changed += u64::from(effect.as_ref().and_then(|e| e.draw) > Some(1));
+                    now.insert(id.clone(), values.clone().expect("values"));
+                }
+                Event::Learned { changed: moved, .. } => {
+                    // Linear, Phase and Hadamard are families 0 to 2.
+                    for parent in parents.drain(..) {
+                        for (f, &x) in now[&parent].iter().flat_map(|v| v.iter().enumerate()) {
+                            if f < 3 {
+                                sums.0.add(x);
+                            } else {
+                                sums.1.add(x);
+                            }
+                        }
+                    }
+
+                    for c in moved {
+                        now.get_mut(&c.member).expect("a member")[c.worker] = c.values.clone();
+                    }
+                }
+                Event::State(s) => {
+                    let m = s.mind.as_ref().expect("a mind group");
+
+                    assert_eq!(m.imagination_changed, Some(changed), "{}", s.generation);
+                    assert_eq!(m.linear_phase_hadamard_mean, sums.0.mean());
+                    assert_eq!(m.other_families_mean, sums.1.mean());
+                    changed = 0;
+                    sums = (ValueSums::default(), ValueSums::default());
+                    checked += 1;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(checked, 7);
+
+        // Both: the goals and the counts.
+        let both: Vec<MindState> = mind_groups(&run(with_goals(imagining(base), 2)))
+            .into_iter()
+            .map(|m| m.expect("a mind group"))
+            .collect();
+
+        assert_eq!(both[3].goal, "-Linear");
+        assert!(both.iter().all(|m| m.imagination_choices.is_some()));
+    }
+
+    #[test]
+    fn lexicase_with_a_goal_draws_only_on_the_tasks_of_that_goal() {
+        // Member 0 does well only on task 0, members 1 and 2 on tasks 1 and 2.
+        let scores = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 0.5, 1.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+        ];
+        let selector = |scores: Vec<Vec<f64>>| Selector {
+            kind: ParentSelection::Lexicase,
+            params: SelectionParams::default(),
+            weights: Vec::new(),
+            scores,
+            rank_of: vec![0; 3],
+            members: 3,
+            observe_seed: 0,
+        };
+        let picks = |sel: &Selector| {
+            let mut rng = ChaCha8Rng::seed_from_u64(6197);
+            let mut counts = [0usize; 3];
+
+            for _ in 0..3000 {
+                counts[sel.pick(&mut rng).expect("a pick")] += 1;
+            }
+
+            counts
+        };
+
+        // On all tasks, member 0 is drawn whenever task 0 comes first.
+        assert!(picks(&selector(scores.clone()))[0] > 0);
+
+        // On the goal of tasks 1 and 2 it scores 0 on every case, so it is never drawn.
+        let on_goal = picks(&selector(goal_cases(scores.clone(), &[1, 2])));
+
+        assert_eq!(on_goal[0], 0);
+        assert!(on_goal[1] > 0 && on_goal[2] > 0, "{on_goal:?}");
+        assert_eq!(
+            goal_cases(scores, &[1, 2]),
+            vec![vec![0.0, 0.0], vec![0.5, 1.0], vec![1.0, 0.0]]
+        );
+
+        // A breeder with goals of one generation draws the parents of each generation on the
+        // tasks of its goal, in panel order: generation 2 on cs and ch, generation 4 on cz,
+        // swap and ch.
+        let designers = designer_pool();
+        let mut b = circuits_after_seeds(with_goals(circuit_config(6199), 1), &designers);
+        let full: Vec<Vec<f64>> = b
+            .archive
+            .iter()
+            .map(|m| {
+                b.search
+                    .iter()
+                    .zip(&m.answers)
+                    .map(|(t, a)| {
+                        a.as_ref()
+                            .and_then(|a| b.domain.grade(t, a).ok())
+                            .map_or(0.0, |g| g.value)
+                    })
+                    .collect()
+            })
+            .collect();
+        let names =
+            |tasks: &[usize]| -> Vec<&str> { tasks.iter().map(|&t| b.search[t].name).collect() };
+
+        for (g, goal, targets) in [
+            (1, "all", None),
+            (2, "-Linear", Some(vec!["cs", "ch"])),
+            (3, "all", None),
+            (4, "-Phase", Some(vec!["cz", "swap", "ch"])),
+        ] {
+            b.next_generation = g;
+
+            let at = b.goal(g).expect("a goal").clone();
+            let sel = b.selector();
+
+            assert_eq!(at.name, goal);
+            assert_eq!(
+                sel.scores,
+                goal_cases(full.clone(), &at.tasks),
+                "generation {g}"
+            );
+            assert!(sel.scores.iter().all(|row| row.len() == at.tasks.len()));
+
+            match targets {
+                Some(targets) => assert_eq!(names(&at.tasks), targets),
+                None => assert_eq!(at.tasks.len(), b.search.len()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_run_with_imagination_and_goals_resumes_like_a_straight_one() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let designers = designer_pool();
+        let never = || false;
+        let cfg = with_goals(
+            imagining(BreedConfig {
+                generations: 6,
+                children_per_generation: 8,
+                ..circuit_config(6203)
+            }),
+            2,
+        );
+        let start = || {
+            Breeder::<CircuitDomain>::start(cfg.clone(), circuit_pool(), &designers, None)
+                .expect("circuits")
+        };
+        let (straight, events) = bred_with_events(start());
+
+        // Stopped after two generations and resumed from the snapshot's JSON, and stopped
+        // inside generation 4 while its newborns run and resumed again: the same events and
+        // the same final state.
+        let mut first = start();
+        let mut split = Vec::new();
+
+        for _ in 0..2 {
+            split.extend(first.step(&never).expect("step").1);
+        }
+
+        let json = serde_json::to_string(&first.snapshot()).expect("json");
+        let mut second = Breeder::<CircuitDomain>::resume_from(
+            cfg.clone(),
+            circuit_pool(),
+            &designers,
+            None,
+            serde_json::from_str(&json).expect("back"),
+        )
+        .expect("resume");
+
+        for _ in 0..2 {
+            split.extend(second.step(&never).expect("step").1);
+        }
+
+        let polls = AtomicUsize::new(0);
+        let stop_later = || polls.fetch_add(1, Ordering::SeqCst) >= 9;
+        let (status, ev) = second
+            .step_with(&stop_later, &mut |_| Ok(()))
+            .expect("stopped step");
+
+        assert_eq!(status, Status::Done("stopped".to_string()));
+        assert!(ev.is_empty());
+
+        let json = serde_json::to_string(&second.snapshot()).expect("json");
+        let mut third = Breeder::<CircuitDomain>::resume_from(
+            cfg.clone(),
+            circuit_pool(),
+            &designers,
+            None,
+            serde_json::from_str(&json).expect("back"),
+        )
+        .expect("resume");
+
+        while let (Status::Continue, ev) = third.step(&never).expect("step") {
+            split.extend(ev);
+        }
+
+        // The stopped attempt's calls show in the cumulative calls of the generation events,
+        // and nowhere else.
+        let without_calls = |events: &[Event]| -> Vec<Event> {
+            events
+                .iter()
+                .cloned()
+                .map(|mut e| {
+                    if let Event::Generation { calls_used, .. } = &mut e {
+                        *calls_used = 0;
+                    }
+
+                    e
+                })
+                .collect()
+        };
+
+        assert_eq!(without_calls(&events), without_calls(&split));
+        assert_ne!(events, split);
+        assert_eq!(straight.archive, third.archive);
+        assert_eq!(straight.comparisons, third.comparisons);
+        assert!(third.calls_used() > straight.calls_used());
     }
 }

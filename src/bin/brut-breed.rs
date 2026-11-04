@@ -37,6 +37,12 @@
 //! as a `soul` object in --config; --soul next to a config that holds one is wrong usage.
 //! --soul defines the experiment too, so a resume refuses it.
 //!
+//! Experience and imagination (`"imagination": {"draws": 4, "rate": 250}`, arm I) and
+//! changing goals (`"goals": {"length": 20}`, arm G) have no flag: they come in --config
+//! (`.scratch/seelen-modell/spec-imagination.md`). Imagination needs a gene pool that names
+//! the families of a text, as the circuit gene pool does; changing goals need lexicase
+//! selection on circuits. Both define the experiment, so a resume cannot change them.
+//!
 //! A finished circuit run also writes `<dir>/rediscovery.json`, the pre-registered count
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
@@ -48,11 +54,15 @@
 //! graded value, usage and answers, and in a run with Souls each imprinted Soul, where each
 //! Soul came from, the teaching section, the authors of each answer and the tally of
 //! votes). In a run with Souls it also checks every member's current Soul: its last entry
-//! in the `souls` events, or its imprinted Soul when no event moved it (step 2). Then it
-//! recomputes the count from that archive. A finished grid run with Souls gets the same two
-//! checks of its archive and Souls; a grid run without Souls is checked as before step 2. A
-//! run with Souls keeps every select-panel answer, as a circuit run does, so on grids too a
-//! report that its checkpoint cannot recompute is an integrity error.
+//! in the `souls` events, or its imprinted Soul when no event moved it (step 2). In a run
+//! with imagination the Born event also holds each Worker's learned values and what the
+//! newborn's learning read, and every member's current values must be their last entry in
+//! the `learned` events, or the values of its Born event when no event moved them
+//! (`.scratch/seelen-modell/spec-imagination.md`). Then it recomputes the count from that
+//! archive. A finished grid run with Souls gets the same two checks of its archive and Souls;
+//! a grid run without Souls is checked as before step 2. A run with Souls keeps every
+//! select-panel answer, as a circuit run does, so on grids too a report that its checkpoint
+//! cannot recompute is an integrity error.
 //! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1. It
 //! also refuses runs with Souls (step 2): a Soul belongs to its run.
 //!
@@ -1157,15 +1167,18 @@ fn check_rediscovery(
 /// is the logged one: the same id, Cascade, parents, generation, operator, solved count,
 /// graded value, usage and answers, and in a run with Souls each imprinted Soul, where each
 /// Soul came from, the teaching section, the authors of each answer and the tally of votes
-/// (step 2). The Cascade holds each Worker's birth Soul and Coupling strength. `rediscovery`
-/// counts by the id, generation, operator and answers; the rest shapes what a resume to
-/// more generations breeds. No hash covers the checkpoint, so only this ties the archive to
+/// (step 2), and in a run with imagination each Worker's learned values at birth and what
+/// the learning read. The Cascade holds each Worker's birth Soul and Coupling strength.
+/// `rediscovery` counts by the id, generation, operator and answers; the rest shapes what a
+/// resume to more generations breeds. No hash covers the checkpoint, so only this ties the archive to
 /// the hash-chained log: an answer edited in the checkpoint would otherwise enter the count
 /// with the next resume. What a member gains later (children, judgments, fitness, rating)
 /// is not in its Born event, and this does not check it. The current Souls, which
 /// Observations change after a member's birth, are checked against the `souls` events
-/// instead (`check_current_souls`). It runs for finished circuit runs and for finished grid
-/// runs with Souls; a grid answer has no text, so its Born event logs none.
+/// instead (`check_current_souls`), and the current learned values, which a member's children
+/// change at the commits, against the `learned` events (`check_current_values`). It runs for
+/// finished circuit runs and for finished grid runs with Souls; a grid answer has no text, so
+/// its Born event logs none.
 fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Event]) -> Result<()> {
     let tasks = breeder.search_panel().len();
     let born: Vec<&Event> = events
@@ -1213,6 +1226,8 @@ fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Even
             teaching: m.teaching.clone(),
             authors: m.authors.clone(),
             votes: m.votes,
+            values: m.values.clone(),
+            effect: m.effect.clone(),
         };
 
         if written != *logged {
@@ -1220,7 +1235,68 @@ fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Even
         }
     }
 
-    check_current_souls(out, archive, events)
+    check_current_souls(out, archive, events)?;
+    check_current_values(out, archive, events)
+}
+
+/// Error unless every Worker's current learned values in the archive are its last entry in
+/// the `learned` events among `events`, or the values its Born event logs when there is
+/// none (`.scratch/seelen-modell/spec-imagination.md`, section 3.3), and every Worker those
+/// events name is in the archive. A Run without imagination has neither.
+fn check_current_values<A>(out: &Path, archive: &[Member<A>], events: &[Event]) -> Result<()> {
+    let mut last: BTreeMap<(&str, usize), &Vec<i16>> = BTreeMap::new();
+
+    for e in events {
+        if let Event::Learned { changed, .. } = e {
+            for c in changed {
+                last.insert((c.member.as_str(), c.worker), &c.values);
+            }
+        }
+    }
+
+    let broken = |what: String| {
+        BrutError::Integrity(format!(
+            "{}: {what} ({})",
+            out.join(SNAPSHOT).display(),
+            out.join(EVENTS).display()
+        ))
+    };
+
+    for m in archive {
+        let now = m.values_now.as_deref().unwrap_or_default();
+        let born = m.values.as_deref().unwrap_or_default();
+        let workers = m.cascade.worker_count();
+
+        if now.len() > workers {
+            return Err(broken(format!(
+                "archive member {} holds current values for {} Workers but has {workers}",
+                m.id,
+                now.len()
+            )));
+        }
+
+        for k in 0..workers {
+            let (expected, from) = match last.remove(&(m.id.as_str(), k)) {
+                Some(v) => (Some(v), "its last entry in the learned events"),
+                None => (born.get(k), "the values of its Born event"),
+            };
+
+            if now.get(k) != expected {
+                return Err(broken(format!(
+                    "the current values of Worker {k} of archive member {} differ from {from}",
+                    m.id
+                )));
+            }
+        }
+    }
+
+    if let Some(((id, k), _)) = last.first_key_value() {
+        return Err(broken(format!(
+            "a learned event names Worker {k} of member {id}, which the archive does not hold"
+        )));
+    }
+
+    Ok(())
 }
 
 /// Error unless every Worker's current Soul in the archive is its last entry in the `souls`

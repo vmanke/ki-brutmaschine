@@ -170,8 +170,9 @@ fn digest(events: &[Event]) -> String {
                 "finalist id={} seed={} select={}/{}",
                 f.id, f.is_seed, f.select_solved, f.select_puzzles
             ),
-            // Runs without Souls write no `souls` event (step 2).
-            Event::State(_) | Event::Souls { .. } => continue,
+            // Runs without Souls write no `souls` event (step 2), and Runs without imagination
+            // no `learned` event (`.scratch/seelen-modell/spec-imagination.md`).
+            Event::State(_) | Event::Souls { .. } | Event::Learned { .. } => continue,
         };
 
         out.push_str(&line);
