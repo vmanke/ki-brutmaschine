@@ -25,14 +25,22 @@ Schlüsse sind als solche markiert.
   eigenen Python-Code (Zhang et al. 2025/2026). AlphaEvolve ändert Programmcode über Diffs
   (Novikov et al. 2025). OMNI-EPIC lässt ein Sprachmodell Umgebungscode schreiben, der dann
   ausgeführt wird (Faldor et al. 2025). Diese drei verletzen die Regel „nie Code“ der Brutmaschine.
-* Jede Quelle, die eine Messgröße optimiert, berichtet oder erwartet Goodhart-Effekte. Die
+* Mehrere Quellen berichten oder erwarten Goodhart-Effekte: die Darwin-Gödel-Maschine (Anhang H),
+  OMNI (Abschnitte 2.2 und 6), OMNI-EPIC (Abschnitt 3.6), Lehman et al. und Skalse et al. PBT
+  optimiert bei GANs die Testmetrik nicht direkt, um eine Überanpassung an sie zu vermeiden
+  (Abschnitt 4.3). Bei POET, Enhanced POET und AlphaEvolve fanden wir keine solche Stelle. Die
   Darwin-Gödel-Maschine entfernte Markierungen, auf die ihr Detektor angewiesen war. Dieses
   Hacking trat nach Angabe der Autoren häufiger auf, wenn die Prüffunktionen sichtbar waren.
-  Skalse et al. 2022 beweisen, dass ein nicht hackbarer Ersatz auf der Menge aller stochastischen
-  Strategien nur trivial sein kann.
+  Skalse et al. 2022 beweisen: Auf der Menge aller stationären (auch stochastischen) Strategien
+  sind ein Ersatz und die wahre Belohnung nur dann nicht hackbar, wenn eine von beiden trivial
+  ist oder wenn beide äquivalent sind (Satz 1, Korollar 1). Trivial heißt: Eine Belohnung gibt
+  allen Strategien denselben Wert. Äquivalent heißt: Beide bringen alle Strategien in dieselbe
+  Reihenfolge.
 * Ein faires Urteil über einen äußeren Sucher braucht einen gleich teuren Vergleich. Li und
   Talwalkar 2019 zeigen, dass Zufallssuche bei gleicher Rechenzeit ein harter Vergleich ist.
-  POET gibt seinem Lehrplan-Vergleich genau so viele ES-Schritte, wie POET selbst verbraucht hat.
+  POET gibt seinem Lehrplan-Vergleich je Zielumgebung so viele ES-Schritte, wie POET entlang der
+  direkten Ahnenlinie dieser Umgebung verbraucht hat, Transfers eingerechnet (Wang et al. 2019,
+  Abschnitt 4.3).
 * Für die Brutmaschine folgt: Der Gott der Götter ist ein weiterer Proposer, nur eine Ebene höher.
   Sein Genom ist eine Run-Konfiguration. Er sieht nur öffentliche Zahlen. Er wird gegen
   Zufallssuche über denselben Konfigurationsraum mit gleich vielen Runs und Aufrufen gemessen.
@@ -45,9 +53,11 @@ Schlüsse sind als solche markiert.
   der Brutmaschine ist die innere Suche ein Run. Die äußere Suche ist der Gott der Götter.
 * Ein Gesetz ist hier ein Wert der Run-Konfiguration, zum Beispiel ein Trait-Bereich, eine
   Stufenzahl oder ein Arm-Schalter. Gesetze sind Daten.
-* Eine Code-Obergrenze ist eine Konstante im Rust-Code. Eine Konfiguration darf sie verschärfen,
-  nie lockern; unbekannte Schlüssel werden abgelehnt (ADR 0005, Abschnitt „Hard ceilings are code,
-  not genes“).
+* Eine Code-Obergrenze ist eine Konstante im Rust-Code. Eine Run-Konfiguration darf Tiefe (4),
+  Breite (3) und die Denkgrenze (4096 Tokens, auch je Stufe) verschärfen, aber nie lockern.
+  Temperatur (0 bis 1,5) und Antwort-Tokens (64 bis 2048) haben feste Bereiche, die keine
+  Konfiguration ändert. Unbekannte Schlüssel werden abgelehnt (ADR 0005, Abschnitt „Hard ceilings
+  are code, not genes“).
 * Goodhart-Effekt heißt: Wird eine Messgröße zum Ziel, misst sie das Gemeinte nicht mehr. Die
   Quellen unten nennen dasselbe „reward hacking“, „objective hacking“ oder „specification gaming“.
 * Ein gleich teurer Vergleich ist ein Vergleichsverfahren mit demselben Budget an Rechenzeit oder
@@ -72,8 +82,8 @@ Eine begutachtete Fassung von PBT haben wir nicht gefunden. Wir führen die Arbe
 
 | Aussage | Beleg | Art des Belegs | Stand |
 |---|---|---|---|
-| POET erzeugt Umgebungen und optimiert dazu gepaarte Lösungen. Lösungen dürfen zwischen Umgebungen wechseln („transfer“). [arxiv](https://arxiv.org/abs/1901.01753) | Wang, R., Lehman, J., Clune, J., Stanley, K. O. (2019), „Paired Open-Ended Trailblazer (POET)“, arXiv:1901.01753v3, Zusammenfassung und Abschnitt 3 | Preprint; Volltext gesehen | bestätigt |
-| Eine Umgebung ist ein Vektor aus fünf Hindernisparametern. Jeder hat einen Startwert, eine Mutationsschrittweite und einen festen Höchstwert. | ebd., Abschnitt 4.2, Tabelle 1 | Preprint | bestätigt |
+| POET erzeugt Umgebungen und optimiert dazu gepaarte Lösungen. Lösungen dürfen zwischen Umgebungen wechseln („transfer“). [arxiv](https://arxiv.org/abs/1901.01753) | Wang, R., Lehman, J., Clune, J., Stanley, K. O. (2019), „Paired Open-Ended Trailblazer (POET)“, arXiv:1901.01753v3, Zusammenfassung und Abschnitt 3 | Preprint; Volltext gesehen; eine kürzere Fassung erschien laut ACM-Datensatz begutachtet in GECCO ’19, S. 142 bis 151 ([doi](https://doi.org/10.1145/3321707.3321799)) | bestätigt |
+| Eine Umgebung ist ein Vektor über fünf Hindernistypen: Stumpfhöhe, Lückenbreite, Stufenhöhe, Stufenzahl und Rauheit. Stumpfhöhe, Lückenbreite und Stufenhöhe sind Intervalle aus je zwei Genen. Das ergibt acht Gene (eigene Zählung). Dazu wird mit jeder Umgebung ein Zufalls-Seed gespeichert. Jedes Gen hat einen Startwert, eine Mutationsschrittweite und einen festen Höchstwert. Bei der Rauheit werden Startwert und jeder Schritt aus Uniform(0; 0,6) gezogen. | ebd., Abschnitt 4.2, Tabelle 1 | Preprint | bestätigt |
 | Ein Mindestkriterium filtert neue Umgebungen: 50 ≤ Punktzahl ≤ 300. So fallen zu leichte und zu schwere Umgebungen weg. Unter den Zugelassenen werden neuartige bevorzugt. | ebd., Abschnitt 4.2 und Anhang 6.1 | Preprint | bestätigt |
 | Der Vergleich mit einem direkten Lehrplan erhält dasselbe Budget an ES-Schritten, das POET für die Zielumgebung verbraucht hat. | ebd., Abschnitt 4.3 | Preprint | bestätigt |
 | Ein Lauf dauerte etwa 10 Tage auf 256 CPU-Kernen. | ebd., Abschnitt 4.3 | Preprint | bestätigt |
@@ -106,7 +116,7 @@ Einordnung: Ein Gott der Götter wäre ein Beitrag zur dritten Säule.
 |---|---|---|---|
 | OMNI nutzt ein großes Sprachmodell als Modell der Interessantheit. Es kombiniert dies mit einem Lehrplan nach Lernfortschritt. [arxiv](https://arxiv.org/abs/2306.01711) | Zhang, J., Lehman, J., Stanley, K., Clune, J., „OMNI“, arXiv:2306.01711v3, Abschnitt 3 | laut ICLR-Programm ICLR 2024; Volltext gesehen | bestätigt |
 | Langweilige Aufgaben bekommen ihr Ziehgewicht mal 0,001. | ebd., Abschnitt 3.3 und Anhang F | wie oben | bestätigt |
-| Die Autoren erwarten nach Goodhart, dass jedes Modell der Interessantheit Schwächen zeigt, sobald man gegen es optimiert. Sie schlagen menschliche Rückmeldung vor („OEHF“). | ebd., Abschnitt 7 | wie oben | bestätigt als Erwartung der Autoren, nicht gemessen |
+| Die Autoren erwarten nach Goodhart, dass jedes Modell der Interessantheit Schwächen zeigt, sobald man gegen es optimiert. Sie schlagen menschliche Rückmeldung vor („OEHF“). | ebd., Abschnitt 6 | wie oben | bestätigt als Erwartung der Autoren, nicht gemessen |
 | Je Experiment etwa 33 Stunden (Crafter) bzw. 60 Stunden (BabyAI) auf einer A10-GPU, je 10 Seeds. | ebd., Abschnitt 4.3 | wie oben | bestätigt |
 
 ### 6. OMNI-EPIC
@@ -176,7 +186,7 @@ Faktoren multiplizieren.
 
 | Aussage | Beleg | Art des Belegs | Stand |
 |---|---|---|---|
-| Neuronale Architektursuche ist ein Sonderfall der Hyperparameter-Optimierung. Zufallssuche mit frühem Abbruch war bei etwa gleicher Rechenzeit (2 GPU-Tage) ähnlich gut wie ENAS auf PTB. [arxiv](https://arxiv.org/abs/1902.07638) | Li, L. und Talwalkar, A., „Random Search and Reproducibility for Neural Architecture Search“, arXiv:1902.07638v3, Abschnitte 1 und 4.1, Tabelle 2 | laut mlanthology-Datensatz UAI 2019, PMLR 115, S. 367 bis 377; Volltext gesehen | bestätigt |
+| Neuronale Architektursuche ist ein Sonderfall der Hyperparameter-Optimierung. Mit etwa so viel Rechenzeit wie DARTS (zweite Ordnung, 2 GPU-Tage) erreichte Zufallssuche mit frühem Abbruch (ASHA) auf PTB eine Test-Perplexität von 56,4. Der veröffentlichte ENAS-Wert ist 56,3. Li und Talwalkar konnten ihn nicht reproduzieren. Für ENAS nennt Tabelle 2 nur Stufe 1 mit 0,5 GPU-Tagen, keine Gesamtkosten. [arxiv](https://arxiv.org/abs/1902.07638) | Li, L. und Talwalkar, A., „Random Search and Reproducibility for Neural Architecture Search“, arXiv:1902.07638v3, Abschnitte 1 und 4.1.1, Tabelle 2, Fußnote 2 | laut mlanthology-Datensatz UAI 2019, PMLR 115, S. 367 bis 377; Volltext gesehen | bestätigt |
 | Vorschlag der Autoren: Ein neues Verfahren als „Vielfaches der Zufallssuche“ angeben, also wie viel mehr Rechenzeit Zufallssuche für dasselbe Ergebnis bräuchte. | ebd., Abschnitt 5, Punkt 1 | wie oben | bestätigt |
 | Keine der 12 untersuchten NAS-Arbeiten von 2018 an war exakt reproduzierbar. Oft fehlten Seeds oder Code. | ebd., Abschnitt 1 | wie oben | bestätigt |
 | Läufe mit anderen Seeds ergaben spürbar andere Endwerte (Perplexität 55,5 gegen 56,5). | ebd., Abschnitt 4.1.1 | wie oben | bestätigt |
@@ -199,8 +209,9 @@ jeweils in Klammern.
 * Das entspricht POET: Dort ist eine Umgebung ein Vektor mit festen Höchstwerten (Wang et al. 2019,
   Tabelle 1). Es entspricht auch LES: Dort ist das gelernte Verfahren ein kleiner fester
   Parametersatz (Lange et al. 2023, Abschnitt 4.1).
-* Die Obergrenzen bleiben Konstanten im Code. Eine Konfiguration darf sie nur verschärfen. Das gilt
-  schon heute (ADR 0005).
+* Die Obergrenzen bleiben Konstanten im Code. Eine Konfiguration darf Tiefe, Breite und Denkgrenze
+  nur verschärfen. Die übrigen Bereiche sind fest. Das gilt schon heute (ADR 0005; `CascadeLimits`
+  in `src/cascade/genome.rs`).
 * Die DGM, AlphaEvolve und OMNI-EPIC ändern oder schreiben Code (Abschnitte 6 bis 8 oben). Sie
   sind keine Vorlage für die Darstellung. Sie sind nur Vorlage für Archiv, Elternwahl und
   Schutzmaßnahmen.
@@ -228,7 +239,7 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
   ändern. So arbeitet schon die sequentielle Regel von Schritt 1 (`issues/09`).
 * Die Zielgröße sollte nicht allein aus dem Universe state kommen. Diversität oder Entropie lassen
   sich leicht aufblähen, ohne dass etwas erfunden wird. OMNI erwartet genau das für jedes Maß, gegen
-  das optimiert wird (Zhang et al., Abschnitt 7). Lehman et al. berichten es vielfach.
+  das optimiert wird (Zhang et al., Abschnitte 2.2 und 6). Lehman et al. berichten es vielfach.
 * Der Gott sieht nur das Search panel. Das Select panel bleibt während der Zucht ungesehen
   (`CONTEXT.md`, Eintrag Select panel), und auch Menschen sehen es nie (Q35 in `spec.md`).
   Bekäme der Gott Select-Zahlen, würde das zurückgehaltene Panel zu seinem Optimierungsziel.
@@ -236,12 +247,19 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
   Entscheidung und eine weitere, unabhängige Bewertung. Er sieht auch nie die
   Hidden evaluation. Sonst wird er zu einem Kanal, über den verborgene Aufgaben in die Suche
   gelangen (ADR 0004, Absatz zur Blindheit).
-* Die Prüfungen, die Betrug erkennen, bleiben vor dem Gott verborgen. Dazu zählen Canary tasks,
-  die gepflanzten Fälschungen von Q31 und das Integrity alarm. Die DGM berichtet weniger Hacking,
-  wenn die Prüffunktionen verborgen sind (Zhang et al., Anhang H).
-* Skalse et al. zeigen: Auf großen Strategiemengen ist jeder nicht triviale Ersatz hackbar. Sie
-  raten, die Menge einzuschränken oder die Optimierung zu begrenzen (Abschnitt 7). Für die
-  Brutmaschine heißt das: wenige Gesetze, enge Bereiche, wenige Generationen des Gottes.
+* Die Prüfungen, die Betrug erkennen, bleiben vor dem Gott verborgen. Dazu zählen Canary tasks und
+  die gepflanzten Fälschungen von Q31. Auch der Integrity alarm bleibt verborgen. Er meldet ein
+  exaktes Ergebnis unter einer Proven- oder Derived-Reference, also einen fehlerhaften Prüfer oder
+  eine falsche Reference (`CONTEXT.md`, Eintrag Integrity alarm). So fiele auch ein ausgenutzter
+  Prüferfehler auf, der ein Ergebnis unter eine solche Reference drückt. Die DGM berichtet weniger
+  Hacking, wenn die Prüffunktionen verborgen sind (Zhang et al., Anhang H).
+* Skalse et al. zeigen: Auf jeder Strategiemenge, die eine offene Teilmenge enthält, etwa allen
+  stationären oder allen ε-suboptimalen Strategien, sind ein nicht trivialer Ersatz und eine nicht
+  triviale wahre Belohnung stets hackbar, wenn sie nicht äquivalent sind (Satz 1, Korollare 1 und
+  2). Auf endlichen Mengen gibt es dagegen stets nicht triviale Paare, die nicht äquivalent und
+  trotzdem nicht hackbar sind (Satz 2). Die Autoren raten, die Menge einzuschränken oder die
+  Optimierung zu begrenzen (Abschnitt 7). Für die Brutmaschine heißt das: wenige Gesetze, enge und
+  möglichst diskrete Bereiche, wenige Generationen des Gottes.
 
 ### G4 Was ein Universum kostet
 
@@ -264,9 +282,10 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
   viele Universen und gleich viele Aufrufe (Li und Talwalkar 2019, Abschnitt 5).
 * Ein zweiter Vergleich ist die heutige Standardkonfiguration. Sie bekommt so viele Seeds, dass ihr
   Gesamtbudget gleich ist.
-* POET gibt seinem Lehrplan-Vergleich das Budget, das POET selbst verbraucht hat (Wang et al. 2019,
-  Abschnitt 4.3). Die DGM vergleicht mit Läufen, die etwa halb so viel kosten (Anhang E.1). Die
-  Brutmaschine sollte dem Beispiel von POET folgen.
+* POET gibt seinem Lehrplan-Vergleich nur das Budget der Ahnenlinie der Zielumgebung, nicht das
+  Budget des ganzen Laufs (Wang et al. 2019, Abschnitt 4.3). Die DGM vergleicht mit Läufen, die
+  etwa halb so viel kosten (Anhang E.1). Die Brutmaschine sollte strenger sein als beide und dem
+  Vergleich das ganze Budget geben.
 * Der Gott wird als Arm geführt. Der Vergleich ist ein zweiter Arm auf denselben Seeds.
 * Das Ergebnis kann als „Vielfaches der Zufallssuche“ berichtet werden (Li und Talwalkar 2019,
   Abschnitt 5).
@@ -298,7 +317,7 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
 * Die Verlagsfassung von Lehman et al. in der Zeitschrift Artificial Life.
 * Cawley und Talbot 2010 (JMLR 11) über Überanpassung bei der Modellauswahl. Wir kennen die Arbeit
   nur aus dem Gedächtnis. Wir stützen deshalb keine Aussage auf sie.
-* Eine begutachtete Fassung von PBT, POET und AI-GA. Wir führen alle drei als Preprints.
+* Eine begutachtete Fassung von PBT und AI-GA. Wir führen beide als Preprints.
 * Ein allgemeines Ergebnis über die Kosten verschachtelter Evolution. Wir haben keines gefunden.
 
 ## Offene Fragen an die Eigentümerin bzw. den Eigentümer
@@ -307,7 +326,10 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
    Schritt 1, der Anteil D der Wiederentdeckungen, die Zahl der Invention candidates oder eine
    Mischung. Jede Mischung ist ein neues Ziel für Goodhart-Effekte.
 2. **Welche Gesetze.** Welche Konfigurationsschlüssel darf der Gott ändern? Wir empfehlen
-   wenige, etwa fünf, wie bei POET. Skalse et al. raten, die Menge klein zu halten.
+   wenige, etwa fünf, wie die fünf Hindernistypen bei POET. Skalse et al. raten, die Menge
+   möglicher Strategien einzuschränken oder die Optimierung zu begrenzen (Abschnitt 7). Nach ihren
+   Sätzen 1 und 2 hilft dabei Endlichkeit, nicht bloße Kleinheit. Daraus schließen wir selbst:
+   wenige Schlüssel, enge und möglichst diskrete Bereiche, wenige Generationen des Gottes.
 3. **Wer der Gott ist.** Zufällige Mutation, ein Sprachmodell über den Broker oder ein gelernter
    Parametersatz? Die erste Form ist billig und zugleich der Vergleich.
 4. **Gesetze im Lauf.** Dürfen sich Gesetze mitten in einem Run ändern, wie bei PBT? Das spart
@@ -327,6 +349,9 @@ Der Gott der Götter ist ein Proposer eine Ebene über den Runs. Drei Formen sin
   Networks. arXiv:1711.09846. Preprint. https://arxiv.org/abs/1711.09846
 * Wang, R., Lehman, J., Clune, J., Stanley, K. O. (2019). Paired Open-Ended Trailblazer (POET).
   arXiv:1901.01753. Preprint. https://arxiv.org/abs/1901.01753
+* Wang, R., Lehman, J., Clune, J., Stanley, K. O. (2019). POET: open-ended coevolution of
+  environments and their optimized solutions. GECCO ’19, S. 142 bis 151 (laut ACM-Datensatz).
+  Begutachtete, kürzere Fassung; Volltext nicht abgerufen. https://doi.org/10.1145/3321707.3321799
 * Wang, R., Lehman, J., Rawal, A., Zhi, J., Li, Y., Clune, J., Stanley, K. O. (2020). Enhanced
   POET. ICML 2020, PMLR 119 (laut DBLP). arXiv:2003.08536. https://arxiv.org/abs/2003.08536
 * Clune, J. (2019). AI-GAs: AI-generating algorithms, an alternate paradigm for producing general
