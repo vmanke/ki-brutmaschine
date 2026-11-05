@@ -572,24 +572,61 @@ fn mutate_inner(
 
     for _ in 0..MUTATE_ATTEMPTS {
         let op = draw_op(rng);
-        let mut steered = Steered::default();
 
-        let Some((mut child, map)) =
-            apply_steered(&parent, op, limits, phrases, steer, &mut steered, rng)
-        else {
-            continue;
-        };
-
-        clamp_to_limits(&mut child, limits);
-
-        if acceptable(&child, limits, &parents) {
-            let sources = flatten_sources(map, &child);
-
+        if let Some((child, sources, steered)) =
+            attempt(&parent, &parents, op, limits, phrases, steer, rng)
+        {
             return Some((child, op, sources, steered));
         }
     }
 
     None
+}
+
+/// One draw of the mutation operator `op` on `parent` (imagination,
+/// `.scratch/seelen-modell/spec-imagination.md`, section 3.2): what one attempt of
+/// `mutate_sourced` or `mutate_steered` makes once it has drawn `op`, with the same draws, but
+/// without drawing the operator and without a second attempt. The operator sees genes only,
+/// as every operator does. None when `op` cannot change this parent, or when the child fails
+/// `check(limits)` or has the parent's id.
+pub fn mutate_once(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    let parent = parent.genes();
+    let parents = [parent.id()];
+
+    attempt(&parent, &parents, op, limits, phrases, steer, rng)
+}
+
+/// One attempt of a mutation with the operator `op` on the genes `parent`, whose id is in
+/// `parents`: apply, clamp, and keep the child when it passes `check(limits)` and differs
+/// from the parent, with the source of every Worker and the choices the weights decided.
+fn attempt(
+    parent: &Cascade,
+    parents: &[String],
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    let mut steered = Steered::default();
+    let (mut child, map) = apply_steered(parent, op, limits, phrases, steer, &mut steered, rng)?;
+
+    clamp_to_limits(&mut child, limits);
+
+    if !acceptable(&child, limits, parents) {
+        return None;
+    }
+
+    let sources = flatten_sources(map, &child);
+
+    Some((child, sources, steered))
 }
 
 /// One-point crossover over stages: a prefix of `a` (1..=len stages), then a suffix of `b`,
@@ -3585,6 +3622,69 @@ mod tests {
             .count() as f64;
 
         assert!(within_3_se(taken / n, 1.0 / 3.0, DRAWS), "{}", taken / n);
+    }
+
+    #[test]
+    fn one_draw_of_an_operator_is_the_attempt_that_drew_it() {
+        // `mutate_once` makes what an attempt of today's mutation makes once it has drawn its
+        // operator: from the same place in the stream, the same child, the same sources and
+        // the same choices of arm W, and the stream stops at the same word. It draws no
+        // operator and tries once.
+        let limits = staged_limits();
+        let mut walk = rng(41);
+        let mut compared = BTreeSet::new();
+        let prefs = prefer(&[(0, 0), (2, 32768)]);
+
+        for k in 0..300 {
+            let parent = evolved_circuit(k, k % 7, &limits, &mut walk);
+            let prefs = vec![prefs.clone(); parent.worker_count()];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let seed = 4100 + k as u64;
+
+            for weighted in [None, Some(&steer)] {
+                let (mut today, mut once) = (rng(seed), rng(seed));
+                let op = draw_op(&mut once);
+                let Some((child, sources, steered)) =
+                    mutate_once(&parent, op, &limits, CIRCUIT_PHRASES, weighted, &mut once)
+                else {
+                    continue;
+                };
+                let full = match weighted {
+                    None => mutate_sourced(&parent, &limits, CIRCUIT_PHRASES, &mut today)
+                        .map(|(c, op, s)| (c, op, s, Steered::default())),
+                    Some(steer) => {
+                        mutate_steered(&parent, &limits, CIRCUIT_PHRASES, steer, &mut today)
+                    }
+                };
+
+                assert_eq!(full, Some((child, op, sources, steered)), "{op:?} {k}");
+                assert_eq!(today.get_word_pos(), once.get_word_pos(), "{op:?} {k}");
+                compared.insert(format!("{op:?}"));
+            }
+        }
+
+        for op in ["SectionReplace", "SectionAdd", "SectionDrop"] {
+            assert!(compared.contains(op), "{compared:?}");
+        }
+
+        // An operator that cannot change the parent gives no draw: a single Stage cannot
+        // drop a Stage.
+        let seed_one = circuit_seed(0);
+
+        assert_eq!(
+            mutate_once(
+                &seed_one,
+                Op::StageDrop,
+                &limits,
+                CIRCUIT_PHRASES,
+                None,
+                &mut rng(7)
+            ),
+            None
+        );
     }
 
     #[test]

@@ -22,6 +22,11 @@
 //! preferences decided in this generation's children. A statistic of the Character is computed
 //! once per distinct strength vector of the search panel and weighted by the number of
 //! tasks that have it, so every task weighs alike.
+//!
+//! A Run with imagination or changing goals (`.scratch/seelen-modell/spec-imagination.md`,
+//! section 3.5) adds the group `mind`: the goal of the generation and, with imagination, how
+//! imagination chose this generation's children and the learned values of their parents.
+//! It is left out of the JSON otherwise.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,6 +55,9 @@ pub struct UniverseState {
     /// state event stays near the size of the other events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soul: Option<Box<SoulState>>,
+    /// The mind of a Run with imagination or changing goals; left out of the JSON otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mind: Option<MindState>,
 }
 
 /// How well the archive does on the search panel. A solved rate is solved / tasks, a
@@ -240,6 +248,73 @@ pub struct SoulState {
     pub variation_changed: Option<u64>,
 }
 
+/// The mind of a Run after a commit (`.scratch/seelen-modell/spec-imagination.md`, section
+/// 3.5), with imagination or changing goals on. Learned values are in thousandths, as the
+/// Born events log them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MindState {
+    /// The goal of this generation: "all", or "-" and the family whose targets it leaves out,
+    /// such as "-Linear". Without changing goals it is "all".
+    pub goal: String,
+    /// With imagination on: this generation's children that imagination chose with some
+    /// candidate draw of a prediction other than 0, the imagination choices; and those whose
+    /// chosen draw is not the first, the changed picks. Left out without imagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imagination_choices: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imagination_changed: Option<u64>,
+    /// With imagination on: the mean learned value of Linear, Phase and Hadamard, and that of
+    /// the other families, over the Workers of this generation's parents, read when the
+    /// parents were chosen, before this commit's learning. A parent counts once per child,
+    /// and both parents of a crossover count. Left out without a value to average, as in
+    /// generation 0, and without imagination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear_phase_hadamard_mean: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_families_mean: Option<f64>,
+}
+
+/// A sum of learned values and their count, for a mean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ValueSums {
+    pub sum: i64,
+    pub count: u64,
+}
+
+impl ValueSums {
+    /// Count the value `v`.
+    pub fn add(&mut self, v: i16) {
+        self.sum += i64::from(v);
+        self.count += 1;
+    }
+
+    /// The mean, or None without a value. The sum is exact in integers, so the one division
+    /// gives the same float on every platform.
+    pub fn mean(&self) -> Option<f64> {
+        (self.count > 0).then(|| self.sum as f64 / self.count as f64)
+    }
+}
+
+/// What the mind group reads about imagination in this generation's children (spec-imagination
+/// 3.5): the imagination choices, the changed picks, and the sums of their parents' learned
+/// values, for Linear, Phase and Hadamard and for the other families.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImaginationCounts {
+    pub choices: u64,
+    pub changed: u64,
+    pub linear_phase_hadamard: ValueSums,
+    pub other_families: ValueSums,
+}
+
+/// What the mind group reads (spec-imagination 3.5).
+#[derive(Clone, Copy, Debug)]
+pub struct MindInput<'a> {
+    /// The name of this generation's goal.
+    pub goal: &'a str,
+    /// With imagination on, how it chose this generation's children; None without it.
+    pub imagination: Option<ImaginationCounts>,
+}
+
 /// What the soul group reads besides the archive (step 2, spec 13.1).
 #[derive(Clone, Copy, Debug)]
 pub struct SoulInput<'a> {
@@ -280,6 +355,8 @@ pub struct ObserveInput<'a, A> {
     pub tasks: usize,
     /// In a Run with Souls, what the soul group reads besides the archive (step 2).
     pub soul: Option<SoulInput<'a>>,
+    /// In a Run with imagination or changing goals, what the mind group reads.
+    pub mind: Option<MindInput<'a>>,
 }
 
 /// The observables of one committed generation.
@@ -296,6 +373,20 @@ pub fn observe<A: Serialize>(input: &ObserveInput<'_, A>) -> UniverseState {
             .soul
             .as_ref()
             .map(|s| Box::new(soul_state(input.archive, input.first_new, s))),
+        mind: input.mind.as_ref().map(mind_state),
+    }
+}
+
+/// The mind group of a commit (spec-imagination 3.5).
+fn mind_state(m: &MindInput<'_>) -> MindState {
+    let counts = m.imagination;
+
+    MindState {
+        goal: m.goal.to_string(),
+        imagination_choices: counts.map(|c| c.choices),
+        imagination_changed: counts.map(|c| c.changed),
+        linear_phase_hadamard_mean: counts.and_then(|c| c.linear_phase_hadamard.mean()),
+        other_families_mean: counts.and_then(|c| c.other_families.mean()),
     }
 }
 
@@ -784,6 +875,9 @@ mod tests {
             teaching: None,
             authors: None,
             votes: None,
+            values: None,
+            values_now: None,
+            effect: None,
         }
     }
 
@@ -816,6 +910,7 @@ mod tests {
             generation_usage: Usage::default(),
             tasks: 4,
             soul: None,
+            mind: None,
         }
     }
 
@@ -1117,6 +1212,7 @@ mod tests {
                 generation_usage: Usage::default(),
                 tasks: 0,
                 soul: None,
+                mind: None,
             }),
             observe(&ObserveInput {
                 first_new: 99,
@@ -1191,6 +1287,81 @@ mod tests {
         }
 
         assert_eq!(serde_json::to_string(&back).expect("json"), json);
+    }
+
+    #[test]
+    fn the_mind_group_averages_values_and_leaves_out_what_it_lacks() {
+        let mut lph = ValueSums::default();
+        let mut other = ValueSums::default();
+
+        for v in [1000, -500, 0] {
+            lph.add(v);
+        }
+
+        for v in [250, 250, -1000, 0, 1] {
+            other.add(v);
+        }
+
+        let counts = ImaginationCounts {
+            choices: 3,
+            changed: 1,
+            linear_phase_hadamard: lph,
+            other_families: other,
+        };
+        let state = observe(&ObserveInput {
+            mind: Some(MindInput {
+                goal: "-Linear",
+                imagination: Some(counts),
+            }),
+            ..input(&family(), &[], &[])
+        });
+        let event = Event::State(state.clone());
+        let json = serde_json::to_string(&event).expect("json");
+        let back: Event = serde_json::from_str(&json).expect("back");
+
+        // Means of the sums: 500 / 3 and −499 / 5, in thousandths, after the other groups.
+        assert_eq!(
+            state.mind,
+            Some(MindState {
+                goal: "-Linear".to_string(),
+                imagination_choices: Some(3),
+                imagination_changed: Some(1),
+                linear_phase_hadamard_mean: Some(500.0 / 3.0),
+                other_families_mean: Some(-99.8),
+            })
+        );
+        assert!(json.ends_with(r#""mind":{"goal":"-Linear","imagination_choices":3,"imagination_changed":1,"linear_phase_hadamard_mean":166.66666666666666,"other_families_mean":-99.8}}"#), "{json}");
+        assert_eq!(back, event);
+        assert_eq!(serde_json::to_string(&back).expect("json"), json);
+
+        // Without imagination only the goal is logged; without values to average, no mean;
+        // without the settings, no group.
+        let goal_only = observe(&ObserveInput {
+            mind: Some(MindInput {
+                goal: "all",
+                imagination: None,
+            }),
+            ..input(&family(), &[], &[])
+        });
+        let no_parents = observe(&ObserveInput {
+            mind: Some(MindInput {
+                goal: "all",
+                imagination: Some(ImaginationCounts::default()),
+            }),
+            ..input(&family(), &[], &[])
+        });
+        let off = observe(&input(&family(), &[], &[]));
+
+        assert_eq!(
+            serde_json::to_string(&goal_only.mind).expect("json"),
+            r#"{"goal":"all"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&no_parents.mind).expect("json"),
+            r#"{"goal":"all","imagination_choices":0,"imagination_changed":0}"#
+        );
+        assert_eq!(off.mind, None);
+        assert!(!serde_json::to_string(&off).expect("json").contains("mind"));
     }
 
     #[test]
@@ -1344,6 +1515,7 @@ mod tests {
                     moved: &moved,
                     variation: None,
                 }),
+                mind: None,
             })
             .soul
             .expect("a soul group")

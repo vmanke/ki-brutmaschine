@@ -8,6 +8,9 @@ ticket 03 found no go (`grid-screen.md`, pull request #53). Arm W was built and 
 tickets 01 and 02, and its screen ended with stop (`screen-w.md`, pull request #52). The owner
 decides the next step.
 
+Update of 2026-11-05: a third candidate, arm IG (`spec-imagination.md`), was built and screened
+in tickets 04 to 06. Its screen ended with stop too (`screen-ig.md`, pull request #57).
+
 It follows the owner's decision of 2026-11-02 to drop the counted experiment of step 2. The
 pilot and that decision are on the branch `claude/schritt2-pilot`: `docs/pilot-step2/README.md`,
 `docs/PREREG_STEP2_SOUL.md` and `.scratch/seele-und-kappa/rule/diagnose.txt`. The terms are
