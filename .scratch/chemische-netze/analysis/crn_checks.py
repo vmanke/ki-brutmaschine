@@ -11,6 +11,9 @@ Our own checks for `research.md`, sections 3.7 and 8.2. Not peer reviewed.
   7. A step rule, on a star of 50 reactions
   8. The kink error and the smallest concentration after 1000 RK4 steps
   9. The share of subnormal values in those steps, with and without reverse rates
+ 10. A coupled pair A <-> B whose loss sums stay below the RK4 bound
+
+A run in which a concentration turns negative is marked invalid, because section 8.3 rejects it.
 
 Run: python3 crn_checks.py
 Needs: numpy, scipy
@@ -86,10 +89,12 @@ def chain_output(x, depth, d_g):
 
 
 def rk4(rhs, s, dt, steps):
-    """Returns the final state, None if it diverges, and the smallest positive value seen."""
+    """Returns the final state, None if it diverges, the smallest positive value seen, and the
+    first negative value as (step, value), None if no value was negative."""
     smallest = np.inf
+    negative = None
 
-    for _ in range(steps):
+    for step in range(1, steps + 1):
         a = rhs(s)
         b = rhs(s + 0.5 * dt * a)
         c = rhs(s + 0.5 * dt * b)
@@ -97,14 +102,17 @@ def rk4(rhs, s, dt, steps):
         s = s + dt / 6.0 * (a + 2.0 * b + 2.0 * c + d)
 
         if not np.all(np.isfinite(s)) or np.max(np.abs(s)) > 1e12:
-            return None, smallest
+            return None, smallest, negative
+
+        if negative is None and np.any(s < 0.0):
+            negative = (step, float(s.min()))
 
         positive = s[s > 0.0]
 
         if positive.size:
             smallest = min(smallest, float(positive.min()))
 
-    return s, smallest
+    return s, smallest, negative
 
 
 def check_fixed_time():
@@ -189,8 +197,12 @@ def check_step_rule():
     for dt in (0.05, 0.0557, 0.06, 0.1, 0.5, 2.0):
         s0 = np.zeros(n + 1)
         s0[0] = 1.0
-        result, _ = rk4(star, s0, dt, 1000)
+        result, _, negative = rk4(star, s0, dt, 1000)
         state = "diverged" if result is None else f"A={result[0]:.3e}"
+
+        if negative is not None:
+            state += f", first negative value {negative[1]:.3e} at step {negative[0]}"
+
         print(f"   dt={dt:<7} single rate={dt:6.3f} loss sum={dt * n:7.3f} -> {state}")
 
 
@@ -204,10 +216,13 @@ def check_budget():
         return np.array([-j1, -j2, j1 - j2, j1, j2])
 
     for dt in (0.1, 0.5, 1.0, 1.5, 2.0):
-        result, smallest = rk4(module, np.array([1.0, 1.0, 0.0, 0.0, 0.0]), dt, 1000)
+        result, smallest, negative = rk4(module, np.array([1.0, 1.0, 0.0, 0.0, 0.0]), dt, 1000)
 
         if result is None:
             print(f"   dt={dt}: diverged")
+        elif negative is not None:
+            print(f"   dt={dt}: invalid, a concentration was {negative[1]:.10f} after step {negative[0]} "
+                  f"(T={dt * 1000:.0f} y={result[3] - result[4]:.3e} smallest positive value={smallest:.3e})")
         else:
             print(f"   dt={dt}: T={dt * 1000:.0f} y={result[3] - result[4]:.3e} smallest positive value={smallest:.3e}")
 
@@ -240,15 +255,42 @@ def check_subnormal_share():
                 return np.array([-j1, -j2, j1 - j2, j1, j2])
 
             s = np.array([1.0, 1.0, 0.0, 0.0, 0.0])
+            negative = None
 
-            for _ in range(1000):
+            for step in range(1, 1001):
                 a = rhs(s)
                 b = rhs(s + 0.5 * dt * a)
                 c = rhs(s + 0.5 * dt * b)
                 d = rhs(s + dt * c)
                 s = s + dt / 6.0 * (a + 2.0 * b + 2.0 * c + d)
 
-            print(f"   {name:13} dt={dt}: subnormal share={100.0 * counts[0] / counts[1]:.3f} % smallest positive value={smallest[0]:.3e}")
+                if negative is None and np.any(s < 0.0):
+                    negative = (step, float(s.min()))
+
+            validity = ""
+
+            if negative is not None:
+                validity = f" invalid: a concentration was {negative[1]:.3e} after step {negative[0]}"
+
+            print(f"   {name:13} dt={dt}: subnormal share={100.0 * counts[0] / counts[1]:.3f} % smallest positive value={smallest[0]:.3e}{validity}")
+
+
+def check_coupled_pair():
+    print("10. Pair A <-> B, both rate constants 1, RK4 from (1, 0): every loss sum is 1, the Jacobian has the eigenvalue -2")
+
+    def pair(s):
+        flux = s[0] - s[1]
+        return np.array([-flux, flux])
+
+    for dt in (1.0, 1.39, 1.4, 2.0):
+        one = rk4(pair, np.array([1.0, 0.0]), dt, 1)[0]
+        result, _, negative = rk4(pair, np.array([1.0, 0.0]), dt, 1000)
+        state = "diverged" if result is None else f"A={result[0]:.6g} B={result[1]:.6g}"
+
+        if negative is not None:
+            state += f", first negative value {negative[1]:.3e} at step {negative[0]}"
+
+        print(f"   dt={dt:<5} loss sum={dt:5.2f} eigenvalue={-2.0 * dt:6.2f} one step=({one[0]:+.4f}, {one[1]:+.4f}) after 1000 steps: {state}")
 
 
 def main():
@@ -261,6 +303,7 @@ def main():
     check_step_rule()
     check_budget()
     check_subnormal_share()
+    check_coupled_pair()
 
 
 if __name__ == "__main__":

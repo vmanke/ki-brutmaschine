@@ -52,20 +52,25 @@
 7. Star A -> B_i, 50 reactions with rate constant 1, RK4, bound about 2.785
    dt=0.05    single rate= 0.050 loss sum=  2.500 -> A=7.381e-189
    dt=0.0557  single rate= 0.056 loss sum=  2.785 -> A=6.424e-01
-   dt=0.06    single rate= 0.060 loss sum=  3.000 -> diverged
-   dt=0.1     single rate= 0.100 loss sum=  5.000 -> diverged
-   dt=0.5     single rate= 0.500 loss sum= 25.000 -> diverged
-   dt=2.0     single rate= 2.000 loss sum=100.000 -> diverged
+   dt=0.06    single rate= 0.060 loss sum=  3.000 -> diverged, first negative value -7.500e-03 at step 1
+   dt=0.1     single rate= 0.100 loss sum=  5.000 -> diverged, first negative value -2.542e-01 at step 1
+   dt=0.5     single rate= 0.500 loss sum= 25.000 -> diverged, first negative value -2.792e+02 at step 1
+   dt=2.0     single rate= 2.000 loss sum=100.000 -> diverged, first negative value -8.010e+04 at step 1
 8. ReLU module, 1000 RK4 steps, x+ = x- = 1, k1 = k2 = 1
    dt=0.1: T=100 y=1.004e-02 smallest positive value=3.720e-44
    dt=0.5: T=500 y=2.002e-03 smallest positive value=1.059e-217
    dt=1.0: T=1000 y=1.000e-03 smallest positive value=4.941e-324
-   dt=1.5: T=1500 y=6.661e-04 smallest positive value=4.941e-324
+   dt=1.5: invalid, a concentration was -0.0227394104 after step 1 (T=1500 y=6.661e-04 smallest positive value=4.941e-324)
    dt=2.0: diverged
 9. Share of subnormal values among states and rates, module, 1000 RK4 steps, x+ = x- = 1
    irreversible  dt=1.0: subnormal share=0.833 % smallest positive value=4.941e-324
-   irreversible  dt=1.5: subnormal share=7.706 % smallest positive value=4.941e-324
+   irreversible  dt=1.5: subnormal share=7.706 % smallest positive value=4.941e-324 invalid: a concentration was -2.274e-02 after step 1
    dG = 20 RT    dt=1.0: subnormal share=0.000 % smallest positive value=2.063e-12
-   dG = 20 RT    dt=1.5: subnormal share=0.000 % smallest positive value=1.375e-12
+   dG = 20 RT    dt=1.5: subnormal share=0.000 % smallest positive value=1.375e-12 invalid: a concentration was -2.274e-02 after step 1
    dG = 100 RT   dt=1.0: subnormal share=0.000 % smallest positive value=3.721e-47
-   dG = 100 RT   dt=1.5: subnormal share=0.000 % smallest positive value=2.478e-47
+   dG = 100 RT   dt=1.5: subnormal share=0.000 % smallest positive value=2.478e-47 invalid: a concentration was -2.274e-02 after step 1
+10. Pair A <-> B, both rate constants 1, RK4 from (1, 0): every loss sum is 1, the Jacobian has the eigenvalue -2
+   dt=1.0   loss sum= 1.00 eigenvalue= -2.00 one step=(+0.6667, +0.3333) after 1000 steps: A=0.5 B=0.5
+   dt=1.39  loss sum= 1.39 eigenvalue= -2.78 one step=(+0.9960, +0.0040) after 1000 steps: A=0.500171 B=0.499829
+   dt=1.4   loss sum= 1.40 eigenvalue= -2.80 one step=(+1.0112, -0.0112) after 1000 steps: A=2.08839e+09 B=-2.08839e+09, first negative value -1.120e-02 at step 1
+   dt=2.0   loss sum= 2.00 eigenvalue= -4.00 one step=(+3.0000, -2.0000) after 1000 steps: diverged, first negative value -2.000e+00 at step 1

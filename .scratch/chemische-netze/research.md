@@ -266,8 +266,9 @@ concentration (section 8.2).
   9.2 RT grew from 0.0100 at depth 1 to 0.0106 at depth 4. We did not test weights, biases,
   fan-out, or a finite read-out time together with finite reverse rates (ticket 03).
 - **A step budget.** With both rate constants at 1, `x+ = x− = 1` and 1000 RK4 steps, the output
-  at `x = 0` was 1.0e-2 at `dt = 0.1`, 1.0e-3 at `dt = 1.0` and 6.7e-4 at `dt = 1.5`. At
-  `dt = 2.0` the run diverged.
+  at `x = 0` was 1.0e-2 at `dt = 0.1` and 1.0e-3 at `dt = 1.0`. At `dt = 1.5` the first step
+  made M negative (−0.023), so a simulator under section 8.3 rejects that run. At `dt = 2.0` the
+  run diverged.
 - **What follows.** The softness of the kink follows from the energy genes and the read-out time,
   so a breeder can select for it. The formulas above are predictions that ticket 03 can falsify.
 
@@ -1163,7 +1164,7 @@ Our reading, in one table:
 | Inputs | one dual-rail pair per task input; their initial concentrations come from the input value | 3.1 |
 | Outputs | one dual-rail pair per task output, read at a fixed time | 3.1 |
 | Context | initial concentrations of the other species, which act as biases or store fuel for outputs read at a fixed time | 3.1, 6.6 |
-| Integration | fixed by the Run, or a gene accepted only under a step rule, for example that dt times the largest per-species sum of pseudo-first-order loss rates, at the concentration cap, stays below the scheme's stability bound | 7.2 |
+| Integration | fixed by the Run, or a gene accepted only under a step rule that keeps the spectrum of the coupled step inside the scheme's stability region at the concentration cap, with positivity checked on its own (Step rule, below) | 7.2 |
 
 - **Rate constants.** Our reading: k+ and k− follow from the energies and the barrier excess as
   in section 6.3. A chemostat's concentration follows from its chemical potential through
@@ -1179,10 +1180,17 @@ Our reading, in one table:
   a star of 50 reactions `A → B_i` with rate constant 1, RK4 diverged at `dt = 0.06`, where dt
   times the largest single rate is only 0.06. dt times the sum of A's loss rates is 3.0 there,
   above RK4's real-axis bound of about 2.785. At `dt = 0.0557` that product is 2.785, and the run
-  did not diverge within 1000 steps. Rates depend on concentrations, so the rule needs the
-  concentration cap of section 8.3. In a closed genome, conserved compositions also bound every
-  species with a nonzero composition before the run; chemostats can break that bound (section
-  8.3). We tested only this linear star. Ticket 01 reports the rule for nonlinear networks.
+  did not diverge within 1000 steps. The loss sum is a diagnostic, not a sufficient bound,
+  because coupling moves the eigenvalues too. For `A ⇌ B` with both rate constants 1, dt times
+  each loss sum is 2 at `dt = 2`, below 2.785, yet one RK4 step takes `(1, 0)` to `(3, −2)`: the
+  Jacobian has the eigenvalue −2. So the rule must bound the spectrum of the coupled step, for
+  example by Gershgorin discs that lie inside the scheme's stability region. Positivity needs
+  its own check: in the ReLU module of section 3.7 every loss sum is at most 1, yet at
+  `dt = 1.5` the first RK4 step makes M negative (`analysis/crn_checks.txt`, checks 8 and 10).
+  Rates depend on concentrations, so the rule needs the concentration cap of section 8.3. In a
+  closed genome, conserved compositions also bound every species with a nonzero composition
+  before the run; chemostats can break that bound (section 8.3). We tested only the star, the
+  pair and one module. Ticket 01 reports the rule for nonlinear networks.
 - **Reported properties.** Whether a network is feedforward and noncompetitive can be read off
   its reactions [8, Def. 4]. These properties say when the exact ReLU equivalence applies in the
   irreversible limit (section 3.1). Our reading: report them, but do not make them separate
@@ -1253,9 +1261,10 @@ Our reading, in one table:
   the genome at a measured worst-case FLOP rate and hold it to the same bound.
 - **Subnormal numbers.** Added 2026-11-05, our reading: they can break that condition, but in our
   test only near the irreversible limit. In the irreversible ReLU module of section 3.7, 1000 RK4
-  steps reached 4.9e-324, and 0.83 % of the states and rates were subnormal at `dt = 1.0` and
-  7.7 % at `dt = 1.5`. With reversible reactions the same module had no subnormal value: its
-  smallest value was about 1e-12 at a drop of 20 RT and about 3e-47 at 100 RT. On one Intel Xeon
+  steps at `dt = 1.0` reached 4.9e-324, and 0.83 % of the states and rates were subnormal. A run
+  at `dt = 1.5` gave 7.7 %, but it is invalid: its first step made M negative, which section 8.3
+  rejects. With reversible reactions the same module had no subnormal value: at `dt = 1.0` its
+  smallest value was 2.1e-12 at a drop of 20 RT and 3.7e-47 at 100 RT. On one Intel Xeon
   at 2.10 GHz, `analysis/denormal.rs` measures about 0.3 ns per operation on normal numbers and
   20 to 21 ns on subnormal ones, a factor of 66 to 76. So about 4 % of subnormal operations would
   use up the 1 ns per FLOP behind `TIME_BUDGET_FLOPS_PER_SECOND` on that machine. Compiled seeds
