@@ -1,0 +1,45 @@
+{
+  "seed": 5001,
+  "generations": 1000,
+  "children_per_generation": 8,
+  "search_puzzles": 33,
+  "select_puzzles": 22,
+  "crossover_rate": 0.5,
+  "peer_opponents": 3,
+  "peer_puzzles_per_pair": 2,
+  "judge_weight": 0.2,
+  "token_cost_per_1k": 0.01,
+  "dgm_lambda": 10.0,
+  "dgm_alpha0": 0.5,
+  "llm_every": 0,
+  "llm_children": 2,
+  "pause_for_llm": true,
+  "max_calls": 13000000,
+  "finalists": 3,
+  "limits": {
+    "models": [
+      {
+        "tag": "sim:small",
+        "cost_per_call": 0.0005
+      },
+      {
+        "tag": "sim:large",
+        "cost_per_call": 0.002
+      }
+    ],
+    "max_stages": 4,
+    "max_width": 3,
+    "think_ceiling_per_stage": []
+  },
+  "domain": {
+    "circuits": {
+      "targets": [],
+      "dress": true,
+      "max_gates": 64
+    }
+  },
+  "selection": "lexicase",
+  "goals": {
+    "length": 20
+  }
+}

@@ -72,7 +72,10 @@ impl Arch {
     }
 }
 
+/// A JSON key that is not a field of the genome is refused, as in the parts of a CNN genome.
+/// No field of a genome was ever removed, so every genome this code wrote still parses.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Genome {
     /// The kind of network: an MLP, or a CNN with its stem, stages and head.
     #[serde(default, skip_serializing_if = "Arch::is_mlp")]
@@ -281,6 +284,14 @@ impl Genome {
             ));
         }
 
+        // The MLP's loss (`nn`) knows one class per sample only.
+        if self.arch.is_mlp() && spec.cell_classes().is_some() {
+            return fail(format!(
+                "an MLP cannot learn one class per cell, as task {} asks; a CNN can",
+                spec.kind.name()
+            ));
+        }
+
         let samples = (spec.n_train as f64) * (self.epochs as f64);
         let (params, flops, seconds) = match &self.arch {
             Arch::Mlp => (self.param_count(spec), self.train_flops(spec), 0.0),
@@ -459,6 +470,24 @@ mod tests {
     }
 
     #[test]
+    fn an_mlp_cannot_learn_one_class_per_cell() {
+        // A grid of 2 x 2 cells: the linear MLP would fit the limits, but its loss knows
+        // one class per sample only, so the shape check refuses it.
+        let spec = crate::arc_grid::spec(2, 4, 1, 1);
+        let mut g = sample();
+
+        g.hidden.clear();
+
+        let message = g
+            .validate(&Limits::default(), &spec)
+            .expect_err("refused")
+            .to_string();
+
+        assert!(message.contains("one class per cell"), "{message}");
+        assert!(g.param_count(&spec) < Limits::default().max_params);
+    }
+
+    #[test]
     fn validate_checks_params_and_flops() {
         let spec = TaskKind::TwoSpirals.spec();
         let g = sample();
@@ -573,6 +602,26 @@ mod tests {
 
         assert_ne!(typo, text);
         assert!(serde_json::from_str::<Genome>(&typo).is_err());
+    }
+
+    #[test]
+    fn a_genome_with_an_unknown_top_level_field_does_not_parse() {
+        for genome in [sample(), testing::lenet()] {
+            let text = serde_json::to_string(&genome).expect("json");
+            let extra = text.replacen("\"seed\":", "\"sead\":1,\"seed\":", 1);
+
+            assert_ne!(extra, text);
+            assert_eq!(
+                serde_json::from_str::<Genome>(&text).expect("parse"),
+                genome
+            );
+
+            let message = serde_json::from_str::<Genome>(&extra)
+                .expect_err("refused")
+                .to_string();
+
+            assert!(message.contains("unknown field `sead`"), "{message}");
+        }
     }
 
     #[test]

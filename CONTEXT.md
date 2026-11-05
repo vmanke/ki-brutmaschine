@@ -11,7 +11,7 @@ A candidate learning algorithm: three small programs (Setup, Predict, Learn) wri
 _Avoid_: agent, model, candidate (in learner mode)
 
 **Candidate**:
-In MLP mode, one network description (layers and training settings) that gets trained and scored.
+In MLP mode, one network description (an MLP or a CNN, with its training settings) that gets trained and scored.
 _Avoid_: learner (in MLP mode), individual
 
 **DSL**:
@@ -21,6 +21,52 @@ _Avoid_: language, code
 **Seed program**:
 One of the hand-written Learners the search starts from.
 _Avoid_: seed (alone; means a random-number seed)
+
+### CNNs in MLP mode
+
+**Model kind**:
+Whether a Candidate's network is an MLP or a CNN. A Run breeds one kind or both, as `--models mlp`, `cnn` or `both` sets; MLP is the default, and MLP Runs behave as before CNNs.
+_Avoid_: model type, architecture (alone)
+
+**CNN**:
+A Candidate whose network is convolutional: a stem, one to twelve CNN stages and a head, trained through candle.
+_Avoid_: ConvNet, conv model
+
+**CNN stage**:
+One block of a CNN after its stem, with its block kind, width, kernel, stride, dilation, groups, options, normalization and activation.
+_Avoid_: Stage (alone; that is part of a Cascade), layer
+
+**CNN family**:
+One of the 16 published designs that the CNN genome covers, such as ResNet or U-Net; a CNN stage belongs to the family of its block kind, and a CNN whose stages come from several families is a mixed form.
+_Avoid_: family (alone; Task family means Learner tasks), architecture
+
+**Base model**:
+A known design that enters generation 0 of a Run instead of a random draw: the scaled-down CNN of one CNN family, which a Run with CNNs takes when it passes the Shape check of the Run's task (on a sequence task a 2-D one enters as its 1-D twin); a promoted model, which `brut init --promoted` copies from `candidates/models/` into the Run's config; or a base genome of the Run's config. In a Run that breeds CNNs or holds promoted models, the best base model by fitness is the bar for its Promotion. The ARC grid tasks have two base models of their own, a U-Net and a fully convolutional network, which `brut arc-grid` trains and scores.
+_Avoid_: seed, seed program (that is a Learner), template
+
+**Shape check**:
+The check every CNN passes before it trains: its shapes fit the task, and its parameters, training FLOPs and estimated training time fit the Limits. A child that fails it is drawn again.
+_Avoid_: validation (alone; Valid is a split), compile
+
+**Time model**:
+The estimate of a CNN's training time from its layers; the Shape check holds it to the time that `max_train_flops` buys at 1 GFLOP/s, so that the FLOP limit, not the clock, ends a training.
+_Avoid_: benchmark, timing
+
+**Operator**:
+One kind of change the random mutator makes to a CNN, such as switching the CNN family of a CNN stage or inserting one; each child of one CNN gets exactly one, named in the archive.
+_Avoid_: mutation operator, mutation (alone; a mutation applies one Operator)
+
+**ARC grid task**:
+One ARC-AGI-1 training task as a grid-to-grid task for CNNs: the pairs of its task file and its re-arc generations, each grid on the Canvas, one colour class per cell. A genome trains a fresh CNN on each from its own seed, and the CNN is scored by Exact match on the task's held-out pairs: the last fifth of the generated pairs and the test pairs of the task file. A task whose pairs change the grid size is left out, and so are the two tasks that repeat pairs of evaluation tasks.
+_Avoid_: ARC family, task family (that is a Learner term), ARC task (alone; the ARC check of the Learner mode uses the evaluation sets)
+
+**Canvas**:
+The square of cells, 30 per side by default, at whose top left every grid of an ARC grid task lies. A cell outside its grid has no colour channel on, and its label carries no loss and no score.
+_Avoid_: padding (alone), board
+
+**Exact match**:
+The score of an ARC grid task: the share of held-out pairs whose whole output grid the CNN gets right. Cell accuracy, the share of right cells inside the grids, is only descriptive, since the copy of the input already gets many cells right.
+_Avoid_: accuracy (alone)
 
 ### How Learners are made
 
@@ -115,7 +161,7 @@ One model call configured as data: a model tag from the allow-list, a system pro
 _Avoid_: agent, sub-AI, bot
 
 **Trait**:
-An inheritable setting that shapes how a Worker thinks, not what it thinks: thinking budget, temperature, answer length, self-check. Hard ceilings on Traits are code, not genes.
+An inheritable setting that shapes how a Worker thinks, not what it thinks: thinking budget, temperature, answer length, self-check. Hard ceilings on Traits are code, not genes. The Soul and the Coupling strength are stored with the Traits, but they pass to children by Souletics, not as genes; the Mutator never sees them.
 _Avoid_: hyperparameter (alone), gene (for prompts)
 
 **Stage**:
@@ -147,8 +193,58 @@ Puzzles unseen during breeding, on which only finalists and seed Cascades are sc
 _Avoid_: test set, hidden panel
 
 **Promotion**:
-Moving the two best finalist Cascades of a Run into `candidates/cascades/` through a human-reviewed draft pull request.
+Moving the winners of a finished Run into the candidate pool through a human-reviewed draft pull request: the two best finalist Cascades into `candidates/cascades/`; or, in MLP mode and from a Run that breeds CNNs or holds promoted models, of the two best models (MLPs or CNNs) by hidden score those that beat the Run's best Base model on the hidden split, each with its provenance, into `candidates/models/`. A model equal by content to one in the pool adds nothing. Later Runs take the merged models into generation 0 as Base models.
 _Avoid_: deploy, release, merge (the human merges, not the Run)
+
+### LLMs using CNNs (planned)
+
+**CNN Worker**:
+A Worker whose model tag is `cnn:` plus the content id of a CNN genome. For each task it trains a fresh CNN of that genome on the task's worked examples and answers with the CNN's output grid. It ignores its prompt sections, its Traits and earlier answers. It refuses tasks whose examples change the grid size.
+_Avoid_: CNN agent, vision model, net (alone)
+
+**Per-task training**:
+Training a CNN from its genome's own seed on the worked examples of one task only, just before it answers that task. No clock can stop it. Fixed limits bound its work before it starts. The trained CNN serves only that task and is never written to disk.
+_Avoid_: test-time training, fine-tuning, pretraining
+
+**Call record**:
+The stored request and full reply, or error, of one call that a Run makes to a model that is not simulated: a CNN Worker, the CNN tool or a real language model. It is one line of the Run's `llm/worker-calls.jsonl`, filed under a key of its model tag and its request. A resumed Run uses a stored reply instead of calling again. A replayed Run answers these calls from their records and never calls the model. `brut-breed-ollama` already keeps such records for the answered calls of real language models (contract I7); CNN calls and errors are planned.
+_Avoid_: cache, transcript, log
+
+**Neighbour rule**:
+A hidden grid rule that sets a cell's colour from its own colour and the colours of its four neighbours. No hypothesis of the simulated Worker model fits it. A CNN is meant to learn it from the worked examples. Half of the puzzles of the grid-mix Domain follow such a rule; it is the positive control of CNN Workers and of the CNN tool.
+_Avoid_: local rule, cellular automaton
+
+**Silent CNN**:
+A CNN Worker or CNN tool that refuses every task, under the reserved tag `cnn:0000000000000000`. It costs its calls and gives nothing. It is the negative control: breeding should not keep it.
+_Avoid_: dummy, null model
+
+**Knock-out**:
+Scoring a Cascade again on the same tasks with the same call seeds, with its CNN Workers or its CNN tool silenced. The paired difference is what the CNN contributes.
+_Avoid_: ablation (here that names a control search, as in Constants-only ablation), lesion
+
+**Architect**:
+The language model that writes CNN genomes in Architect rounds of an MLP-mode Run, given parents and their public validation scores. Its answers arrive as files and are recorded and replayed; a missing answer pauses the Run.
+_Avoid_: designer (that is the simulated circuit model), Mutator (that one writes Cascades), LLM proposer (that one writes Learners)
+
+**Blueprint**:
+One CNN genome returned by the Architect, before it is checked and trained. It is checked strictly and never repaired.
+_Avoid_: proposal (that is a Learner), design, suggestion
+
+**Architect round**:
+A generation of an MLP-mode Run, at fixed intervals, in which the Architect is asked for a fixed number of Blueprints.
+_Avoid_: LLM round (that one asks for Learners or Cascades)
+
+**CNN tool**:
+A CNN that a language-model Worker may ask, while it answers, for the CNN's output grid on a grid the Worker writes. It learns by Per-task training on the task's worked examples. A Run has at most one, and its tag is not on the Workers' allow-list.
+_Avoid_: plugin, function call, oracle
+
+**Tool turn**:
+One ask and reply inside one answer: the Worker's request, the CNN tool's grid, and the Worker's next reply. Each Tool turn costs one more call of the model. It also costs one call of the CNN tool, unless the requested grid has the wrong size.
+_Avoid_: step, round, function call
+
+**Tool budget**:
+The Trait `tool_calls`: the most Tool turns one answer of a Worker may take, from 0 to a ceiling of 3 in code. A Run may set a lower ceiling. At 0 the Worker has no tool.
+_Avoid_: tool limit (alone), quota
 
 ### Universes and invention (step 1)
 
@@ -161,7 +257,7 @@ The breeder side of a Domain: the seed Cascades, the phrase pool of the section 
 _Avoid_: genome (that is one Cascade), library
 
 **Universe state**:
-The per-generation record of a Run's six observables (performance, diversity, lineage, honesty, judging, cost), logged as one `state` event after every committed generation. It is computed from committed state only, so a resumed Run writes the same records as a straight one.
+The per-generation record of a Run's six observables (performance, diversity, lineage, honesty, judging, cost), logged as one `state` event after every committed generation; a Run with Souls logs a seventh group, `soul`. It is computed from committed state only, so a resumed Run writes the same records as a straight one.
 _Avoid_: metrics, stats, telemetry
 
 **Target**:
@@ -201,26 +297,50 @@ The first generation in which a Run's bred Cascades have solved more than half o
 _Avoid_: T alone (T also counts T gates), success generation, hitting time
 
 **Arm**:
-One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice.
+One configuration of a paired experiment, run on the same seeds as the others: arm A uses Darwin Gödel selection, arm R uniform parent choice. In step 2, arm S has the Soul, arm V the same Soul with the real Readout (German Vorzeichen), and arm K the Soul with the Coupling strength fixed at 0; the pilot adds arm E (equal Family strengths) and arm N (no Soul).
 _Avoid_: condition, group
 
-### Soul and Character (planned, step 2)
+### Soul and Character (step 2)
 
 **Soul**:
-A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but come from the Task. It is never seen directly, only through the Character it produces.
+A Worker's hidden, inherited phases, one per hypothesis family, code name `phase_state`. The phases are its identity; their strengths are not part of the Soul but are the Family strengths of the Task. It is never seen directly, only through the Character it produces. A Worker has three: its birth Soul, part of its genome, the only one it passes on; its imprinted Soul, fixed at birth by Upbringing; and its current Soul, which starts as the imprinted Soul and which Observations change during the Run.
 _Avoid_: spirit, psyche, mind
 
+**Soul population**:
+All Souls of a universe. Every child brings its own unit of Soul and nobody gives any up; since the archive keeps every member, the Soul population only grows.
+_Avoid_: soul pool, total soul
+
+**Family strength**:
+How well a hypothesis family fits a Task, as the Domain states it; the same for every Worker on that Task. It weights the Soul's phases when the Character is computed.
+_Avoid_: prior, weight (alone)
+
 **Character**:
-The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by a strength that the Task sets. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it.
+The visible pattern a Worker's Soul produces: for each Task, the squared magnitude of the sum of the Soul's phases, each weighted by its Family strength. It is recomputed from the Soul each time and never inherited; when an Observation changes the Soul, the Character changes with it. The logs use the normalised Character: the Character divided by the sum of the squared Family strengths, whose mean is 1 on every Task over Souls with independent, uniformly distributed phases; shared ancestry, Imprinting and Observations can move it away from 1.
 _Avoid_: personality, temperament, profile
 
+**Array pattern**:
+The joint pattern of a Stage: for each answer, the squared magnitude of the sum of its Workers' contributions. Observations steer it by shifting phases.
+_Avoid_: stage character, collective judgment, vox populi
+
 **Observation**:
-A Worker judging answers of others, in the vote of its own Stage or as a peer judge. It changes the Souls of both sides, with a strength κ that the observer inherits.
+A Worker judging answers of others, in the vote of its own Stage or as a peer judge. It changes the Souls of both sides, as strongly as the observer's Coupling strength says.
 _Avoid_: measurement (alone), look
 
+**Coupling strength**:
+The inherited number κ between 0 and 1 with which an observer pulls the phases of the Worker it observes toward its own and is pulled in turn, by half as much. At 1 the observed takes the observer's phases.
+_Avoid_: feeling, measurement strength, gain
+
 **Upbringing**:
-What a child receives from its parents' lives besides genes and Soul. In imprinting, its parents observe its first answers and so shift its Soul toward theirs. In teaching, a prompt section is written fresh at birth from its parents' best solved examples and lessons; it is never inherited as a gene.
+What a child receives from its parents' lives besides genes and Soul. In imprinting, after the child's first answer each of its Workers is shifted toward the current Soul of each parent Worker it came from (one, or two after a crossover, taken in parent order), each time by that parent Worker's Coupling strength, without a model call and without changing the parents. In teaching, a prompt section is written fresh at birth from its parents' best solved examples; it is never inherited as a gene. Lessons written by a language model come in a later step.
 _Avoid_: training, education (alone)
+
+**Souletics**:
+Soul inheritance: a child's Soul is a copy of one parent's Soul from birth, or a mix of both parents' Souls, with small random changes, and now and then an entirely new Soul. The Coupling strength passes the same way, with a small random step, although it is not part of the Soul. It is one of three channels of inheritance besides genes and Upbringing; experience passes only through Upbringing. German reports call it Seeletik.
+_Avoid_: soul genetics
+
+**Readout**:
+How a Soul's hidden angles are read: as unit phasors (complex), or as the sign of the nearer of 0 and half a turn (real, the control of arm V). Both readouts read the same angles, and a phasor has length 1 in either, so the Soul carries no strength.
+_Avoid_: projection, measurement (that is an Observation)
 
 ### Records and control
 

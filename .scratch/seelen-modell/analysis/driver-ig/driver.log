@@ -1,0 +1,213 @@
+2026-11-04T14:45:05Z driver start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T14:45:05Z start N-5001 threads=2
+2026-11-04T14:45:07Z start G-5001 threads=2
+2026-11-04T15:15:47Z done G-5001 exit=0 wall_seconds=1839.453
+2026-11-04T15:15:49Z verify G-5001 exit=0 brut-breed: 41394 events, hash chain intact, head 4c7a1cd36fcd064075395eda000549e622e68d61d540509a0b463def59543365; checkpoint at entry 41394 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T15:16:03Z compressed G-5001 3915287
+2026-11-04T15:16:06Z start I-5001 threads=2
+2026-11-04T15:25:05Z done N-5001 exit=0 wall_seconds=2399.114
+2026-11-04T15:25:07Z verify N-5001 exit=0 brut-breed: 51847 events, hash chain intact, head 2f4885a7a374cb19641d8ec9cd3bcc62831f3de5dd739ddbd4290a2092c6eb1d; checkpoint at entry 51847 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T15:25:24Z compressed N-5001 4619454
+2026-11-04T15:25:29Z start IG-5001 threads=2
+2026-11-04T16:01:24Z done IG-5001 exit=0 wall_seconds=2155.792
+2026-11-04T16:01:26Z verify IG-5001 exit=0 brut-breed: 52190 events, hash chain intact, head 094e69c9a91cbd7741c0dd771ac643363ac4570bbedce0f8833d45e57f2fce6b; checkpoint at entry 52190 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T16:01:43Z compressed IG-5001 4914201
+2026-11-04T16:01:48Z start N-5002 threads=2
+2026-11-04T16:23:02Z done I-5001 exit=0 wall_seconds=4015.709
+2026-11-04T16:23:04Z verify I-5001 exit=0 brut-breed: 53366 events, hash chain intact, head eb2d12ebc87bdbd96507473d40cf83b6279cb013e3a71e7fbcb2c47bce0ee619; checkpoint at entry 53366 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T16:23:21Z compressed I-5001 4546513
+2026-11-04T16:23:21Z start G-5002 threads=2
+2026-11-04T16:27:38Z done N-5002 exit=0 wall_seconds=1549.934
+2026-11-04T16:27:39Z verify N-5002 exit=0 brut-breed: 44379 events, hash chain intact, head a025dd5b094c2dd466919973cdb0f1a40a9bb94f69cbd259360934993d71bd92; checkpoint at entry 44379 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T16:27:53Z compressed N-5002 3883075
+2026-11-04T16:27:53Z start I-5002 threads=2
+2026-11-04T19:27:54Z note: the session stopped the task of driver.sh at 2026-11-04T16:45:03Z, its limit of 7200 s for a background task; G-5002 and I-5002 were unfinished. The queue goes on through slot.sh, two slots at a time.
+2026-11-04T19:28:02Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T19:28:02Z slot A moved G-5002 to killed/G-5002-20261104T192802Z: a stopped task left it unfinished; it runs again from the start
+2026-11-04T19:28:02Z slot A runs G-5002
+2026-11-04T19:28:02Z start G-5002 threads=2
+2026-11-04T19:28:05Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T19:28:05Z slot B moved I-5002 to killed/I-5002-20261104T192805Z: a stopped task left it unfinished; it runs again from the start
+2026-11-04T19:28:05Z slot B runs I-5002
+2026-11-04T19:28:05Z start I-5002 threads=2
+2026-11-04T19:54:23Z done G-5002 exit=0 wall_seconds=1580.660
+2026-11-04T19:54:25Z verify G-5002 exit=0 brut-breed: 42840 events, hash chain intact, head 7839357229e718dafb3b8ac870dc93a8e12e4f54e66e5ec19c2c84b9963fbe3e; checkpoint at entry 42840 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T19:54:38Z compressed G-5002 3947642
+2026-11-04T19:54:38Z slot A runs IG-5002
+2026-11-04T19:54:38Z start IG-5002 threads=2
+2026-11-04T20:06:30Z done I-5002 exit=0 wall_seconds=2304.670
+2026-11-04T20:06:32Z verify I-5002 exit=0 brut-breed: 37336 events, hash chain intact, head b05b42f4f75a9cc81a86286d2a0e59fe112cf6481c4b208a68e4549a75092807; checkpoint at entry 37336 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T20:06:46Z compressed I-5002 3786361
+2026-11-04T20:06:46Z slot B end: N-5003 may need 5020 s, 4699 s left
+2026-11-04T20:07:00Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T20:07:00Z slot B runs N-5003
+2026-11-04T20:07:00Z start N-5003 threads=2
+2026-11-04T20:26:11Z done IG-5002 exit=0 wall_seconds=1893.209
+2026-11-04T20:26:13Z verify IG-5002 exit=0 brut-breed: 48143 events, hash chain intact, head a1fd45d22a6607cce9bbacfeb5d0574f0373d9ef801fe7cddf6cbf9e9bf4fb96; checkpoint at entry 48143 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T20:26:28Z compressed IG-5002 4370520
+2026-11-04T20:26:28Z slot A end: G-5003 may need 5020 s, 3514 s left
+2026-11-04T20:26:42Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T20:26:42Z slot A runs G-5003
+2026-11-04T20:26:42Z start G-5003 threads=2
+2026-11-04T20:42:06Z note: the container restarted at about 2026-11-04T20:40Z and stopped both slots; N-5003 and G-5003 were unfinished. Their claims were removed by hand, so a new slot moves them to killed/ and runs them again from the start.
+2026-11-04T20:42:18Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T20:42:19Z slot A moved N-5003 to killed/N-5003-20261104T204219Z: a stopped task left it unfinished; it runs again from the start
+2026-11-04T20:42:19Z slot A runs N-5003
+2026-11-04T20:42:19Z start N-5003 threads=2
+2026-11-04T20:42:22Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T20:42:22Z slot B moved G-5003 to killed/G-5003-20261104T204222Z: a stopped task left it unfinished; it runs again from the start
+2026-11-04T20:42:22Z slot B runs G-5003
+2026-11-04T20:42:22Z start G-5003 threads=2
+2026-11-04T21:08:35Z done G-5003 exit=0 wall_seconds=1573.650
+2026-11-04T21:08:37Z verify G-5003 exit=0 brut-breed: 52659 events, hash chain intact, head b275fc37a4418f729deeb7af9b3f6df9f8052820e39fdf809ce4c68ddf6fd91a; checkpoint at entry 52659 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T21:08:54Z compressed G-5003 4664255
+2026-11-04T21:08:54Z slot B runs I-5003
+2026-11-04T21:08:54Z start I-5003 threads=2
+2026-11-04T21:17:00Z done N-5003 exit=0 wall_seconds=2081.449
+2026-11-04T21:17:02Z verify N-5003 exit=0 brut-breed: 51419 events, hash chain intact, head f95396cc753695f79ce052ff5d9812f89db913b1a821a0b262f6b3142c9e7c43; checkpoint at entry 51419 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T21:17:19Z compressed N-5003 4533268
+2026-11-04T21:17:19Z slot A end: IG-5003 may need 5020 s, 4919 s left
+2026-11-04T21:17:32Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T21:17:32Z slot A runs IG-5003
+2026-11-04T21:17:32Z start IG-5003 threads=2
+2026-11-04T21:33:02Z done I-5003 exit=0 wall_seconds=1447.992
+2026-11-04T21:33:04Z verify I-5003 exit=0 brut-breed: 45091 events, hash chain intact, head 6ae5ab0df815aa560721f506781ad0604dfc2aac14c8b8e504410581b8030f2c; checkpoint at entry 45091 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T21:33:19Z compressed I-5003 4072990
+2026-11-04T21:33:19Z slot B end: N-5004 may need 5020 s, 3963 s left
+2026-11-04T21:33:30Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T21:33:30Z slot B runs N-5004
+2026-11-04T21:33:30Z start N-5004 threads=2
+2026-11-04T21:45:08Z done IG-5003 exit=0 wall_seconds=1656.116
+2026-11-04T21:45:10Z verify IG-5003 exit=0 brut-breed: 50298 events, hash chain intact, head 87bc548b644e416af06ad315b42c2b06cb7b223e611700bc336a1d4ddae88f14; checkpoint at entry 50298 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T21:45:26Z compressed IG-5003 4614744
+2026-11-04T21:45:26Z slot A runs G-5004
+2026-11-04T21:45:26Z start G-5004 threads=2
+2026-11-04T22:09:18Z done G-5004 exit=0 wall_seconds=1431.925
+2026-11-04T22:09:20Z verify G-5004 exit=0 brut-breed: 38274 events, hash chain intact, head f1875fa50e1f6b35b39953a48de4cf33ee9449d46c54fb8e9563789e86872592; checkpoint at entry 38274 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T22:09:33Z compressed G-5004 3501872
+2026-11-04T22:09:33Z slot A end: I-5004 may need 5020 s, 3899 s left
+2026-11-04T22:09:48Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T22:09:48Z slot A runs I-5004
+2026-11-04T22:09:48Z start I-5004 threads=2
+2026-11-04T22:35:46Z done I-5004 exit=0 wall_seconds=1558.586
+2026-11-04T22:35:48Z verify I-5004 exit=0 brut-breed: 41449 events, hash chain intact, head c72588920ed75bd6fb1bf7e0b5ffdf0c3eeabd1540190db1258a0e9fdd19b962; checkpoint at entry 41449 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T22:36:01Z compressed I-5004 3859527
+2026-11-04T22:36:01Z slot A runs IG-5004
+2026-11-04T22:36:01Z start IG-5004 threads=2
+2026-11-04T22:39:12Z done N-5004 exit=0 wall_seconds=3941.809
+2026-11-04T22:39:13Z verify N-5004 exit=0 brut-breed: 45835 events, hash chain intact, head 358618f1f3ab6eebe54de88ba724a99a34425a7d75a57b13556f6c58b7cadbb2; checkpoint at entry 45835 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T22:39:28Z compressed N-5004 4185604
+2026-11-04T22:39:28Z slot B end: N-5005 may need 5020 s, 3062 s left
+2026-11-04T22:39:47Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T22:39:47Z slot B runs N-5005
+2026-11-04T22:39:47Z start N-5005 threads=2
+2026-11-04T23:04:38Z done IG-5004 exit=0 wall_seconds=1717.823
+2026-11-04T23:04:40Z verify IG-5004 exit=0 brut-breed: 49876 events, hash chain intact, head 6b1b712ef27bad56b09cdd13ccbc460ded93eab797ed067b74da35664fc68732; checkpoint at entry 49876 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T23:04:56Z compressed IG-5004 4383832
+2026-11-04T23:04:56Z slot A end: G-5005 may need 5020 s, 3712 s left
+2026-11-04T23:05:10Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T23:05:10Z slot A runs G-5005
+2026-11-04T23:05:10Z start G-5005 threads=2
+2026-11-04T23:09:34Z done N-5005 exit=0 wall_seconds=1786.595
+2026-11-04T23:09:35Z verify N-5005 exit=0 brut-breed: 44475 events, hash chain intact, head a76adb3004cbcf6f70a8ea8a79f78702b0ae2f087398f8711009e4ceaef1072e; checkpoint at entry 44475 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T23:09:49Z compressed N-5005 3880668
+2026-11-04T23:09:49Z slot B runs I-5005
+2026-11-04T23:09:49Z start I-5005 threads=2
+2026-11-04T23:39:26Z done G-5005 exit=0 wall_seconds=2055.960
+2026-11-04T23:39:28Z verify G-5005 exit=0 brut-breed: 53106 events, hash chain intact, head 0d8b375bfbb11bd11869eb78d664b37881eceef33fab12d72d983178460f2803; checkpoint at entry 53106 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T23:39:44Z compressed G-5005 4652965
+2026-11-04T23:39:44Z slot A end: IG-5005 may need 5020 s, 4946 s left
+2026-11-04T23:39:57Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T23:39:57Z slot A runs IG-5005
+2026-11-04T23:39:57Z start IG-5005 threads=2
+2026-11-04T23:44:15Z done I-5005 exit=0 wall_seconds=2066.681
+2026-11-04T23:44:17Z verify I-5005 exit=0 brut-breed: 38872 events, hash chain intact, head e46245d20d17ec7acfb79aebf3c62dd2a7baf2046b8209a74e66f28e1037c376; checkpoint at entry 38872 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-04T23:44:31Z compressed I-5005 3883493
+2026-11-04T23:44:31Z slot B end: N-5006 may need 5020 s, 3136 s left
+2026-11-04T23:44:41Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-04T23:44:41Z slot B runs N-5006
+2026-11-04T23:44:41Z start N-5006 threads=2
+2026-11-05T00:22:20Z done N-5006 exit=0 wall_seconds=2258.167
+2026-11-05T00:22:22Z verify N-5006 exit=0 brut-breed: 42632 events, hash chain intact, head e72ebd916bade40df617e15ee378d1d68bdc35d1bff137d10b7a8b1b0a402ebf; checkpoint at entry 42632 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T00:22:35Z compressed N-5006 4021474
+2026-11-05T00:22:35Z slot B end: G-5006 may need 5020 s, 4746 s left
+2026-11-05T00:22:52Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T00:22:52Z slot B runs G-5006
+2026-11-05T00:22:52Z start G-5006 threads=2
+2026-11-05T00:45:23Z done G-5006 exit=0 wall_seconds=1350.881
+2026-11-05T00:45:25Z verify G-5006 exit=0 brut-breed: 29570 events, hash chain intact, head 68305fbd125e6b1a111889325fd626256862b20a78751ce6c2b10f389eca47c8; checkpoint at entry 29570 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T00:45:34Z compressed G-5006 2943287
+2026-11-05T00:45:34Z slot B runs I-5006
+2026-11-05T00:45:34Z start I-5006 threads=2
+2026-11-05T01:14:50Z done I-5006 exit=0 wall_seconds=1756.021
+2026-11-05T01:14:52Z verify I-5006 exit=0 brut-breed: 25070 events, hash chain intact, head 3b0ecabd8be5fd2000da49dd1979e91e82ca625bda45a09717cc6ab4428c04ba; checkpoint at entry 25070 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T01:15:02Z compressed I-5006 2779016
+2026-11-05T01:15:02Z slot B end: IG-5006 may need 5020 s, 3890 s left
+2026-11-05T01:16:13Z note: slot.sh changed: a new slot now always starts its first Run; the fit check holds for its further Runs. Before, a Run longer than 7020 s / 1.25 would have kept every new slot from starting.
+2026-11-05T01:16:13Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T01:16:13Z slot B runs IG-5006
+2026-11-05T01:16:13Z start IG-5006 threads=2
+2026-11-05T01:19:02Z done IG-5005 exit=0 wall_seconds=5944.661
+2026-11-05T01:19:04Z verify IG-5005 exit=0 brut-breed: 50792 events, hash chain intact, head 9f8a63380f18c896a44b7b23b3d5272a36151342053af3bb43187fdd58e7df61; checkpoint at entry 50792 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T01:19:20Z compressed IG-5005 4600845
+2026-11-05T01:19:20Z slot A end: N-5007 may need 7431 s, 1057 s left
+2026-11-05T01:19:37Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T01:19:37Z slot A runs N-5007
+2026-11-05T01:19:37Z start N-5007 threads=2
+2026-11-05T01:40:24Z done IG-5006 exit=0 wall_seconds=1451.352
+2026-11-05T01:40:25Z verify IG-5006 exit=0 brut-breed: 25926 events, hash chain intact, head 989882deca32644431c66b51738c09ea612eec1dc2d9b088d00146bf01784770; checkpoint at entry 25926 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T01:40:35Z compressed IG-5006 2810969
+2026-11-05T01:40:35Z slot B end: G-5007 may need 7431 s, 5558 s left
+2026-11-05T01:40:50Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T01:40:50Z slot B runs G-5007
+2026-11-05T01:40:50Z start G-5007 threads=2
+2026-11-05T01:58:49Z done N-5007 exit=0 wall_seconds=2352.589
+2026-11-05T01:58:51Z verify N-5007 exit=0 brut-breed: 50768 events, hash chain intact, head c5120fc03ce0bbb7ec0ade5fd1c344fb7087cf435836a37eafc760ea281a9c09; checkpoint at entry 50768 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T01:59:07Z compressed N-5007 4283974
+2026-11-05T01:59:07Z slot A end: I-5007 may need 7431 s, 4650 s left
+2026-11-05T01:59:23Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T01:59:23Z slot A runs I-5007
+2026-11-05T01:59:23Z start I-5007 threads=2
+2026-11-05T02:36:53Z done I-5007 exit=0 wall_seconds=2249.391
+2026-11-05T02:36:55Z verify I-5007 exit=0 brut-breed: 51929 events, hash chain intact, head a85ce5ca48f6d29a180eb648834431712428830735eb48d1a3601e1a54abfda9; checkpoint at entry 51929 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T02:37:11Z compressed I-5007 4689743
+2026-11-05T02:37:11Z slot A end: IG-5007 may need 7431 s, 4752 s left
+2026-11-05T02:37:35Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T02:37:35Z slot A runs IG-5007
+2026-11-05T02:37:35Z start IG-5007 threads=2
+2026-11-05T03:10:35Z done IG-5007 exit=0 wall_seconds=1979.602
+2026-11-05T03:10:37Z verify IG-5007 exit=0 brut-breed: 50813 events, hash chain intact, head b16c69162ea79032d57fcce05114051fec09a0a57a5f8a7096c5894315866654; checkpoint at entry 50813 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T03:10:52Z compressed IG-5007 4616128
+2026-11-05T03:10:52Z slot A end: N-5008 may need 7431 s, 5023 s left
+2026-11-05T03:11:13Z slot A start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T03:11:13Z slot A runs N-5008
+2026-11-05T03:11:13Z start N-5008 threads=2
+2026-11-05T03:13:49Z done G-5007 exit=0 wall_seconds=5579.344
+2026-11-05T03:13:51Z verify G-5007 exit=0 brut-breed: 45458 events, hash chain intact, head 0663b220c71fe55df7d74d92d79b25265702582b394c3829314b053084dfa39d; checkpoint at entry 45458 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T03:14:05Z compressed G-5007 4092387
+2026-11-05T03:14:05Z slot B end: G-5008 may need 7431 s, 1425 s left
+2026-11-05T03:14:18Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T03:14:18Z slot B runs G-5008
+2026-11-05T03:14:18Z start G-5008 threads=2
+2026-11-05T03:46:59Z done G-5008 exit=0 wall_seconds=1960.471
+2026-11-05T03:47:00Z verify G-5008 exit=0 brut-breed: 50780 events, hash chain intact, head 259449c013d8c8591fafe0d3c9f45c88a075a64ec1eb7ae128c4c0ef7d0636e6; checkpoint at entry 50780 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T03:47:17Z compressed G-5008 4757783
+2026-11-05T03:47:17Z slot B end: I-5008 may need 7431 s, 5041 s left
+2026-11-05T03:47:32Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T03:47:32Z slot B runs I-5008
+2026-11-05T03:47:32Z start I-5008 threads=2
+2026-11-05T04:10:34Z done I-5008 exit=0 wall_seconds=1381.903
+2026-11-05T04:10:35Z verify I-5008 exit=0 brut-breed: 35637 events, hash chain intact, head 8687ffb0277665505c5bfc7d8937a1922049869ae2b68e714e38a00330c80f72; checkpoint at entry 35637 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T04:10:47Z compressed I-5008 3568943
+2026-11-05T04:10:47Z slot B end: IG-5008 may need 7431 s, 5625 s left
+2026-11-05T04:11:06Z slot B start queue=/path/to/ig-screen/driver/queue.txt
+2026-11-05T04:11:06Z slot B runs IG-5008
+2026-11-05T04:11:06Z start IG-5008 threads=2
+2026-11-05T04:47:47Z done IG-5008 exit=0 wall_seconds=2201.697
+2026-11-05T04:47:49Z verify IG-5008 exit=0 brut-breed: 46454 events, hash chain intact, head 80ddf6316e9069d141b199cdadc42eff9dd2a4a7d10788222719a5d9026ffb35; checkpoint at entry 46454 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T04:48:03Z compressed IG-5008 4331804
+2026-11-05T04:48:03Z slot B end: no Run left to start
+2026-11-05T04:53:32Z done N-5008 exit=0 wall_seconds=6139.405
+2026-11-05T04:53:34Z verify N-5008 exit=0 brut-breed: 53591 events, hash chain intact, head 345e94dbfb7391504a0e74d9d615090ab36f65409b2c189d160afb8190927c1b; checkpoint at entry 53591 matches; settings match; report recomputed and equal; rediscovery recomputed and equal
+2026-11-05T04:53:50Z compressed N-5008 4705878
+2026-11-05T04:53:50Z slot A end: no Run left to start

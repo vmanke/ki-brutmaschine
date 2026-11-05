@@ -1,0 +1,1186 @@
+{
+ "criteria": {
+  "1": false,
+  "2": false,
+  "3": false,
+  "N_before_W": 6,
+  "verdict": "STOP"
+ },
+ "divergence": {
+  "913": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  },
+  "914": {
+   "W-N": 5,
+   "W-W0": 4,
+   "WF-N": 5,
+   "WF-W": 5
+  },
+  "915": {
+   "W-N": 2,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  },
+  "916": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  },
+  "917": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  },
+  "918": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  },
+  "919": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 2,
+   "WF-W": 1
+  },
+  "920": {
+   "W-N": 1,
+   "W-W0": 2,
+   "WF-N": 1,
+   "WF-W": 1
+  }
+ },
+ "hashes": {
+  "N-913": {
+   "config.json": "6035cc52104721ccda33c57607311f93324b0a1818cfc97b1a8e9581af31776a",
+   "events.jsonl": "0c0545f2a03e659f4c37627b71aaa98b744ea13c0911e870b3e8de50afd131a0",
+   "rediscovery.json": "5b92f282f94bbb948c0f3aadf6f56610942c1804d1d77cd55092cfb1e09d95f7",
+   "report.json": "d88a520da229c5b05e78efce701bb8ce82e4b0ae31738f8ba63b6b2ab7cc29cf",
+   "snapshot.json": "dc7bf8b5714756219acad98d79372bb847837e8f918976933cfb27402e25396d"
+  },
+  "N-914": {
+   "config.json": "ab61922248e95a6025d8e81c7d87ece3763a676bae8ad7a3da64a6489f395bde",
+   "events.jsonl": "49c1c0db2aa248c89334b316220420b7eaa5eac813097f1b8e360f7ea443d0fb",
+   "rediscovery.json": "16366ffff43eff889b73bc812948c190c879b58706aaafe220f09ef3a705da30",
+   "report.json": "022b1b0d8b080db17ea7605ae6a91102e35e9912c382176939027f4a9cb75471",
+   "snapshot.json": "4e32ce3d4f0d3cccba7a7022dbb2cf86cf0b11fc5f95fe2683d6d9750106a6ed"
+  },
+  "N-915": {
+   "config.json": "786e3931cd2dfe39e33ada8c1d3b87f8f39d01e947f9a7836183ab0a28a10de7",
+   "events.jsonl": "7efe133153703cbfb572c06a1f0c03e484d6ad8c025a0fb3dad7844eb1e923a2",
+   "rediscovery.json": "ac892944013307d461f48a9b82a6ae524f688f8fa8f5630d3cc29245465c61f8",
+   "report.json": "006fb15cca7cd56889c96f21fd4a1e434772aa352d618ce7e47a2149c467e9ce",
+   "snapshot.json": "56601ba1222c640d7885fe7d650453a7acaede2e2493facb7a4cdec6e383193f"
+  },
+  "N-916": {
+   "config.json": "ec9ed334eac39411d1c146757f2d3b85669930cd285296116150994c21cf7a26",
+   "events.jsonl": "03287b708daaeda2c01693f2df559afe22d85e5cde08f6bc3544bca11b02c762",
+   "rediscovery.json": "e6ea93da0dd1636b60a95e271f2a44e737c278a9417e2cdab066bf5a897c2f9f",
+   "report.json": "cbb942389e104c0e2f9f7ff04c6a7ba7e449085d03b7fcabb935ab0dafcc5b09",
+   "snapshot.json": "213c0faee8d6562a749ff94aad628b9001f69a2e50f2270163a06cd81527ef89"
+  },
+  "N-917": {
+   "config.json": "fb8f0dda8aee79d0087edecead8653c499c43e6a870ca20ced4f3af7bb872568",
+   "events.jsonl": "710c6c688260ce484b918fdd1f7a13442722b1179da88dc0b296d12097b452e4",
+   "rediscovery.json": "1f1b2516a3ec94d3b3deb7fc4cc9c157a380157b7165c9e1767be2c472bb3801",
+   "report.json": "7b11795bb970482c490cf9449a077bd39573242257a45b7d1dd0c7a28f498530",
+   "snapshot.json": "88714c0bc9b4485a3fdb08a7e96786e0a7a248aff79bf4a6547aef26d34bf7db"
+  },
+  "N-918": {
+   "config.json": "067f5ccef150f8bca0d5f653d14e5fedd56f17749b093cc2eb22b73af6402094",
+   "events.jsonl": "be1079676609b57d5282620a054b9c4bbda514c7e6d49392a315624e15c6242c",
+   "rediscovery.json": "8ae1118b4c9106b8cef22ecd23d404bfc3b7d69cc42f71ca74737c8c4c7c3ade",
+   "report.json": "150404e1338d5633b8e649a44236a6102b1bd6e760f1d7467a3cedfd89bf893d",
+   "snapshot.json": "93321f6edff44be99245ffbf6524927cf8c843f16622dada6167f8e0b1274418"
+  },
+  "N-919": {
+   "config.json": "e478f629b4a417628764b32601ce9009c4c80358d02976514a30fc285dd08a10",
+   "events.jsonl": "59b2e98128a01391613c1d173083885be44c3224c9e102be7124f3093064274a",
+   "rediscovery.json": "f2330a85fb7c621c3384d749ae7bb97ea983950835f44ff9ba92490f028aef8c",
+   "report.json": "c120757247b3865dbdec5a6817461d1c6234f492cd2fe33ea07eeba51ec589dc",
+   "snapshot.json": "976ad271bb3a7f0234ed1b194a7b4d957d595ff67b7d5aca22f25bea0b8284fc"
+  },
+  "N-920": {
+   "config.json": "d2cc1949e8290140d8a1a0e2e711794fcb1d29bf003e9d793e55b97f0446c53c",
+   "events.jsonl": "63ebe89667ce1de00a22116c846621aaa792ad98bd3d00b795317d273b5dab58",
+   "rediscovery.json": "573e8e9fb42dea57b34b55c1dcf32f65a1d1d8e7e1681d74c5212ea9d1b6ff5d",
+   "report.json": "c356144ddcd6e526b4c372daf06ccfadbf13cf9be96d12c39c4b1fee672a21f2",
+   "snapshot.json": "e20caa4b69b4851a2de56741fb6e7224cf0242a0e8991e69dc2c05ff6fcccd05"
+  },
+  "W-913": {
+   "config.json": "7994021911a1745091f96f957d85730bd4a60930e3e25674790460605f4f9914",
+   "events.jsonl": "12e2dfd429d0c959b0e3dc881e8b756d32ac685e533416f94a8386a762989d15",
+   "rediscovery.json": "5cc3d5d87561f0a2b6768841a4affd45139bb20a06433b913cda8c916fcb54c6",
+   "report.json": "084648d8b96d3db241731da1c6087790c2ab28ff07469c563aa3dbdbd4ff73e4",
+   "snapshot.json": "4142ae04f13c0a21b7e02c41a2dc0cb108963a0f17015dc21427d962ffcb7e73"
+  },
+  "W-914": {
+   "config.json": "8cb15f743e486a2964d9d76f4386d3d677fd467fc64b1b86bbac46a7ddbc8e1b",
+   "events.jsonl": "ab2106e15a4bb517fd7b879af1ad69e2d44e79e8a832da8f767d9b871af7e572",
+   "rediscovery.json": "77011fb1d479ab849661b8d25d3f171b0d9a1fca8ba64d6be598a4b421e3e25d",
+   "report.json": "3a53302a4676dcd22f2e64424844668a91915a23984c13b515f8f240fa56de2a",
+   "snapshot.json": "6c2a48b8e3125b4e814efd2692ddfd86bd2e0ee79e8cba7821344f67be94ee61"
+  },
+  "W-915": {
+   "config.json": "962a40767d6c6aaba5d6f70970578fa71c0c08ae7630ff3de201620acc215f64",
+   "events.jsonl": "14a91f5f16ce6008bba637fa30a2ea6ce0550b6af0254860a979da79dcc040d2",
+   "rediscovery.json": "3fd7c98616d735835f800e5c368b157c884736691c9cf98f1350d64548d5d95d",
+   "report.json": "a2e48baa0ae24a8c27491a08dbf757e450f9eb6b57d5d3eb73bc8220e33c4db2",
+   "snapshot.json": "1ac307c305b3eff25f00c4899c8b53e0bcecc48c52689ba51e1cf0d3a699fc54"
+  },
+  "W-916": {
+   "config.json": "a74a686d96d634b2328dcef852cf595879b3d8b1fabff00696445098a63cdbcc",
+   "events.jsonl": "649af3dfe0a9bdf321e834616ca7f2431e047de71b9e8f6942620183bc24f990",
+   "rediscovery.json": "1a640b35932f04ccd4e426372aa2f08b93db1d907e841cb050530b4a34a151e4",
+   "report.json": "6581a91175f461dd7f617316beb247ae527fd785fba710950c04c6b4e23ce60f",
+   "snapshot.json": "e8da855843355dbfe49bc26f8c904d61795da86f9567080d18e8b38039bd3b9d"
+  },
+  "W-917": {
+   "config.json": "75b2be0188f338035fb76bcbe6336db3518502393bacbbbeac8d20da8ee54156",
+   "events.jsonl": "4841dbc4a02f099ac866a14be36d55e7c3fe1da94ea0a2c786930ecf3a3d3c9f",
+   "rediscovery.json": "dbdeaff1fa45b473c50bcfb0e3d38de7953fe5a68fa9ab6db14832707ea76ebf",
+   "report.json": "478b0f9660619da96d1dcab3693f6e60ebb86b6ffba0a2e2c5e8f960d62cc34b",
+   "snapshot.json": "e7e4f2a10e328854034e6c10851dd2b639060a669926554cf45080244fb22e22"
+  },
+  "W-918": {
+   "config.json": "e923859e26158729a25736782b3609246417def13057a938767b11c243cdda80",
+   "events.jsonl": "1f0c6fbd8249f2ea83577eaac5bd959d98c89f80bb01235c02f589311c33b1e2",
+   "rediscovery.json": "75c656736c895cd5f9c54c79621989818bf4bc6e0534061e627c0e13da8628ee",
+   "report.json": "de172d832dda9f9ca3824a61273b2e21b96cba2b9d31ac31e7ed975ec35dae48",
+   "snapshot.json": "e4de8b2e0a93a824365899183a5761f5a0ee8a268ef2389987b2459559acfb5f"
+  },
+  "W-919": {
+   "config.json": "48373cdaab7d41f86c2558f8ab16ebf05aee2b530257ea0a958b6687498ca35a",
+   "events.jsonl": "018bafc9e3590318e1c04aa9eb890488df145aa3b4fc62278fa3c5774b2daeb7",
+   "rediscovery.json": "9a0bc0a8c4f9db644d40dc1e26d216c444810cbaef76a3b9b6404dc0c062ac2a",
+   "report.json": "6c9d7fbffe1fcfdb0663058408be79299938c12c1509cb300823faf775196ff6",
+   "snapshot.json": "a474633d37d2dcc01d37a922edcf2baa33b7226512171fdfc2e731adff7cf1b8"
+  },
+  "W-920": {
+   "config.json": "e53e519e9357403cdad6ebd880645f37181c45f52e9ffc94d78aeeef84a97e93",
+   "events.jsonl": "311c1d04590eedb12de4e3e6eb9d891b7f2efb17a8bb5cc99c547eac00122895",
+   "rediscovery.json": "26d391171270bd588e5dac3a457ca26f0f03d4029f01c2d636aaa28237c6ef0c",
+   "report.json": "a509aacfdb89aab3ced6cf735e35d6ce292a2bf25fa5f635598b179dbb26a762",
+   "snapshot.json": "7c769efdf8d42716a828f55da222dc176cd7bb914f3cf9f12468f02d7491bc5a"
+  },
+  "W0-913": {
+   "config.json": "35369b03856f02ee700cd716b715b15e2bd1eafdacabf19bfa780f713cc881a7",
+   "events.jsonl": "ed1df28e3e61c9ed22b6847a6d180ef4ffeda6e4cc3f991e1bdaad61278dd1d8",
+   "rediscovery.json": "41e0cfa3f083d329897380b5687f11811b72ac96bbb81e3e278419cd4ae47b40",
+   "report.json": "5ed623f832e9137d2a89c98cfc30e1fcc91dd514d895ea38512ca9a7eebd4b03",
+   "snapshot.json": "4c425d290f734e38e69caaf83d4193f392eded5f1deb3eaa807b12221738735c"
+  },
+  "W0-914": {
+   "config.json": "479d74c3dc39b33823b284fe36f019e08cb9c144d24c2170d76e2ccfc87dce37",
+   "events.jsonl": "d73b8268ff7e6670025f1b4a7a5e18d28edebe7b9d6358e4fb4392caef4f73ad",
+   "rediscovery.json": "ba928466c2afe7404853fcbfd7c12381bd476a2b9dda0d29851dba74250ce137",
+   "report.json": "56a585988495b61ef8f59346e4eaf09e9f1e7e86d42f7f55dfdfdf1f89e1370d",
+   "snapshot.json": "102c36110e4fb70b738ccdf4c13dfbefb4d7c5cda1aaf838f3245c48f43381f7"
+  },
+  "W0-915": {
+   "config.json": "0dbd13c93a2a92dcb2b1e2a0c087518d7535068610d1733ca74894a50e03ba89",
+   "events.jsonl": "7226ab93a09ad3004f0e5c07221d508c54824de21b8ef67c8c5d220eba84b2d9",
+   "rediscovery.json": "c3f075331f9560e278fa413688f4f0be90c538875e1195fd35afd6e12da63de7",
+   "report.json": "28858d889f0a90221ed0e1ad7692ce6064fa0a733414efeb60737b0451b62a1c",
+   "snapshot.json": "cba9aec8436442ba1224cf700976ae5be4b4277b6f90790774e230e3393272e1"
+  },
+  "W0-916": {
+   "config.json": "1e20c9088daef7ad84783a3a2e829fd43a0c6bfd65e9186510e772e69122875e",
+   "events.jsonl": "7908b85a6d5eecae1a342d385affcbb877c823f0228cad640880f01e0c0837dd",
+   "rediscovery.json": "c71743c622af186c65e5ca77f7210790e9b3dced283645a319051b33dd5f1ff5",
+   "report.json": "ef658a1b614899037a5a45139f240d00c44f7e4dfa5c1daf1721d50f837dc24d",
+   "snapshot.json": "7c3cf84b8fc63a4c9122bf28e282aeb56a6db603c0d7a31a66d60a378e7eab47"
+  },
+  "W0-917": {
+   "config.json": "7ae10b1fd12561b538044e127790e45aea1bce4b574b9cae7abedb9b09db7ba0",
+   "events.jsonl": "babf5ac07068c15efa2dc28b8333ad1374cc81106e0b653460a6e67abd7942d2",
+   "rediscovery.json": "9566771927831ce7d06477cfeff7329a57d8a831297ee1b956bf0cb88661f4e1",
+   "report.json": "ba8d54fd1229fa049378c575db659e003f1a270fb494a2664a8c3d43415be8f2",
+   "snapshot.json": "38effaa95df6d3ad976272d6b8341366efb0e74a42dd994b779066b53cca402d"
+  },
+  "W0-918": {
+   "config.json": "9e39f395336ba1f8e27e0ec80b6dd82f5bd0f60f53d7a983b80c7798db85d0c5",
+   "events.jsonl": "fd18f493d744c6af0aaa3fad947c6ea0902e51a708842022aaca03a34a6e9e03",
+   "rediscovery.json": "55d15bdae475dc68b2e21b72cb6d720f8ddd0c072788189dce9d7e0fbc613b8d",
+   "report.json": "b659b7618940cdad4ec919e81955a4004b59f32d42cb682a411cc4c1282b256e",
+   "snapshot.json": "ad1eabd209746dbdac6b6666ab817ee866a7b6b4e289cc880cc51298e56b8053"
+  },
+  "W0-919": {
+   "config.json": "ee5695002465635145401512a65f221e05dcc52e4e2d68d4668702202dca163d",
+   "events.jsonl": "8ab4ecb800373ffb69a8af6470adb946ab8c594d3f3cb0c004a5c39c061ab019",
+   "rediscovery.json": "d7fd265e774f881c3e2a41d4587b861e4a4be83f78f01c0a5b2cac5d6c5e899e",
+   "report.json": "cea0a58df146547c320cf6cac48d07edbe2c47549844779094a3badb70e16213",
+   "snapshot.json": "f2fd1c2ff14626cd18f7f7d2f9a1f381b9fa5e59f394fbb75ab56365b065ed04"
+  },
+  "W0-920": {
+   "config.json": "12c6217746b6a7ef0b94bbc973ecd910bcb6e2f424b4a110edaf0c54fbb58d15",
+   "events.jsonl": "949f4609ae236e7a736e5cc9402cf5882901cbbff09eaf6d35b3e2cfe902a161",
+   "rediscovery.json": "44aff9f93491218612d1b092149d3bb5c324a0f33b43cb8dd3c61e32ef785704",
+   "report.json": "679b4f788f813dacf0f3fc93ed7876ae76cf978aabe2426cf54d4623e5eb3a4e",
+   "snapshot.json": "e1a4208138b9d59ea21c0169a1abd3627eb3feb763d43bf8b72143a949277bf8"
+  },
+  "WF-913": {
+   "config.json": "a8154c93809eaa72fe2aa57a94728f8c766af59b61e563255f0dca6d1bdc366e",
+   "events.jsonl": "f00e7876c2b069007ae18d691da73ff837aa0b50059c7cca9939a484e20abbce",
+   "rediscovery.json": "824d434138fb1e0f80f3f020cf561f3e9a89ab857338339cbb3f73eb2e8c1d26",
+   "report.json": "d93cdb77984138161ffad2c771650316abb9dc977ff03d9346b09722124cf685",
+   "snapshot.json": "1b09e67df02e275357af050613eb0d6da434367e3a75c0cff73ef500cf614df3"
+  },
+  "WF-914": {
+   "config.json": "6e985d85e7823d8c02a91c9b279bcc526238ed94cd40a170bb6b7bad76ccd0d8",
+   "events.jsonl": "4909343f92681ec7f8f30a365446c2d1ca4fdbe5709c9a94328879ee8e70f587",
+   "rediscovery.json": "6d723cc2809841985cea9ed48105278456a7d3810f1448db77dd72fd8263cc6f",
+   "report.json": "456e2cedbcafedf4195938e79445376c4b57981ccb7c4e058ae3a996c37b0486",
+   "snapshot.json": "494bdff7dedab86b1c5e3a87181beb9dc556bb5a6edd068d0288ab80401a5854"
+  },
+  "WF-915": {
+   "config.json": "b9c3709360503c24a1720883248f9569f2c6bff12c11ff3210d8aeb1420e3c61",
+   "events.jsonl": "c063582f2a22de5828472de761350cd73bc781f8e043b8625899f0a404f887cd",
+   "rediscovery.json": "16fc7602a34bfc17ac5a7f45c48ede1bbee10e64ddf0ef90b6e5cab1e5137ee3",
+   "report.json": "948879a5948294d47ba3c764380c79a084025a481485f9c9633912b260a75c76",
+   "snapshot.json": "4c2dbe30292a9be1eca70aff8bb29fb3546842984ba9055c7957f6759fa11c88"
+  },
+  "WF-916": {
+   "config.json": "5a9b7113dd9f5e0ba05856699f62fa9e1b808935ab2d925551e8c1d492cf4ede",
+   "events.jsonl": "df385db2cd4ffe6cfad3b16096e280930e7640765c0793ef38a0d18c882331f8",
+   "rediscovery.json": "310cac3cadbf14d52a14259d9638ff199daf7973e60a56c74555418d5bfa7127",
+   "report.json": "2e0ca4b818d08004e4528c6172d28abacb8e9de6691d9979742fc7951269d89f",
+   "snapshot.json": "44f705c82d8267eb924ab940038852c952b5cdc5104ef1e3da411794169f3169"
+  },
+  "WF-917": {
+   "config.json": "3ee404210a516e0457b855ba88a6d08bee955b50db7de44782b4dab86ee897aa",
+   "events.jsonl": "dbfd85af22a925551786e71ea40b99f10aa64b485cccec9de103a85eb9812ea4",
+   "rediscovery.json": "c244d2a545585bdc75a6261b0802ad785b3b7dc384c1c1d95d9c8237130417d5",
+   "report.json": "f8faeae4a31e830754add966442e6d976220c3aec58200b9c06593c6852944ea",
+   "snapshot.json": "409d5ab95520a9e91b79e1d247f87e2638d1aa21be952110c12198ebbd959021"
+  },
+  "WF-918": {
+   "config.json": "e89c62ba34530c18fdc4218cfc83334c1ee27c6e7cdc3b7299984edbdede78e6",
+   "events.jsonl": "a4376d2ea335f6f1cb9eae6cb18820d3297c586775a3b180814cecbb9c413056",
+   "rediscovery.json": "f373760e3abcda537fc8809ef7c01c189ccc2ec6c82d3e16e668d8c1f7cc81de",
+   "report.json": "2d786831f47cabebcfee423c640656d4e834d803afc5d01579a35e8c8c7708a8",
+   "snapshot.json": "6127cbc7866726924f678bdcc6e265f5a23c4436e99738ca53d69d92e9f930be"
+  },
+  "WF-919": {
+   "config.json": "01a769711c4d2649e04e6d6c5ce84c588e90eb36170b00f41003e533b07fd97c",
+   "events.jsonl": "40d8e733d3ee964c06b25f03a02cf85bed22e3461bd832ed7d72d50159ced2cf",
+   "rediscovery.json": "f2ce0570e6bac66a7910290ac8fc9400f8ac408ea5614ac358c88029a2e27c1d",
+   "report.json": "33ecd7349a1d6ea1b3625f4811883358639c12a084035264aa5dc224a69292ea",
+   "snapshot.json": "a927ea4d02d0585d16b6e26915af44e35d0852a8e360ad0e3486768f442e6130"
+  },
+  "WF-920": {
+   "config.json": "d8e8420d3aa2fd620a1cefabdf562f8c71baafaa792556446a0ae6fe95ba6b4b",
+   "events.jsonl": "a9c9242cdfd969ceb384d4198a13f783ea0055807a192cdc5d7a12c7fd9e54d3",
+   "rediscovery.json": "018a0988fb74ba14199d0023ac9040aaf033ae82ef5d7d08bcb72a638e4f9fe7",
+   "report.json": "7bb73361e7a8b3f3674a98eba4dc51613e7caed4ec405470f95535cd0e48b8b5",
+   "snapshot.json": "d17ebc5ac529c36b131de9da45ad2a47deaf6d9d2d1a6963c159f3c9bc438c70"
+  }
+ },
+ "pooled_draws": {
+  "N": {
+   "brought": 8,
+   "changed": 119,
+   "draws": 419,
+   "lost": 61,
+   "made": 2,
+   "multiple": 0
+  },
+  "W": {
+   "brought": 4,
+   "changed": 305,
+   "draws": 1140,
+   "lost": 133,
+   "made": 0,
+   "multiple": 0
+  },
+  "W0": {
+   "brought": 22,
+   "changed": 345,
+   "draws": 1062,
+   "lost": 146,
+   "made": 4,
+   "multiple": 0
+  },
+  "WF": {
+   "brought": 5,
+   "changed": 167,
+   "draws": 316,
+   "lost": 10,
+   "made": 3,
+   "multiple": 0
+  }
+ },
+ "runs": [
+  {
+   "T": null,
+   "arm": "W",
+   "calls_used": 1029854,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 97,
+    "draws": 501,
+    "lost": 41,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": null,
+   "mean_preference": 0.8004994195869768,
+   "passes": false,
+   "preference_values": 1185,
+   "seed": 913,
+   "variation_changed": 2179,
+   "variation_choices": 5536,
+   "verify": "brut-breed: 33949 events, hash chain intact, head 17a6d7685fa27e9ec006cb9d6fc1cedb59c0c6c42e5b76b61818a234433e84db; checkpoint at entry 33949 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 583.015
+  },
+  {
+   "T": 70,
+   "arm": "W0",
+   "calls_used": 972517,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 2,
+    "draws": 16,
+    "lost": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 70,
+    "op": "section_replace"
+   },
+   "mean_preference": 0.9738624414467406,
+   "passes": true,
+   "preference_values": 1110,
+   "seed": 913,
+   "variation_changed": 1743,
+   "variation_choices": 5116,
+   "verify": "brut-breed: 28869 events, hash chain intact, head 172552a391fd74288ad73454729debac3c9b86cb3aa61d0402b1bf6a3e2b44bf; checkpoint at entry 28869 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 562.241
+  },
+  {
+   "T": 41,
+   "arm": "N",
+   "calls_used": 1017648,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 11,
+    "draws": 30,
+    "lost": 7,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 41,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 913,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 45893 events, hash chain intact, head 83a6d591fdf3f06b53f5c1b1f5021f6e29ade91b57896d98e5df98b1e3f2ebd3; checkpoint at entry 45893 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 505.66
+  },
+  {
+   "T": 54,
+   "arm": "WF",
+   "calls_used": 1015339,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 2,
+    "draws": 10,
+    "lost": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 54,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 913,
+   "variation_changed": 1906,
+   "variation_choices": 7109,
+   "verify": "brut-breed: 47319 events, hash chain intact, head 00a468e003f8518347929724e11c0e5371bb0a161be965a572de227696d70f01; checkpoint at entry 47319 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 646.062
+  },
+  {
+   "T": 980,
+   "arm": "W",
+   "calls_used": 1048499,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 48,
+    "draws": 106,
+    "lost": 25,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 5,
+   "first_three": {
+    "generation": 980,
+    "op": "section_crossover"
+   },
+   "mean_preference": 0.5893921618532517,
+   "passes": true,
+   "preference_values": 1410,
+   "seed": 914,
+   "variation_changed": 2265,
+   "variation_choices": 6358,
+   "verify": "brut-breed: 23307 events, hash chain intact, head 0428bb6baa75f31d19b1ee98e11c84897af85c3ee83c0eeb3f1ec2196a1d26ec; checkpoint at entry 23307 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 503.716
+  },
+  {
+   "T": 638,
+   "arm": "W0",
+   "calls_used": 999504,
+   "deviations": [],
+   "draws": {
+    "brought": 13,
+    "changed": 163,
+    "draws": 513,
+    "lost": 86,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 4,
+   "first_three": {
+    "generation": 638,
+    "op": "section_crossover"
+   },
+   "mean_preference": 1.0045393358672365,
+   "passes": true,
+   "preference_values": 1095,
+   "seed": 914,
+   "variation_changed": 2004,
+   "variation_choices": 6444,
+   "verify": "brut-breed: 27915 events, hash chain intact, head c86ddf21509427dad1eb93dbd3a0dfdc9f4dcdf97b76048784e8e69c819c8d3f; checkpoint at entry 27915 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 544.274
+  },
+  {
+   "T": 126,
+   "arm": "N",
+   "calls_used": 1037795,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 10,
+    "draws": 31,
+    "lost": 3,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 126,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 914,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 37937 events, hash chain intact, head 548e253c88d89021fbfbcd5d76966b82b5dcdf2964d9dfc980ddda7d8f2774aa; checkpoint at entry 37937 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 401.935
+  },
+  {
+   "T": 192,
+   "arm": "WF",
+   "calls_used": 1018559,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 38,
+    "draws": 85,
+    "lost": 3,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 5,
+   "first_three": {
+    "generation": 192,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 914,
+   "variation_changed": 1548,
+   "variation_choices": 5331,
+   "verify": "brut-breed: 28591 events, hash chain intact, head 4a10c6e63fe19eb38344b9d2e3ba2fed0acb6527b70f323ec8407083c4baa982; checkpoint at entry 28591 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 543.335
+  },
+  {
+   "T": 150,
+   "arm": "W",
+   "calls_used": 1027908,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 6,
+    "draws": 19,
+    "lost": 1,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 150,
+    "op": "stage_add"
+   },
+   "mean_preference": 1.3535468625389673,
+   "passes": true,
+   "preference_values": 1185,
+   "seed": 915,
+   "variation_changed": 1889,
+   "variation_choices": 8113,
+   "verify": "brut-breed: 39829 events, hash chain intact, head 1577f46736b22101959935b04676d5a3273d34e91eefd12a0dea12f909da3c39; checkpoint at entry 39829 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 520.66
+  },
+  {
+   "T": 171,
+   "arm": "W0",
+   "calls_used": 1045975,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 14,
+    "draws": 40,
+    "lost": 2,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 171,
+    "op": "section_crossover"
+   },
+   "mean_preference": 1.0223252030588574,
+   "passes": true,
+   "preference_values": 1221,
+   "seed": 915,
+   "variation_changed": 1961,
+   "variation_choices": 6302,
+   "verify": "brut-breed: 24284 events, hash chain intact, head e0e4553b07b9c1be9ca2ab43d3599263305c2ba144687440435e970673733572; checkpoint at entry 24284 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 551.731
+  },
+  {
+   "T": 485,
+   "arm": "N",
+   "calls_used": 1072670,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 8,
+    "draws": 43,
+    "lost": 4,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 485,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 915,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 24904 events, hash chain intact, head 293fce011123074ddb853192f2085f72ddc762cb6cfc33fd3b380671421d6a43; checkpoint at entry 24904 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 359.411
+  },
+  {
+   "T": 13,
+   "arm": "WF",
+   "calls_used": 1301846,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 2,
+    "draws": 3,
+    "lost": 0,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 13,
+    "op": "section_replace"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 915,
+   "variation_changed": 1900,
+   "variation_choices": 7702,
+   "verify": "brut-breed: 51569 events, hash chain intact, head 34c98c4196d0b6fc5ea7fcd11fb56a00a435c8b352a911a6c8747f2a8282181b; checkpoint at entry 51569 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 730.962
+  },
+  {
+   "T": 47,
+   "arm": "W",
+   "calls_used": 1060627,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 1,
+    "draws": 12,
+    "lost": 1,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 47,
+    "op": "section_crossover"
+   },
+   "mean_preference": 0.7074426387864351,
+   "passes": true,
+   "preference_values": 1245,
+   "seed": 916,
+   "variation_changed": 2203,
+   "variation_choices": 7702,
+   "verify": "brut-breed: 40568 events, hash chain intact, head c139d174e789d9b75e86ab1f09d238b65be8041cbc0e7b5e88d8332b9ef753aa; checkpoint at entry 40568 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 622.065
+  },
+  {
+   "T": 210,
+   "arm": "W0",
+   "calls_used": 990707,
+   "deviations": [],
+   "draws": {
+    "brought": 5,
+    "changed": 63,
+    "draws": 170,
+    "lost": 24,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 210,
+    "op": "section_add"
+   },
+   "mean_preference": 1.0531937829758142,
+   "passes": true,
+   "preference_values": 1302,
+   "seed": 916,
+   "variation_changed": 2247,
+   "variation_choices": 7953,
+   "verify": "brut-breed: 35692 events, hash chain intact, head 891a304ef61f2de5503c43995ac173bd8f524c8dafaf5445432973c63642d296; checkpoint at entry 35692 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 595.977
+  },
+  {
+   "T": 913,
+   "arm": "N",
+   "calls_used": 1042427,
+   "deviations": [],
+   "draws": {
+    "brought": 2,
+    "changed": 35,
+    "draws": 159,
+    "lost": 20,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 913,
+    "op": "section_replace"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 916,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 38583 events, hash chain intact, head 07f91b692d7989e81cde0d6f75ec113a4a1bb71d5b0dbcdc2f338ed6e2b14676; checkpoint at entry 38583 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 476.607
+  },
+  {
+   "T": 22,
+   "arm": "WF",
+   "calls_used": 1017531,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 10,
+    "draws": 18,
+    "lost": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 22,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 916,
+   "variation_changed": 2128,
+   "variation_choices": 8444,
+   "verify": "brut-breed: 47201 events, hash chain intact, head 688d0129f93c594007e8a34973db353fa2c0b596f3c133e17e61d5dcc75528a5; checkpoint at entry 47201 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 661.739
+  },
+  {
+   "T": 387,
+   "arm": "W",
+   "calls_used": 1101006,
+   "deviations": [],
+   "draws": {
+    "brought": 2,
+    "changed": 30,
+    "draws": 100,
+    "lost": 20,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 387,
+    "op": "section_crossover"
+   },
+   "mean_preference": 0.7782602026333382,
+   "passes": true,
+   "preference_values": 1395,
+   "seed": 917,
+   "variation_changed": 2178,
+   "variation_choices": 7313,
+   "verify": "brut-breed: 33982 events, hash chain intact, head f58f8a1318b438f661bf3528eb262b2a596c9b45c636627ede14a129a3182ba0; checkpoint at entry 33982 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 533.21
+  },
+  {
+   "T": 46,
+   "arm": "W0",
+   "calls_used": 1028544,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 13,
+    "draws": 34,
+    "lost": 5,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 46,
+    "op": "stage_add"
+   },
+   "mean_preference": 1.0337323732750183,
+   "passes": true,
+   "preference_values": 1182,
+   "seed": 917,
+   "variation_changed": 2389,
+   "variation_choices": 8051,
+   "verify": "brut-breed: 39949 events, hash chain intact, head a83d2e934ee7f6acc8716c8eb6795905ceee338d753745e0d2fd270309d65897; checkpoint at entry 39949 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 614.153
+  },
+  {
+   "T": 137,
+   "arm": "N",
+   "calls_used": 1080766,
+   "deviations": [],
+   "draws": {
+    "brought": 2,
+    "changed": 18,
+    "draws": 53,
+    "lost": 9,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 137,
+    "op": "section_add"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 917,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 31092 events, hash chain intact, head 3dc23226ad1aa5f84d2e779aa9f3b5973a19b3c22182c2b154ab6758c007cd17; checkpoint at entry 31092 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 417.115
+  },
+  {
+   "T": 147,
+   "arm": "WF",
+   "calls_used": 1013810,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 46,
+    "draws": 100,
+    "lost": 4,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 147,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 917,
+   "variation_changed": 1187,
+   "variation_choices": 3520,
+   "verify": "brut-breed: 41867 events, hash chain intact, head 332147eb76159f33bd9313a64dca3038b57429ad7e9ccf415e15e81e9a87e772; checkpoint at entry 41867 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 573.834
+  },
+  {
+   "T": null,
+   "arm": "W",
+   "calls_used": 1006357,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 13,
+    "draws": 197,
+    "lost": 11,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": null,
+   "mean_preference": 0.688837743966044,
+   "passes": false,
+   "preference_values": 1116,
+   "seed": 918,
+   "variation_changed": 2229,
+   "variation_choices": 5721,
+   "verify": "brut-breed: 39068 events, hash chain intact, head b25d8f447999ca15e248b558a4e9755a170e9b1614a85a1745e15608d8eb8532; checkpoint at entry 39068 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 573.974
+  },
+  {
+   "T": 926,
+   "arm": "W0",
+   "calls_used": 1036885,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 67,
+    "draws": 229,
+    "lost": 23,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 926,
+    "op": "stage_add"
+   },
+   "mean_preference": 0.9698696108431624,
+   "passes": true,
+   "preference_values": 1212,
+   "seed": 918,
+   "variation_changed": 1990,
+   "variation_choices": 6032,
+   "verify": "brut-breed: 29251 events, hash chain intact, head 91a42676c34f6eccee9b71a470aefb37c19526e2157303d6014836d4ac293969; checkpoint at entry 29251 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 539.351
+  },
+  {
+   "T": 396,
+   "arm": "N",
+   "calls_used": 970571,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 20,
+    "draws": 53,
+    "lost": 12,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 396,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 918,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 26523 events, hash chain intact, head d15947b577af888d2b79518ffdea6e14c16a6175aec3c30583cad66fad28ffdf; checkpoint at entry 26523 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 325.317
+  },
+  {
+   "T": 90,
+   "arm": "WF",
+   "calls_used": 1052290,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 53,
+    "draws": 64,
+    "lost": 2,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 90,
+    "op": "section_replace"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 918,
+   "variation_changed": 1330,
+   "variation_choices": 3914,
+   "verify": "brut-breed: 47408 events, hash chain intact, head 2cb7b5d57868e3fda3e58a496347ca78ef5c9c32913d1591514165ed93bd0e9c; checkpoint at entry 47408 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 624.014
+  },
+  {
+   "T": 166,
+   "arm": "W",
+   "calls_used": 1251283,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 12,
+    "draws": 44,
+    "lost": 3,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 166,
+    "op": "section_crossover"
+   },
+   "mean_preference": 1.2820651664621936,
+   "passes": true,
+   "preference_values": 1563,
+   "seed": 919,
+   "variation_changed": 1642,
+   "variation_choices": 9538,
+   "verify": "brut-breed: 43095 events, hash chain intact, head 7c0fcc32dcaa34b245a6c1e9dc875cba9b1c901a7b5426bf44c0471b140c304b; checkpoint at entry 43095 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 665.918
+  },
+  {
+   "T": 133,
+   "arm": "W0",
+   "calls_used": 1234969,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 6,
+    "draws": 15,
+    "lost": 2,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 133,
+    "op": "section_replace"
+   },
+   "mean_preference": 0.9948154507263501,
+   "passes": true,
+   "preference_values": 1359,
+   "seed": 919,
+   "variation_changed": 2225,
+   "variation_choices": 7173,
+   "verify": "brut-breed: 41264 events, hash chain intact, head a4e9f04a156f02004b1bfe5c0b0cd71af324d8d7c2ea762a277c77fccf1b9e0a; checkpoint at entry 41264 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 737.418
+  },
+  {
+   "T": 84,
+   "arm": "N",
+   "calls_used": 1037584,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 14,
+    "draws": 40,
+    "lost": 4,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 84,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 919,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 35388 events, hash chain intact, head e8d667576651196ff913fc2a7c5233e9a7c7e489489000d2069db9e21ca13093; checkpoint at entry 35388 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 434.009
+  },
+  {
+   "T": 5,
+   "arm": "WF",
+   "calls_used": 1162177,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 1,
+    "draws": 2,
+    "lost": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 2,
+   "first_three": {
+    "generation": 5,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 919,
+   "variation_changed": 1764,
+   "variation_choices": 5951,
+   "verify": "brut-breed: 35902 events, hash chain intact, head bb37dbf70511add2d946b5ae18e6f6832c7d408dad050702bcf420332d65dfa3; checkpoint at entry 35902 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 709.771
+  },
+  {
+   "T": null,
+   "arm": "W",
+   "calls_used": 999122,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 98,
+    "draws": 161,
+    "lost": 31,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": null,
+   "mean_preference": 1.2639721376096897,
+   "passes": false,
+   "preference_values": 1218,
+   "seed": 920,
+   "variation_changed": 1889,
+   "variation_choices": 5155,
+   "verify": "brut-breed: 47601 events, hash chain intact, head df12612b470dc5e87c567130167cfec36d082aedbc2b99d2405f64908336d272; checkpoint at entry 47601 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 680.766
+  },
+  {
+   "T": 206,
+   "arm": "W0",
+   "calls_used": 1023931,
+   "deviations": [],
+   "draws": {
+    "brought": 1,
+    "changed": 17,
+    "draws": 45,
+    "lost": 3,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 1,
+   "first_three": {
+    "generation": 206,
+    "op": "section_replace"
+   },
+   "mean_preference": 0.9978633750122816,
+   "passes": true,
+   "preference_values": 1311,
+   "seed": 920,
+   "variation_changed": 2302,
+   "variation_choices": 7738,
+   "verify": "brut-breed: 37182 events, hash chain intact, head fe79f28a08b983f91c7be457a0e72e716457cfd630c927ad6562307721d47eb6; checkpoint at entry 37182 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 562.468
+  },
+  {
+   "T": 235,
+   "arm": "N",
+   "calls_used": 1098778,
+   "deviations": [],
+   "draws": {
+    "brought": 0,
+    "changed": 3,
+    "draws": 10,
+    "lost": 2,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_change": null,
+   "first_three": {
+    "generation": 235,
+    "op": "section_crossover"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 920,
+   "variation_changed": null,
+   "variation_choices": null,
+   "verify": "brut-breed: 27258 events, hash chain intact, head 758ef7ea8ed938dca2aa98e3c8521c72330e5de54ca6c6b5dffb21ccd1e16cf1; checkpoint at entry 27258 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 394.445
+  },
+  {
+   "T": 60,
+   "arm": "WF",
+   "calls_used": 1026438,
+   "deviations": [],
+   "draws": {
+    "brought": 2,
+    "changed": 15,
+    "draws": 34,
+    "lost": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_change": 2,
+   "first_three": {
+    "generation": 60,
+    "op": "section_replace"
+   },
+   "mean_preference": null,
+   "passes": true,
+   "preference_values": 0,
+   "seed": 920,
+   "variation_changed": 1747,
+   "variation_choices": 6284,
+   "verify": "brut-breed: 44192 events, hash chain intact, head a575fb16543a8e1d1ee420ad6b5b507dfe4cdba75b343ecd9a3bfacf0526db04; checkpoint at entry 44192 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "wall_seconds": 621.932
+  }
+ ],
+ "seeds": [
+  913,
+  914,
+  915,
+  916,
+  917,
+  918,
+  919,
+  920
+ ]
+}

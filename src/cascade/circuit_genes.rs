@@ -20,6 +20,7 @@
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
 
+use crate::cascade::designer::named_families;
 use crate::cascade::domain::GenePool;
 use crate::cascade::genome::{Cascade, Section, Stage, Traits, Worker};
 use crate::cascade::qubit::Gate;
@@ -329,6 +330,7 @@ pub fn circuit_seed_cascades() -> Vec<(String, Cascade)> {
             temperature: 0.2,
             answer_tokens: 512,
             self_check: false,
+            ..Traits::default()
         },
     };
 
@@ -381,14 +383,15 @@ pub fn no_gate_lists(c: &Cascade) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// The genes of circuit breeding: the seeds, the phrase pool, the brief and the rule that
-/// refuses gate lists.
+/// The genes of circuit breeding: the seeds, the phrase pool, the brief, the rule that
+/// refuses gate lists, and the families a text names by the stems the designer reads.
 pub fn circuit_pool() -> GenePool {
     GenePool {
         seeds: circuit_seed_cascades,
         phrases: CIRCUIT_PHRASES,
         brief: &CIRCUIT_BRIEF,
         admit: no_gate_lists,
+        families_of: Some(named_families),
     }
 }
 
@@ -517,7 +520,7 @@ fn is_qubit_index(word: &str) -> bool {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
@@ -756,6 +759,7 @@ mod tests {
                 temperature: 0.0,
                 answer_tokens: 512,
                 self_check,
+                ..Traits::default()
             },
         }
     }
@@ -1254,6 +1258,7 @@ mod tests {
                     temperature: 0.2,
                     answer_tokens: 512,
                     self_check: false,
+                    ..Traits::default()
                 },
                 "{name}"
             );
@@ -1300,6 +1305,70 @@ mod tests {
         ]);
 
         assert_eq!(calls, 4 * (5 * 32 + 6 * 384));
+        assert_eq!(hits, expected);
+    }
+
+    /// `run` with random phases from `phases` on every request (step 2): the circuit the
+    /// Cascade chooses when its Workers' requests carry phases, as a simulated designer
+    /// receives them in a Run with Souls.
+    fn run_with_phases(
+        c: &Cascade,
+        target: &Target,
+        seed: u64,
+        phases: &mut ChaCha8Rng,
+    ) -> Option<Circuit> {
+        let mut chosen: Vec<Circuit> = Vec::new();
+
+        for (k, stage) in c.stages.iter().enumerate() {
+            let w = stage.workers.first().expect("a Worker");
+            let model = SimDesigner::from_tag(&w.model).expect("a simulated designer");
+            let prompt = render_circuit_solve_prompt(target, MAX_GATES, &chosen);
+            let req = GenRequest {
+                phases: Some((0..8).map(|_| phases.random()).collect()),
+                ..circuit_request(w, prompt, derive_seed(seed, &format!("stage{k}/worker0")))
+            };
+            let reply = model.generate(&req).expect("generate");
+
+            if reply.stop_reason == StopReason::Stop
+                && let Some(answer) = parse_circuit_answer(&reply.text, target.qubits(), MAX_GATES)
+            {
+                chosen.push(answer);
+            }
+        }
+
+        chosen.last().cloned()
+    }
+
+    #[test]
+    fn the_step1_calibration_holds_with_phases() {
+        // The count of `the_seeds_reach_only_swap_and_cs_on_every_dressing` with random
+        // phases on every request: the seeds still solve exactly swap and cs, in every
+        // disguise. `designer.rs` checks the pinned routes in a test of the same name.
+        let mut phases = rng(43);
+        let mut hits: BTreeMap<(String, &str), usize> = BTreeMap::new();
+
+        for (seed, c) in circuit_seed_cascades() {
+            for (name, base, (t, cnot)) in targets() {
+                for (i, d) in (0u64..).zip(every_dressing(base.qubits())) {
+                    let target = base.dress(&d);
+                    let reached = run_with_phases(&c, &target, i, &mut phases).is_some_and(|a| {
+                        let checked = check(&target, &a).expect("check");
+
+                        checked.exact && checked.cost.t <= t && checked.cost.cnot <= cnot
+                    });
+
+                    if reached {
+                        *hits.entry((seed.clone(), name)).or_default() += 1;
+                    }
+                }
+            }
+        }
+
+        let expected = BTreeMap::from([
+            (("linear".to_string(), "swap"), 32),
+            (("phase".to_string(), "cs"), 32),
+        ]);
+
         assert_eq!(hits, expected);
     }
 
@@ -1597,5 +1666,17 @@ mod tests {
         }
 
         assert!((pool.admit)(&single("strategy", "H 0; CNOT 0 1; T 1")).is_err());
+
+        // The families of a text are those the designer reads, in its order.
+        let families_of = pool
+            .families_of
+            .expect("circuits name the families of a text");
+
+        assert_eq!(families_of(SEED_LINEAR), [0]);
+        assert_eq!(families_of(SEED_HADAMARD), [2]);
+
+        for (_, text) in CIRCUIT_PHRASES {
+            assert_eq!(families_of(text), named_families(text), "{text}");
+        }
     }
 }

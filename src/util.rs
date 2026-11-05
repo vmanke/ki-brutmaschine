@@ -1,4 +1,4 @@
-//! Shared helpers: error type, hashing, seeds, time, `.env` parsing.
+//! Shared helpers: error type, bounded file reads, hashing, seeds, time, `.env` parsing.
 //!
 //! This module is complete. Other modules build on it.
 
@@ -56,6 +56,47 @@ impl From<serde_json::Error> for BrutError {
 }
 
 pub type Result<T> = std::result::Result<T, BrutError>;
+
+/// The text of the regular file at `path`, of at most `limit` bytes.
+///
+/// A symlink, a FIFO, a device or a directory is refused before it is opened: opening a FIFO
+/// blocks, and /dev/zero never ends. The opened handle is checked again, and the read stops
+/// after `limit` bytes, so a file that is swapped or grows after the first check cannot
+/// exhaust memory either. The errors do not name the path; the caller does.
+pub fn read_regular_file(path: &Path, limit: u64) -> Result<String> {
+    use std::io::Read;
+
+    let not_regular = || BrutError::Invalid("not a regular file".to_string());
+
+    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
+        return Err(not_regular());
+    }
+
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+
+    if !meta.is_file() {
+        return Err(not_regular());
+    }
+
+    if meta.len() > limit {
+        return Err(BrutError::Invalid(format!(
+            "{} bytes, max {limit}",
+            meta.len()
+        )));
+    }
+
+    let mut text = String::new();
+
+    file.take(limit.saturating_add(1))
+        .read_to_string(&mut text)?;
+
+    if text.len() as u64 > limit {
+        return Err(BrutError::Invalid(format!("more than {limit} bytes")));
+    }
+
+    Ok(text)
+}
 
 /// Lower-case hex SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -293,6 +334,47 @@ mod tests {
         assert_eq!(bytes.len(), 64);
         assert!(bytes.iter().all(|&b| b == bytes[0]));
         assert_eq!(std::fs::read_dir(&dir).expect("list").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_regular_file_refuses_what_is_no_small_regular_file() {
+        let dir = std::env::temp_dir().join(format!("brut-util-regular-{}", std::process::id()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let file = dir.join("model.json");
+
+        std::fs::write(&file, "{}").expect("write");
+
+        assert_eq!(read_regular_file(&file, 2).expect("fits"), "{}");
+        assert!(read_regular_file(&file, 1).is_err());
+
+        // A device never ends, and a directory is no file to read either.
+        for path in [Path::new("/dev/zero"), dir.as_path()] {
+            assert!(read_regular_file(path, 1024).is_err(), "{}", path.display());
+        }
+
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.json");
+
+            std::os::unix::fs::symlink(&file, &link).expect("symlink");
+            assert!(read_regular_file(&link, 1024).is_err());
+
+            // A FIFO is refused before it is opened, so the read does not block.
+            let fifo = dir.join("fifo.json");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .is_ok_and(|status| status.success());
+
+            if made {
+                assert!(read_regular_file(&fifo, 1024).is_err());
+            }
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

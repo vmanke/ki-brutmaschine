@@ -1,6 +1,6 @@
 # Stage 2 model-backend contract
 
-Version: contract-v2, 2026-10-29 (v1: 2026-10-21; v2 adds `think_tokens`). This document is normative for the model backend
+Version: contract-v3, 2026-11-01 (v1: 2026-10-21; v2, 2026-10-29, adds `think_tokens`; v3 adds `phases`, `soul_decided` and `reads_phases()`). This document is normative for the model backend
 of Stage 2. It defines the interface the core already has (`src/backend.rs`) and the
 separate adapter that serves a local open model through Ollama in a Docker sandbox.
 The adapter runs only on a host the user controls; this managed container cannot run it
@@ -19,10 +19,10 @@ prompt mutator, code mutator) is specified elsewhere and is not part of this con
 ## 1. Interface (already in core, `src/backend.rs`)
 
 ```rust
-pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64, think_tokens: u32 }
+pub struct GenRequest { system, prompt, max_tokens: u32, temperature: f32, seed: u64, think_tokens: u32, phases: Option<Vec<u16>> }
 pub enum StopReason { Stop, Length, Refusal, Error }
-pub struct GenResponse { text, prompt_tokens: u32, completion_tokens: u32, stop_reason, backend }
-pub trait ModelBackend { fn name(&self) -> &str; fn generate(&self, &GenRequest) -> Result<GenResponse>; }
+pub struct GenResponse { text, prompt_tokens: u32, completion_tokens: u32, stop_reason, backend, soul_decided: bool }
+pub trait ModelBackend { fn name(&self) -> &str; fn generate(&self, &GenRequest) -> Result<GenResponse>; fn reads_phases(&self) -> bool { false } }
 pub struct StubModel;   // deterministic, no network, for tests and local development here
 ```
 
@@ -30,7 +30,23 @@ The orchestrator depends only on this trait. It uses `StubModel` here and the Ol
 adapter on the host. It checks `GenResponse::is_usable()` (clean stop and non-empty) before
 it parses an answer as a proposal.
 
-## 2. The Ollama adapter (separate crate `backend-ollama`, host only)
+**contract-v3: the Soul (step 2, `.scratch/seele-und-kappa/spec.md`, section 11.1).**
+
+- `GenRequest::phases` holds the current phases of the Worker's Soul, one per hypothesis
+  family of the Domain, with the readout applied (in the real-valued arm each phase is 0
+  or 32768). It has the serde default `None` and is left out of the JSON when `None`. The
+  breeder fills it only in the solve and Stage-vote requests of a Cascade's own evaluation,
+  never in a peer judgment, and only for a backend whose `reads_phases()` is true. So the
+  Ollama adapter never receives phases, and every recorded request and its key stay as they
+  are.
+- `GenResponse::soul_decided` is true when the request's phases decided the reply: the reply
+  differs from the reply to the same request without phases. It has the serde default
+  `false` and is left out of the JSON when false, so a response from an adapter that does
+  not know the field still reads.
+- `ModelBackend::reads_phases()` is false by default. Only the simulated models (`SimModel`,
+  `SimDesigner`) return true. The Family strengths of a task never reach a request.
+
+## 2. The Ollama adapter (separate crate `backend-ollama`, host only; built)
 
 MUST hold for the adapter:
 
@@ -71,6 +87,9 @@ MUST hold for the adapter:
   runtime. Every request and its full answer are recorded in the run (ADR 0002), and a
   repeated run replays the recorded answers instead of calling the model again. Thus the
   run is reproducible even though the model is not.
+- I8. **No Soul (contract-v3).** The adapter keeps the default `reads_phases()`, false, so
+  it never receives `phases`, and it answers with `soul_decided` false. A real model sees
+  no Soul; with real models the Soul acts only in the Stage vote.
 
 ## 3. Host setup (user, once)
 
@@ -87,13 +106,41 @@ Documented for the host, not run here:
 
 - The core builds, tests and clippy stay clean with `backend` present (done).
 - The adapter crate, once added on a host, exchanges a real `GenRequest`/`GenResponse`
-  with a running Ollama server and records both in the archive.
-- A request to any non-loopback host is refused with a `BrutError`.
+  with a running Ollama server and records both in the archive (done, PR #33: the live
+  test against `qwen2.5:7b`, and three breeding runs with 2704 recorded Worker calls,
+  `docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
+- A request to any non-loopback host is refused with a `BrutError` (done, unit test
+  `only_loopback_hosts_pass` and `the_allow_list_and_the_prefix_are_enforced_before_any_call`).
 - With the sandbox, a mutated program that tries to open a socket fails, because the
-  container has no network.
+  container has no network (open: the sandbox is not built; cascade breeding runs no
+  mutated code, so its runs do not need it).
 
 ## 5. What is built here vs on the host
 
-- **Here (this container):** the `ModelBackend` trait, `StubModel`, their tests, and this
-  contract. Nothing calls a network.
-- **On the host:** the `backend-ollama` crate, the Docker sandbox, and the first real run.
+- **In the core crate:** the `ModelBackend` trait, `StubModel`, their tests, and this
+  contract. Nothing calls a network. `brut-breed` offers one slot, `EXTRA_BACKENDS`, for
+  backends of allow-listed tags that are not simulated; the core binary never fills it.
+- **In `backend-ollama/` (built, PR #33, 2026-10-31):** `OllamaBackend` (I2, I3, I5, I6),
+  `Recorded` (I7, file `<out>/llm/worker-calls.jsonl`), and the program
+  `brut-breed-ollama`, which includes `src/bin/brut-breed.rs` as a module and fills the
+  slot for tags `ollama:<model>`. The allow-list holds only models without a thinking
+  mode (`qwen2.5:7b`, `qwen2.5:14b`, `qwen2.5:32b`, `llama3.1:8b`), so `think_tokens` is
+  ignored as I5 says for such models. Open: the Docker sandbox of section 3.
+- **On the host (an H200 VM, 2026-10-31):** Ollama 0.40.13 as a system service on
+  127.0.0.1:11434 and the first real runs (`docs/ERGEBNISSE_STUFE2C_ERSTE_LAEUFE.md`).
+  Ollama serves one request at a time there.
+- **vLLM (built, 2026-10-31):** the module `backend_ollama::vllm` serves tags
+  `vllm:<served model name>` through `/v1/chat/completions` of a vLLM server on loopback,
+  with the same guarantees (I3, I5 for models without a thinking mode, I6, and I7 through
+  `Recorded`). On the H200 it gives 40 times the throughput of Ollama at 64 parallel
+  requests.
+- **Thinking model (built, 2026-10-31):** `vllm:qwen3.8-27b` follows I5: `think_tokens` 0
+  turns thinking off; a budget above 0 turns it on and picks `reasoning_effort` by the
+  thresholds recorded in `backend_ollama::vllm` (1 to 2048 low, to 3072 medium, to 4096
+  xhigh); the request asks for `max_tokens + think_tokens` and the adapter checks each part
+  on its own (reasoning above `think_tokens`, or answer above `max_tokens`, is `Length`).
+  The record keeps the reasoning, the level and both token counts (`thinking`).
+- **Mutator and control (built, 2026-10-31):** `brut-mutator` answers the Mutator requests
+  of a paused run with a local model (recorded in `llm/mutator-calls.jsonl`); `vote-control`
+  measures the compute-equal majority vote of a seed cascade on a finished run's select
+  panel. Both live in `backend-ollama/`.

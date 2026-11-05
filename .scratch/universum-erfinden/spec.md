@@ -41,6 +41,35 @@ search, and runs studied as universes.
 | Q45 | Build all three quantum forms, each against a classical control: quantum-inspired amplitudes (Han and Kim 2002), quantum Workers (simulated circuits such as Grover search, after the simulator exists), quantum probability for judgments (Pothos and Busemeyer 2013). |
 | Q46 | With real language models the soul acts in voting: votes add as complex numbers and the squared magnitude decides; in the simulator it also interferes over explicit hypotheses. |
 | Q47 | Build order: (1) universe observables and inventing with qubits; (2) soul and kappa; (3) overseers; (4) human feelings; (5) quantum Workers and the TextGrad operator. One PR and one ADR per step. |
+| Q51 | The Character is a term of the model: computed and measured in runs, not only a picture in the atlas. |
+| Q52 | The Soul is the inherited phases, one per hypothesis family; they are its identity. Their strengths come from the Task (Family strength, Q63); learned strengths are a later variant, equal strengths the control. Chosen after a check of 20 sources from speckle optics, signal phase, quantum cognition and phasor networks. |
+| Q53 | New terms go to the glossary in small pull requests of their own, never inside a code pull request. |
+| Q54 | Each Worker has a Character; each Stage also has a joint pattern of its Workers' contributions, the Array pattern (Q61). |
+| Q55 | The Character is recomputed from the Soul each time and never inherited. Inheritance has three channels: genes, Upbringing (Q59) and Souletics (Q66). |
+| Q56 | Observations change the Soul, and with it the Character, during a run; the change is logged per generation. |
+| Q57 | For the model, the Soul shows itself through its Character (rung 1 of the ladder below); for nature, Q48 stays open (rung 4). |
+| Q58 | Soul population: every child brings its own unit of Soul and nobody loses any, as in Hoppe's urn (1984); the archive keeps every member. |
+| Q59 | Upbringing is imprinting (the parents observe the child's first answers and so shift its Soul toward theirs) and teaching (a prompt section written at birth from the parents' best solved examples and lessons, never inherited as a gene). |
+| Q60 | kappa is called Coupling strength (German "Kopplungsstärke des Beobachters"), as in the Kuramoto model. It replaces the name "feeling" of Q44, which stays reserved for human feelings (Q34 to Q36). |
+| Q61 | The joint pattern of a Stage is its Array pattern (German "Gruppencharakteristik der Stufe"), the antenna term for separate elements with their own phases. |
+| Q62 | Observations are both the judgments in a Stage's vote and peer judgments. |
+| Q63 | Family strengths come from the Task as its Domain states them, the same for every Worker on that Task; equal strengths are the control, learned strengths a later variant. |
+| Q64 | Souletics: a child's Soul is a copy of one parent's Soul or, after a crossover, a mix of both parents' phases; each phase moves by a small random angle; now and then the child gets an entirely new Soul, as the new colour in Hoppe's urn. Each part can be switched off for a control. |
+| Q65 | A parent passes on its Soul from birth, not the Soul as Observations changed it; experience passes only through Upbringing, so the three channels stay separable. |
+| Q66 | The glossary calls the third channel Souletics and defines it as soul inheritance; German reports keep the owner's word "Seeletik". |
+| Q67 | Family strengths come from the construction routes: each family of a step-1 route that provably reaches the reference gets strength 1, every other family 0; for grids, the families of the hidden rule get 1. Equal strengths stay the control. |
+| Q68 | In a Stage vote, a judgment's phasor is the judge's phase sum weighted by the task's family strengths; its squared length is the judge's Character for that task, so a Worker whose Soul fits the task votes louder. |
+| Q69 | An Observation moves the observed Worker toward the observer by kappa times the phase gap, and the observer back by half of that; both start from the state before the Observation, as in the atlas sketch. |
+| Q70 | The real control (arm V) carries the same hidden angles as the complex arm and reads only a sign; in a vote, ties go first to the number of judgments, then to the order of the answers. |
+| Q71 | Seed programs start with a fixed kappa, which the pilot sets (about 0.2); a child inherits kappa from its source Worker with a small random step at birth; kappa is not a gene, and the Mutator does not see it. |
+| Q72 | In the simulator the Soul acts only where a model today takes the first of equals or flips a coin; costs, scores and the step-1 calibration stay as they are. |
+| Q73 | Imprinting follows the child's first answer: each child Worker moves toward its source Worker's current Soul by the Q69 rule, with no model call and no change to the parents. Teaching uses only solved examples written by fixed code and stays off in the comparison. |
+| Q74 | Two separate claims, "S before V" and "S before K", each wrong with probability at most 1/200, both together at most 1/100. Arm E (equal strengths) runs in the pilot for description; if S beats E there, a third claim can still be added before the pre-registration is frozen. |
+
+Q67 to Q74 were decided on 2026-10-31 by the recommended answers (Q67 a, Q68 a, Q69 a, Q70 a,
+Q71 a, Q72 a, Q73 a and d, Q74 a). This follows the owner's standing rule: Claude decides open
+design questions by its recommendation and reports each decision, and the owner can overrule any
+of them. The questions with all their options are in `.scratch/seele-und-kappa/owner-questions.md`.
 
 ## What the experiments may claim
 
@@ -59,7 +88,7 @@ record the ladder of claims the evidence can carry:
 
 ## Open
 
-- Q48: an operational definition of "soul" that yields a measurable prediction.
+- Q48: an operational definition of "soul" that yields a measurable prediction. For the model, Q57 answers it through the Character; for nature it stays open.
 
 ## Tickets
 

@@ -1,28 +1,39 @@
 //! End-to-end tests: tiny real runs with the hidden evaluator, resume, kill switch, tamper detection.
 
+use std::collections::HashSet;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use brutmaschine::archive::{Archive, CandidateStatus, RecordKind};
+use brutmaschine::cnn::families::Family;
 use brutmaschine::cnn::genome::{
     Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
 };
-use brutmaschine::config::{Config, Limits, ScoreWeights};
+use brutmaschine::config::{Config, Limits, ModelKinds, ScoreWeights};
 use brutmaschine::evolve::{
-    self, ARCHIVE_FILE, BASE_GENERATOR, CONFIG_FILE, EvalSetup, MODELS_DIR, RunSummary,
+    self, ARCHIVE_FILE, BASE_GENERATOR, BASE_MODEL_GENERATOR, CONFIG_FILE, EvalSetup,
+    INIT_GENERATOR, MODELS_DIR, PROMOTED_GENERATOR, RunSummary,
 };
 use brutmaschine::genome::{Activation, Arch, Genome, Optimizer};
-use brutmaschine::hidden_eval::create_secret;
+use brutmaschine::hidden_eval::{HIDDEN_SEED_KEY, create_secret};
+use brutmaschine::hitl::{
+    BaseModelScore, CandidateAdapter, LineageStep, MAX_CANDIDATE_FILE_BYTES, MODEL_DIR,
+    ModelAdapter, ModelProvenance, PromotedModel, model_seed_ids,
+};
 use brutmaschine::model::Model;
 use brutmaschine::nn::Mlp;
+use brutmaschine::promote::{self, PROMOTE_DIR, PromotionManifest};
 use brutmaschine::safety;
 use brutmaschine::score;
 use brutmaschine::task::{self, Split, TaskKind};
 use brutmaschine::util::{BrutError, derive_seed};
+use brutmaschine::variation::CNN_GENERATOR;
 
 const EVAL_BIN: &str = env!("CARGO_BIN_EXE_brut-eval");
 const BRUT_BIN: &str = env!("CARGO_BIN_EXE_brut");
+const INGEST_BIN: &str = env!("CARGO_BIN_EXE_brut-ingest");
 
 /// A fresh, empty directory for one test.
 fn fresh_dir(name: &str) -> PathBuf {
@@ -503,6 +514,781 @@ fn a_cnn_run_gives_the_same_files_at_1_and_3_matrix_threads() {
     assert_eq!(fitness_list(&one), fitness_list(&three));
     assert_eq!(model_files(&one), model_files(&three));
     assert!(cnn_files >= 3, "{cnn_files} CNN files");
+}
+
+/// A short run with CNNs on the shapes task (ticket 05): the base models that fit
+/// `max_params` of 1100 (GoogLeNet, Xception and ShuffleNet; the 13 others stay out with a
+/// log line), 2 random CNNs, and 3 children. A clock of 600 s per candidate keeps a busy
+/// machine from stopping a training, which would change the results.
+fn short_cnn_config() -> Config {
+    Config {
+        task: TaskKind::Shapes,
+        master_seed: 1,
+        population_init: 2,
+        generations: 1,
+        children_per_generation: 3,
+        crossover_rate: 0.5,
+        limits: Limits {
+            max_params: 1100,
+            max_candidate_seconds: 600.0,
+            max_total_seconds: 3600.0,
+            ..Limits::default()
+        },
+        threads: 0,
+        models: ModelKinds::Cnn,
+        ..Config::default()
+    }
+}
+
+/// Set the value of every `"key":` in `text` to `zero`. A value is a JSON number or a string
+/// without escapes, as in `tests/mlp_golden.rs`.
+fn mask(text: &str, key: &str, zero: &str) -> String {
+    let pattern = format!("\"{key}\":");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(at) = rest.find(&pattern) {
+        let after = &rest[at + pattern.len()..];
+        let value = after.trim_start_matches(' ');
+        let len = match value.strip_prefix('"') {
+            Some(inner) => inner.find('"').expect("closing quote") + 2,
+            None => value
+                .find(|c: char| !(c.is_ascii_digit() || "+-.eE".contains(c)))
+                .unwrap_or(value.len()),
+        };
+
+        out.push_str(&rest[..rest.len() - value.len()]);
+        out.push_str(zero);
+        rest = &value[len..];
+    }
+
+    out.push_str(rest);
+
+    out
+}
+
+/// Every file of the run in `dir`, sorted by path, as text, with the clock fields set to 0:
+/// in the archive the time and the training time of each record and the hashes over them, in
+/// its head the last hash. Nothing else in a run directory without a secret holds the clock.
+fn run_files(dir: &Path) -> Vec<(String, String)> {
+    let mut paths = vec![
+        CONFIG_FILE.to_string(),
+        ARCHIVE_FILE.to_string(),
+        "archive.head".to_string(),
+    ];
+    let mut models: Vec<String> = std::fs::read_dir(dir.join(MODELS_DIR))
+        .expect("models dir")
+        .map(|entry| {
+            let name = entry.expect("dir entry").file_name();
+
+            format!("{MODELS_DIR}/{}", name.to_string_lossy())
+        })
+        .collect();
+
+    models.sort();
+    paths.extend(models);
+
+    paths
+        .into_iter()
+        .map(|rel| {
+            let text = std::fs::read_to_string(dir.join(&rel)).expect("read run file");
+            let text = mask(&text, "unix_ms", "0");
+            let text = mask(&text, "wall_seconds", "0.0");
+            let text = mask(&text, "prev_hash", "\"\"");
+            let text = mask(&text, "last_hash", "\"\"");
+
+            (rel, mask(&text, "hash", "\"\""))
+        })
+        .collect()
+}
+
+/// A short evolution run with CNNs on the shapes task gives the same files, byte for byte
+/// once the clock fields are masked, from the same seed: in two child processes `brut run
+/// --no-hidden` with `RAYON_NUM_THREADS` at 1 and 2, which sets both the worker threads that
+/// train candidates side by side and the threads of candle's matrix products. Both run at
+/// the same time, about a minute at one thread.
+#[test]
+fn a_short_cnn_run_on_shapes_is_reproducible_byte_for_byte() {
+    let config = short_cnn_config();
+    let start = |name: &str, threads: &str| {
+        let dir = fresh_dir(name);
+
+        config.save(&dir.join(CONFIG_FILE)).expect("save config");
+
+        let child = Command::new(BRUT_BIN)
+            .arg("run")
+            .arg(&dir)
+            .arg("--no-hidden")
+            .env("RAYON_NUM_THREADS", threads)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start brut");
+
+        (dir, child)
+    };
+    let (one, first) = start("cnn-short-1", "1");
+    let (two, second) = start("cnn-short-2", "2");
+    let summaries: Vec<String> = [first, second]
+        .into_iter()
+        .map(|child| {
+            let out = child.wait_with_output().expect("brut run");
+
+            assert!(
+                out.status.success(),
+                "brut run failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+
+            mask(
+                &String::from_utf8(out.stdout).expect("utf-8 summary"),
+                "wall_seconds",
+                "0.0",
+            )
+        })
+        .collect();
+    let files = run_files(&one);
+
+    assert_eq!(run_files(&two), files);
+    assert_eq!(summaries[0], summaries[1]);
+
+    let archive = Archive::open(&one.join(ARCHIVE_FILE)).expect("open");
+    let candidates = archive.candidates();
+    let first_generation: Vec<&str> = candidates
+        .iter()
+        .filter(|c| c.generation == 0)
+        .map(|c| c.generator.as_str())
+        .collect();
+    let left_out = archive
+        .records()
+        .iter()
+        .filter(
+            |r| matches!(&r.kind, RecordKind::SafetyEvent { what } if what.contains("left out")),
+        )
+        .count();
+
+    // Generation 0: the base models that fit, and the random CNNs.
+    for family in ["googlenet", "xception", "shufflenet"] {
+        let name = format!("{BASE_MODEL_GENERATOR}/{family}");
+
+        assert!(
+            first_generation.contains(&name.as_str()),
+            "{first_generation:?}"
+        );
+    }
+
+    assert_eq!(first_generation.len(), 3 + 2, "{first_generation:?}");
+    assert_eq!(
+        first_generation
+            .iter()
+            .filter(|g| **g == INIT_GENERATOR)
+            .count(),
+        2
+    );
+    assert_eq!(left_out, 13);
+    assert_eq!(files.len(), 3 + candidates.len());
+
+    // Every candidate is a CNN that trained to its end; the children come from the CNN
+    // operators. On this seed one of them exchanged the stages of the base models of two
+    // families (ShuffleNet and GoogLeNet, on the machine that wrote this test).
+    let children: Vec<_> = candidates.iter().filter(|c| c.generation == 1).collect();
+
+    for c in &candidates {
+        assert!(matches!(c.genome.arch, Arch::Cnn(_)), "{}", c.id);
+        assert_eq!(c.status, CandidateStatus::Ok, "{}", c.id);
+        assert!(!c.train.stopped_by_budget, "{}", c.id);
+    }
+
+    assert_eq!(children.len(), 3);
+    assert!(
+        children
+            .iter()
+            .all(|c| c.generator.starts_with(&format!("{CNN_GENERATOR}/"))),
+        "{:?}",
+        children.iter().map(|c| &c.generator).collect::<Vec<_>>()
+    );
+    assert!(
+        children
+            .iter()
+            .any(|c| c.generator == format!("{CNN_GENERATOR}/crossover") && c.parents.len() == 2)
+    );
+}
+
+/// The commit that the promotion tests name. A promotion checks only its form.
+const TEST_COMMIT: &str = "4613e2a";
+
+/// Write `config` and a secret with this hidden seed into `dir`. `create_secret` draws a
+/// random seed, which would change the hidden scores, and so what a run promotes, from one
+/// test run to the next.
+fn setup_with_hidden_seed(dir: &Path, config: &Config, hidden_seed: u64) -> EvalSetup {
+    config.save(&dir.join(CONFIG_FILE)).expect("save config");
+
+    let secret_env = dir.join("secret").join("hidden.env");
+
+    std::fs::create_dir_all(secret_env.parent().expect("secret dir")).expect("create secret dir");
+
+    // Mode 0600 as `create_secret` makes it: brut-eval refuses a secret that others can read.
+    let mut options = std::fs::OpenOptions::new();
+
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(&secret_env).expect("create secret");
+
+    writeln!(file, "{HIDDEN_SEED_KEY}={hidden_seed}").expect("write secret");
+
+    EvalSetup {
+        eval_bin: PathBuf::from(EVAL_BIN),
+        secret_env,
+    }
+}
+
+/// A linear model that trains for the fewest epochs: a weak base model for a winner to beat.
+fn weak_base_genome() -> Genome {
+    Genome {
+        arch: Arch::Mlp,
+        hidden: Vec::new(),
+        activation: Activation::Relu,
+        optimizer: Optimizer::Sgd,
+        learning_rate: 0.001,
+        l2: 0.0,
+        batch_size: 256,
+        epochs: 5,
+        init_scale: 1.0,
+        seed: 3,
+    }
+}
+
+/// The `*.json` files in `dir`, sorted by name.
+fn json_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .expect("read dir")
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| path.extension().is_some_and(|x| x == "json"))
+        .collect();
+
+    files.sort();
+
+    files
+}
+
+/// The way of ticket 07: a finished run promotes its winners with `brut promote`, the gate
+/// of the pool accepts them, a second promotion of the same run adds nothing once the pool
+/// holds them, and `brut init --promoted` puts them into generation 0 of a new run, which
+/// leaves out a promoted model that fails its limits, with a log line.
+///
+/// The first run is an MLP run that starts from a weak promoted model, so that it can
+/// promote (`Config::can_promote`) and stays fast.
+#[test]
+fn promoted_models_go_from_a_finished_run_into_the_first_generation_of_a_new_run() {
+    let adapter = ModelAdapter::new();
+    let from = fresh_dir("promote-from");
+    let config = Config {
+        promoted: vec![weak_base_genome()],
+        ..tiny_config(5)
+    };
+    let eval = setup_with_hidden_seed(&from, &config, 4_242);
+
+    evolve::run(&from, Some(&eval)).expect("run");
+
+    // The hidden set holds the two best by fitness and the weak model, the only base model.
+    let archive = Archive::open(&from.join(ARCHIVE_FILE)).expect("open");
+    let base = archive
+        .candidates()
+        .into_iter()
+        .find(|c| c.generator == PROMOTED_GENERATOR)
+        .expect("the weak promoted model trained");
+
+    assert!(
+        archive
+            .hidden_evals()
+            .iter()
+            .any(|h| h.candidate_id == base.id)
+    );
+
+    let empty = fresh_dir("promote-empty-pool");
+    let path = |p: &Path| p.to_str().expect("utf-8 path").to_string();
+    let out = run_brut(&[
+        "promote",
+        &path(&from),
+        "--commit",
+        TEST_COMMIT,
+        "--pool",
+        &path(&empty),
+    ]);
+
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The files are what `promote::choose` gives: at most two, each beats the base genome.
+    let expected =
+        promote::choose(&archive, TEST_COMMIT, &model_seed_ids(), &adapter).expect("promotion");
+    let promoted: Vec<&PromotedModel> = expected.promoted().collect();
+    let written = from.join(PROMOTE_DIR).join(MODEL_DIR);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(!promoted.is_empty(), "{stdout}");
+    assert!(promoted.len() <= 2);
+    assert_eq!(expected.best_base_model.id, base.id);
+    assert_eq!(json_files(&written).len(), promoted.len());
+
+    for m in &promoted {
+        let id = adapter.fingerprint(m);
+        let text = std::fs::read_to_string(written.join(format!("{id}.json"))).expect("read");
+
+        assert_eq!(text, format!("{}\n", adapter.to_json(m).expect("json")));
+        assert!(m.provenance.hidden_primary > expected.best_base_model.hidden_primary);
+        assert_eq!(m.provenance.run_id, archive.run_id().expect("run id"));
+        assert!(stdout.contains(&format!("promoted      {id}")), "{stdout}");
+    }
+
+    let manifest: PromotionManifest = serde_json::from_str(
+        &std::fs::read_to_string(from.join(PROMOTE_DIR).join("proposal.json"))
+            .expect("read manifest"),
+    )
+    .expect("manifest json");
+
+    assert_eq!(manifest, expected.manifest());
+    assert_eq!(manifest.adapter, "model");
+
+    // The gate of the pool, which CI runs on a pull request, accepts the files.
+    let gate = Command::new(INGEST_BIN)
+        .arg("--models")
+        .arg(&written)
+        .output()
+        .expect("run brut-ingest");
+
+    assert!(
+        gate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&gate.stdout)
+    );
+
+    // A human merges them into the pool. A second promotion of the run adds nothing.
+    let pool = fresh_dir("promote-pool");
+
+    for file in json_files(&written) {
+        std::fs::copy(&file, pool.join(file.file_name().expect("name"))).expect("copy");
+    }
+
+    let again = run_brut(&[
+        "promote",
+        &path(&from),
+        "--commit",
+        TEST_COMMIT,
+        "--pool",
+        &path(&pool),
+    ]);
+
+    assert!(again.status.success());
+    assert!(String::from_utf8_lossy(&again.stdout).contains("nothing to promote"));
+    assert!(!from.join(PROMOTE_DIR).exists());
+
+    // A valid pool file whose model trains longer than the next run allows.
+    let mut long = promoted[0].clone();
+
+    long.genome.epochs = 50;
+    long.provenance.lineage[0].id = long.genome.id();
+
+    assert!(adapter.validate(&long).is_ok());
+
+    std::fs::write(
+        pool.join(format!("{}.json", adapter.fingerprint(&long))),
+        adapter.to_json(&long).expect("json"),
+    )
+    .expect("write");
+
+    // A new run takes the pool into its config; this test then shrinks the run.
+    let into = fresh_dir("promote-into");
+    let init = run_brut(&[
+        "init",
+        &path(&into),
+        "--seed",
+        "6",
+        "--promoted",
+        &path(&pool),
+    ]);
+
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&init.stdout)
+            .contains(&format!("promoted: {} models", promoted.len() + 1))
+    );
+
+    let stored = Config::load(&into.join(CONFIG_FILE)).expect("config");
+    let config = Config {
+        promoted: stored.promoted.clone(),
+        ..tiny_config(6)
+    };
+
+    assert_eq!(stored.promoted.len(), promoted.len() + 1);
+    config.save(&into.join(CONFIG_FILE)).expect("save");
+    evolve::run(&into, None).expect("run");
+
+    let archive = Archive::open(&into.join(ARCHIVE_FILE)).expect("open");
+    let entered: HashSet<String> = archive
+        .candidates()
+        .into_iter()
+        .filter(|c| c.generation == 0 && c.generator == PROMOTED_GENERATOR)
+        .map(|c| c.id)
+        .collect();
+    let wanted: HashSet<String> = promoted.iter().map(|m| m.genome.id()).collect();
+    let left_out = format!(
+        "generation 0: promoted model {} left out: invalid: genome: epochs 50 outside 5..=20",
+        long.genome.id()
+    );
+
+    assert_eq!(entered, wanted);
+    assert!(
+        archive
+            .records()
+            .iter()
+            .any(|r| matches!(&r.kind, RecordKind::SafetyEvent { what } if *what == left_out)),
+        "no log line: {left_out}"
+    );
+}
+
+/// A run with the model kinds mlp and no promoted models keeps the hidden set of the runs
+/// before CNNs, even with a base genome in its config: the weak base genome, the least fit
+/// candidate, gets no hidden query, and `brut promote` refuses the run.
+#[test]
+fn an_mlp_run_with_base_genomes_keeps_its_hidden_set_and_promotes_nothing() {
+    let dir = fresh_dir("mlp-base-hidden");
+    let config = Config {
+        base_genomes: vec![weak_base_genome()],
+        ..tiny_config(5)
+    };
+
+    assert!(!config.can_promote());
+
+    let eval = setup_with_hidden_seed(&dir, &config, 4_242);
+
+    evolve::run(&dir, Some(&eval)).expect("run");
+
+    let archive = Archive::open(&dir.join(ARCHIVE_FILE)).expect("open");
+    let mut trained: Vec<_> = archive
+        .candidates()
+        .into_iter()
+        .filter(|c| matches!(c.status, CandidateStatus::Ok | CandidateStatus::Quarantined))
+        .collect();
+
+    trained.sort_by(|a, b| {
+        b.fitness
+            .total_cmp(&a.fitness)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let base = trained
+        .iter()
+        .find(|c| c.generator == BASE_GENERATOR)
+        .expect("the base genome trained")
+        .id
+        .clone();
+    let best: HashSet<String> = trained
+        .iter()
+        .take(config.hidden_eval_top_k)
+        .map(|c| c.id.clone())
+        .collect();
+    let queried: HashSet<String> = archive
+        .hidden_evals()
+        .into_iter()
+        .map(|h| h.candidate_id)
+        .collect();
+
+    assert!(
+        !best.contains(&base),
+        "the weak base genome is among the best"
+    );
+    assert_eq!(queried, best);
+
+    let out = run_brut(&[
+        "promote",
+        dir.to_str().expect("utf-8 path"),
+        "--commit",
+        TEST_COMMIT,
+        "--pool",
+        fresh_dir("mlp-base-pool").to_str().expect("utf-8 path"),
+    ]);
+
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no promoted models"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The gate of the pool (`brut-ingest --models`, which CI runs on a pull request) reads only
+/// regular files of at most `MAX_CANDIDATE_FILE_BYTES`, and each line it prints stays one
+/// line: a FIFO, a symlink to a device and a huge file are rejected at once, and neither a
+/// file name nor a provenance with line breaks can forge a line of its log.
+#[test]
+fn the_model_gate_rejects_unreadable_files_and_keeps_its_log_lines() {
+    let dir = fresh_dir("gate-files");
+    let adapter = ModelAdapter::new();
+    let mut genome = Family::Vgg.base_model();
+
+    // Another seed: no longer a base model of a family, which would be a duplicate.
+    genome.seed += 1;
+
+    let model = |generator: &str| PromotedModel {
+        genome: genome.clone(),
+        provenance: ModelProvenance {
+            run_id: "cd".repeat(32),
+            task: TaskKind::Shapes,
+            master_seed: 4,
+            commit: TEST_COMMIT.to_string(),
+            valid_primary: 0.9,
+            hidden_primary: 0.9,
+            best_base_model: BaseModelScore {
+                id: "0123456789abcdef".to_string(),
+                generator: generator.to_string(),
+                valid_primary: 0.8,
+                hidden_primary: 0.8,
+            },
+            lineage: vec![LineageStep {
+                id: genome.id(),
+                generation: 0,
+                generator: INIT_GENERATOR.to_string(),
+                parents: Vec::new(),
+            }],
+        },
+    };
+    let forged = "base-model/\n::error::forged\nok    0123456789abcdef  forged";
+
+    assert!(adapter.validate(&model("base-model/resnet")).is_ok());
+    std::fs::write(
+        dir.join(format!("{}.json", genome.id())),
+        adapter.to_json(&model(forged)).expect("json"),
+    )
+    .expect("write");
+    std::fs::write(dir.join("x\nok    0123456789abcdef  forged.json"), "{}").expect("write");
+    std::fs::File::create(dir.join("cccccccccccccccc.json"))
+        .and_then(|file| file.set_len(MAX_CANDIDATE_FILE_BYTES + 1))
+        .expect("a sparse file above the cap");
+
+    let mut files = 3;
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/dev/zero", dir.join("bbbbbbbbbbbbbbbb.json"))
+            .expect("symlink");
+        files += 1;
+
+        let made = Command::new("mkfifo")
+            .arg(dir.join("aaaaaaaaaaaaaaaa.json"))
+            .status()
+            .is_ok_and(|status| status.success());
+
+        if made {
+            files += 1;
+        }
+    }
+
+    let mut child = Command::new(INGEST_BIN)
+        .arg("--models")
+        .arg(&dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start brut-ingest");
+    let started = Instant::now();
+
+    while child.try_wait().expect("wait").is_none() {
+        if started.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+
+            panic!("brut-ingest did not finish within 60 s");
+        }
+
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let out = child.wait_with_output().expect("output");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.starts_with("REJECT ") || line.starts_with("brut-ingest: ")),
+        "{stdout}"
+    );
+    assert_eq!(
+        lines.iter().filter(|l| l.starts_with("REJECT ")).count(),
+        files,
+        "{stdout}"
+    );
+    assert!(stdout.contains(&format!("brut-ingest: 0 accepted, {files} rejected")));
+
+    // The forged generator stays inside the line that rejects its file.
+    let line = lines
+        .iter()
+        .find(|line| line.contains(&format!("{}.json", genome.id())))
+        .expect("a line for the forged model");
+
+    assert!(
+        line.contains("best_base_model must be a base model"),
+        "{line}"
+    );
+    assert!(line.contains("::error::forged"), "{line}");
+}
+
+/// `small_cnn` and two MLPs as the promoted models of a short run of both kinds on bars and
+/// stripes. `max_params` of 700 leaves out every base model of the CNN families (the
+/// smallest, ShuffleNet, has 710) and the wide MLP (4146), so generation 0 holds the CNN, the
+/// narrow MLP and 2 random genomes, an MLP and a CNN; 3 children follow. A clock of 600 s per
+/// candidate keeps a busy machine from stopping a training.
+fn promoted_config() -> Config {
+    let narrow = Genome {
+        arch: Arch::Mlp,
+        hidden: vec![2],
+        activation: Activation::Tanh,
+        optimizer: Optimizer::Adam,
+        learning_rate: 0.01,
+        l2: 0.0,
+        batch_size: 64,
+        epochs: 5,
+        init_scale: 1.0,
+        seed: 12,
+    };
+    let wide = Genome {
+        hidden: vec![16],
+        ..narrow.clone()
+    };
+
+    Config {
+        task: TaskKind::BarsAndStripes,
+        master_seed: 3,
+        population_init: 2,
+        generations: 1,
+        children_per_generation: 3,
+        crossover_rate: 0.5,
+        limits: Limits {
+            max_params: 700,
+            max_candidate_seconds: 600.0,
+            max_total_seconds: 3600.0,
+            ..Limits::default()
+        },
+        threads: 0,
+        models: ModelKinds::Both,
+        promoted: vec![small_cnn(), narrow, wide],
+        ..Config::default()
+    }
+}
+
+/// A run that starts from promoted models gives the same files, byte for byte once the clock
+/// fields are masked, from the same seed: `brut run --no-hidden` in two child processes with
+/// `RAYON_NUM_THREADS` at 1 and 2, as for the CNN run of ticket 05.
+#[test]
+fn a_run_with_promoted_models_is_reproducible_byte_for_byte() {
+    let config = promoted_config();
+    let start = |name: &str, threads: &str| {
+        let dir = fresh_dir(name);
+
+        config.save(&dir.join(CONFIG_FILE)).expect("save config");
+
+        let child = Command::new(BRUT_BIN)
+            .arg("run")
+            .arg(&dir)
+            .arg("--no-hidden")
+            .env("RAYON_NUM_THREADS", threads)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start brut");
+
+        (dir, child)
+    };
+    let (one, first) = start("promoted-1", "1");
+    let (two, second) = start("promoted-2", "2");
+    let summaries: Vec<String> = [first, second]
+        .into_iter()
+        .map(|child| {
+            let out = child.wait_with_output().expect("brut run");
+
+            assert!(
+                out.status.success(),
+                "brut run failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+
+            mask(
+                &String::from_utf8(out.stdout).expect("utf-8 summary"),
+                "wall_seconds",
+                "0.0",
+            )
+        })
+        .collect();
+    let files = run_files(&one);
+
+    assert_eq!(run_files(&two), files);
+    assert_eq!(summaries[0], summaries[1]);
+
+    let archive = Archive::open(&one.join(ARCHIVE_FILE)).expect("open");
+    let candidates = archive.candidates();
+    let mut first_generation: Vec<(&str, bool)> = candidates
+        .iter()
+        .filter(|c| c.generation == 0)
+        .map(|c| (c.generator.as_str(), c.genome.arch.is_mlp()))
+        .collect();
+    let logged = |what: &str| {
+        archive
+            .records()
+            .iter()
+            .filter(|r| matches!(&r.kind, RecordKind::SafetyEvent { what: w } if w.contains(what)))
+            .count()
+    };
+    let wide = &config.promoted[2];
+
+    // The archive orders a generation by id.
+    first_generation.sort();
+
+    assert_eq!(
+        first_generation,
+        vec![
+            (INIT_GENERATOR, false),
+            (INIT_GENERATOR, true),
+            (PROMOTED_GENERATOR, false),
+            (PROMOTED_GENERATOR, true),
+        ]
+    );
+
+    for genome in &config.promoted[..2] {
+        let entry = archive.get(&genome.id()).expect("a promoted model trained");
+
+        assert_eq!(entry.generator, PROMOTED_GENERATOR);
+        assert_eq!(&entry.genome, genome);
+    }
+    assert_eq!(logged("generation 0: base model "), 16);
+    assert_eq!(
+        logged(&format!(
+            "generation 0: promoted model {} left out: invalid: genome: 4146 params > max 700",
+            wide.id()
+        )),
+        1
+    );
+    assert_eq!(files.len(), 3 + candidates.len());
+    assert_eq!(candidates.iter().filter(|c| c.generation == 1).count(), 3);
+
+    for c in &candidates {
+        assert_eq!(c.status, CandidateStatus::Ok, "{}", c.id);
+        assert!(!c.train.stopped_by_budget, "{}", c.id);
+    }
 }
 
 /// A run directory that `brut run --no-hidden` wrote at commit bec9aa1, before CNNs: the

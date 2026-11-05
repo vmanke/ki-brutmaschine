@@ -1,0 +1,40 @@
+[package]
+name = "backend-ollama"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "The Ollama adapter of docs/STAGE2_BACKEND_CONTRACT.md: a local model behind the ModelBackend trait"
+license = "MIT"
+publish = false
+
+# A separate package (ADR 0001, contract I1): the core crate gains no dependency. Only this
+# package opens a network socket, and only to a loopback address (I3).
+[dependencies]
+brutmaschine = { path = ".." }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# Contract I2: ureq 3, no async runtime. Without default features: no TLS, http only, which
+# is all a loopback Ollama needs.
+ureq = { version = "3", default-features = false }
+
+[[bin]]
+name = "brut-breed-ollama"
+path = "src/main.rs"
+
+# Answers the Mutator requests of a paused run with a local model (module `mutator`).
+[[bin]]
+name = "brut-mutator"
+path = "src/bin/brut-mutator.rs"
+
+# The compute-equal majority-vote control of a finished run (module `vote`).
+[[bin]]
+name = "vote-control"
+path = "src/vote_control.rs"
+
+# The analysis of docs/PREREG_BREEDING_VS_VOTE.md (module `breeding_vs_vote`).
+[[bin]]
+name = "breeding-vs-vote"
+path = "src/bin/breeding-vs-vote.rs"
+
+[profile.release]
+opt-level = 3

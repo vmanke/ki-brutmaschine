@@ -3,12 +3,14 @@
 //! The crate depends on candle at commit 9515d410 of its main branch (ADR 0007).
 //! At that commit candle's CPU backend computes 17 of 60 checked backward cases
 //! wrongly, through 7 defects (D1 to D7); an eighth defect, D8, is that candle
-//! cannot seed its CPU generator. This file wraps candle's tensor in its
-//! own `Tensor` type, so code outside it can only use the functions below. They
-//! are either native candle operations whose backward pass we checked, or a
-//! replacement (W1 to W8) for one of the defects. Each replacement names its
-//! defect and the place in candle's source, as a path inside the candle
-//! repository at that commit.
+//! cannot seed its CPU generator. Ticket 04 found a ninth, D9: candle's 1-D
+//! transposed convolution has no backward pass, and its forward pass is wrong
+//! for more than one row of more than one channel. This file wraps candle's
+//! tensor in its own `Tensor` type, so code outside it can only use the
+//! functions below. They are either native candle operations whose backward
+//! pass we checked, or a replacement (W1 to W9) for one of the defects. Each
+//! replacement names its defect and the place in candle's source, as a path
+//! inside the candle repository at that commit.
 //!
 //! Training runs in f32. The gradient check in the tests runs the same
 //! functions in f64.
@@ -231,6 +233,12 @@ fn pad_spatial(x: &candle::Tensor, padding: usize) -> Result<candle::Tensor> {
 }
 
 /// Takes the positions `start, start + step, ...` (`len` of them) along `dim`.
+///
+/// candle's `index_select` refuses a tensor that is not contiguous
+/// (candle-core/src/cpu_backend/mod.rs:729), and a batch norm in training mode
+/// returns a transposed view (candle-nn/src/batch_norm.rs:252). So the input is
+/// made contiguous first. `contiguous` returns a contiguous tensor itself
+/// (candle-core/src/tensor.rs:2494-2497), so it changes no bit for one.
 fn take_strided(
     x: &candle::Tensor,
     dim: usize,
@@ -248,7 +256,7 @@ fn take_strided(
         .map_err(|_| BrutError::Invalid("window: a position does not fit into u32".into()))?;
     let index = candle::Tensor::from_vec(positions, len, x.device())?;
 
-    Ok(x.index_select(&index, dim)?)
+    Ok(x.contiguous()?.index_select(&index, dim)?)
 }
 
 /// 2-D convolution of `x` (n, c_in, h, w) with `kernel` (c_out, c_in / groups, k_h, k_w).
@@ -333,13 +341,16 @@ pub fn conv1d(
     Ok(Tensor(out.0.squeeze(2)?))
 }
 
-/// Causal 1-D convolution: zero padding on the left only, so output t reads inputs up to t.
+/// Causal 1-D convolution: zero padding on the left only, so output t reads inputs up to
+/// `t * stride`.
 ///
-/// The stride is 1, so the output is as long as the input. Built on `conv1d`
-/// (W1), so it avoids defect D1 as well.
+/// The output has `(len - 1) / stride + 1` cells, as many as a convolution with the padding
+/// of `conv1d` that keeps the size at stride 1. Built on `conv1d` (W1), so it avoids defect
+/// D1 as well.
 pub fn causal_conv1d(
     x: &Tensor,
     kernel: &Tensor,
+    stride: usize,
     dilation: usize,
     groups: usize,
 ) -> Result<Tensor> {
@@ -352,7 +363,7 @@ pub fn causal_conv1d(
 
     let padded = x.0.pad_with_zeros(2, (k - 1) * dilation, 0)?;
 
-    conv1d(&Tensor(padded), kernel, 0, 1, dilation, groups)
+    conv1d(&Tensor(padded), kernel, 0, stride, dilation, groups)
 }
 
 /// 2-D transposed convolution of `x` (n, c_in, h, w) with `kernel` (c_in, c_out, k_h, k_w).
@@ -402,6 +413,31 @@ pub fn conv_transpose2d(
         x.0.conv_transpose2d(&kernel.0, padding, output_padding, stride, dilation)?;
 
     Ok(Tensor(out))
+}
+
+/// 1-D transposed convolution of `x` (n, c_in, len) with `kernel` (c_in, c_out, k), without
+/// padding: the output has `(len - 1) * stride + k` cells.
+///
+/// Replacement W9 for defect D9. candle's own `conv_transpose1d` has no backward
+/// pass (candle-core/src/backprop.rs:314). Without padding and dilation it also
+/// takes a matrix-product path (candle-core/src/cpu_backend/mod.rs:2884-2926)
+/// whose forward pass is wrong when the batch and the input channels both
+/// exceed 1. This function runs `conv_transpose2d` on a height of 1 instead. A
+/// kernel of height 1 keeps that height at any stride.
+pub fn conv_transpose1d(x: &Tensor, kernel: &Tensor, stride: usize) -> Result<Tensor> {
+    x.0.dims3()?;
+    kernel.0.dims3()?;
+
+    let out = conv_transpose2d(
+        &Tensor(x.0.unsqueeze(2)?),
+        &Tensor(kernel.0.unsqueeze(2)?),
+        0,
+        0,
+        stride,
+        1,
+    )?;
+
+    Ok(Tensor(out.0.squeeze(2)?))
 }
 
 /// Max pooling of `x` (n, c, h, w) with a square window.
@@ -520,16 +556,31 @@ fn avg_pool2d_views(
 
 /// Max pooling of `x` (n, c, len) along the sequence, with a window of `kernel` cells.
 ///
-/// candle has no 1-D pooling. Like `max_pool2d` (W3), this function takes the
-/// running maximum over the `kernel` shifted views of the input. Cells behind
-/// the last window are dropped.
-pub fn max_pool1d(x: &Tensor, kernel: usize, stride: usize) -> Result<Tensor> {
+/// `padding` cells sit on both sides; padding never wins a window. candle has no
+/// 1-D pooling. Like `max_pool2d` (W3), this function takes the running maximum
+/// over the `kernel` shifted views of the padded input. Cells behind the last
+/// window are dropped.
+pub fn max_pool1d(x: &Tensor, kernel: usize, stride: usize, padding: usize) -> Result<Tensor> {
     let (_, _, len) = x.0.dims3()?;
-    let out = out_len(len, 0, kernel, stride, 1)?;
+    let out = out_len(len, padding, kernel, stride, 1)?;
+    check_pool_padding("max_pool1d", kernel, padding)?;
+
+    let padded = if padding == 0 {
+        x.0.clone()
+    } else {
+        // Zero inside and PAD_LOW in the border; adding it keeps the inside exact.
+        let inside = candle::Tensor::ones((1, 1, len), x.0.dtype(), x.0.device())?;
+        let border = (inside
+            .pad_with_zeros(2, padding, padding)?
+            .affine(-1.0, 1.0)?
+            * PAD_LOW)?;
+        x.0.pad_with_zeros(2, padding, padding)?
+            .broadcast_add(&border)?
+    };
 
     let mut running: Option<candle::Tensor> = None;
     for j in 0..kernel {
-        let tap = take_strided(&x.0, 2, j, stride, out)?;
+        let tap = take_strided(&padded, 2, j, stride, out)?;
         running = Some(match running {
             None => tap,
             Some(max) => max.maximum(&tap)?,
@@ -585,6 +636,28 @@ pub fn upsample_nearest2d(x: &Tensor, factor: usize) -> Result<Tensor> {
         x.0.reshape((n, c, h, 1, w, 1))?
             .broadcast_as((n, c, h, factor, w, factor))?
             .reshape((n, c, h * factor, w * factor))?;
+
+    Ok(Tensor(out))
+}
+
+/// Nearest upsampling of `x` (n, c, len) by an integer factor along the sequence.
+///
+/// Replacement W5 for defect D5 on a sequence: candle's backward pass of
+/// `upsample_nearest1d` assigns its gradient instead of adding it
+/// (candle-core/src/backprop.rs:388). This function broadcasts every cell into
+/// `factor` cells; the backward pass of a broadcast adds.
+pub fn upsample_nearest1d(x: &Tensor, factor: usize) -> Result<Tensor> {
+    if factor == 0 {
+        return Err(BrutError::Invalid(
+            "upsample_nearest1d: the factor must be at least 1".into(),
+        ));
+    }
+
+    let (n, c, len) = x.0.dims3()?;
+    let out =
+        x.0.reshape((n, c, len, 1))?
+            .broadcast_as((n, c, len, factor))?
+            .reshape((n, c, len * factor))?;
 
     Ok(Tensor(out))
 }
@@ -779,19 +852,27 @@ pub fn broadcast_add(a: &Tensor, b: &Tensor) -> Result<Tensor> {
     Ok(Tensor(a.0.broadcast_add(&b.0)?))
 }
 
-/// The channel shuffle of ShuffleNet on `x` (n, c, h, w): channel `g * (c / groups) + i` moves to `i * groups + g`.
+/// The channel shuffle of ShuffleNet on `x` (n, c, ...), an image or a sequence: channel
+/// `g * (c / groups) + i` moves to `i * groups + g`.
 pub fn channel_shuffle(x: &Tensor, groups: usize) -> Result<Tensor> {
-    let (n, c, h, w) = x.0.dims4()?;
+    let dims = x.dims().to_vec();
+    if dims.len() < 3 {
+        return Err(BrutError::Invalid(format!(
+            "channel_shuffle: the input {dims:?} has no spatial axis"
+        )));
+    }
+
+    let c = dims[1];
     if groups == 0 || !c.is_multiple_of(groups) {
         return Err(BrutError::Invalid(format!(
             "channel_shuffle: {groups} groups do not divide {c} channels"
         )));
     }
 
-    let out =
-        x.0.reshape((n, groups, c / groups, h, w))?
-            .transpose(1, 2)?
-            .reshape((n, c, h, w))?;
+    let mut split = vec![dims[0], groups, c / groups];
+    split.extend_from_slice(&dims[2..]);
+
+    let out = x.0.reshape(split)?.transpose(1, 2)?.reshape(dims)?;
 
     Ok(Tensor(out))
 }
@@ -863,6 +944,56 @@ pub fn cross_entropy(logits: &Tensor, labels: &[u32]) -> Result<Tensor> {
     let targets = candle::Tensor::from_vec(labels.to_vec(), n, logits.0.device())?;
 
     Ok(Tensor(candle_nn::loss::cross_entropy(&logits.0, &targets)?))
+}
+
+/// Mean softmax cross-entropy over some cells of grids of logits, one label per cell.
+///
+/// Row i of `logits` (n, classes * cells) holds the outputs of one sample of a task with one
+/// class per cell, channel by channel: the logit of class c at cell k is at c * cells + k
+/// (`task::OutputShape::Grid`). `picked` names the cells that carry a label, cell k of row i
+/// as i * cells + k, in increasing order, and `labels` their classes. The mean runs over the
+/// picked cells only, so the other cells carry no loss and get no gradient: the cells outside
+/// the grid of an ARC sample (ticket 06).
+///
+/// This is candle_nn's `cross_entropy` on the picked cells, which `index_select` gathers
+/// from the logits laid out as one row per cell.
+pub fn cell_cross_entropy(
+    logits: &Tensor,
+    classes: usize,
+    picked: &[u32],
+    labels: &[u32],
+) -> Result<Tensor> {
+    let (n, values) = logits.0.dims2()?;
+    let cells = values.checked_div(classes).unwrap_or(0);
+    let total = n.saturating_mul(cells);
+    let fits = cells > 0
+        && cells * classes == values
+        && !picked.is_empty()
+        && picked.len() == labels.len()
+        && picked.windows(2).all(|pair| pair[0] < pair[1])
+        && picked.iter().all(|&cell| (cell as usize) < total)
+        && labels.iter().all(|&label| (label as usize) < classes);
+    if !fits {
+        return Err(BrutError::Invalid(format!(
+            "cell_cross_entropy: {} picked cells and {} labels do not fit {n} rows of {values} \
+             logits in {classes} classes",
+            picked.len(),
+            labels.len()
+        )));
+    }
+
+    let per_cell = logits
+        .0
+        .reshape((n, classes, cells))?
+        .transpose(1, 2)?
+        .contiguous()?
+        .reshape((total, classes))?;
+    let device = logits.0.device();
+    let index = candle::Tensor::from_vec(picked.to_vec(), picked.len(), device)?;
+    let targets = candle::Tensor::from_vec(labels.to_vec(), labels.len(), device)?;
+    let chosen = per_cell.index_select(&index, 0)?;
+
+    Ok(Tensor(candle_nn::loss::cross_entropy(&chosen, &targets)?))
 }
 
 /// Mean squared error: the mean of `(prediction - target)^2` over all values.
@@ -1320,12 +1451,12 @@ mod tests {
 
         let inputs = vec![c.plain(&[2, 3, 9]), c.plain(&[4, 3, 3])];
         c.add("causal_conv1d", "k3, dilation 2, length 9", inputs, |t| {
-            causal_conv1d(&t[0], &t[1], 2, 1)
+            causal_conv1d(&t[0], &t[1], 1, 2, 1)
         });
 
         let inputs = vec![c.plain(&[3, 4, 10]), c.plain(&[4, 2, 2])];
         c.add("causal_conv1d", "k2, dilation 4, groups 2", inputs, |t| {
-            causal_conv1d(&t[0], &t[1], 4, 2)
+            causal_conv1d(&t[0], &t[1], 1, 4, 2)
         });
 
         let inputs = vec![c.plain(&[2, 3, 3, 4]), c.plain(&[3, 4, 2, 2])];
@@ -1344,6 +1475,34 @@ mod tests {
         let inputs = vec![c.plain(&[1, 2, 4, 5]), c.plain(&[2, 3, 3, 3])];
         c.add("conv_transpose2d", "3x3, dilation 2, 4x5", inputs, |t| {
             conv_transpose2d(&t[0], &t[1], 0, 0, 1, 2)
+        });
+
+        // The cases below came with ticket 04; they draw after the cases above, so those
+        // keep their inputs.
+        let inputs = vec![c.plain(&[2, 3, 10]), c.plain(&[4, 3, 3])];
+        c.add(
+            "causal_conv1d",
+            "k3, stride 2, dilation 2, length 10",
+            inputs,
+            |t| causal_conv1d(&t[0], &t[1], 2, 2, 1),
+        );
+
+        let inputs = vec![c.plain(&[2, 3, 5]), c.plain(&[3, 4, 2])];
+        c.add("conv_transpose1d", "k2, stride 2, length 5", inputs, |t| {
+            conv_transpose1d(&t[0], &t[1], 2)
+        });
+
+        let inputs = vec![c.plain(&[3, 2, 4]), c.plain(&[2, 3, 3])];
+        c.add(
+            "conv_transpose1d",
+            "k3, stride 2, overlapping, length 4",
+            inputs,
+            |t| conv_transpose1d(&t[0], &t[1], 2),
+        );
+
+        let inputs = vec![c.plain(&[2, 3, 3, 3]), c.plain(&[3, 2, 2, 2])];
+        c.add("conv_transpose2d", "2x2, stride 2, odd 3x3", inputs, |t| {
+            conv_transpose2d(&t[0], &t[1], 0, 0, 2, 1)
         });
 
         c.list
@@ -1395,12 +1554,12 @@ mod tests {
 
         let inputs = vec![c.distinct(&[2, 3, 9])];
         c.add("max_pool1d", "window 2, stride 2, length 9", inputs, |t| {
-            max_pool1d(&t[0], 2, 2)
+            max_pool1d(&t[0], 2, 2, 0)
         });
 
         let inputs = vec![c.distinct(&[2, 2, 10])];
         c.add("max_pool1d", "window 3, stride 2, length 10", inputs, |t| {
-            max_pool1d(&t[0], 3, 2)
+            max_pool1d(&t[0], 3, 2, 0)
         });
 
         let inputs = vec![c.plain(&[2, 3, 10])];
@@ -1458,7 +1617,114 @@ mod tests {
             global_avg_pool(&t[0])
         });
 
+        // Ticket 04: the pooling branch of an Inception block keeps the size, and a
+        // decoder upsamples a sequence.
+        let inputs = vec![c.distinct(&[2, 3, 9])];
+        c.add(
+            "max_pool1d",
+            "window 3, stride 1, padding 1, length 9",
+            inputs,
+            |t| max_pool1d(&t[0], 3, 1, 1),
+        );
+
+        let inputs = vec![c.distinct(&[1, 2, 7])];
+        c.add(
+            "max_pool1d",
+            "window 5, stride 1, padding 2, length 7",
+            inputs,
+            |t| max_pool1d(&t[0], 5, 1, 2),
+        );
+
+        let inputs = vec![c.plain(&[2, 3, 5])];
+        c.add("upsample_nearest1d", "factor 2, length 5", inputs, |t| {
+            upsample_nearest1d(&t[0], 2)
+        });
+
+        // The input also feeds x * x, as in `upsample_nearest2d` above.
+        let inputs = vec![c.plain(&[2, 3, 4])];
+        c.add(
+            "upsample_nearest1d",
+            "factor 3, input shared with x * x",
+            inputs,
+            |t| {
+                let up = flatten(&upsample_nearest1d(&t[0], 3)?)?;
+                let square = flatten(&broadcast_mul(&t[0], &t[0])?)?;
+                cat(&[&up, &square], 1)
+            },
+        );
+
+        // A batch norm in training mode gives a transposed view, which candle's index_select
+        // refuses. A plan pools it directly after an inverted residual, which ends without
+        // an activation. Distinct inputs keep their order through the norm, since gamma > 0.
+        let inputs = vec![
+            c.distinct(&[2, 3, 4, 6]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "max_pool2d",
+            "2x2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| max_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 3, 5, 6]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "avg_pool2d",
+            "2x2, stride 2, of a batch norm in training mode, crop path",
+            inputs,
+            |t| avg_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 2, 7, 7]),
+            c.uniform(&[2], 0.5, 1.5),
+            c.plain(&[2]),
+        ];
+        c.add(
+            "avg_pool2d",
+            "3x3, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| avg_pool2d(&train_norm(&t[0], &t[1], &t[2])?, 3, 2, 0),
+        );
+
+        let inputs = vec![
+            c.distinct(&[2, 3, 9]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "max_pool1d",
+            "window 2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| max_pool1d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2, 0),
+        );
+
+        let inputs = vec![
+            c.plain(&[2, 3, 9]),
+            c.uniform(&[3], 0.5, 1.5),
+            c.plain(&[3]),
+        ];
+        c.add(
+            "avg_pool1d",
+            "window 2, stride 2, of a batch norm in training mode",
+            inputs,
+            |t| avg_pool1d(&train_norm(&t[0], &t[1], &t[2])?, 2, 2),
+        );
+
         c.list
+    }
+
+    /// A batch norm in training mode of `x` with scale `gamma` and shift `beta`, from fresh
+    /// running statistics.
+    fn train_norm(x: &Tensor, gamma: &Tensor, beta: &Tensor) -> Result<Tensor> {
+        let (mean, var) = fresh_stats(gamma.dims()[0]);
+
+        BatchNorm::new(gamma, beta, &mean, &var, 1e-5)?.forward_train(x)
     }
 
     /// Batch, layer and group norm.
@@ -1671,6 +1937,57 @@ mod tests {
             cross_entropy(&logits, &[0, 1, 1, 0])
         });
 
+        // Ticket 04: a shuffle along a sequence, and the joins of DenseNet and U-Net.
+        let inputs = vec![c.plain(&[2, 6, 5])];
+        c.add(
+            "channel_shuffle",
+            "sequence, 6 channels in 2 groups",
+            inputs,
+            |t| channel_shuffle(&t[0], 2),
+        );
+
+        // A dense layer: x and conv(x) side by side, so x feeds both parts of the join.
+        let inputs = vec![c.plain(&[2, 3, 4, 4]), c.plain(&[2, 3, 3, 3])];
+        c.add("cat", "x joined to conv2d(x), input shared", inputs, |t| {
+            cat(&[&conv2d(&t[0], &t[1], 1, 1, 1, 1)?, &t[0]], 1)
+        });
+
+        // A U-Net skip: x joined to the upsampled transposed convolution of its pooled
+        // values, along a sequence.
+        let inputs = vec![c.plain(&[2, 2, 6]), c.plain(&[2, 3, 2])];
+        c.add(
+            "cat",
+            "x joined to its pooled, transposed convolution, sequence",
+            inputs,
+            |t| {
+                let down = avg_pool1d(&t[0], 2, 2)?;
+                cat(&[&conv_transpose1d(&down, &t[1], 2)?, &t[0]], 1)
+            },
+        );
+
+        // Ticket 06: one class per cell, some cells outside the grids. Their logits get no
+        // gradient, which the check compares as well.
+        let inputs = vec![c.uniform(&[2, 3 * 4], -2.0, 2.0)];
+        c.add(
+            "cell_cross_entropy",
+            "2 grids of 4 cells, 3 classes, 5 cells inside",
+            inputs,
+            |t| cell_cross_entropy(&t[0], 3, &[0, 2, 3, 5, 6], &[1, 0, 2, 2, 1]),
+        );
+
+        // The per-cell head of an ARC grid task: a 1x1 convolution to the classes, flattened
+        // channel by channel, and the loss over the cells inside the grids.
+        let inputs = vec![c.plain(&[2, 2, 2, 3]), c.plain(&[3, 2, 1, 1])];
+        c.add(
+            "cell_cross_entropy",
+            "a 1x1 convolution to 3 classes on 2 x 3 cells",
+            inputs,
+            |t| {
+                let logits = flatten(&conv2d(&t[0], &t[1], 0, 1, 1, 1)?)?;
+                cell_cross_entropy(&logits, 3, &[0, 1, 4, 6, 9, 10, 11], &[2, 0, 1, 1, 0, 2, 2])
+            },
+        );
+
         c.list
     }
 
@@ -1803,6 +2120,14 @@ mod tests {
             Ok(Tensor(t[0].0.gelu_erf()?))
         });
 
+        let inputs = vec![c.plain(&[1, 3, 5]), c.plain(&[3, 2, 2])];
+        c.add(
+            "conv_transpose1d",
+            "D9, candle's conv_transpose1d, no backward pass",
+            inputs,
+            |t| Ok(Tensor(t[0].0.conv_transpose1d(&t[1].0, 0, 0, 2, 1, 1)?)),
+        );
+
         for case in &c.list {
             let outcome = check(case);
             eprintln!("candle's own op: {} ({}): {outcome:?}", case.op, case.label);
@@ -1811,6 +2136,116 @@ mod tests {
 
         // D8: candle cannot seed its CPU generator.
         assert!(Device::Cpu.set_seed(1).is_err());
+
+        // D9: on two rows of three channels, candle's 1-D transposed convolution differs
+        // from W9 in its forward pass already. W9 matches the sum by hand.
+        let x = tensor_of(&c.plain(&[2, 3, 5]));
+        let kernel = tensor_of(&c.plain(&[3, 2, 2]));
+        let theirs = x.0.conv_transpose1d(&kernel.0, 0, 0, 2, 1, 1).unwrap();
+        let ours = conv_transpose1d(&x, &kernel, 2).unwrap();
+        let (xs, ks) = (f64_values(&x), f64_values(&kernel));
+        let mut by_hand = vec![0.0; 2 * 2 * 10];
+
+        for row in 0..2 {
+            for i in 0..3 {
+                for t in 0..5 {
+                    for o in 0..2 {
+                        for j in 0..2 {
+                            by_hand[row * 20 + o * 10 + t * 2 + j] +=
+                                xs[row * 15 + i * 5 + t] * ks[i * 4 + o * 2 + j];
+                        }
+                    }
+                }
+            }
+        }
+
+        let gap = max_gap(&ours, &theirs);
+        eprintln!("candle's own op: conv_transpose1d (D9, forward): differs by {gap:.2e}");
+        assert!(gap > 0.1, "candle's conv_transpose1d now matches W9");
+
+        let off = f64_values(&ours)
+            .iter()
+            .zip(&by_hand)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+
+        assert!(off <= FORWARD_LIMIT, "W9 is off the sum by hand by {off:e}");
+    }
+
+    #[test]
+    fn cell_cross_entropy_is_the_mean_over_the_picked_cells() {
+        // 2 rows, 2 classes, 3 cells: logits[i][c * 3 + k].
+        let values = vec![
+            0.5, -1.0, 2.0, 1.5, 0.0, -2.0, -0.5, 3.0, 1.0, 0.25, -1.5, 0.75,
+        ];
+        let logits = f64_tensor(values.clone(), &[2, 6]);
+        let picked = [0, 2, 4, 5];
+        let labels = [1, 0, 0, 1];
+        let loss = f64_values(&cell_cross_entropy(&logits, 2, &picked, &labels).unwrap())[0];
+        let expected: f64 = picked
+            .iter()
+            .zip(&labels)
+            .map(|(&cell, &label)| {
+                let (row, k) = (cell as usize / 3, cell as usize % 3);
+                let logit = |c: usize| values[row * 6 + c * 3 + k];
+                let max = logit(0).max(logit(1));
+                let sum = (logit(0) - max).exp() + (logit(1) - max).exp();
+
+                max + sum.ln() - logit(label as usize)
+            })
+            .sum::<f64>()
+            / 4.0;
+
+        assert!((loss - expected).abs() < 1e-12, "{loss} {expected}");
+
+        // The logits of cells that are not picked change neither the loss nor the gradient.
+        let mut moved = values.clone();
+
+        moved[1] = 40.0;
+        moved[3 + 1] = -40.0;
+
+        let again = f64_values(
+            &cell_cross_entropy(&f64_tensor(moved, &[2, 6]), 2, &picked, &labels).unwrap(),
+        )[0];
+
+        assert_eq!(again, loss);
+
+        let zeros = |shape: &[usize]| f64_tensor(vec![0.0; shape.iter().product()], shape);
+        let x = zeros(&[2, 6]);
+
+        assert!(cell_cross_entropy(&x, 0, &[0], &[0]).is_err(), "no class");
+        assert!(
+            cell_cross_entropy(&x, 4, &[0], &[0]).is_err(),
+            "6 logits in 4 classes"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[], &[]).is_err(),
+            "no cell picked"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[0, 1], &[0]).is_err(),
+            "one label for two cells"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[6], &[0]).is_err(),
+            "cell 6 of 6"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[1], &[2]).is_err(),
+            "class 2 of 2"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[2, 1], &[0, 0]).is_err(),
+            "not increasing"
+        );
+        assert!(
+            cell_cross_entropy(&x, 2, &[1, 1], &[0, 0]).is_err(),
+            "picked twice"
+        );
+        assert!(
+            cell_cross_entropy(&zeros(&[2, 3, 2]), 2, &[0], &[0]).is_err(),
+            "3-D"
+        );
     }
 
     /// Public functions of this file that are not differentiable operations.
@@ -1904,7 +2339,7 @@ mod tests {
     }
 
     /// candle calls with a known defect (ADR 0007), and the functions of this file allowed to make them.
-    const KNOWN_WRONG: [(&str, &[&str]); 30] = [
+    const KNOWN_WRONG: [(&str, &[&str]); 32] = [
         // D1: the kernel gradient of conv1d.
         (".conv1d(", &[]),
         ("::conv1d(", &[]),
@@ -1934,6 +2369,9 @@ mod tests {
         (".gelu", &[]),
         ("::gelu", &[]),
         ("Activation", &[]),
+        // D9: the 1-D transposed convolution.
+        (".conv_transpose1d(", &[]),
+        ("::conv_transpose1d(", &[]),
         // D8: candle's random numbers.
         ("::rand(", &[]),
         ("::randn(", &[]),
@@ -2110,7 +2548,7 @@ mod tests {
 
         let x = tensor_of(&c.plain(&[2, 3, 9]));
         let kernel = tensor_of(&c.plain(&[4, 3, 3]));
-        let ours = causal_conv1d(&x, &kernel, 2, 1).unwrap();
+        let ours = causal_conv1d(&x, &kernel, 1, 2, 1).unwrap();
         let theirs =
             x.0.pad_with_zeros(2, 4, 0)
                 .unwrap()
@@ -2188,7 +2626,7 @@ mod tests {
                 .unwrap();
             gaps.push((
                 format!("max_pool1d {len} {kernel} {stride}"),
-                max_gap(&max_pool1d(&x, kernel, stride).unwrap(), &theirs),
+                max_gap(&max_pool1d(&x, kernel, stride, 0).unwrap(), &theirs),
             ));
             let theirs = rows
                 .avg_pool2d_with_stride((1, kernel), (1, stride))
@@ -2206,6 +2644,28 @@ mod tests {
         gaps.push((
             "global_avg_pool".into(),
             max_gap(&ours, &x.0.mean((2, 3)).unwrap()),
+        ));
+
+        // W9 against candle's own 1-D transposed convolution, on one row: there its forward
+        // pass is right (D9).
+        for (len, k, stride) in [(5, 2, 2), (4, 3, 2), (6, 1, 3)] {
+            let x = tensor_of(&c.plain(&[1, 3, len]));
+            let kernel = tensor_of(&c.plain(&[3, 2, k]));
+            let theirs = x.0.conv_transpose1d(&kernel.0, 0, 0, stride, 1, 1).unwrap();
+            gaps.push((
+                format!("conv_transpose1d {len} {k} {stride}"),
+                max_gap(&conv_transpose1d(&x, &kernel, stride).unwrap(), &theirs),
+            ));
+        }
+
+        // W5 along a sequence against candle's upsampling.
+        let x = tensor_of(&c.plain(&[2, 3, 5]));
+        gaps.push((
+            "upsample_nearest1d".into(),
+            max_gap(
+                &upsample_nearest1d(&x, 3).unwrap(),
+                &x.0.upsample_nearest1d(15).unwrap(),
+            ),
         ));
 
         for (name, gap) in &gaps {
@@ -2242,17 +2702,37 @@ mod tests {
     }
 
     #[test]
+    fn channel_shuffle_moves_each_channel_also_along_a_sequence() {
+        // 6 channels in 3 groups of 2: channel g * 2 + i moves to i * 3 + g. Each channel
+        // holds its own index at every cell.
+        for size in [vec![2], vec![2, 1]] {
+            let mut shape = vec![1, 6];
+            shape.extend_from_slice(&size);
+
+            let cells: usize = size.iter().product();
+            let values: Vec<f32> = (0..6).flat_map(|ch| vec![ch as f32; cells]).collect();
+            let out = channel_shuffle(&Tensor::from_f32(values, &shape).unwrap(), 3)
+                .unwrap()
+                .to_vec_f32()
+                .unwrap();
+            let order: Vec<f32> = out.chunks_exact(cells).map(|ch| ch[0]).collect();
+
+            assert_eq!(order, vec![0.0, 2.0, 4.0, 1.0, 3.0, 5.0], "{size:?}");
+        }
+    }
+
+    #[test]
     fn causal_conv1d_reads_no_later_input() {
         let mut c = Cases::new(8);
         let x = c.plain(&[1, 2, 12]);
         let kernel = tensor_of(&c.plain(&[3, 2, 3]));
-        let before = causal_conv1d(&tensor_of(&x), &kernel, 2, 1).unwrap();
+        let before = causal_conv1d(&tensor_of(&x), &kernel, 1, 2, 1).unwrap();
 
         // Change step 9 of both input channels.
         let mut changed = x.values.clone();
         changed[9] += 1.0;
         changed[12 + 9] += 1.0;
-        let after = causal_conv1d(&f64_tensor(changed, &[1, 2, 12]), &kernel, 2, 1).unwrap();
+        let after = causal_conv1d(&f64_tensor(changed, &[1, 2, 12]), &kernel, 1, 2, 1).unwrap();
 
         assert_eq!(before.dims(), [1, 3, 12]);
         let (before, after) = (f64_values(&before), f64_values(&after));
@@ -2264,6 +2744,27 @@ mod tests {
                 "channel {channel}"
             );
             assert_ne!(before[row + 9], after[row + 9], "channel {channel}");
+        }
+
+        // With a stride of 2, output t reads steps 2t, 2t - 2 and 2t - 4 (dilation 2). So
+        // outputs 0 to 4 read no step after 8, and a change of step 10 reaches output 5 only.
+        let strided = |values: Vec<f64>| {
+            f64_values(&causal_conv1d(&f64_tensor(values, &[1, 2, 12]), &kernel, 2, 2, 1).unwrap())
+        };
+        let mut later = x.values.clone();
+        later[10] += 1.0;
+        later[12 + 10] += 1.0;
+        let (before, after) = (strided(x.values.clone()), strided(later));
+
+        assert_eq!(before.len(), 3 * 6);
+        for channel in 0..3 {
+            let row = channel * 6;
+            assert_eq!(
+                before[row..row + 5],
+                after[row..row + 5],
+                "channel {channel}"
+            );
+            assert_ne!(before[row + 5], after[row + 5], "channel {channel}");
         }
     }
 
@@ -2425,9 +2926,9 @@ mod tests {
             avg_pool2d(&x, 3, 1, 2).is_err(),
             "padding above half the kernel"
         );
-        assert!(max_pool1d(&x, 2, 2).is_err(), "a 4-D input");
+        assert!(max_pool1d(&x, 2, 2, 0).is_err(), "a 4-D input");
         assert!(
-            max_pool1d(&zeros(&[2, 3, 4]), 5, 5).is_err(),
+            max_pool1d(&zeros(&[2, 3, 4]), 5, 5, 0).is_err(),
             "a window wider than the input"
         );
         assert!(
@@ -2442,6 +2943,28 @@ mod tests {
         assert!(mse(&zeros(&[0, 3]), &zeros(&[0, 3])).is_err(), "no values");
         assert!(upsample_nearest2d(&x, 0).is_err());
         assert!(channel_shuffle(&x, 3).is_err());
+        assert!(
+            channel_shuffle(&zeros(&[2, 4]), 2).is_err(),
+            "no spatial axis"
+        );
+        assert!(upsample_nearest1d(&zeros(&[2, 3, 4]), 0).is_err());
+        assert!(upsample_nearest1d(&x, 2).is_err(), "a 4-D input");
+        assert!(
+            max_pool1d(&zeros(&[2, 3, 4]), 3, 1, 2).is_err(),
+            "padding above half the kernel"
+        );
+        assert!(
+            conv_transpose1d(&x, &zeros(&[4, 2, 2]), 2).is_err(),
+            "a 4-D input"
+        );
+        assert!(
+            conv_transpose1d(&zeros(&[2, 3, 4]), &zeros(&[4, 2, 2]), 2).is_err(),
+            "the kernel reads 4 channels"
+        );
+        assert!(
+            causal_conv1d(&zeros(&[2, 3, 4]), &zeros(&[4, 3, 3]), 0, 1, 1).is_err(),
+            "stride 0"
+        );
         assert!(group_norm(&x, &zeros(&[4]), &zeros(&[4]), 3, 1e-5).is_err());
         assert!(layer_norm_channels(&x, &zeros(&[3]), &zeros(&[4]), 1e-5).is_err());
         assert!(linear(&zeros(&[2, 5]), &zeros(&[3, 4]), &zeros(&[3])).is_err());

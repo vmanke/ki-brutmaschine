@@ -56,3 +56,13 @@ path = "src/bin/brut-breed.rs"
 [[example]]
 name = "circuit_positive_control"
 test = true
+
+# The comparative selection experiment (docs/SELECTION_STUDY.md); its unit tests run too.
+[[example]]
+name = "selection_study"
+test = true
+
+# The analysis of the step 2 comparison (docs/PREREG_STEP2_SOUL.md); its unit tests run too.
+[[example]]
+name = "soul_comparison"
+test = true

@@ -10,6 +10,14 @@
 //! uniform noise in [-noise, noise). While the noise stays below 0.5, rounding gives back
 //! the clean value, so the best reachable accuracy is 1. Sample i has class i mod classes,
 //! so every class has the same count when the split size is a multiple of the class count.
+//!
+//! The mirror grid task maps a grid to a grid, for U-Net (ticket 04). Its outputs form a
+//! grid too (`OutputShape::Grid`): one value per cell, a regression of the clean values. It
+//! stood in for the ARC grids of ticket 06; an MLP reads and writes its grids flattened.
+//!
+//! The ARC grid tasks of ticket 06 (`TaskKind::ArcGrid`) are not generated: `arc_grid`
+//! reads their examples from files. Their outputs are one colour class per cell
+//! (`TaskSpec::cell_classes`), and their score is the exact match of whole grids.
 
 use std::f32::consts::{PI, TAU};
 
@@ -59,11 +67,19 @@ pub const ALPHABET: usize = 4;
 /// change how often a symbol occurs on average. It is not a palindrome.
 pub const MOTIF: [usize; 8] = [0, 2, 1, 3, 3, 0, 2, 1];
 
+/// Height and width of the grids of `MirrorGrid`, in cells.
+pub const GRID_SIDE: usize = 8;
+
+/// The label of a cell that lies outside the grid of its sample, in a task with one class
+/// per cell (`TaskSpec::cell_classes`): a cell of the canvas that the grid does not cover.
+/// It carries no loss and no score.
+pub const NO_CELL: u32 = u32::MAX;
+
 // The bars and stripes draw their lines as the bits of one u32.
 const _: () = assert!(IMAGE_SIDE < 32);
 
 // The mirror axis lies between two columns.
-const _: () = assert!(IMAGE_SIDE.is_multiple_of(2));
+const _: () = assert!(IMAGE_SIDE.is_multiple_of(2) && GRID_SIDE.is_multiple_of(2));
 
 // The shapes fit the image. Below a side of 5 the circle equals another shape: the cross
 // at side 4, the square at side 3.
@@ -140,6 +156,30 @@ pub enum TaskKind {
     /// motif by chance (about 57 in 4^8, or 1 in 1150) is drawn again. Then noise on each
     /// of the `ALPHABET * SEQ_LEN` values.
     Motif1d,
+    /// `GRID_SIDE` x `GRID_SIDE` grids of random cells, each mapped to its mirror image: a
+    /// grid-to-grid task (ticket 04), a stand-in for the ARC grids of ticket 06. Each cell of
+    /// the input is on with probability 1/2, then pixel noise. The targets are the clean
+    /// grid mirrored about its vertical axis, one value per cell: target (y, x) is the clean
+    /// input at (y, `GRID_SIDE` - 1 - x), 0 or 1. A regression of 64 values, so the score
+    /// is R^2: a model that ignores its input reaches 0 at best, the mirror itself 1. A cell
+    /// of the input says nothing about the target at its own place, since the two halves of
+    /// a grid are drawn independently.
+    ///
+    /// Each grid has 2^64 clean pictures, so the splits share none in practice.
+    MirrorGrid,
+    /// ARC grids (ticket 06): an ARC-AGI-1 training task with its re-arc generations as a
+    /// grid-to-grid task with one colour class per cell, read from files by `arc_grid`. Each
+    /// grid lies at the top left of a square canvas, with one input channel per colour; a
+    /// cell outside the grid has no channel on. Each output cell has the class of its colour
+    /// (`TaskSpec::cell_classes`), and a cell outside the output grid the label `NO_CELL`. The
+    /// score is the share of grids with every cell right (exact match); the share of right
+    /// cells is a descriptive measure.
+    ///
+    /// `spec` gives the largest such task (`arc_grid::largest_spec`), on a canvas of
+    /// `arc_grid::ARC_SIDE` cells, and `generate` no sample, since the examples come from
+    /// files. It is not in `ALL`. `brut run` cannot breed on it (`Config::validate`), and
+    /// `brut-eval` refuses it; `brut arc-grid` trains and scores genomes on it.
+    ArcGrid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -151,10 +191,50 @@ pub enum Split {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Objective {
-    /// Softmax cross-entropy; output size = classes.
+    /// Softmax cross-entropy; output size = classes. With a grid of outputs that has one
+    /// channel per class, each cell is classified on its own (`TaskSpec::cell_classes`).
     Classification { classes: usize },
     /// Mean squared error; output size = n_out.
     Regression,
+}
+
+/// Layout of the `n_out` outputs of one sample.
+///
+/// A grid stores its outputs as an image stores its inputs (`InputShape::Image`): channel
+/// by channel, and inside a channel row by row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OutputShape {
+    /// A plain vector: the classes of a classification, or the values of a regression.
+    #[default]
+    Flat,
+    /// A grid of `height` x `width` cells with `channels` values each: the value at
+    /// (channel, y, x) has index (channel * height + y) * width + x.
+    Grid {
+        channels: usize,
+        height: usize,
+        width: usize,
+    },
+}
+
+impl OutputShape {
+    /// True for `Flat`, the default. A task spec leaves a flat output out of its JSON, so
+    /// the specs of the tasks before grid outputs keep their bytes.
+    pub fn is_flat(&self) -> bool {
+        matches!(self, OutputShape::Flat)
+    }
+
+    /// Values per sample: the product of the sizes. `None` for `Flat`, whose size is the
+    /// task's `n_out`, and for a product above `usize::MAX`.
+    pub fn size(&self) -> Option<usize> {
+        match *self {
+            OutputShape::Flat => None,
+            OutputShape::Grid {
+                channels,
+                height,
+                width,
+            } => channels.checked_mul(height)?.checked_mul(width),
+        }
+    }
 }
 
 /// Layout of the `n_in` input values of one sample.
@@ -207,6 +287,10 @@ pub struct TaskSpec {
     #[serde(default, skip_serializing_if = "InputShape::is_flat")]
     pub input: InputShape,
     pub n_out: usize,
+    /// Layout of the `n_out` outputs. A flat shape is left out of the JSON, so the specs
+    /// written before grid outputs keep their bytes and still parse.
+    #[serde(default, skip_serializing_if = "OutputShape::is_flat")]
+    pub output: OutputShape,
     pub objective: Objective,
     pub n_train: usize,
     pub n_valid: usize,
@@ -221,6 +305,31 @@ impl TaskSpec {
     /// sequence fits when the product of its sizes is `n_in` and not 0.
     pub fn input_fits(&self) -> bool {
         self.input.is_flat() || (self.n_in > 0 && self.input.size() == Some(self.n_in))
+    }
+
+    /// True when the output shape fits `n_out`. A flat shape always fits. A grid fits when
+    /// the product of its sizes is `n_out` and not 0.
+    pub fn output_fits(&self) -> bool {
+        self.output.is_flat() || (self.n_out > 0 && self.output.size() == Some(self.n_out))
+    }
+
+    /// The classes and the cells of a task with one class per cell: a classification whose
+    /// outputs form a grid with one channel per class, as the ARC grid tasks (ticket 06).
+    /// The outputs of a sample are then the logits of each class, channel by channel, and its
+    /// targets one label per cell, `NO_CELL` for a cell outside its grid. None for every
+    /// other task, so for every task before ticket 06.
+    pub fn cell_classes(&self) -> Option<(usize, usize)> {
+        match (self.objective, self.output) {
+            (
+                Objective::Classification { classes },
+                OutputShape::Grid {
+                    channels,
+                    height,
+                    width,
+                },
+            ) if channels == classes => Some((classes, height.checked_mul(width)?)),
+            _ => None,
+        }
     }
 }
 
@@ -243,8 +352,9 @@ pub struct Dataset {
 }
 
 impl TaskKind {
-    /// Every task, in the order of the enum.
-    pub const ALL: [TaskKind; 9] = [
+    /// Every task that `generate` draws, in the order of the enum: all but `ArcGrid`, whose
+    /// examples come from files.
+    pub const ALL: [TaskKind; 10] = [
         TaskKind::TwoSpirals,
         TaskKind::Checkerboard,
         TaskKind::Parity,
@@ -254,6 +364,7 @@ impl TaskKind {
         TaskKind::BlobCount,
         TaskKind::MirrorSymmetry,
         TaskKind::Motif1d,
+        TaskKind::MirrorGrid,
     ];
 
     /// Fixed spec for each task (sizes, objective, noise).
@@ -264,6 +375,7 @@ impl TaskKind {
                 n_in: 2,
                 input: InputShape::Flat,
                 n_out: 2,
+                output: OutputShape::Flat,
                 objective: Objective::Classification { classes: 2 },
                 n_train: 400,
                 n_valid: 400,
@@ -275,6 +387,7 @@ impl TaskKind {
                 n_in: 2,
                 input: InputShape::Flat,
                 n_out: 2,
+                output: OutputShape::Flat,
                 objective: Objective::Classification { classes: 2 },
                 n_train: 1000,
                 n_valid: 1000,
@@ -286,6 +399,7 @@ impl TaskKind {
                 n_in: PARITY_BITS,
                 input: InputShape::Flat,
                 n_out: 2,
+                output: OutputShape::Flat,
                 objective: Objective::Classification { classes: 2 },
                 n_train: 256,
                 n_valid: 256,
@@ -297,6 +411,7 @@ impl TaskKind {
                 n_in: 1,
                 input: InputShape::Flat,
                 n_out: 1,
+                output: OutputShape::Flat,
                 objective: Objective::Regression,
                 n_train: 500,
                 n_valid: 500,
@@ -315,11 +430,33 @@ impl TaskKind {
                 n_in: ALPHABET * SEQ_LEN,
                 ..image_spec(self, 2)
             },
+            TaskKind::MirrorGrid => {
+                let grid = GRID_SIDE * GRID_SIDE;
+
+                TaskSpec {
+                    n_in: grid,
+                    input: InputShape::Image {
+                        channels: 1,
+                        height: GRID_SIDE,
+                        width: GRID_SIDE,
+                    },
+                    n_out: grid,
+                    output: OutputShape::Grid {
+                        channels: 1,
+                        height: GRID_SIDE,
+                        width: GRID_SIDE,
+                    },
+                    objective: Objective::Regression,
+                    ..image_spec(self, 2)
+                }
+            }
+            TaskKind::ArcGrid => crate::arc_grid::largest_spec(),
         }
     }
 
     /// Parse a CLI name such as "spirals", "checkerboard", "parity", "sine", "shapes",
-    /// "bars-and-stripes", "blob-count", "mirror-symmetry" or "motif-1d".
+    /// "bars-and-stripes", "blob-count", "mirror-symmetry", "motif-1d", "mirror-grid" or
+    /// "arc-grid".
     pub fn from_name(name: &str) -> Option<TaskKind> {
         let lower = name.trim().to_ascii_lowercase();
 
@@ -333,6 +470,8 @@ impl TaskKind {
             "blobs" | "blobcount" | "blob-count" => Some(TaskKind::BlobCount),
             "mirror" | "mirrorsymmetry" | "mirror-symmetry" => Some(TaskKind::MirrorSymmetry),
             "motif" | "motif1d" | "motif-1d" => Some(TaskKind::Motif1d),
+            "mirrorgrid" | "mirror-grid" => Some(TaskKind::MirrorGrid),
+            "arcgrid" | "arc-grid" => Some(TaskKind::ArcGrid),
             _ => None,
         }
     }
@@ -349,6 +488,8 @@ impl TaskKind {
             TaskKind::BlobCount => "blob-count",
             TaskKind::MirrorSymmetry => "mirror-symmetry",
             TaskKind::Motif1d => "motif-1d",
+            TaskKind::MirrorGrid => "mirror-grid",
+            TaskKind::ArcGrid => "arc-grid",
         }
     }
 }
@@ -366,6 +507,7 @@ fn image_spec(kind: TaskKind, classes: usize) -> TaskSpec {
             width: IMAGE_SIDE,
         },
         n_out: classes,
+        output: OutputShape::Flat,
         objective: Objective::Classification { classes },
         n_train: 1000,
         n_valid: 1000,
@@ -387,6 +529,9 @@ impl Split {
 
 /// Generate one split. Deterministic in (spec, split, seed).
 /// The split tag is mixed into the seed, so splits never share samples by seed reuse.
+///
+/// An ARC grid task (`TaskKind::ArcGrid`) gives an empty split of its sizes: its examples
+/// come from files (`arc_grid`).
 pub fn generate(spec: &TaskSpec, split: Split, seed: u64) -> Dataset {
     let n = match split {
         Split::Train => spec.n_train,
@@ -411,6 +556,14 @@ pub fn generate(spec: &TaskSpec, split: Split, seed: u64) -> Dataset {
         TaskKind::BlobCount => blob_count(n, noise, &mut rng),
         TaskKind::MirrorSymmetry => mirror_symmetry(n, noise, &mut rng),
         TaskKind::Motif1d => motif_1d(n, noise, &mut rng),
+        TaskKind::MirrorGrid => mirror_grid(n, noise, &mut rng),
+        TaskKind::ArcGrid => Dataset {
+            x: Vec::new(),
+            targets: Targets::Labels(Vec::new()),
+            n: 0,
+            n_in: spec.n_in,
+            n_out: spec.n_out,
+        },
     }
 }
 
@@ -810,6 +963,32 @@ fn motif_1d(n: usize, noise: f32, rng: &mut ChaCha8Rng) -> Dataset {
     labelled(x, labels, ALPHABET * SEQ_LEN, 2)
 }
 
+/// See `TaskKind::MirrorGrid`.
+fn mirror_grid(n: usize, noise: f32, rng: &mut ChaCha8Rng) -> Dataset {
+    let cells = GRID_SIDE * GRID_SIDE;
+    let mut x = Vec::with_capacity(n * cells);
+    let mut targets = Vec::with_capacity(n * cells);
+    let mut clean = vec![false; cells];
+
+    for _ in 0..n {
+        clean.fill_with(|| rng.random_bool(0.5));
+
+        for row in clean.chunks_exact(GRID_SIDE) {
+            targets.extend(row.iter().rev().map(|&on| f32::from(u8::from(on))));
+        }
+
+        push_noisy(&mut x, &clean, noise, rng);
+    }
+
+    Dataset {
+        x,
+        targets: Targets::Values(targets),
+        n,
+        n_in: cells,
+        n_out: cells,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -1033,6 +1212,7 @@ mod tests {
     fn input_shapes_fit_n_in() {
         for kind in TaskKind::ALL {
             assert!(kind.spec().input_fits(), "{kind:?}");
+            assert!(kind.spec().output_fits(), "{kind:?}");
         }
 
         for kind in FLAT {
@@ -1104,6 +1284,17 @@ mod tests {
             assert!(!text.contains("input"), "{text}");
         }
 
+        // Only the mirror grid has outputs other than a flat vector.
+        for kind in TaskKind::ALL {
+            let text = serde_json::to_string(&kind.spec()).expect("json");
+
+            assert_eq!(
+                text.contains("output"),
+                kind == TaskKind::MirrorGrid,
+                "{text}"
+            );
+        }
+
         for kind in TaskKind::ALL {
             let spec = kind.spec();
             let text = serde_json::to_string(&spec).expect("json");
@@ -1123,6 +1314,147 @@ mod tests {
             motif.contains(r#""input":{"Sequence":{"channels":4,"length":64}}"#),
             "{motif}"
         );
+
+        let grid = serde_json::to_string(&TaskKind::MirrorGrid.spec()).expect("json");
+
+        assert!(
+            grid.contains(r#""n_out":64,"output":{"Grid":{"channels":1,"height":8,"width":8}}"#),
+            "{grid}"
+        );
+    }
+
+    #[test]
+    fn output_shapes_fit_n_out() {
+        let grid = OutputShape::Grid {
+            channels: 1,
+            height: GRID_SIDE,
+            width: GRID_SIDE,
+        };
+        let spec = TaskKind::MirrorGrid.spec();
+
+        assert_eq!(spec.output, grid);
+        assert_eq!(grid.size(), Some(64));
+        assert_eq!(OutputShape::Flat.size(), None);
+        assert!(
+            !TaskSpec {
+                n_out: 63,
+                ..spec.clone()
+            }
+            .output_fits()
+        );
+        assert!(
+            !TaskSpec {
+                n_out: 0,
+                output: OutputShape::Grid {
+                    channels: 0,
+                    height: 8,
+                    width: 8
+                },
+                ..spec.clone()
+            }
+            .output_fits()
+        );
+        assert!(
+            !TaskSpec {
+                output: OutputShape::Grid {
+                    channels: usize::MAX,
+                    height: 2,
+                    width: 1
+                },
+                ..spec
+            }
+            .output_fits()
+        );
+    }
+
+    #[test]
+    fn the_mirror_grid_maps_each_grid_to_its_mirror_image() {
+        let spec = TaskKind::MirrorGrid.spec();
+
+        assert_eq!(spec.objective, Objective::Regression);
+        assert_eq!((spec.n_in, spec.n_out), (64, 64));
+
+        let mut on = 0usize;
+        let mut cells = 0usize;
+
+        for split in SPLITS {
+            let data = generate(&spec, split, 6);
+            let Targets::Values(targets) = &data.targets else {
+                panic!("expected values");
+            };
+
+            for (row, target) in data.x.chunks_exact(64).zip(targets.chunks_exact(64)) {
+                let clean: Vec<f32> = row.iter().map(|&v| f32::from(v > 0.5)).collect();
+
+                for y in 0..GRID_SIDE {
+                    for x in 0..GRID_SIDE {
+                        assert_eq!(target[y * 8 + x], clean[y * 8 + 7 - x], "{split:?}");
+                    }
+                }
+
+                on += clean.iter().filter(|&&v| v == 1.0).count();
+                cells += 64;
+            }
+
+            // The noise stays within its bounds, as for the image tasks.
+            assert!(
+                data.x
+                    .iter()
+                    .all(|&v| !(PIXEL_NOISE..1.0 - PIXEL_NOISE).contains(&v))
+            );
+            assert!(
+                data.x
+                    .iter()
+                    .all(|&v| (-PIXEL_NOISE..=1.0 + PIXEL_NOISE).contains(&v))
+            );
+        }
+
+        // About half the cells are on.
+        let share = on as f64 / cells as f64;
+
+        assert!((0.49..0.51).contains(&share), "{share}");
+
+        // A cell says nothing about the target at its own place: the input and the target
+        // agree at about half the cells.
+        let data = generate(&spec, Split::Train, 6);
+        let Targets::Values(targets) = &data.targets else {
+            panic!("expected values");
+        };
+        let same = data
+            .x
+            .iter()
+            .zip(targets)
+            .filter(|&(&v, &t)| f32::from(v > 0.5) == t)
+            .count();
+        let share = same as f64 / targets.len() as f64;
+
+        assert!((0.48..0.52).contains(&share), "{share}");
+    }
+
+    #[test]
+    fn mirror_grids_repeat_their_bytes_and_share_no_sample() {
+        let spec = TaskKind::MirrorGrid.spec();
+        let mut seen: HashSet<Vec<u8>> = HashSet::new();
+
+        for split in SPLITS {
+            let first = generate(&spec, split, 7);
+
+            assert_eq!(first, generate(&spec, split, 7), "{split:?}");
+
+            for row in clean_rows(&first) {
+                seen.insert(row);
+            }
+        }
+
+        assert_eq!(seen.len(), spec.n_train + spec.n_valid + spec.n_hidden);
+
+        // Without noise the inputs are the clean values, and the targets stay the same.
+        let data = generate(&spec, Split::Valid, 2);
+        let quiet = generate(&TaskSpec { noise: 0.0, ..spec }, Split::Valid, 2);
+        let rounded: Vec<f32> = data.x.iter().map(|&v| f32::from(v > 0.5)).collect();
+
+        assert_eq!(quiet.x, rounded);
+        assert_eq!(quiet.targets, data.targets);
     }
 
     #[test]
@@ -1544,6 +1876,87 @@ mod tests {
 
         reversed.reverse();
         assert_ne!(reversed, MOTIF);
+    }
+
+    #[test]
+    fn the_arc_grid_kind_is_read_from_files_and_never_generated() {
+        let spec = TaskKind::ArcGrid.spec();
+        let side = crate::arc_grid::ARC_SIDE;
+        let cells = side * side;
+
+        assert_eq!(spec.kind, TaskKind::ArcGrid);
+        assert_eq!((spec.n_in, spec.n_out), (10 * cells, 10 * cells));
+        assert_eq!(
+            spec.input,
+            InputShape::Image {
+                channels: 10,
+                height: side,
+                width: side
+            }
+        );
+        assert_eq!(spec.cell_classes(), Some((10, cells)));
+        assert!(spec.input_fits() && spec.output_fits());
+        assert_eq!(spec, crate::arc_grid::largest_spec());
+
+        // It is not one of the generated tasks, and it generates no sample.
+        assert!(!TaskKind::ALL.contains(&TaskKind::ArcGrid));
+
+        for split in SPLITS {
+            let data = generate(&spec, split, 3);
+
+            assert_eq!((data.n, data.n_in, data.n_out), (0, spec.n_in, spec.n_out));
+            assert!(data.x.is_empty());
+            assert_eq!(data.targets, Targets::Labels(Vec::new()));
+        }
+
+        assert_eq!(TaskKind::from_name("arc-grid"), Some(TaskKind::ArcGrid));
+        assert_eq!(
+            TaskKind::from_name(TaskKind::ArcGrid.name()),
+            Some(TaskKind::ArcGrid)
+        );
+
+        let text = serde_json::to_string(&spec).expect("json");
+        let back: TaskSpec = serde_json::from_str(&text).expect("parse");
+
+        assert_eq!(back, spec);
+        assert!(text.starts_with(r#"{"kind":"ArcGrid","#), "{text}");
+    }
+
+    #[test]
+    fn only_a_classification_with_a_grid_of_classes_has_cell_classes() {
+        // Every task before ticket 06 has none: flat classes, a regression, or the mirror
+        // grid's regression of one value per cell.
+        for kind in TaskKind::ALL {
+            assert_eq!(kind.spec().cell_classes(), None, "{kind:?}");
+        }
+
+        let grid = |channels| OutputShape::Grid {
+            channels,
+            height: 2,
+            width: 3,
+        };
+        let cells = TaskSpec {
+            n_out: 24,
+            output: grid(4),
+            objective: Objective::Classification { classes: 4 },
+            ..TaskKind::MirrorGrid.spec()
+        };
+
+        assert_eq!(cells.cell_classes(), Some((4, 6)));
+
+        // The channels of the grid must be the classes.
+        let other = TaskSpec {
+            output: grid(3),
+            n_out: 18,
+            ..cells.clone()
+        };
+        let regression = TaskSpec {
+            objective: Objective::Regression,
+            ..cells.clone()
+        };
+
+        assert_eq!(other.cell_classes(), None);
+        assert_eq!(regression.cell_classes(), None);
     }
 
     #[test]

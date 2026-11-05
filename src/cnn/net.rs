@@ -51,25 +51,42 @@ impl ParamSpec {
 /// The trainable tensors of `plan`, in plan order.
 ///
 /// A convolution has its kernel of shape (outputs, inputs / groups, k, k), or (outputs,
-/// inputs / groups, k) along a sequence, then its bias if it has one. A norm has its scale,
-/// then its shift. A dense layer has its matrix (outputs, inputs), then its bias.
+/// inputs / groups, k) along a sequence, then its bias if it has one; so has a causal
+/// convolution. A transposed convolution has its kernel of shape (inputs, outputs, f, f),
+/// or (inputs, outputs, f) along a sequence, for its factor f, then its bias if it has one.
+/// A norm has its scale, then its shift. A dense layer has its matrix (outputs, inputs),
+/// then its bias. A squeeze-and-excitation has the matrix (hidden, channels) and the bias
+/// of its first dense layer, then the matrix (channels, hidden) and the bias of its second.
 ///
 /// A kernel or matrix starts as in `nn::Mlp::new`, by the activation that follows it in the
 /// plan: He init, std sqrt(2 / fan_in), for ReLU, GELU, SiLU and ReLU6; Xavier init, std
 /// sqrt(2 / (fan_in + fan_out)), for tanh and sine. For a convolution the fans count one
 /// group: fan_in is the inputs per group times the taps, fan_out the outputs per group
-/// times the taps. The output layer has no activation after it; like the output layer of
-/// an MLP, it follows `activation`, the activation of the head. Biases and shifts start at
-/// 0, scales at 1.
+/// times the taps. A transposed convolution feeds each output cell from one cell of each
+/// input channel: its fan_in is its inputs, its fan_out its outputs times the cells of a
+/// block. The output layer has no activation after it; like the output layer of an MLP,
+/// it follows `activation`, the activation of the head. So does the projection of an
+/// inverted residual or a ConvNeXt block in the last stage; in an earlier stage it follows
+/// the first activation of the next stage. The first dense layer of a
+/// squeeze-and-excitation has He init for its ReLU, the second Xavier init for its sigmoid.
+/// Biases and shifts start at 0, scales at 1.
 pub(crate) fn param_specs(plan: &Plan, activation: Activation) -> Vec<ParamSpec> {
     let axes = plan.input.size.len();
     let mut specs = Vec::new();
 
     for (i, step) in plan.steps.iter().enumerate() {
-        let next = next_activation(plan, i).unwrap_or(activation.into());
+        let next = he_init(next_activation(plan, i).unwrap_or(activation.into()));
 
         match step.layer {
             Layer::Conv {
+                inputs,
+                outputs,
+                kernel,
+                groups,
+                bias,
+                ..
+            }
+            | Layer::CausalConv {
                 inputs,
                 outputs,
                 kernel,
@@ -91,6 +108,24 @@ pub(crate) fn param_specs(plan: &Plan, activation: Activation) -> Vec<ParamSpec>
                     specs.push(constant(outputs, Init::Zeros));
                 }
             }
+            Layer::ConvTranspose {
+                inputs,
+                outputs,
+                factor,
+                bias,
+            } => {
+                let mut shape = vec![inputs, outputs];
+
+                shape.extend(std::iter::repeat_n(factor, axes));
+
+                let cells = factor.pow(axes as u32);
+
+                specs.push(weight(shape, next, inputs, outputs * cells));
+
+                if bias {
+                    specs.push(constant(outputs, Init::Zeros));
+                }
+            }
             Layer::Norm { channels, .. } => {
                 specs.push(constant(channels, Init::Ones));
                 specs.push(constant(channels, Init::Zeros));
@@ -99,7 +134,23 @@ pub(crate) fn param_specs(plan: &Plan, activation: Activation) -> Vec<ParamSpec>
                 specs.push(weight(vec![outputs, inputs], next, inputs, outputs));
                 specs.push(constant(outputs, Init::Zeros));
             }
-            Layer::Activation(_) | Layer::Pool { .. } | Layer::GlobalAvgPool | Layer::Flatten => {}
+            Layer::SqueezeExcite { channels, hidden } => {
+                specs.push(weight(vec![hidden, channels], true, channels, hidden));
+                specs.push(constant(hidden, Init::Zeros));
+                specs.push(weight(vec![channels, hidden], false, hidden, channels));
+                specs.push(constant(channels, Init::Zeros));
+            }
+            Layer::Activation(_)
+            | Layer::Pool { .. }
+            | Layer::MaxPoolSame { .. }
+            | Layer::Upsample { .. }
+            | Layer::Shuffle { .. }
+            | Layer::GlobalAvgPool
+            | Layer::Flatten
+            | Layer::Fork
+            | Layer::Branch
+            | Layer::Add
+            | Layer::Concat => {}
         }
     }
 
@@ -131,20 +182,24 @@ fn next_activation(plan: &Plan, i: usize) -> Option<CnnActivation> {
         })
 }
 
-/// A kernel or matrix with He or Xavier init for the activation that follows it.
-fn weight(
-    shape: Vec<usize>,
-    activation: CnnActivation,
-    fan_in: usize,
-    fan_out: usize,
-) -> ParamSpec {
-    let std = match activation {
+/// True when a kernel or matrix before `activation` starts with He init, false for Xavier
+/// init (see `param_specs`).
+fn he_init(activation: CnnActivation) -> bool {
+    match activation {
         CnnActivation::Relu | CnnActivation::Gelu | CnnActivation::Silu | CnnActivation::Relu6 => {
-            (2.0 / fan_in.max(1) as f32).sqrt()
+            true
         }
-        CnnActivation::Tanh | CnnActivation::Sine => {
-            (2.0 / (fan_in + fan_out).max(1) as f32).sqrt()
-        }
+        CnnActivation::Tanh | CnnActivation::Sine => false,
+    }
+}
+
+/// A kernel or matrix with He init, std sqrt(2 / fan_in), if `he`, else with Xavier init,
+/// std sqrt(2 / (fan_in + fan_out)).
+fn weight(shape: Vec<usize>, he: bool, fan_in: usize, fan_out: usize) -> ParamSpec {
+    let std = if he {
+        (2.0 / fan_in.max(1) as f32).sqrt()
+    } else {
+        (2.0 / (fan_in + fan_out).max(1) as f32).sqrt()
     };
 
     ParamSpec {
@@ -279,9 +334,27 @@ enum Unit {
         /// Index into `biases`.
         bias: Option<usize>,
         stride: usize,
+        /// Zero cells on both sides; a causal convolution puts its own on the left only.
         padding: usize,
         dilation: usize,
         groups: usize,
+        causal: bool,
+    },
+    ConvTranspose {
+        /// Index into `weights`.
+        kernel: usize,
+        /// Index into `biases`.
+        bias: Option<usize>,
+        factor: usize,
+    },
+    Upsample {
+        factor: usize,
+    },
+    Shuffle {
+        groups: usize,
+    },
+    MaxPoolSame {
+        window: usize,
     },
     Norm {
         norm: Norm,
@@ -304,6 +377,18 @@ enum Unit {
         /// Index into `biases`.
         bias: usize,
     },
+    SqueezeExcite {
+        /// Indices into `weights`: the matrices of the two dense layers.
+        squeeze: usize,
+        excite: usize,
+        /// Indices into `biases`: their biases.
+        squeeze_bias: usize,
+        excite_bias: usize,
+    },
+    Fork,
+    Branch,
+    Add,
+    Concat,
 }
 
 /// A CNN as candle tensors: the units of its plan and their values.
@@ -390,7 +475,31 @@ impl Net {
                     padding,
                     dilation,
                     groups,
+                    causal: false,
                 },
+                Layer::CausalConv {
+                    stride,
+                    dilation,
+                    groups,
+                    bias,
+                    ..
+                } => Unit::Conv {
+                    kernel: take(true),
+                    bias: bias.then(|| take(false)),
+                    stride,
+                    padding: 0,
+                    dilation,
+                    groups,
+                    causal: true,
+                },
+                Layer::ConvTranspose { factor, bias, .. } => Unit::ConvTranspose {
+                    kernel: take(true),
+                    bias: bias.then(|| take(false)),
+                    factor,
+                },
+                Layer::Upsample { factor } => Unit::Upsample { factor },
+                Layer::Shuffle { groups } => Unit::Shuffle { groups },
+                Layer::MaxPoolSame { window } => Unit::MaxPoolSame { window },
                 Layer::Norm { norm, channels } => {
                     let batch = if norm == Norm::Batch {
                         let (mean, var) = &values.running[net.running.len()];
@@ -420,6 +529,24 @@ impl Net {
                     matrix: take(true),
                     bias: take(false),
                 },
+                // The order of `param_specs`: matrix, bias, matrix, bias.
+                Layer::SqueezeExcite { .. } => {
+                    let squeeze = take(true);
+                    let squeeze_bias = take(false);
+                    let excite = take(true);
+                    let excite_bias = take(false);
+
+                    Unit::SqueezeExcite {
+                        squeeze,
+                        excite,
+                        squeeze_bias,
+                        excite_bias,
+                    }
+                }
+                Layer::Fork => Unit::Fork,
+                Layer::Branch => Unit::Branch,
+                Layer::Add => Unit::Add,
+                Layer::Concat => Unit::Concat,
             };
 
             net.units.push(unit);
@@ -504,6 +631,8 @@ impl Net {
             }
         };
         let mut h = x.clone();
+        // The input of each open fork, and the outputs of its finished branches.
+        let mut forks: Vec<(Tensor, Vec<Tensor>)> = Vec::new();
 
         for unit in &self.units {
             h = match unit {
@@ -514,24 +643,50 @@ impl Net {
                     padding,
                     dilation,
                     groups,
+                    causal,
+                } => {
+                    let kernel = read(&self.weights[*kernel]);
+                    let out = match (*causal, one_d) {
+                        (true, _) => ops::causal_conv1d(&h, &kernel, *stride, *dilation, *groups)?,
+                        (false, true) => {
+                            ops::conv1d(&h, &kernel, *padding, *stride, *dilation, *groups)?
+                        }
+                        (false, false) => {
+                            ops::conv2d(&h, &kernel, *padding, *stride, *dilation, *groups)?
+                        }
+                    };
+
+                    add_bias(out, bias.map(|bias| read(&self.biases[bias])))?
+                }
+                Unit::ConvTranspose {
+                    kernel,
+                    bias,
+                    factor,
                 } => {
                     let kernel = read(&self.weights[*kernel]);
                     let out = if one_d {
-                        ops::conv1d(&h, &kernel, *padding, *stride, *dilation, *groups)?
+                        ops::conv_transpose1d(&h, &kernel, *factor)?
                     } else {
-                        ops::conv2d(&h, &kernel, *padding, *stride, *dilation, *groups)?
+                        ops::conv_transpose2d(&h, &kernel, 0, 0, *factor, 1)?
                     };
 
-                    match bias {
-                        Some(bias) => {
-                            let bias = read(&self.biases[*bias]);
-                            let mut shape = vec![1; out.dims().len()];
+                    add_bias(out, bias.map(|bias| read(&self.biases[bias])))?
+                }
+                Unit::Upsample { factor } => {
+                    if one_d {
+                        ops::upsample_nearest1d(&h, *factor)?
+                    } else {
+                        ops::upsample_nearest2d(&h, *factor)?
+                    }
+                }
+                Unit::Shuffle { groups } => ops::channel_shuffle(&h, *groups)?,
+                Unit::MaxPoolSame { window } => {
+                    let padding = (window - 1) / 2;
 
-                            shape[1] = bias.dims()[0];
-
-                            ops::broadcast_add(&out, &ops::reshape(&bias, &shape)?)?
-                        }
-                        None => out,
+                    if one_d {
+                        ops::max_pool1d(&h, *window, 1, padding)?
+                    } else {
+                        ops::max_pool2d(&h, *window, 1, padding)?
                     }
                 }
                 Unit::Norm {
@@ -572,7 +727,7 @@ impl Net {
                 }
                 Unit::Activation(activation) => activate(*activation, &h)?,
                 Unit::Pool { pool, window } => match (one_d, pool) {
-                    (true, Pool::Max) => ops::max_pool1d(&h, *window, *window)?,
+                    (true, Pool::Max) => ops::max_pool1d(&h, *window, *window, 0)?,
                     (true, Pool::Avg) => ops::avg_pool1d(&h, *window, *window)?,
                     (false, Pool::Max) => ops::max_pool2d(&h, *window, *window, 0)?,
                     (false, Pool::Avg) => ops::avg_pool2d(&h, *window, *window, 0)?,
@@ -584,11 +739,87 @@ impl Net {
                     &read(&self.weights[*matrix]),
                     &read(&self.biases[*bias]),
                 )?,
+                Unit::SqueezeExcite {
+                    squeeze,
+                    excite,
+                    squeeze_bias,
+                    excite_bias,
+                } => {
+                    let pooled = ops::global_avg_pool(&h)?;
+                    let hidden = ops::relu(&ops::linear(
+                        &pooled,
+                        &read(&self.weights[*squeeze]),
+                        &read(&self.biases[*squeeze_bias]),
+                    )?)?;
+                    let gate = ops::sigmoid(&ops::linear(
+                        &hidden,
+                        &read(&self.weights[*excite]),
+                        &read(&self.biases[*excite_bias]),
+                    )?)?;
+                    // One value per row and channel, the same at every position.
+                    let mut shape = gate.dims().to_vec();
+
+                    shape.resize(h.dims().len(), 1);
+
+                    ops::broadcast_mul(&h, &ops::reshape(&gate, &shape)?)?
+                }
+                Unit::Fork => {
+                    forks.push((h.clone(), Vec::new()));
+
+                    h
+                }
+                Unit::Branch => {
+                    let Some((input, outputs)) = forks.last_mut() else {
+                        return Err(mismatch("a branch has no fork"));
+                    };
+
+                    outputs.push(h);
+
+                    input.clone()
+                }
+                Unit::Add => {
+                    let Some((_, outputs)) = forks.pop() else {
+                        return Err(mismatch("a sum has no fork"));
+                    };
+                    let mut sum = h;
+
+                    for output in &outputs {
+                        sum = ops::add(output, &sum)?;
+                    }
+
+                    sum
+                }
+                Unit::Concat => {
+                    let Some((_, outputs)) = forks.pop() else {
+                        return Err(mismatch("a join has no fork"));
+                    };
+                    let mut parts: Vec<&Tensor> = outputs.iter().collect();
+
+                    parts.push(&h);
+
+                    ops::cat(&parts, 1)?
+                }
             };
+        }
+
+        if !forks.is_empty() {
+            return Err(mismatch("a fork has no sum"));
         }
 
         Ok(h)
     }
+}
+
+/// `out` plus a bias per channel, if there is one.
+fn add_bias(out: Tensor, bias: Option<Tensor>) -> Result<Tensor> {
+    let Some(bias) = bias else {
+        return Ok(out);
+    };
+    let mut shape = vec![1; out.dims().len()];
+
+    shape[1] = bias.dims()[0];
+
+    ops::broadcast_add(&out, &ops::reshape(&bias, &shape)?)
 }
 
 /// An activation of the stem, a stage or the head.
@@ -620,12 +851,18 @@ mod tests {
 
     /// The hand-made genomes of `cnn::genome::testing` with a task they fit.
     fn genomes() -> Vec<(Genome, TaskSpec)> {
-        vec![
+        let mut genomes = vec![
             (testing::lenet(), TaskKind::Shapes.spec()),
             (testing::vgg(), TaskKind::BlobCount.spec()),
             (testing::grouped_dilated(), TaskKind::MirrorSymmetry.spec()),
             (testing::sequence(), TaskKind::Motif1d.spec()),
-        ]
+        ];
+
+        for (_, task, genome) in testing::block_genomes() {
+            genomes.push((genome, task.spec()));
+        }
+
+        genomes
     }
 
     fn initial(genome: &Genome, plan: &Plan, seed: u64) -> (Vec<ParamSpec>, Values) {
@@ -648,12 +885,16 @@ mod tests {
             let specs = param_specs(&plan, genome.activation);
             let mut next = specs.iter();
 
-            // Step by step: a convolution has a kernel and maybe a bias, a norm a scale and
-            // a shift, a dense layer a matrix and a bias.
+            // Step by step: a convolution of any kind has a kernel and maybe a bias, a norm
+            // a scale and a shift, a dense layer a matrix and a bias, a
+            // squeeze-and-excitation two of each.
             for step in &plan.steps {
                 let tensors = match step.layer {
-                    Layer::Conv { bias, .. } => 1 + usize::from(bias),
+                    Layer::Conv { bias, .. }
+                    | Layer::CausalConv { bias, .. }
+                    | Layer::ConvTranspose { bias, .. } => 1 + usize::from(bias),
                     Layer::Norm { .. } | Layer::Dense { .. } => 2,
+                    Layer::SqueezeExcite { .. } => 4,
                     _ => 0,
                 };
                 let values: usize = next.by_ref().take(tensors).map(ParamSpec::len).sum();

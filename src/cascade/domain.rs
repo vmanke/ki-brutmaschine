@@ -17,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use crate::cascade::arena::BreedConfig;
 use crate::cascade::genome::{Cascade, seed_cascades};
 use crate::cascade::puzzle::{
-    Grid, Puzzle, SELF_CHECK_TEXT, generate_panel, parse_answer, render_judge_prompt,
-    render_solve_prompt,
+    Grid, Puzzle, SELF_CHECK_TEXT, generate_panel, parse_answer, render_example,
+    render_judge_prompt, render_solve_prompt,
 };
+use crate::cascade::sim::{family_names, rule_strengths};
 use crate::cascade::variation::{GRID_BRIEF, MutatorBrief, PHRASES};
 use crate::util::{BrutError, Result};
 
@@ -76,6 +77,29 @@ pub trait Domain: Sized + Sync {
 
     /// The fixed text a Worker's self-check Trait adds to its system prompt.
     fn self_check_text(&self) -> &'static str;
+
+    /// The names of the domain's hypothesis families in their fixed order (step 2, spec
+    /// 5.1). A Soul holds one phase per family. Empty by default, and a Run with Souls on
+    /// such a domain is refused.
+    fn families(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    /// The Family strengths of `task`, one per family in the order of `families()`: each at
+    /// least 0, at least one positive (spec 5.1). They are the same for every Worker on the
+    /// task (Q63). They are evaluator data: no prompt, no request and no Worker sees them.
+    /// Empty by default, as `families()`.
+    fn strengths(&self, _task: &Self::Task) -> Vec<f64> {
+        Vec::new()
+    }
+
+    /// One solved example for teaching (step 2, spec 10.2): the task with `answer`, as
+    /// plain text for a system prompt. Fixed code writes it; it holds what a prompt shows
+    /// of the task, never the task's id, rule or reference. None by default: a domain that
+    /// renders no example gives no teaching.
+    fn example(&self, _task: &Self::Task, _answer: &Self::Answer) -> Option<String> {
+        None
+    }
 }
 
 /// The breeder side of a task family: what new Cascades are made from.
@@ -89,16 +113,22 @@ pub struct GenePool {
     pub brief: &'static MutatorBrief,
     /// A rule every new Cascade must also pass (Ok for grids).
     pub admit: fn(&Cascade) -> std::result::Result<(), String>,
+    /// The hypothesis families a text names, by their places in the Domain's family order
+    /// (step 2, arm W of `.scratch/seelen-modell/spec.md`, section 4.1). None for a gene
+    /// pool that cannot name them; a Run whose Soul steers variation is refused then.
+    pub families_of: Option<fn(&str) -> Vec<usize>>,
 }
 
 impl GenePool {
-    /// The grid puzzles of Stage 2c: today's seeds, phrases and brief.
+    /// The grid puzzles of Stage 2c: today's seeds, phrases and brief. They name no
+    /// families of a text.
     pub fn grid() -> GenePool {
         GenePool {
             seeds: seed_cascades,
             phrases: PHRASES,
             brief: &GRID_BRIEF,
             admit: |_| Ok(()),
+            families_of: None,
         }
     }
 }
@@ -218,11 +248,27 @@ impl Domain for GridDomain {
     fn self_check_text(&self) -> &'static str {
         SELF_CHECK_TEXT
     }
+
+    /// The families of the simulated grid model (spec 5.3).
+    fn families(&self) -> Vec<&'static str> {
+        family_names()
+    }
+
+    /// The strengths of the puzzle's hidden rule (spec 5.3).
+    fn strengths(&self, task: &Puzzle) -> Vec<f64> {
+        rule_strengths(&task.rule)
+    }
+
+    /// The puzzle's test input with `answer` as its output, as a worked example.
+    fn example(&self, task: &Puzzle, answer: &Grid) -> Option<String> {
+        Some(render_example(&task.test_input, answer))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cascade::puzzle::{Geo, Rule};
 
     #[test]
     fn grid_domain_forwards_to_stage_2c() {
@@ -280,6 +326,10 @@ mod tests {
         assert_eq!((pool.seeds)(), seed_cascades());
         assert_eq!(pool.phrases, PHRASES);
         assert!(std::ptr::eq(pool.brief, &GRID_BRIEF));
+        assert!(
+            pool.families_of.is_none(),
+            "grids name no families of a text"
+        );
 
         for (_, c) in seed_cascades() {
             assert_eq!((pool.admit)(&c), Ok(()));
@@ -309,5 +359,75 @@ mod tests {
             CircuitConfig::default()
         );
         assert!(serde_json::from_str::<CircuitConfig>(r#"{"gates":3}"#).is_err());
+    }
+
+    /// The families of the simulated grid model, in its order (spec 5.3).
+    const GRID_FAMILIES: [&str; 7] = [
+        "Mirror",
+        "Rotate",
+        "Transpose",
+        "Gravity",
+        "Colour",
+        "Compose",
+        "Previous",
+    ];
+
+    #[test]
+    fn the_grid_families_are_the_grid_models() {
+        assert_eq!(GridDomain.families(), GRID_FAMILIES);
+        assert_eq!(GridDomain.families(), family_names());
+    }
+
+    /// A hidden rule and the families that fit it.
+    type RuleCase = (Geo, Option<[u8; 10]>, &'static [&'static str]);
+
+    #[test]
+    fn grid_strengths_follow_the_rule() {
+        let puzzle = |geo: Geo, colours: Option<[u8; 10]>| Puzzle {
+            id: "hand-made".to_string(),
+            rule: Rule { geo, colours },
+            train: Vec::new(),
+            test_input: Vec::new(),
+            test_output: Vec::new(),
+        };
+        let fit = |names: &[&str]| -> Vec<f64> {
+            GRID_FAMILIES
+                .iter()
+                .map(|f| if names.contains(f) { 1.0 } else { 0.0 })
+                .collect()
+        };
+        let map = Some([0, 2, 3, 1, 4, 5, 6, 7, 8, 9]);
+        let cases: [RuleCase; 12] = [
+            (Geo::FlipH, None, &["Mirror"]),
+            (Geo::FlipV, None, &["Mirror"]),
+            (Geo::Rot90, None, &["Rotate"]),
+            (Geo::Rot180, None, &["Rotate"]),
+            (Geo::Rot270, None, &["Rotate"]),
+            (Geo::Transpose, None, &["Transpose"]),
+            (Geo::GravityDown, None, &["Gravity"]),
+            (Geo::Identity, map, &["Colour"]),
+            (Geo::FlipV, map, &["Mirror", "Colour", "Compose"]),
+            (Geo::Rot180, map, &["Rotate", "Colour", "Compose"]),
+            (Geo::Transpose, map, &["Transpose", "Colour", "Compose"]),
+            (Geo::GravityDown, map, &["Gravity", "Colour", "Compose"]),
+        ];
+
+        for (geo, colours, names) in cases {
+            assert_eq!(
+                GridDomain.strengths(&puzzle(geo, colours)),
+                fit(names),
+                "{geo:?} {colours:?}"
+            );
+        }
+
+        // Every generated puzzle has a fitting family, and Previous fits none.
+        for p in generate_panel(3, 300) {
+            let s = GridDomain.strengths(&p);
+
+            assert_eq!(s.len(), GRID_FAMILIES.len(), "{}", p.id);
+            assert!(s.iter().any(|&x| x > 0.0), "{}", p.id);
+            assert!(s.iter().all(|&x| x == 0.0 || x == 1.0), "{}", p.id);
+            assert_eq!(s[6], 0.0, "{}", p.id);
+        }
     }
 }

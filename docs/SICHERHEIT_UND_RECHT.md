@@ -60,8 +60,17 @@ Validierungswert zu optimistisch.
 - Die verdeckte Bewertung ist endgültig: Danach lehnt `brut run` weitere
   Generationen ab (`evolve::check_not_final`). Bewertet wird eine feste Liste
   der besten Kandidaten nach Validierungs-Fitness (`evolve::hidden_set`).
-  Gesperrte Kandidaten bleiben darin, damit ein erneuter Aufruf nicht so
-  lange weitere Kandidaten prüft, bis einer besteht.
+  Ein Lauf, welcher CNNs züchtet oder mit beförderten Modellen beginnt,
+  nimmt zusätzlich sein bestes Basismodell in die Liste, falls es nicht schon
+  darin steht (`Config::can_promote`). Das kostet höchstens eine Abfrage mehr.
+  Jeder andere Lauf, etwa ein MLP-Lauf wie vor den CNNs, behält die Liste wie
+  bisher. Gesperrte Kandidaten bleiben darin, damit ein erneuter Aufruf nicht
+  so lange weitere Kandidaten prüft, bis einer besteht.
+- Nach dieser Bewertung wählt `brut promote` aus der Liste höchstens zwei
+  Modelle nach ihrem verdeckten Wert (ADR 0008). Die verdeckten Daten des
+  Laufs steuern also, welche Modelle in den Pool gehen, jedoch erst nach dem
+  Ende des Laufs und nur über einen PR, den ein Mensch prüft. Ein späterer
+  Lauf zieht einen neuen Seed für seine verdeckten Daten.
 
 ### 3. Abfluss des Geheimnisses
 
@@ -182,7 +191,7 @@ belegt sehr viel Speicher oder führt Code aus.
 - Eine Datei mit `"kind": "cnn"` ist ein Faltungsnetz. Sie darf keine
   unbekannten Felder enthalten, auch nicht im Genom. Der Leser bricht ab,
   sobald die Listen der trainierten Werte zusammen mehr als 2 000 000 Zahlen
-  halten oder die Listen der laufenden Statistiken mehr als 6656
+  halten oder die Listen der laufenden Statistiken mehr als 86 528
   (`MAX_RUNNING_VALUES`), denn mehr Werte hat kein gültiges Modell. Bevor
   `brut-eval` einen Tensor anlegt, prüft es die Architektur: die Formprüfung
   des Genoms gegen die Aufgabe, die Parameterzahl (höchstens 2 000 000), Tiefe
@@ -338,9 +347,26 @@ sein. Trainingsdaten könnten Bewertungsaufgaben schon enthalten
   Spiegelungen und mit neu nummerierten Farben). Jede Überschneidung führt
   zur Ablehnung, ohne Buchung. Ein Test pflanzt ein gedrehtes und
   umgefärbtes Duplikat und prüft, dass es erkannt wird.
-- Während `brut` und `brut-eval` läuft kein fremder Code. Nur der
-  abgeschaltete Zusatzversuch E2 bräuchte eine einmalige Umwandlung der
-  re-arc-Daten; sie liefe nur im getesteten Sandkasten-Rezept des Plans.
+- Während `brut` und `brut-eval` läuft kein fremder Code. Die re-arc-Daten
+  wandelt `tools/rearc_to_jsonl.py` einmalig um, ein eigenes Skript nur mit der
+  Python-Standardbibliothek; es liest `re_arc.zip` als Daten und führt keinen
+  Code von re-arc aus. Es läuft nur im getesteten Sandkasten-Rezept des Plans
+  (`tools/rearc_sandbox.sh`): erst Benutzer 65534 ohne neue Rechte, dann eigene
+  Namensräume ohne Netzwerk, ein eigenes tmpfs und `prlimit`. Die Zip-Datei
+  bekommt es über die Standardeingabe, die Zeilen gibt es über die
+  Standardausgabe zurück, sodass es keine Datei außerhalb seines tmpfs öffnet.
+  Root schreibt die Ausgabe nur in einen Ordner, in den kein anderer Benutzer
+  schreiben kann, auch in keinen Ordner darüber (wie `StrictModes` von sshd);
+  sonst bricht das Skript ab. So kann niemand root über einen Symlink eine
+  fremde Datei überschreiben lassen.
+  Wir wandeln am 2026-11-01 für die ARC-Rasteraufgaben der CNNs (Ticket 06) um;
+  den SHA-256 der Ausgabe hält die Manifest-Datei fest.
+- Die ARC-Rasteraufgaben der CNNs lesen nur die Trainingsdateien von
+  ARC-AGI-1 und die umgewandelte re-arc-Datei, nie eine Bewertungsdatei. Zwei
+  Trainingsaufgaben, welche Paare von Bewertungsaufgaben wiederholen
+  (40853293 und caa06a1f), bleiben mit ihren re-arc-Paaren draußen. Wir messen
+  auf den echten Daten: Kein Paar dieser Aufgaben gleicht normiert einem Paar
+  der drei Bewertungssätze.
 
 ### 11. Lieferkette
 

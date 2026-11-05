@@ -31,6 +31,12 @@ pub struct GenRequest {
     /// requests recorded before this field existed still replay.
     #[serde(default)]
     pub think_tokens: u32,
+    /// The current phases of the Worker's Soul, one per hypothesis family of the Domain,
+    /// with the readout applied (step 2, contract-v3). Only a backend whose
+    /// `reads_phases()` is true ever gets them, and only a simulated model reads them. None
+    /// is left out of the JSON, so every request key stays as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<Vec<u16>>,
 }
 
 /// Why generation stopped. Mirrors the fields the orchestrator must check before
@@ -58,6 +64,17 @@ pub struct GenResponse {
     pub stop_reason: StopReason,
     /// Backend name and model tag, recorded so a run says which model produced a proposal.
     pub backend: String,
+    /// True when the request's phases decided this reply (step 2, contract-v3): a simulated
+    /// model sets it when the reply differs from its reply to the same request without
+    /// phases. False is left out of the JSON, and a response written without the field
+    /// reads as false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub soul_decided: bool,
+}
+
+/// For serde: leave a false flag out of the JSON.
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 impl GenResponse {
@@ -76,6 +93,12 @@ pub trait ModelBackend: Send + Sync {
 
     /// Produce one completion for `req`.
     fn generate(&self, req: &GenRequest) -> Result<GenResponse>;
+
+    /// True when the backend reads `GenRequest::phases` (step 2, contract-v3). False by
+    /// default, and then the breeder never fills them: a real model never gets phases.
+    fn reads_phases(&self) -> bool {
+        false
+    }
 }
 
 /// A rough token count: one token per whitespace-separated word, at least one for
@@ -163,6 +186,7 @@ impl ModelBackend for StubModel {
             text,
             stop_reason,
             backend: self.name.clone(),
+            soul_decided: false,
         })
     }
 }
@@ -179,6 +203,7 @@ mod tests {
             temperature: 0.0,
             seed,
             think_tokens: 0,
+            phases: None,
         }
     }
 
@@ -215,7 +240,9 @@ mod tests {
     #[test]
     fn invalid_stub_differs_from_valid() {
         let good = StubModel::new("stub:test").generate(&req(5)).expect("ok");
-        let bad = StubModel::invalid("stub:test").generate(&req(5)).expect("ok");
+        let bad = StubModel::invalid("stub:test")
+            .generate(&req(5))
+            .expect("ok");
 
         assert_ne!(good.text, bad.text);
         assert!(good.is_usable());

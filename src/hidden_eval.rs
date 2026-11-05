@@ -314,6 +314,15 @@ impl HiddenEvaluator {
     /// persisted before scoring (a crash during scoring still counts it); when the budget is
     /// spent, the request is refused.
     pub fn evaluate(&mut self, req: &EvalRequest) -> Result<EvalResponse> {
+        // The ARC grid tasks (ticket 06) read their examples from files; they have no
+        // hidden split here.
+        if req.task == TaskKind::ArcGrid {
+            return Err(BrutError::Invalid(format!(
+                "task {} has no hidden split: its examples come from files",
+                req.task.name()
+            )));
+        }
+
         let path = self.allowed_model_path(&req.model_path)?;
         let model = load_model(&path)?;
         let spec = req.task.spec();
@@ -1073,7 +1082,36 @@ mod tests {
     }
 
     #[test]
+    fn an_arc_grid_request_is_refused_without_a_query() {
+        // The ARC grid tasks (ticket 06) read their examples from files: there is no hidden
+        // split to score, so the request is refused before any query is charged.
+        let (dir, secret, models) = layout("arc-grid");
+        let model = models.join("cnn.json");
+        let genome = crate::arc_grid::base_models().remove(1).1;
+        let cnn = crate::cnn::model::testing::untrained(&genome, &TaskKind::ArcGrid.spec(), 1);
+
+        create_secret(&secret).expect("secret");
+        std::fs::write(&model, serde_json::to_vec(&cnn).expect("json")).expect("write");
+
+        let mut ev = HiddenEvaluator::open(&secret, 2, 0.01).expect("open");
+        let req = EvalRequest {
+            task: TaskKind::ArcGrid,
+            ..request(&model)
+        };
+        let message = ev.evaluate(&req).expect_err("refused").to_string();
+
+        assert!(message.contains("arc-grid"), "{message}");
+        assert!(
+            !dir.join("secret").join(STATE_FILE).exists(),
+            "no query charged"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn cnn_files_are_scored_and_bad_ones_cost_no_query() {
+        use crate::cnn::families::Family;
         use crate::cnn::genome::{
             Block, CnnActivation, CnnGenome, Dims, Downsample, Head, Norm, Stage, Stem,
         };
@@ -1096,11 +1134,51 @@ mod tests {
             model_path: path.to_path_buf(),
             task: TaskKind::Shapes,
         };
-        let mut ev = HiddenEvaluator::open(&secret, 10, 0.01).expect("open");
+        let mut ev = HiddenEvaluator::open(&secret, 20, 0.01).expect("open");
         let resp = ev.evaluate(&req(&good_path)).expect("a valid CNN file");
 
         assert!((0.0..=1.0).contains(&resp.hidden_primary));
         assert_eq!(resp.queries_used, 1);
+
+        // Base models of the blocks of tickets 03 and 04 score as well, each on its task for
+        // one query: skip connections, a bottleneck, separable blocks, inverted residuals,
+        // squeeze-and-excitation, the joins of Inception, DenseNet and SqueezeNet, the
+        // channel shuffle, ConvNeXt, causal convolutions along a sequence, and a decoder with
+        // the per-cell head on a grid.
+        let families = [
+            Family::ResNet,
+            Family::Xception,
+            Family::MobileNetV2,
+            Family::SeNet,
+            Family::GoogLeNet,
+            Family::DenseNet,
+            Family::ShuffleNet,
+            Family::SqueezeNet,
+            Family::ConvNeXt,
+            Family::Tcn,
+            Family::UNet,
+        ];
+
+        for (i, family) in families.into_iter().enumerate() {
+            let task = family.task();
+            let genome = family.base_model();
+            let model = crate::cnn::model::testing::untrained(&genome, &task.spec(), 2);
+            let path = models.join(format!("{}.json", family.name()));
+
+            std::fs::write(&path, serde_json::to_vec(&Model::Cnn(model)).expect("json"))
+                .expect("write");
+
+            let resp = ev
+                .evaluate(&EvalRequest { task, ..req(&path) })
+                .expect("a base model file");
+
+            assert!(
+                (0.0..=1.0).contains(&resp.hidden_primary),
+                "{}",
+                family.name()
+            );
+            assert_eq!(resp.queries_used, 2 + i, "{}", family.name());
+        }
 
         // Architectures without trained values: they must be refused before the values.
         let wide = |width: usize, kernel: usize, stages: usize| {
@@ -1239,7 +1317,10 @@ mod tests {
         }
 
         // None of the refused files cost a query.
-        assert_eq!(ev.evaluate(&req(&good_path)).expect("eval").queries_used, 2);
+        assert_eq!(
+            ev.evaluate(&req(&good_path)).expect("eval").queries_used,
+            13
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

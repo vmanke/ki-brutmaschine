@@ -7,17 +7,20 @@ use crate::cnn::shape::Plan;
 use crate::config::ScoreWeights;
 use crate::model::Model;
 use crate::nn::{Mlp, Workspace};
-use crate::task::{Dataset, Objective, Targets, TaskSpec};
+use crate::task::{Dataset, NO_CELL, Objective, Targets, TaskSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Metrics {
-    /// Mean loss (cross-entropy or MSE).
+    /// Mean loss (cross-entropy or MSE). With one class per cell, the mean cross-entropy
+    /// over the cells inside the grids.
     pub loss: f64,
-    /// Classification only.
+    /// Classification only: the share of right samples, or with one class per cell the
+    /// share of right cells inside the grids (cell accuracy, a descriptive measure).
     pub accuracy: Option<f64>,
     /// Regression only: coefficient of determination.
     pub r2: Option<f64>,
-    /// Main score in [0, 1], higher is better: accuracy, or max(0, r2).
+    /// Main score in [0, 1], higher is better: accuracy, or max(0, r2). With one class per
+    /// cell, the share of grids with every cell inside right (exact match).
     pub primary: f64,
 }
 
@@ -145,13 +148,19 @@ fn metrics(
     let n = data.n;
     let n_out = data.n_out;
 
-    let result = match (spec.objective, &data.targets) {
-        (Objective::Classification { classes }, Targets::Labels(labels))
+    let result = match (spec.objective, &data.targets, spec.cell_classes()) {
+        (Objective::Classification { .. }, Targets::Labels(labels), Some((classes, cells)))
+            if classes.checked_mul(cells) == Some(n_out)
+                && n.checked_mul(cells) == Some(labels.len()) =>
+        {
+            cell_classification(forward, rows, data, labels, classes, cells)
+        }
+        (Objective::Classification { classes }, Targets::Labels(labels), None)
             if classes == n_out && labels.len() == n =>
         {
             classification(forward, rows, data, labels)
         }
-        (Objective::Regression, Targets::Values(values)) if values.len() == n * n_out => {
+        (Objective::Regression, Targets::Values(values), _) if values.len() == n * n_out => {
             regression(forward, rows, data, values)
         }
         _ => None,
@@ -215,6 +224,93 @@ fn classification(
         accuracy: Some(accuracy),
         r2: None,
         primary: accuracy,
+    })
+}
+
+/// Exact match, cell accuracy and cross-entropy of a task with one class per cell
+/// (`TaskSpec::cell_classes`). None on non-finite output, a bad label, or a sample without a
+/// cell inside its grid.
+///
+/// The logit of class c at cell k is output c * cells + k of its sample. A cell with the
+/// label `NO_CELL` lies outside the grid and counts nowhere. A cell is right when its label
+/// is the first index of the largest logit, as in `classification`; a grid is an exact match
+/// when every cell inside it is right.
+fn cell_classification(
+    mut forward: impl FnMut(&[f32], usize) -> Option<Vec<f32>>,
+    rows: usize,
+    data: &Dataset,
+    labels: &[u32],
+    classes: usize,
+    cells: usize,
+) -> Option<Metrics> {
+    let n_in = data.n_in;
+    let n_out = data.n_out;
+    let mut loss = 0.0f64;
+    let mut inside = 0usize;
+    let mut right = 0usize;
+    let mut exact = 0usize;
+
+    for (x_chunk, l_chunk) in data.x.chunks(rows * n_in).zip(labels.chunks(rows * cells)) {
+        let rows = l_chunk.len() / cells;
+        let out = forward(x_chunk, rows)?;
+
+        if out.len() != rows * n_out {
+            return None;
+        }
+
+        for (row, sample) in out.chunks_exact(n_out).zip(l_chunk.chunks_exact(cells)) {
+            if !row.iter().all(|v| v.is_finite()) {
+                return None;
+            }
+
+            let mut cells_inside = 0usize;
+            let mut cells_right = 0usize;
+
+            for (k, &label) in sample.iter().enumerate() {
+                if label == NO_CELL {
+                    continue;
+                }
+
+                let label = label as usize;
+
+                if label >= classes {
+                    return None;
+                }
+
+                let logit = |c: usize| row[c * cells + k];
+                let max = (0..classes).map(logit).fold(f32::NEG_INFINITY, f32::max) as f64;
+                let sum: f64 = (0..classes).map(|c| (logit(c) as f64 - max).exp()).sum();
+
+                loss += max + sum.ln() - logit(label) as f64;
+
+                // First index of the maximum, so ties are deterministic.
+                let mut best = 0;
+
+                for c in 1..classes {
+                    if logit(c) > logit(best) {
+                        best = c;
+                    }
+                }
+
+                cells_inside += 1;
+                cells_right += usize::from(best == label);
+            }
+
+            if cells_inside == 0 {
+                return None;
+            }
+
+            inside += cells_inside;
+            right += cells_right;
+            exact += usize::from(cells_right == cells_inside);
+        }
+    }
+
+    Some(Metrics {
+        loss: clip_loss(loss / inside as f64),
+        accuracy: Some(right as f64 / inside as f64),
+        r2: None,
+        primary: exact as f64 / data.n as f64,
     })
 }
 
@@ -360,6 +456,7 @@ mod tests {
             n_in: 2,
             input: crate::task::InputShape::Flat,
             n_out: 2,
+            output: crate::task::OutputShape::Flat,
             objective: Objective::Classification { classes: 2 },
             n_train: 4,
             n_valid: 4,
@@ -494,6 +591,104 @@ mod tests {
 
         assert_eq!(chunk_rows(&[2, EVAL_MAX_FLOATS * 2, 2]), 1);
         assert_eq!(chunk_rows(&[]), EVAL_CHUNK);
+    }
+
+    /// A task with one class per cell: 2 classes on a grid of 1 x 3 cells, read from 1 input
+    /// per sample (an MLP of 1 input and 6 outputs), as the CNN grid tasks of ticket 06 lay
+    /// out their logits: class c of cell k at index c * 3 + k.
+    fn cell_spec() -> TaskSpec {
+        TaskSpec {
+            n_in: 1,
+            n_out: 6,
+            output: crate::task::OutputShape::Grid {
+                channels: 2,
+                height: 1,
+                width: 3,
+            },
+            ..cls_spec()
+        }
+    }
+
+    /// Logits 2 * x for class 0 and -2 * x for class 1 of every cell.
+    fn cell_model() -> Mlp {
+        Mlp {
+            sizes: vec![1, 6],
+            activation: Activation::Relu,
+            weights: vec![vec![2.0, 2.0, 2.0, -2.0, -2.0, -2.0]],
+            biases: vec![vec![0.0; 6]],
+        }
+    }
+
+    #[test]
+    fn cell_classes_score_whole_grids_and_cells() {
+        use crate::task::NO_CELL;
+
+        // With x = 1 every cell says class 0, with x = -1 class 1.
+        let data = Dataset {
+            x: vec![1.0, -1.0, 1.0, -1.0],
+            targets: Targets::Labels(vec![
+                0, 0, 0, // all three right: an exact match
+                1, NO_CELL, 1, // two cells inside, both right
+                0, 1, NO_CELL, // one of two right
+                0, 0, 0, // all wrong
+            ]),
+            n: 4,
+            n_in: 1,
+            n_out: 6,
+        };
+        let m = evaluate(&Model::Mlp(cell_model()), &cell_spec(), &data);
+
+        // Exact match is the primary score; the share of right cells is descriptive.
+        assert_eq!(m.primary, 0.5);
+        assert_eq!(m.accuracy, Some(6.0 / 10.0));
+        assert_eq!(m.r2, None);
+
+        // The loss is the mean cross-entropy over the 10 labelled cells only.
+        let right = (1.0 + (-4.0f64).exp()).ln();
+        let wrong = 4.0 + right;
+        let expected = (6.0 * right + 4.0 * wrong) / 10.0;
+
+        assert!((m.loss - expected).abs() < 1e-6, "{} {expected}", m.loss);
+    }
+
+    #[test]
+    fn cell_classes_refuse_bad_labels_and_empty_grids() {
+        use crate::task::NO_CELL;
+
+        let data = |labels: Vec<u32>| Dataset {
+            x: vec![1.0],
+            targets: Targets::Labels(labels),
+            n: 1,
+            n_in: 1,
+            n_out: 6,
+        };
+        let score = |labels| evaluate(&Model::Mlp(cell_model()), &cell_spec(), &data(labels));
+
+        assert_eq!(score(vec![0, 0, 0]).primary, 1.0);
+
+        for labels in [
+            vec![0, 2, 0],                   // class 2 of 2 classes
+            vec![0, 0],                      // two labels for three cells
+            vec![NO_CELL, NO_CELL, NO_CELL], // no cell inside the grid
+            vec![0, 0, 0, 0],                // four labels for three cells
+        ] {
+            let m = score(labels.clone());
+
+            assert_eq!(m, Metrics::failed(cell_spec().objective), "{labels:?}");
+        }
+
+        // A model whose outputs do not fill the grid fails too.
+        let flat = Mlp {
+            sizes: vec![1, 2],
+            weights: vec![vec![1.0, -1.0]],
+            biases: vec![vec![0.0; 2]],
+            ..cell_model()
+        };
+
+        assert_eq!(
+            evaluate(&Model::Mlp(flat), &cell_spec(), &data(vec![0, 0, 0])).primary,
+            0.0
+        );
     }
 
     #[test]

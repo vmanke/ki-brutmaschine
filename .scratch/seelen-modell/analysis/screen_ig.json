@@ -1,0 +1,5397 @@
+{
+ "seeds": [
+  5001,
+  5002,
+  5003,
+  5004,
+  5005,
+  5006,
+  5007,
+  5008
+ ],
+ "families": [
+  "Linear",
+  "Phase",
+  "Hadamard",
+  "Compose",
+  "Search",
+  "Meet",
+  "Simplify",
+  "Previous"
+ ],
+ "runs": [
+  {
+   "arm": "N",
+   "seed": 5001,
+   "T": 115,
+   "passes": true,
+   "calls_used": 2427119,
+   "wall_seconds": 2399.114,
+   "verify": "brut-breed: 51847 events, hash chain intact, head 2f4885a7a374cb19641d8ec9cd3bcc62831f3de5dd739ddbd4290a2092c6eb1d; checkpoint at entry 51847 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 127,
+    "changed": 33,
+    "lost": 16,
+    "brought": 3,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 115,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5001,
+   "T": 134,
+   "passes": true,
+   "calls_used": 2219984,
+   "wall_seconds": 1839.453,
+   "verify": "brut-breed: 41394 events, hash chain intact, head 4c7a1cd36fcd064075395eda000549e622e68d61d540509a0b463def59543365; checkpoint at entry 41394 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 143,
+    "changed": 56,
+    "lost": 38,
+    "brought": 3,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 134,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5001,
+   "T": 90,
+   "passes": true,
+   "calls_used": 1105419,
+   "wall_seconds": 4015.709,
+   "verify": "brut-breed: 53366 events, hash chain intact, head eb2d12ebc87bdbd96507473d40cf83b6279cb013e3a71e7fbcb2c47bce0ee619; checkpoint at entry 53366 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 5,
+   "imagination_choices": 2439,
+   "imagination_changed": 1465,
+   "means": {
+    "lph": "203657/1485",
+    "other": "-13571/2475",
+    "lph_values": 1485,
+    "other_values": 2475
+   },
+   "plus": [
+    374,
+    -137
+   ],
+   "minus": [
+    637,
+    -256
+   ],
+   "draws": {
+    "draws": 89,
+    "changed": 41,
+    "lost": 3,
+    "brought": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 90,
+    "op": "section_crossover"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5001,
+   "T": 187,
+   "passes": true,
+   "calls_used": 2729845,
+   "wall_seconds": 2155.792,
+   "verify": "brut-breed: 52190 events, hash chain intact, head 094e69c9a91cbd7741c0dd771ac643363ac4570bbedce0f8833d45e57f2fce6b; checkpoint at entry 52190 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 5,
+   "imagination_choices": 1999,
+   "imagination_changed": 984,
+   "means": {
+    "lph": "38875/652",
+    "other": "-13437/3260",
+    "lph_values": 1956,
+    "other_values": 3260
+   },
+   "plus": [
+    303,
+    -12
+   ],
+   "minus": [
+    284,
+    -79
+   ],
+   "draws": {
+    "draws": 228,
+    "changed": 106,
+    "lost": 35,
+    "brought": 5,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 187,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5002,
+   "T": 90,
+   "passes": true,
+   "calls_used": 1098459,
+   "wall_seconds": 1549.934,
+   "verify": "brut-breed: 44379 events, hash chain intact, head a025dd5b094c2dd466919973cdb0f1a40a9bb94f69cbd259360934993d71bd92; checkpoint at entry 44379 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 133,
+    "changed": 79,
+    "lost": 37,
+    "brought": 1,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 90,
+    "op": "section_crossover"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5002,
+   "T": 65,
+   "passes": true,
+   "calls_used": 1519379,
+   "wall_seconds": 1580.66,
+   "verify": "brut-breed: 42840 events, hash chain intact, head 7839357229e718dafb3b8ac870dc93a8e12e4f54e66e5ec19c2c84b9963fbe3e; checkpoint at entry 42840 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 84,
+    "changed": 56,
+    "lost": 25,
+    "brought": 3,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 65,
+    "op": "section_add"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5002,
+   "T": 8,
+   "passes": true,
+   "calls_used": 1230115,
+   "wall_seconds": 2304.67,
+   "verify": "brut-breed: 37336 events, hash chain intact, head b05b42f4f75a9cc81a86286d2a0e59fe112cf6481c4b208a68e4549a75092807; checkpoint at entry 37336 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 3,
+   "imagination_choices": 3012,
+   "imagination_changed": 1851,
+   "means": {
+    "lph": "136441/1395",
+    "other": "29644/2325",
+    "lph_values": 1395,
+    "other_values": 2325
+   },
+   "plus": [
+    1149,
+    -187
+   ],
+   "minus": [
+    580,
+    -144
+   ],
+   "draws": {
+    "draws": 11,
+    "changed": 11,
+    "lost": 3,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 8,
+    "op": "section_add"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5002,
+   "T": 8,
+   "passes": true,
+   "calls_used": 1341574,
+   "wall_seconds": 1893.209,
+   "verify": "brut-breed: 48143 events, hash chain intact, head a1fd45d22a6607cce9bbacfeb5d0574f0373d9ef801fe7cddf6cbf9e9bf4fb96; checkpoint at entry 48143 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 3,
+   "imagination_choices": 2220,
+   "imagination_changed": 1206,
+   "means": {
+    "lph": "146626/1473",
+    "other": "31034/2455",
+    "lph_values": 1473,
+    "other_values": 2455
+   },
+   "plus": [
+    415,
+    -37
+   ],
+   "minus": [
+    387,
+    -104
+   ],
+   "draws": {
+    "draws": 11,
+    "changed": 11,
+    "lost": 3,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 8,
+    "op": "section_add"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5003,
+   "T": 22,
+   "passes": true,
+   "calls_used": 1413146,
+   "wall_seconds": 2081.449,
+   "verify": "brut-breed: 51419 events, hash chain intact, head f95396cc753695f79ce052ff5d9812f89db913b1a821a0b262f6b3142c9e7c43; checkpoint at entry 51419 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 28,
+    "changed": 15,
+    "lost": 9,
+    "brought": 2,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 22,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5003,
+   "T": 272,
+   "passes": true,
+   "calls_used": 1865439,
+   "wall_seconds": 1573.65,
+   "verify": "brut-breed: 52659 events, hash chain intact, head b275fc37a4418f729deeb7af9b3f6df9f8052820e39fdf809ce4c68ddf6fd91a; checkpoint at entry 52659 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 349,
+    "changed": 218,
+    "lost": 112,
+    "brought": 18,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 272,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5003,
+   "T": 46,
+   "passes": true,
+   "calls_used": 1082545,
+   "wall_seconds": 1447.992,
+   "verify": "brut-breed: 45091 events, hash chain intact, head 6ae5ab0df815aa560721f506781ad0604dfc2aac14c8b8e504410581b8030f2c; checkpoint at entry 45091 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 4,
+   "imagination_choices": 2428,
+   "imagination_changed": 1303,
+   "means": {
+    "lph": "7960/407",
+    "other": "652/2035",
+    "lph_values": 1221,
+    "other_values": 2035
+   },
+   "plus": [
+    183,
+    -18
+   ],
+   "minus": [
+    594,
+    -197
+   ],
+   "draws": {
+    "draws": 72,
+    "changed": 53,
+    "lost": 22,
+    "brought": 4,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 46,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5003,
+   "T": 92,
+   "passes": true,
+   "calls_used": 1344820,
+   "wall_seconds": 1656.116,
+   "verify": "brut-breed: 50298 events, hash chain intact, head 87bc548b644e416af06ad315b42c2b06cb7b223e611700bc336a1d4ddae88f14; checkpoint at entry 50298 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 4,
+   "imagination_choices": 2538,
+   "imagination_changed": 1426,
+   "means": {
+    "lph": "45/46",
+    "other": "-131/2070",
+    "lph_values": 1242,
+    "other_values": 2070
+   },
+   "plus": [
+    762,
+    -250
+   ],
+   "minus": [
+    399,
+    -97
+   ],
+   "draws": {
+    "draws": 133,
+    "changed": 93,
+    "lost": 45,
+    "brought": 9,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 92,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5004,
+   "T": 28,
+   "passes": true,
+   "calls_used": 2189507,
+   "wall_seconds": 3941.809,
+   "verify": "brut-breed: 45835 events, hash chain intact, head 358618f1f3ab6eebe54de88ba724a99a34425a7d75a57b13556f6c58b7cadbb2; checkpoint at entry 45835 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 10,
+    "changed": 5,
+    "lost": 5,
+    "brought": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 28,
+    "op": "stage_add"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5004,
+   "T": 43,
+   "passes": true,
+   "calls_used": 1021381,
+   "wall_seconds": 1431.925,
+   "verify": "brut-breed: 38274 events, hash chain intact, head f1875fa50e1f6b35b39953a48de4cf33ee9449d46c54fb8e9563789e86872592; checkpoint at entry 38274 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 12,
+    "changed": 6,
+    "lost": 5,
+    "brought": 0,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 43,
+    "op": "section_crossover"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5004,
+   "T": 500,
+   "passes": true,
+   "calls_used": 1642323,
+   "wall_seconds": 1558.586,
+   "verify": "brut-breed: 41449 events, hash chain intact, head c72588920ed75bd6fb1bf7e0b5ffdf0c3eeabd1540190db1258a0e9fdd19b962; checkpoint at entry 41449 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 5,
+   "imagination_choices": 522,
+   "imagination_changed": 202,
+   "means": {
+    "lph": "125/1488",
+    "other": "573/620",
+    "lph_values": 1488,
+    "other_values": 2480
+   },
+   "plus": [
+    55,
+    -3
+   ],
+   "minus": [
+    17,
+    -8
+   ],
+   "draws": {
+    "draws": 473,
+    "changed": 124,
+    "lost": 74,
+    "brought": 5,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 500,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5004,
+   "T": 186,
+   "passes": true,
+   "calls_used": 1065764,
+   "wall_seconds": 1717.823,
+   "verify": "brut-breed: 49876 events, hash chain intact, head 6b1b712ef27bad56b09cdd13ccbc460ded93eab797ed067b74da35664fc68732; checkpoint at entry 49876 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 5,
+   "imagination_choices": 2156,
+   "imagination_changed": 1125,
+   "means": {
+    "lph": "763/1350",
+    "other": "487/2250",
+    "lph_values": 1350,
+    "other_values": 2250
+   },
+   "plus": [
+    419,
+    -81
+   ],
+   "minus": [
+    465,
+    -169
+   ],
+   "draws": {
+    "draws": 137,
+    "changed": 39,
+    "lost": 24,
+    "brought": 5,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 186,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5005,
+   "T": 9,
+   "passes": true,
+   "calls_used": 1181556,
+   "wall_seconds": 1786.595,
+   "verify": "brut-breed: 44475 events, hash chain intact, head a76adb3004cbcf6f70a8ea8a79f78702b0ae2f087398f8711009e4ceaef1072e; checkpoint at entry 44475 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 2,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 9,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5005,
+   "T": 9,
+   "passes": true,
+   "calls_used": 1450416,
+   "wall_seconds": 2055.96,
+   "verify": "brut-breed: 53106 events, hash chain intact, head 0d8b375bfbb11bd11869eb78d664b37881eceef33fab12d72d983178460f2803; checkpoint at entry 53106 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 2,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 9,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5005,
+   "T": 9,
+   "passes": true,
+   "calls_used": 1494697,
+   "wall_seconds": 2066.681,
+   "verify": "brut-breed: 38872 events, hash chain intact, head e46245d20d17ec7acfb79aebf3c62dd2a7baf2046b8209a74e66f28e1037c376; checkpoint at entry 38872 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 10,
+   "imagination_choices": 2454,
+   "imagination_changed": 1404,
+   "means": {
+    "lph": "48769/453",
+    "other": "12922/755",
+    "lph_values": 1359,
+    "other_values": 2265
+   },
+   "plus": [
+    550,
+    -9
+   ],
+   "minus": [
+    828,
+    -35
+   ],
+   "draws": {
+    "draws": 2,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 9,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5005,
+   "T": 9,
+   "passes": true,
+   "calls_used": 1093140,
+   "wall_seconds": 5944.661,
+   "verify": "brut-breed: 50792 events, hash chain intact, head 9f8a63380f18c896a44b7b23b3d5272a36151342053af3bb43187fdd58e7df61; checkpoint at entry 50792 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 10,
+   "imagination_choices": 2509,
+   "imagination_changed": 1487,
+   "means": {
+    "lph": "136589/1269",
+    "other": "35542/2115",
+    "lph_values": 1269,
+    "other_values": 2115
+   },
+   "plus": [
+    236,
+    -31
+   ],
+   "minus": [
+    872,
+    -445
+   ],
+   "draws": {
+    "draws": 2,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 9,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5006,
+   "T": 14,
+   "passes": true,
+   "calls_used": 1704266,
+   "wall_seconds": 2258.167,
+   "verify": "brut-breed: 42632 events, hash chain intact, head e72ebd916bade40df617e15ee378d1d68bdc35d1bff137d10b7a8b1b0a402ebf; checkpoint at entry 42632 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 8,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 14,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5006,
+   "T": 14,
+   "passes": true,
+   "calls_used": 1019547,
+   "wall_seconds": 1350.881,
+   "verify": "brut-breed: 29570 events, hash chain intact, head 68305fbd125e6b1a111889325fd626256862b20a78751ce6c2b10f389eca47c8; checkpoint at entry 29570 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 8,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 14,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5006,
+   "T": 14,
+   "passes": true,
+   "calls_used": 1096890,
+   "wall_seconds": 1756.021,
+   "verify": "brut-breed: 25070 events, hash chain intact, head 3b0ecabd8be5fd2000da49dd1979e91e82ca625bda45a09717cc6ab4428c04ba; checkpoint at entry 25070 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 6,
+   "imagination_choices": 912,
+   "imagination_changed": 377,
+   "means": {
+    "lph": "6625/234",
+    "other": "-25/78",
+    "lph_values": 1170,
+    "other_values": 1950
+   },
+   "plus": [
+    11,
+    -1
+   ],
+   "minus": [
+    54,
+    -30
+   ],
+   "draws": {
+    "draws": 8,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 14,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5006,
+   "T": 14,
+   "passes": true,
+   "calls_used": 970767,
+   "wall_seconds": 1451.352,
+   "verify": "brut-breed: 25926 events, hash chain intact, head 989882deca32644431c66b51738c09ea612eec1dc2d9b088d00146bf01784770; checkpoint at entry 25926 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 6,
+   "imagination_choices": 818,
+   "imagination_changed": 319,
+   "means": {
+    "lph": "34250/1131",
+    "other": "-150/377",
+    "lph_values": 1131,
+    "other_values": 1885
+   },
+   "plus": [
+    30,
+    -2
+   ],
+   "minus": [
+    59,
+    -18
+   ],
+   "draws": {
+    "draws": 8,
+    "changed": 1,
+    "lost": 0,
+    "brought": 1,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 14,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5007,
+   "T": 142,
+   "passes": true,
+   "calls_used": 1222200,
+   "wall_seconds": 2352.589,
+   "verify": "brut-breed: 50768 events, hash chain intact, head c5120fc03ce0bbb7ec0ade5fd1c344fb7087cf435836a37eafc760ea281a9c09; checkpoint at entry 50768 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 183,
+    "changed": 100,
+    "lost": 62,
+    "brought": 10,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 140,
+    "op": "section_add"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5007,
+   "T": 59,
+   "passes": true,
+   "calls_used": 1139357,
+   "wall_seconds": 5579.344,
+   "verify": "brut-breed: 45458 events, hash chain intact, head 0663b220c71fe55df7d74d92d79b25265702582b394c3829314b053084dfa39d; checkpoint at entry 45458 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 32,
+    "changed": 22,
+    "lost": 9,
+    "brought": 2,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 59,
+    "op": "section_add"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5007,
+   "T": 109,
+   "passes": true,
+   "calls_used": 1685886,
+   "wall_seconds": 2249.391,
+   "verify": "brut-breed: 51929 events, hash chain intact, head a85ce5ca48f6d29a180eb648834431712428830735eb48d1a3601e1a54abfda9; checkpoint at entry 51929 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 13,
+   "imagination_choices": 2463,
+   "imagination_changed": 1278,
+   "means": {
+    "lph": "13000/463",
+    "other": "0",
+    "lph_values": 1389,
+    "other_values": 2315
+   },
+   "plus": [
+    539,
+    -118
+   ],
+   "minus": [
+    336,
+    -154
+   ],
+   "draws": {
+    "draws": 136,
+    "changed": 119,
+    "lost": 54,
+    "brought": 8,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 109,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5007,
+   "T": 68,
+   "passes": true,
+   "calls_used": 1164305,
+   "wall_seconds": 1979.602,
+   "verify": "brut-breed: 50813 events, hash chain intact, head b16c69162ea79032d57fcce05114051fec09a0a57a5f8a7096c5894315866654; checkpoint at entry 50813 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 13,
+   "imagination_choices": 2295,
+   "imagination_changed": 1245,
+   "means": {
+    "lph": "29875/1218",
+    "other": "225/406",
+    "lph_values": 1218,
+    "other_values": 2030
+   },
+   "plus": [
+    595,
+    -53
+   ],
+   "minus": [
+    344,
+    -121
+   ],
+   "draws": {
+    "draws": 45,
+    "changed": 29,
+    "lost": 16,
+    "brought": 4,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 68,
+    "op": "section_replace"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "N",
+   "seed": 5008,
+   "T": 68,
+   "passes": true,
+   "calls_used": 2016024,
+   "wall_seconds": 6139.405,
+   "verify": "brut-breed: 53591 events, hash chain intact, head 345e94dbfb7391504a0e74d9d615090ab36f65409b2c189d160afb8190927c1b; checkpoint at entry 53591 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 54,
+    "changed": 26,
+    "lost": 13,
+    "brought": 2,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 68,
+    "op": "section_crossover"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "G",
+   "seed": 5008,
+   "T": 154,
+   "passes": true,
+   "calls_used": 2459082,
+   "wall_seconds": 1960.471,
+   "verify": "brut-breed: 50780 events, hash chain intact, head 259449c013d8c8591fafe0d3c9f45c88a075a64ec1eb7ae128c4c0ef7d0636e6; checkpoint at entry 50780 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": null,
+   "imagination_choices": null,
+   "imagination_changed": null,
+   "means": null,
+   "plus": [
+    0,
+    0
+   ],
+   "minus": [
+    0,
+    0
+   ],
+   "draws": {
+    "draws": 109,
+    "changed": 31,
+    "lost": 20,
+    "brought": 2,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 154,
+    "op": "section_add"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "I",
+   "seed": 5008,
+   "T": 73,
+   "passes": true,
+   "calls_used": 1081020,
+   "wall_seconds": 1381.903,
+   "verify": "brut-breed: 35637 events, hash chain intact, head 8687ffb0277665505c5bfc7d8937a1922049869ae2b68e714e38a00330c80f72; checkpoint at entry 35637 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 8,
+   "imagination_choices": 2815,
+   "imagination_changed": 1559,
+   "means": {
+    "lph": "15799/1278",
+    "other": "6959/1065",
+    "lph_values": 1278,
+    "other_values": 2130
+   },
+   "plus": [
+    760,
+    -118
+   ],
+   "minus": [
+    547,
+    -172
+   ],
+   "draws": {
+    "draws": 73,
+    "changed": 45,
+    "lost": 18,
+    "brought": 3,
+    "made": 1,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 73,
+    "op": "section_replace"
+   },
+   "goal_blocks": null,
+   "deviations": [],
+   "anomalies": []
+  },
+  {
+   "arm": "IG",
+   "seed": 5008,
+   "T": 198,
+   "passes": true,
+   "calls_used": 1471556,
+   "wall_seconds": 2201.697,
+   "verify": "brut-breed: 46454 events, hash chain intact, head 80ddf6316e9069d141b199cdadc42eff9dd2a4a7d10788222719a5d9026ffb35; checkpoint at entry 46454 matches; settings match; report recomputed and equal; rediscovery recomputed and equal",
+   "first_change": 8,
+   "imagination_choices": 1042,
+   "imagination_changed": 450,
+   "means": {
+    "lph": "2500/939",
+    "other": "-150/313",
+    "lph_values": 939,
+    "other_values": 1565
+   },
+   "plus": [
+    23,
+    -1
+   ],
+   "minus": [
+    97,
+    -7
+   ],
+   "draws": {
+    "draws": 147,
+    "changed": 66,
+    "lost": 27,
+    "brought": 5,
+    "made": 0,
+    "multiple": 0
+   },
+   "first_three": {
+    "generation": 198,
+    "op": "section_crossover"
+   },
+   "goal_blocks": [
+    [
+     "all",
+     1,
+     20
+    ],
+    [
+     "-Linear",
+     21,
+     40
+    ],
+    [
+     "all",
+     41,
+     60
+    ],
+    [
+     "-Phase",
+     61,
+     80
+    ],
+    [
+     "all",
+     81,
+     100
+    ],
+    [
+     "-Hadamard",
+     101,
+     120
+    ],
+    [
+     "all",
+     121,
+     140
+    ],
+    [
+     "-Compose",
+     141,
+     160
+    ],
+    [
+     "all",
+     161,
+     180
+    ],
+    [
+     "-Search",
+     181,
+     200
+    ],
+    [
+     "all",
+     201,
+     220
+    ],
+    [
+     "-Meet",
+     221,
+     240
+    ],
+    [
+     "all",
+     241,
+     260
+    ],
+    [
+     "-Simplify",
+     261,
+     280
+    ],
+    [
+     "all",
+     281,
+     300
+    ],
+    [
+     "-Linear",
+     301,
+     320
+    ],
+    [
+     "all",
+     321,
+     340
+    ],
+    [
+     "-Phase",
+     341,
+     360
+    ],
+    [
+     "all",
+     361,
+     380
+    ],
+    [
+     "-Hadamard",
+     381,
+     400
+    ],
+    [
+     "all",
+     401,
+     420
+    ],
+    [
+     "-Compose",
+     421,
+     440
+    ],
+    [
+     "all",
+     441,
+     460
+    ],
+    [
+     "-Search",
+     461,
+     480
+    ],
+    [
+     "all",
+     481,
+     500
+    ],
+    [
+     "-Meet",
+     501,
+     520
+    ],
+    [
+     "all",
+     521,
+     540
+    ],
+    [
+     "-Simplify",
+     541,
+     560
+    ],
+    [
+     "all",
+     561,
+     580
+    ],
+    [
+     "-Linear",
+     581,
+     600
+    ],
+    [
+     "all",
+     601,
+     620
+    ],
+    [
+     "-Phase",
+     621,
+     640
+    ],
+    [
+     "all",
+     641,
+     660
+    ],
+    [
+     "-Hadamard",
+     661,
+     680
+    ],
+    [
+     "all",
+     681,
+     700
+    ],
+    [
+     "-Compose",
+     701,
+     720
+    ],
+    [
+     "all",
+     721,
+     740
+    ],
+    [
+     "-Search",
+     741,
+     760
+    ],
+    [
+     "all",
+     761,
+     780
+    ],
+    [
+     "-Meet",
+     781,
+     800
+    ],
+    [
+     "all",
+     801,
+     820
+    ],
+    [
+     "-Simplify",
+     821,
+     840
+    ],
+    [
+     "all",
+     841,
+     860
+    ],
+    [
+     "-Linear",
+     861,
+     880
+    ],
+    [
+     "all",
+     881,
+     900
+    ],
+    [
+     "-Phase",
+     901,
+     920
+    ],
+    [
+     "all",
+     921,
+     940
+    ],
+    [
+     "-Hadamard",
+     941,
+     960
+    ],
+    [
+     "all",
+     961,
+     980
+    ],
+    [
+     "-Compose",
+     981,
+     1000
+    ]
+   ],
+   "deviations": [],
+   "anomalies": []
+  }
+ ],
+ "pooled_draws": {
+  "N": {
+   "draws": 545,
+   "changed": 260,
+   "lost": 142,
+   "brought": 20,
+   "made": 5,
+   "multiple": 0
+  },
+  "G": {
+   "draws": 739,
+   "changed": 391,
+   "lost": 209,
+   "brought": 30,
+   "made": 7,
+   "multiple": 0
+  },
+  "I": {
+   "draws": 864,
+   "changed": 395,
+   "lost": 174,
+   "brought": 23,
+   "made": 7,
+   "multiple": 0
+  },
+  "IG": {
+   "draws": 711,
+   "changed": 346,
+   "lost": 150,
+   "brought": 31,
+   "made": 7,
+   "multiple": 0
+  }
+ },
+ "pooled_effects": {
+  "I": {
+   "plus": 3621,
+   "mean_s_plus": "-197/1207",
+   "minus": 3593,
+   "mean_s_minus": "-996/3593",
+   "D": "494351/4336751"
+  },
+  "IG": {
+   "plus": 2783,
+   "mean_s_plus": "-467/2783",
+   "minus": 2907,
+   "mean_s_minus": "-1040/2907",
+   "D": "1536751/8090181"
+  }
+ },
+ "direction": {
+  "IG-N": {
+   "first": [
+    5002,
+    5007
+   ],
+   "second": [
+    5001,
+    5003,
+    5004,
+    5008
+   ],
+   "ties": 2
+  },
+  "I-N": {
+   "first": [
+    5001,
+    5002,
+    5007
+   ],
+   "second": [
+    5003,
+    5004,
+    5008
+   ],
+   "ties": 2
+  },
+  "G-N": {
+   "first": [
+    5002,
+    5007
+   ],
+   "second": [
+    5001,
+    5003,
+    5004,
+    5008
+   ],
+   "ties": 2
+  },
+  "IG-I": {
+   "first": [
+    5004,
+    5007
+   ],
+   "second": [
+    5001,
+    5003,
+    5008
+   ],
+   "ties": 3
+  },
+  "IG-G": {
+   "first": [
+    5002,
+    5003
+   ],
+   "second": [
+    5001,
+    5004,
+    5007,
+    5008
+   ],
+   "ties": 2
+  }
+ },
+ "criteria": {
+  "1": false,
+  "2": true,
+  "3": true,
+  "4": false
+ },
+ "verdict": "STOP",
+ "deviations": [],
+ "anomalies": []
+}

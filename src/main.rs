@@ -1,25 +1,46 @@
 //! `brut`: command-line front end of the Brutmaschine.
 //!
 //! Commands:
-//!   brut init <run_dir> [--task <task>] [--seed N]
+//!   brut init <run_dir> [--task <task>] [--seed N] [--models mlp|cnn|both] [--promoted <dir>]
 //!   brut init <run_dir> --mode learner [--seed N] [--flops X] [--variation V] [--secret F] [--arc-cells]
 //!   brut run <run_dir> [--no-hidden]
 //!   brut status <run_dir>
 //!   brut lineage <run_dir> <candidate_id>
 //!   brut verify <run_dir>
 //!   brut approve <run_dir> <candidate_id> --by <name> [--note <text>]
+//!   brut promote <run_dir> --commit <sha> [--pool <dir>]
 //!   brut stop <run_dir>
 //!   brut learner secret-init [--dir D] [--arc-root R] [--manifest M]
 //!   brut learner show <run_dir> <id>
 //!   brut learner report <run_dir>
 //!   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
+//!   brut arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N]
+//!                 [--canvas N] [--limits <file>] [--threads N] [--out <file>]
 //!   brut help
 //!
 //! Tasks: spirals, checkerboard, parity, sine, shapes, bars-and-stripes, blob-count,
-//! mirror-symmetry, motif-1d (`TaskKind::from_name`).
+//! mirror-symmetry, motif-1d, mirror-grid (`TaskKind::from_name`).
+//!
+//! Model kinds of an MLP-mode run (`ModelKinds::from_name`): mlp, the default; cnn, the base
+//! models of the CNN families and random CNNs; both, side by side. A run with CNNs needs a
+//! task with images or sequences, and `brut init` writes a smaller run for it
+//! (`Config::for_models`).
+//!
+//! Promotion (ADR 0008, `brutmaschine::promote`): `brut promote` writes the winners of a
+//! finished MLP-mode run, at most two, under `<run_dir>/promote/` for
+//! `scripts/propose-pr.sh`, which opens a draft pull request into `candidates/models/`. A
+//! human merges it. `brut init --promoted candidates/models` copies the merged models into
+//! the config of a new run, and they join its generation 0 where they fit.
 //!
 //! `run`, `status`, `lineage`, `verify` and `approve` work on both run kinds: a directory
 //! with `meta.json` is a learner run, one with `config.json` an MLP run.
+//!
+//! ARC grid tasks (ticket 06, `brutmaschine::arc_grid`): `brut arc-grid` trains a fresh CNN
+//! of each genome on each ARC grid task, an ARC-AGI-1 training task with its re-arc
+//! generations, and scores it on the task's held-out pairs, next to the copy of the input.
+//! Without `--genome` it takes the two base models of these tasks, and without `--limits`
+//! the default limits. It reads only the training files and the re-arc file of the
+//! manifest, each checked against its SHA-256.
 //!
 //! Exit codes: 0 ok, 1 runtime error, 2 usage error.
 
@@ -27,10 +48,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use brutmaschine::arc_grid::{self, ARC_SIDE, GenomeResult};
 use brutmaschine::archive::{Archive, CandidateStatus, LearnerStatus, RecordKind};
-use brutmaschine::config::Config;
+use brutmaschine::config::{Config, Limits, MAX_THREADS, ModelKinds};
 use brutmaschine::evolve::{self, ARCHIVE_FILE, CONFIG_FILE, EvalSetup};
+use brutmaschine::genome::Genome;
 use brutmaschine::hidden_eval::create_secret;
+use brutmaschine::hitl::{
+    CandidateAdapter, MAX_CANDIDATE_FILE_BYTES, MODEL_DIR, ModelAdapter, model_seed_ids,
+};
 use brutmaschine::learner::types::{EvalSet, MetaConfig, SUPPORTED_F, Tier, VariationMode};
 use brutmaschine::learner_hidden::create_learner_secret;
 use brutmaschine::lineage_store::read_snapshot;
@@ -38,15 +64,17 @@ use brutmaschine::meta_evolve::{
     self, LearnerEvalSetup, META_CONFIG_FILE, MetaRunSummary, default_secret_dir,
 };
 use brutmaschine::meta_report;
+use brutmaschine::promote::{self, PROMOTE_DIR};
 use brutmaschine::safety;
 use brutmaschine::task::TaskKind;
-use brutmaschine::util::now_unix_ms;
+use brutmaschine::util::{now_unix_ms, read_regular_file, write_atomic};
 
 const USAGE: &str = "\
 brut - Brutmaschine, a safe prototype of an AI model incubator
 
 usage:
-  brut init <run_dir> [--task <task>] [--seed N]
+  brut init <run_dir> [--task <task>] [--seed N] [--models mlp|cnn|both]
+            [--promoted <dir>]
   brut init <run_dir> --mode learner [--seed N] [--flops X]
             [--variation full|constants-only|random-search] [--secret <file>] [--arc-cells]
   brut run <run_dir> [--no-hidden]
@@ -54,18 +82,36 @@ usage:
   brut lineage <run_dir> <candidate_id>
   brut verify <run_dir>
   brut approve <run_dir> <candidate_id> --by <name> [--note <text>]
+  brut promote <run_dir> --commit <sha> [--pool <dir>]
   brut stop <run_dir>
   brut learner secret-init [--dir <dir>] [--arc-root <dir>] [--manifest <file>]
   brut learner show <run_dir> <id>
   brut learner report <run_dir>
   brut learner arc-check <run_dir> <id> --set a1-eval|a2-eval|concept-arc
+  brut arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N]
+                [--canvas N] [--limits <file>] [--threads N] [--out <file>]
   brut help
 
 tasks: spirals, checkerboard, parity, sine (flat inputs); shapes, bars-and-stripes,
-blob-count, mirror-symmetry (16x16 images); motif-1d (one-hot sequences of 64)
+blob-count, mirror-symmetry (16x16 images); motif-1d (one-hot sequences of 64);
+mirror-grid (8x8 grids to their mirror images)
+
+models: mlp (default); cnn, the base models of 16 CNN families and random CNNs, which
+need a task with images or sequences; both, MLPs and CNNs side by side
+
+promotion: brut promote writes the two best models of a finished run by hidden score
+that beat its best base model to <run_dir>/promote/, for scripts/propose-pr.sh and a
+human-reviewed pull request into candidates/models/ (--pool, the default, holds the merged
+models); brut init --promoted candidates/models puts the merged models into generation 0
 
 learner mode: --secret defaults to $HOME/.brut/learner/hidden.env (create it once with
 brut learner secret-init); run, status, lineage, verify and approve detect the run kind
+
+arc grids: brut arc-grid trains a fresh CNN of each genome (default: the base models u-net
+and fcn) on each ARC-AGI-1 training task with its re-arc generations, one colour class per
+cell on a canvas of 30x30 (--canvas), and scores whole grids (exact match) and cells on the
+held-out pairs; --tasks takes the first N tasks by id, --limits a JSON file in the form
+of the limits of a run's config (default: the default limits), --out writes the JSON report
 
 exit codes: 0 ok, 1 runtime error, 2 usage error";
 
@@ -182,8 +228,10 @@ fn dispatch(args: &[String]) -> CliResult {
         "lineage" => cmd_lineage(rest),
         "verify" => cmd_verify(rest),
         "approve" => cmd_approve(rest),
+        "promote" => cmd_promote(rest),
         "stop" => cmd_stop(rest),
         "learner" => cmd_learner(rest),
+        "arc-grid" => cmd_arc_grid(rest),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
 
@@ -199,6 +247,8 @@ fn cmd_init(args: &[String]) -> CliResult {
         &[
             ("--task", true),
             ("--seed", true),
+            ("--models", true),
+            ("--promoted", true),
             ("--mode", true),
             ("--flops", true),
             ("--variation", true),
@@ -221,8 +271,13 @@ fn cmd_init(args: &[String]) -> CliResult {
         return Err(CliError::Usage(format!("{flag} needs --mode learner")));
     }
 
+    let models = match p.value("--models") {
+        None => ModelKinds::Mlp,
+        Some(name) => ModelKinds::from_name(name)
+            .ok_or_else(|| CliError::Usage(format!("unknown model kinds {name}")))?,
+    };
     let run_dir = PathBuf::from(&p.positional[0]);
-    let mut config = Config::default();
+    let mut config = Config::for_models(models);
 
     if let Some(name) = p.value("--task") {
         config.task = TaskKind::from_name(name)
@@ -234,6 +289,15 @@ fn cmd_init(args: &[String]) -> CliResult {
             .parse()
             .map_err(|_| CliError::Usage(format!("bad seed {seed}")))?;
     }
+
+    if let Some(pool) = p.value("--promoted") {
+        config.promoted = read_promoted(Path::new(pool))?;
+    }
+
+    // Only the options can make the config invalid here: CNNs on a task with flat inputs.
+    config
+        .validate()
+        .map_err(|e| CliError::Usage(e.to_string()))?;
 
     let config_path = run_dir.join(CONFIG_FILE);
 
@@ -252,10 +316,22 @@ fn cmd_init(args: &[String]) -> CliResult {
 
     println!("created run directory {dir}");
     println!(
-        "  config:  {dir}/{CONFIG_FILE}  (task {}, seed {})",
+        "  config:  {dir}/{CONFIG_FILE}  (task {}, seed {}, models {})",
         config.task.name(),
-        config.master_seed
+        config.master_seed,
+        config.models.name()
     );
+
+    if let Some(pool) = p.value("--promoted") {
+        let n = config.promoted.len();
+
+        println!(
+            "  promoted: {n} model{} from {pool}; each joins generation 0 if it fits the task, \
+             the limits and the model kinds, else the archive says why not",
+            if n == 1 { "" } else { "s" }
+        );
+    }
+
     println!("  secret:  {dir}/{SECRET_FILE}  (mode 0600, read only by brut-eval)");
     println!();
     println!("next steps:");
@@ -263,6 +339,348 @@ fn cmd_init(args: &[String]) -> CliResult {
     println!("  2. brut run {dir}");
     println!("  3. brut status {dir}");
     println!("  4. brut approve {dir} <candidate_id> --by <your name>");
+
+    // Only a run that breeds CNNs or starts from promoted models can promote a model
+    // (`Config::can_promote`, `promote::choose`).
+    if config.can_promote() {
+        println!("  5. brut promote {dir} --commit <the commit that ran it>");
+    }
+
+    Ok(())
+}
+
+/// `brut arc-grid`: train and score genomes on the ARC grid tasks (`arc_grid`, ticket 06).
+fn cmd_arc_grid(args: &[String]) -> CliResult {
+    let usage = "arc-grid --arc-root <dir> --manifest <file> [--genome <file>] [--tasks N] \
+                 [--canvas N] [--limits <file>] [--threads N] [--out <file>]";
+    let p = parse(
+        args,
+        &[
+            ("--arc-root", true),
+            ("--manifest", true),
+            ("--genome", true),
+            ("--tasks", true),
+            ("--canvas", true),
+            ("--limits", true),
+            ("--threads", true),
+            ("--out", true),
+        ],
+    )?;
+
+    p.exactly(0, usage)?;
+
+    let (Some(root), Some(manifest)) = (p.value("--arc-root"), p.value("--manifest")) else {
+        return Err(CliError::Usage(format!("expected {usage}")));
+    };
+    let number = |flag: &str| -> Result<Option<usize>, CliError> {
+        p.value(flag)
+            .map(|text| {
+                text.parse::<usize>()
+                    .map_err(|_| CliError::Usage(format!("bad {flag} {text}")))
+            })
+            .transpose()
+    };
+    let canvas = number("--canvas")?.unwrap_or(ARC_SIDE);
+    let count = number("--tasks")?;
+    let threads = number("--threads")?.unwrap_or(0);
+
+    if !(1..=ARC_SIDE).contains(&canvas) {
+        return Err(CliError::Usage(format!(
+            "--canvas must be 1 to {ARC_SIDE}, the largest ARC grid"
+        )));
+    }
+
+    if count == Some(0) {
+        return Err(CliError::Usage("--tasks must be at least 1".into()));
+    }
+
+    if threads > MAX_THREADS {
+        return Err(CliError::Usage(format!(
+            "--threads must be at most {MAX_THREADS}"
+        )));
+    }
+
+    let limits = match p.value("--limits") {
+        Some(file) => read_limits(Path::new(file))?,
+        None => Limits::default(),
+    };
+    let genomes: Vec<(String, Genome)> = match p.value("--genome") {
+        Some(file) => vec![read_genome(Path::new(file))?],
+        None => arc_grid::base_models()
+            .into_iter()
+            .map(|(name, genome)| (name.to_string(), genome))
+            .collect(),
+    };
+    let (mut tasks, left_out) = arc_grid::load(Path::new(root), Path::new(manifest), canvas)?;
+    let eligible = tasks.len();
+
+    if let Some(n) = count {
+        tasks.truncate(n);
+    }
+
+    if tasks.is_empty() {
+        return Err(CliError::Runtime(
+            "no ARC grid task: no training task with re-arc pairs passes the rules".into(),
+        ));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .map_err(|e| CliError::Runtime(format!("thread pool: {e}")))?;
+
+    println!(
+        "arc-grid: {} of {eligible} ARC grid tasks on a canvas of {canvas}x{canvas} cells \
+         ({} training tasks left out by the rules)",
+        tasks.len(),
+        left_out.len()
+    );
+
+    let report = pool.install(|| arc_grid::report(&genomes, &tasks, left_out, canvas, &limits));
+
+    println!(
+        "{:<20} {:>11} {:>10} {:>11} {:>10} {:>7} {:>7} {:>8}",
+        "model",
+        "exact valid",
+        "exact test",
+        "cells valid",
+        "cells test",
+        "trained",
+        "refused",
+        "diverged"
+    );
+
+    for result in &report.results {
+        println!("{}", result_line(result));
+    }
+
+    if let Some(out) = p.value("--out") {
+        let mut bytes = serde_json::to_vec_pretty(&report)
+            .map_err(|e| CliError::Runtime(format!("report: {e}")))?;
+
+        bytes.push(b'\n');
+        write_atomic(Path::new(out), &bytes)?;
+        println!("report: {out}");
+    }
+
+    Ok(())
+}
+
+/// One line of the table of `brut arc-grid`: the means of one model.
+fn result_line(result: &GenomeResult) -> String {
+    let s = &result.summary;
+    let name = match &result.id {
+        Some(id) => format!("{} {}", result.name, &id[..id.len().min(8)]),
+        None => result.name.clone(),
+    };
+    let (trained, refused, diverged) = match result.genome {
+        Some(_) => (
+            s.scored.to_string(),
+            s.refused.to_string(),
+            s.diverged.to_string(),
+        ),
+        None => ("-".into(), "-".into(), "-".into()),
+    };
+
+    format!(
+        "{name:<20} {:>11.3} {:>10.3} {:>11.3} {:>10.3} {trained:>7} {refused:>7} {diverged:>8}",
+        s.exact_valid, s.exact_test, s.cells_valid, s.cells_test
+    )
+}
+
+/// The limits in `file`: the JSON of the `limits` of a run's config, unknown fields refused,
+/// held to the same rules and hard caps as there (`Config::validate`).
+fn read_limits(file: &Path) -> Result<Limits, CliError> {
+    let text = read_regular_file(file, MAX_CANDIDATE_FILE_BYTES)
+        .map_err(|e| CliError::Runtime(format!("limits {}: {e}", file.display())))?;
+    let limits: Limits = serde_json::from_str(&text).map_err(|_| {
+        CliError::Runtime(format!(
+            "limits {}: not the JSON of the limits of a config",
+            file.display()
+        ))
+    })?;
+
+    Config {
+        limits,
+        ..Config::default()
+    }
+    .validate()
+    .map_err(|e| CliError::Runtime(format!("limits {}: {e}", file.display())))?;
+
+    Ok(limits)
+}
+
+/// The genome in `file`, named by the file's stem: the JSON of one `Genome`, a regular file
+/// of at most `MAX_CANDIDATE_FILE_BYTES`, unknown fields refused. The error does not quote
+/// the file.
+fn read_genome(file: &Path) -> Result<(String, Genome), CliError> {
+    let text = read_regular_file(file, MAX_CANDIDATE_FILE_BYTES)
+        .map_err(|e| CliError::Runtime(format!("genome {}: {e}", file.display())))?;
+    let genome: Genome = serde_json::from_str(&text).map_err(|_| {
+        CliError::Runtime(format!(
+            "genome {}: not the JSON of one genome",
+            file.display()
+        ))
+    })?;
+    let name = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("genome")
+        .to_string();
+
+    Ok((name, genome))
+}
+
+/// The genomes of the promoted models in `pool` (`candidates/models/`), in the order of their
+/// file names. Each `*.json` must be a regular file of at most `MAX_CANDIDATE_FILE_BYTES`,
+/// parse as a promoted model (unknown fields refused) and be named by its content id, as the
+/// gate of the pool requires (`brut-ingest --models`).
+/// Whether a model fits the new run is decided when the run starts, with a log line for each
+/// one left out (`Config::promoted`).
+fn read_promoted(pool: &Path) -> Result<Vec<Genome>, CliError> {
+    let adapter = ModelAdapter::new();
+    let runtime = |e: std::io::Error| CliError::Runtime(format!("{}: {e}", pool.display()));
+    let mut files: Vec<PathBuf> = std::fs::read_dir(pool)
+        .map_err(runtime)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().is_some_and(|x| x == "json"))
+        .collect();
+
+    files.sort();
+
+    let mut genomes = Vec::with_capacity(files.len());
+
+    for path in files {
+        let refuse = |m: String| CliError::Runtime(format!("{}: {m}", path.display()));
+        let text = read_regular_file(&path, MAX_CANDIDATE_FILE_BYTES)
+            .map_err(|e| refuse(e.to_string()))?;
+        let model = adapter.parse(&text).map_err(|e| refuse(e.to_string()))?;
+        let id = adapter.fingerprint(&model);
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+
+        if stem != id {
+            return Err(refuse(format!(
+                "the file name does not match the content id {id}"
+            )));
+        }
+
+        genomes.push(model.genome);
+    }
+
+    Ok(genomes)
+}
+
+/// `brut promote`: write the winners of a finished run under `<run_dir>/promote/`
+/// (`promote::choose`), for `scripts/propose-pr.sh`. An earlier promotion there is replaced.
+/// Nothing else in the run directory changes, and nothing is merged: a human merges the pull
+/// request (ADR 0004).
+fn cmd_promote(args: &[String]) -> CliResult {
+    let p = parse(args, &[("--commit", true), ("--pool", true)])?;
+
+    p.exactly(1, "promote <run_dir> --commit <sha> [--pool <dir>]")?;
+
+    let run_dir = Path::new(&p.positional[0]);
+
+    if meta_evolve::is_meta_run(run_dir) {
+        return Err(CliError::Usage(
+            "promote takes an MLP-mode run; a learner run has no models to promote".into(),
+        ));
+    }
+
+    let Some(commit) = p.value("--commit") else {
+        return Err(CliError::Usage(
+            "promote needs --commit <sha>, the git commit of the code that ran the run".into(),
+        ));
+    };
+
+    // The pool to deduplicate against; without --pool the one of the repository, which a
+    // checkout without promoted models lacks.
+    let pool = match p.value("--pool") {
+        Some(dir) => PathBuf::from(dir),
+        None => PathBuf::from(MODEL_DIR.trim_end_matches('/')),
+    };
+    let mut known = model_seed_ids();
+
+    if pool.is_dir() {
+        for entry in std::fs::read_dir(&pool).map_err(|e| CliError::Runtime(e.to_string()))? {
+            let path = entry.map_err(|e| CliError::Runtime(e.to_string()))?.path();
+
+            if path.extension().is_some_and(|x| x == "json")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                known.insert(stem.to_string());
+            }
+        }
+    } else if p.value("--pool").is_some() {
+        return Err(CliError::Runtime(format!(
+            "pool directory {} does not exist",
+            pool.display()
+        )));
+    }
+
+    let archive = open_archive(run_dir)?;
+    let adapter = ModelAdapter::new();
+    let promotion = promote::choose(&archive, commit, &known, &adapter)?;
+    let out = run_dir.join(PROMOTE_DIR);
+    let runtime = |e: std::io::Error| CliError::Runtime(format!("{}: {e}", out.display()));
+
+    // Generated output only: an earlier promotion must not ride along.
+    if out.exists() {
+        std::fs::remove_dir_all(&out).map_err(runtime)?;
+    }
+
+    let best = &promotion.best_base_model;
+
+    println!(
+        "best base model {} ({}): valid {:.4}, hidden {:.4}",
+        best.id, best.generator, best.valid_primary, best.hidden_primary
+    );
+
+    for c in &promotion.considered {
+        match &c.outcome {
+            Ok(_) => println!("promoted      {}  hidden {:.4}", c.id, c.hidden_primary),
+            Err(reason) => println!(
+                "not promoted  {}  hidden {:.4}: {reason}",
+                c.id, c.hidden_primary
+            ),
+        }
+    }
+
+    if promotion.promoted().next().is_none() {
+        println!(
+            "nothing to promote: no model of the two best by hidden score is new and beats the best base model"
+        );
+
+        return Ok(());
+    }
+
+    let dir = out.join(MODEL_DIR);
+
+    std::fs::create_dir_all(&dir).map_err(runtime)?;
+
+    for m in promotion.promoted() {
+        let path = dir.join(format!("{}.json", adapter.fingerprint(m)));
+        let mut text = adapter.to_json(m)?;
+
+        text.push('\n');
+        write_atomic(&path, text.as_bytes())?;
+        println!("\n{}\nwrote {}", adapter.summary(m), path.display());
+    }
+
+    let mut manifest = serde_json::to_string_pretty(&promotion.manifest())
+        .map_err(|e| CliError::Runtime(e.to_string()))?;
+    let path = out.join("proposal.json");
+
+    manifest.push('\n');
+    write_atomic(&path, manifest.as_bytes())?;
+    println!(
+        "\nwrote {}\nnext: scripts/propose-pr.sh {} (a draft pull request; a human merges it)",
+        path.display(),
+        out.display()
+    );
 
     Ok(())
 }
@@ -577,10 +995,13 @@ fn cmd_stop(args: &[String]) -> CliResult {
 // ---------------------------------------------------------------------------------------
 
 fn init_learner(p: &Parsed) -> CliResult {
-    if p.flag("--task") {
-        return Err(CliError::Usage(
-            "--task is for MLP runs, not --mode learner".into(),
-        ));
+    if let Some(flag) = ["--task", "--models", "--promoted"]
+        .iter()
+        .find(|f| p.flag(f))
+    {
+        return Err(CliError::Usage(format!(
+            "{flag} is for MLP runs, not --mode learner"
+        )));
     }
 
     let run_dir = PathBuf::from(&p.positional[0]);
@@ -1106,6 +1527,40 @@ mod tests {
     }
 
     #[test]
+    fn arc_grid_usage_errors() {
+        let usage = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Usage(_)));
+        let base = ["arc-grid", "--arc-root", "r", "--manifest", "m"];
+        let with = |extra: &[&'static str]| {
+            let mut args = base.to_vec();
+
+            args.extend_from_slice(extra);
+            args
+        };
+
+        assert!(usage(&["arc-grid"]));
+        assert!(usage(&["arc-grid", "--arc-root", "r"]));
+        assert!(usage(&["arc-grid", "--manifest", "m"]));
+        assert!(usage(&with(&["extra"])));
+        assert!(usage(&with(&["--canvas", "0"])));
+        assert!(usage(&with(&["--canvas", "31"])));
+        assert!(usage(&with(&["--canvas", "x"])));
+        assert!(usage(&with(&["--tasks", "0"])));
+        assert!(usage(&with(&["--tasks", "-1"])));
+        assert!(usage(&with(&["--threads", "100000"])));
+        assert!(usage(&with(&["--set", "a1-eval"])));
+
+        // A run cannot breed on the ARC grid tasks; init refuses before it writes anything.
+        assert!(usage(&["init", "arc-grid-run-dir", "--task", "arc-grid"]));
+        assert!(!Path::new("arc-grid-run-dir").exists());
+
+        // Valid options with a data root that does not exist: a runtime error, not usage.
+        assert!(matches!(
+            dispatch(&strings(&with(&["--tasks", "2", "--canvas", "6"]))),
+            Err(CliError::Runtime(_))
+        ));
+    }
+
+    #[test]
     fn learner_usage_errors() {
         let usage = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Usage(_)));
 
@@ -1124,6 +1579,9 @@ mod tests {
         ]));
         assert!(usage(&["learner", "secret-init", "extra"]));
         assert!(usage(&["init", "x", "--mode", "robot"]));
+        assert!(usage(&[
+            "init", "x", "--mode", "learner", "--models", "cnn"
+        ]));
         assert!(usage(&["init", "x", "--flops", "1e9"]));
         assert!(usage(&["init", "x", "--arc-cells"]));
         assert!(usage(&[
@@ -1141,6 +1599,203 @@ mod tests {
             "--variation",
             "greedy"
         ]));
+    }
+
+    #[test]
+    fn init_takes_the_model_kinds_of_a_run() {
+        let usage = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Usage(_)));
+        let dir = std::env::temp_dir().join(format!("brut-main-models-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // An unknown kind, and CNNs on a task with flat inputs, are usage errors that leave
+        // nothing behind.
+        let run = dir.join("refused");
+        let run = run.to_str().unwrap_or("refused");
+
+        assert!(usage(&["init", run, "--models", "rnn"]));
+        assert!(usage(&[
+            "init", run, "--task", "spirals", "--models", "cnn"
+        ]));
+        assert!(usage(&["init", run, "--task", "sine", "--models", "both"]));
+        assert!(!dir.join("refused").exists());
+
+        // Without --task a run with CNNs takes the shapes task.
+        for (models, task) in [
+            ("cnn", None),
+            ("both", Some("motif-1d")),
+            ("mlp", Some("spirals")),
+        ] {
+            let run = dir.join(models);
+            let mut args = vec!["init", run.to_str().unwrap_or(models), "--models", models];
+
+            if let Some(task) = task {
+                args.extend(["--task", task]);
+            }
+
+            assert!(dispatch(&strings(&args)).is_ok(), "{models}");
+
+            let config = Config::load(&run.join(CONFIG_FILE)).expect("a config");
+            let mut expected = Config::for_models(ModelKinds::from_name(models).expect("a kind"));
+
+            if let Some(task) = task {
+                expected.task = TaskKind::from_name(task).expect("a task");
+            }
+
+            assert_eq!(config, expected);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_takes_the_promoted_models_of_a_pool_and_refuses_a_broken_pool() {
+        use brutmaschine::hitl::{BaseModelScore, LineageStep, ModelProvenance, PromotedModel};
+
+        let dir = std::env::temp_dir().join(format!("brut-main-promoted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pool = dir.join("pool");
+        let adapter = ModelAdapter::new();
+        let genome = brutmaschine::cnn::families::Family::Vgg.base_model();
+        let model = PromotedModel {
+            provenance: ModelProvenance {
+                run_id: "cd".repeat(32),
+                task: TaskKind::Shapes,
+                master_seed: 4,
+                commit: "4613e2a".to_string(),
+                valid_primary: 0.9,
+                hidden_primary: 0.9,
+                best_base_model: BaseModelScore {
+                    id: "0123456789abcdef".to_string(),
+                    generator: "base-model/resnet".to_string(),
+                    valid_primary: 0.8,
+                    hidden_primary: 0.8,
+                },
+                lineage: vec![LineageStep {
+                    id: genome.id(),
+                    generation: 0,
+                    generator: "init".to_string(),
+                    parents: Vec::new(),
+                }],
+            },
+            genome: genome.clone(),
+        };
+        let id = adapter.fingerprint(&model);
+        let json = adapter.to_json(&model).expect("json");
+        let path = |p: &Path| p.to_str().unwrap_or("x").to_string();
+
+        std::fs::create_dir_all(&pool).expect("pool");
+        std::fs::write(pool.join(format!("{id}.json")), &json).expect("write");
+        std::fs::write(pool.join("README.md"), "not a model").expect("write");
+
+        // The pool's models go into the config, as they are.
+        let run = dir.join("run");
+
+        assert!(
+            dispatch(&strings(&[
+                "init",
+                &path(&run),
+                "--models",
+                "cnn",
+                "--promoted",
+                &path(&pool)
+            ]))
+            .is_ok()
+        );
+        assert_eq!(
+            Config::load(&run.join(CONFIG_FILE))
+                .expect("config")
+                .promoted,
+            vec![genome]
+        );
+
+        // A file not named by its content id, a file that is no promoted model, and a missing
+        // pool are runtime errors that leave nothing behind.
+        let runtime = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Runtime(_)));
+        let refused = dir.join("refused");
+
+        std::fs::write(pool.join("0000000000000000.json"), &json).expect("write");
+        assert!(runtime(&[
+            "init",
+            &path(&refused),
+            "--promoted",
+            &path(&pool)
+        ]));
+        std::fs::remove_file(pool.join("0000000000000000.json")).expect("remove");
+        std::fs::write(
+            pool.join(format!("{id}.json")),
+            json.replacen("\"commit\"", "\"zz_extra\": 1, \"commit\"", 1),
+        )
+        .expect("write");
+        assert!(runtime(&[
+            "init",
+            &path(&refused),
+            "--promoted",
+            &path(&pool)
+        ]));
+        assert!(runtime(&[
+            "init",
+            &path(&refused),
+            "--promoted",
+            &path(&dir.join("no-pool"))
+        ]));
+        assert!(!refused.exists());
+
+        // promote needs --commit and a run directory, and learner mode has no models.
+        let usage = |args: &[&str]| matches!(dispatch(&strings(args)), Err(CliError::Usage(_)));
+
+        assert!(usage(&["promote", &path(&run)]));
+        assert!(usage(&["promote", "--commit", "4613e2a"]));
+        assert!(usage(&[
+            "init",
+            &path(&refused),
+            "--mode",
+            "learner",
+            "--promoted",
+            &path(&pool)
+        ]));
+        assert!(runtime(&[
+            "promote",
+            &path(&run),
+            "--commit",
+            "4613e2a",
+            "--pool",
+            &path(&dir.join("no-pool"))
+        ]));
+
+        // A pool file is read only as a regular file of at most MAX_CANDIDATE_FILE_BYTES: a
+        // symlink and a FIFO are refused before they are opened, so a FIFO cannot block, and
+        // a huge file before it is read.
+        let file = pool.join(format!("{id}.json"));
+        let target = dir.join("model.json");
+        let init = || runtime(&["init", &path(&refused), "--promoted", &path(&pool)]);
+
+        std::fs::write(&target, &json).expect("write");
+        std::fs::remove_file(&file).expect("remove");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &file).expect("symlink");
+            assert!(init());
+            std::fs::remove_file(&file).expect("remove");
+
+            let made = std::process::Command::new("mkfifo")
+                .arg(&file)
+                .status()
+                .is_ok_and(|status| status.success());
+
+            if made {
+                assert!(init());
+                std::fs::remove_file(&file).expect("remove");
+            }
+        }
+
+        std::fs::File::create(&file)
+            .and_then(|huge| huge.set_len(MAX_CANDIDATE_FILE_BYTES + 1))
+            .expect("a sparse file above the cap");
+        assert!(init());
+        assert!(!refused.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

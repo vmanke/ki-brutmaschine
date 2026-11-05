@@ -199,7 +199,10 @@ weshalb der Validierungswert des Siegers zu optimistisch ist. Wir nennen das
    würden die Suche lenken. Wer in Etappen rechnen will, nutzt dafür
    `brut run --no-hidden`.
 2. **Feste Liste.** Bewertet werden die besten `hidden_eval_top_k`
-   Kandidaten nach Validierungs-Fitness (`evolve::hidden_set`). Kandidaten in
+   Kandidaten nach Validierungs-Fitness (`evolve::hidden_set`). Ein Lauf,
+   welcher CNNs züchtet oder mit beförderten Modellen beginnt, bewertet dazu
+   sein bestes Basismodell, falls es nicht darunter ist, damit `brut promote`
+   die Gewinner mit ihm vergleichen kann (ADR 0008). Kandidaten in
    Quarantäne behalten ihren Platz in dieser Liste. Ein erneuter Aufruf von
    `brut run` bewertet nur fehlende Kandidaten derselben Liste nach (zum
    Beispiel nach einem Not-Aus). Er rückt nicht in der Rangliste nach unten.

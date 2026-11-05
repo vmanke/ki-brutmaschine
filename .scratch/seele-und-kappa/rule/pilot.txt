@@ -1,0 +1,23 @@
+60 runs, 12 seeds
+arm S: passes 12/12; votes 45795, flipped 2371 (0.0518), tied 2614 (0.0571), sim_decided 2912; minutes 11.0753 (9.455 to 12.8565); calls at most 1243954
+arm V: passes 9/12; votes 40297, flipped 412 (0.0102), tied 15169 (0.3764), sim_decided 6049; minutes 10.8126 (9.3408 to 12.2929); calls at most 1250775
+arm K: passes 12/12; votes 51569, flipped 2809 (0.0545), tied 3137 (0.0608), sim_decided 3423; minutes 11.281 (9.6667 to 14.6781); calls at most 1264833
+arm E: passes 12/12; votes 54293, flipped 5242 (0.0966), tied 0 (0.0), sim_decided 3824; minutes 10.9916 (9.4566 to 14.7222); calls at most 1257405
+arm N: passes 12/12; votes 0, flipped 0 (None), tied 0 (None), sim_decided 0; minutes 8.3779 (7.1516 to 10.1293); calls at most 1261620
+S against V: S first 4, V first 4, tie 4
+S against K: S first 3, K first 3, tie 6
+S against E: S first 0, E first 4, tie 8
+S against N: S first 0, N first 5, tie 7
+joint (Y_V|Y_K): {"S first|K first": 1, "S first|S first": 1, "S first|tie": 2, "V first|K first": 2, "V first|S first": 2, "tie|tie": 4}
+901 {'S': 131, 'V': 131, 'K': 131, 'E': 131, 'N': 131} tie tie {'S-V': 197, 'S-K': 197, 'V-K': 242, 'S-E': 197, 'S-N': 197}
+902 {'S': 799, 'V': 140, 'K': 998, 'E': 140, 'N': 140} V first S first {'S-V': 101, 'S-K': 564, 'V-K': 101, 'S-E': 101, 'S-N': 101}
+903 {'S': 23, 'V': 111, 'K': 23, 'E': 23, 'N': 23} S first tie {'S-V': 4, 'S-K': 83, 'V-K': 4, 'S-E': 79, 'S-N': 55}
+904 {'S': 393, 'V': 274, 'K': 398, 'E': 393, 'N': 270} V first S first {'S-V': 242, 'S-K': 303, 'V-K': 242, 'S-E': 536, 'S-N': 163}
+905 {'S': 42, 'V': 28, 'K': 30, 'E': 42, 'N': 28} V first K first {'S-V': 18, 'S-K': 27, 'V-K': 18, 'S-E': 18, 'S-N': 18}
+906 {'S': 232, 'V': 232, 'K': 232, 'E': 107, 'N': 232} tie tie {'S-V': 246, 'S-K': 246, 'V-K': 246, 'S-E': 40, 'S-N': 246}
+907 {'S': 196, 'V': None, 'K': 196, 'E': 196, 'N': 196} S first tie {'S-V': 187, 'S-K': 268, 'V-K': 187, 'S-E': 238, 'S-N': 229}
+908 {'S': 46, 'V': 46, 'K': 46, 'E': 46, 'N': 46} tie tie {'S-V': 83, 'S-K': 71, 'V-K': 71, 'S-E': 79, 'S-N': 75}
+909 {'S': 289, 'V': 92, 'K': 183, 'E': 170, 'N': 285} V first K first {'S-V': 53, 'S-K': 92, 'V-K': 53, 'S-E': 92, 'S-N': 263}
+910 {'S': 933, 'V': None, 'K': 405, 'E': 592, 'N': 528} S first K first {'S-V': 73, 'S-K': 73, 'V-K': 73, 'S-E': 73, 'S-N': 73}
+911 {'S': 7, 'V': 7, 'K': 7, 'E': 7, 'N': 7} tie tie {'S-V': 12, 'S-K': 12, 'V-K': 12, 'S-E': 12, 'S-N': 12}
+912 {'S': 320, 'V': None, 'K': 390, 'E': 320, 'N': 320} S first S first {'S-V': 39, 'S-K': 88, 'V-K': 39, 'S-E': 21, 'S-N': 39}

@@ -1,0 +1,73 @@
+seed 901: S vote/flip/sim 27/197/269 V vote/flip/sim 27/197/256 K vote/flip/sim 27/197/242 E vote/flip/sim 27/197/242 N vote/flip/sim None/None/None
+  S-V: diverge at 197, newborn 5, in answers; complex/flipped/tied/sim S 9/2/0/0, V 9/1/6/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 197, newborn 5, in answers; complex/flipped/tied/sim S 9/2/0/0, K 9/1/3/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 242, newborn 1, in answers; complex/flipped/tied/sim V 0/0/0/0, K 0/0/0/7; a flipped vote or a phase-decided reply
+  S-E: diverge at 197, newborn 5, in answers; complex/flipped/tied/sim S 9/2/0/0, E 9/1/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 197, newborn 5, in answers; complex/flipped/tied/sim S 9/2/0/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 902: S vote/flip/sim 3/21/199 V vote/flip/sim 3/None/166 K vote/flip/sim 3/21/199 E vote/flip/sim 3/269/188 N vote/flip/sim None/None/None
+  S-V: diverge at 101, newborn 7, in answers, solved, graded value; complex/flipped/tied/sim S 9/3/3/0, V 9/0/9/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 564, newborn 6, in answers; complex/flipped/tied/sim S 0/0/0/1, K 0/0/0/6; a flipped vote or a phase-decided reply
+  V-K: diverge at 101, newborn 7, in answers, solved, graded value; complex/flipped/tied/sim V 9/0/9/0, K 9/3/3/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 101, newborn 7, in answers, solved, graded value; complex/flipped/tied/sim S 9/3/3/0, E 9/0/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 101, newborn 7, in answers, solved, graded value; complex/flipped/tied/sim S 9/3/3/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 903: S vote/flip/sim 26/55/141 V vote/flip/sim 20/155/4 K vote/flip/sim 26/55/199 E vote/flip/sim 26/55/119 N vote/flip/sim None/None/None
+  S-V: diverge at 4, newborn 6, in answers; complex/flipped/tied/sim S 0/0/0/0, V 0/0/0/6; a flipped vote or a phase-decided reply
+  S-K: diverge at 83, newborn 4, in answers; complex/flipped/tied/sim S 15/0/3/0, K 15/1/0/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 4, newborn 6, in answers; complex/flipped/tied/sim V 0/0/0/6, K 0/0/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 79, newborn 7, in answers; complex/flipped/tied/sim S 2/0/2/0, E 2/2/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 55, newborn 3, in answers; complex/flipped/tied/sim S 15/1/1/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 904: S vote/flip/sim 52/536/154 V vote/flip/sim 52/None/154 K vote/flip/sim 52/630/154 E vote/flip/sim 52/822/154 N vote/flip/sim None/None/None
+  S-V: diverge at 242, newborn 5, in answers; complex/flipped/tied/sim S 0/0/0/0, V 0/0/0/6; a flipped vote or a phase-decided reply
+  S-K: diverge at 303, newborn 6, in answers; complex/flipped/tied/sim S 0/0/0/1, K 0/0/0/6; a flipped vote or a phase-decided reply
+  V-K: diverge at 242, newborn 5, in answers; complex/flipped/tied/sim V 0/0/0/6, K 0/0/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 536, newborn 4, in answers, solved, graded value; complex/flipped/tied/sim S 15/3/3/0, E 15/0/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 163, newborn 3, in answers; complex/flipped/tied/sim S 0/0/0/6, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 905: S vote/flip/sim 18/18/133 V vote/flip/sim 18/103/134 K vote/flip/sim 18/18/54 E vote/flip/sim 18/18/86 N vote/flip/sim None/None/None
+  S-V: diverge at 18, newborn 0, in answers; complex/flipped/tied/sim S 6/2/0/0, V 6/0/3/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 27, newborn 7, in answers; complex/flipped/tied/sim S 6/2/2/0, K 6/4/0/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 18, newborn 0, in answers; complex/flipped/tied/sim V 6/0/3/0, K 6/2/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 18, newborn 0, in answers; complex/flipped/tied/sim S 6/2/0/0, E 6/1/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 18, newborn 0, in answers; complex/flipped/tied/sim S 6/2/0/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 906: S vote/flip/sim 40/40/296 V vote/flip/sim 40/130/296 K vote/flip/sim 40/130/257 E vote/flip/sim 40/40/216 N vote/flip/sim None/None/None
+  S-V: diverge at 246, newborn 2, in answers, solved, graded value; complex/flipped/tied/sim S 12/6/6/0, V 12/3/9/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 246, newborn 2, in answers, solved, graded value; complex/flipped/tied/sim S 12/6/6/0, K 12/9/3/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 246, newborn 2, in answers, solved, graded value; complex/flipped/tied/sim V 12/3/9/0, K 12/9/3/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 40, newborn 1, in answers, solved, graded value; complex/flipped/tied/sim S 9/3/3/0, E 9/9/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 246, newborn 2, in answers, solved, graded value; complex/flipped/tied/sim S 12/6/6/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 907: S vote/flip/sim 10/93/229 V vote/flip/sim 10/466/110 K vote/flip/sim 10/171/229 E vote/flip/sim 10/93/229 N vote/flip/sim None/None/None
+  S-V: diverge at 187, newborn 6, in answers; complex/flipped/tied/sim S 0/0/0/0, V 0/0/0/6; a flipped vote or a phase-decided reply
+  S-K: diverge at 268, newborn 3, in answers, solved, graded value; complex/flipped/tied/sim S 12/6/0/0, K 12/3/6/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 187, newborn 6, in answers; complex/flipped/tied/sim V 0/0/0/6, K 0/0/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 238, newborn 3, in answers; complex/flipped/tied/sim S 2/0/1/0, E 2/1/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 229, newborn 0, in answers; complex/flipped/tied/sim S 1/0/0/2, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 908: S vote/flip/sim 16/83/41 V vote/flip/sim 16/151/75 K vote/flip/sim 16/81/41 E vote/flip/sim 16/79/41 N vote/flip/sim None/None/None
+  S-V: diverge at 83, newborn 2, in answers; complex/flipped/tied/sim S 9/2/0/0, V 9/0/6/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 71, newborn 3, in answers; complex/flipped/tied/sim S 0/0/0/0, K 3/0/0/3; a flipped vote or a phase-decided reply
+  V-K: diverge at 71, newborn 3, in answers; complex/flipped/tied/sim V 0/0/0/0, K 3/0/0/3; a flipped vote or a phase-decided reply
+  S-E: diverge at 79, newborn 7, in answers; complex/flipped/tied/sim S 9/0/2/0, E 9/2/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 75, newborn 2, in answers; complex/flipped/tied/sim S 3/0/0/3, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 909: S vote/flip/sim 79/263/458 V vote/flip/sim 62/None/53 K vote/flip/sim 79/92/180 E vote/flip/sim 79/92/233 N vote/flip/sim None/None/None
+  S-V: diverge at 53, newborn 5, in answers; complex/flipped/tied/sim S 0/0/0/0, V 0/0/0/6; a flipped vote or a phase-decided reply
+  S-K: diverge at 92, newborn 7, in answers; complex/flipped/tied/sim S 9/0/0/0, K 9/1/0/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 53, newborn 5, in answers; complex/flipped/tied/sim V 0/0/0/6, K 0/0/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 92, newborn 7, in answers; complex/flipped/tied/sim S 9/0/0/0, E 9/1/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 263, newborn 0, in answers; complex/flipped/tied/sim S 1/1/0/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 910: S vote/flip/sim 25/60/141 V vote/flip/sim 25/60/249 K vote/flip/sim 25/73/283 E vote/flip/sim 25/73/281 N vote/flip/sim None/None/None
+  S-V: diverge at 73, newborn 3, in answers; complex/flipped/tied/sim S 6/1/1/0, V 6/0/4/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 73, newborn 3, in answers; complex/flipped/tied/sim S 6/1/1/0, K 6/2/0/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 73, newborn 3, in answers; complex/flipped/tied/sim V 6/0/4/0, K 6/2/0/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 73, newborn 3, in answers; complex/flipped/tied/sim S 6/1/1/0, E 6/2/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 73, newborn 3, in answers; complex/flipped/tied/sim S 6/1/1/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 911: S vote/flip/sim 12/12/134 V vote/flip/sim 12/22/39 K vote/flip/sim 12/12/73 E vote/flip/sim 12/12/63 N vote/flip/sim None/None/None
+  S-V: diverge at 12, newborn 2, in answers; complex/flipped/tied/sim S 9/2/0/0, V 9/0/6/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 12, newborn 2, in answers; complex/flipped/tied/sim S 9/2/0/0, K 9/1/3/0; a flipped vote or a phase-decided reply
+  V-K: diverge at 12, newborn 2, in answers; complex/flipped/tied/sim V 9/0/6/0, K 9/1/3/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 12, newborn 2, in answers; complex/flipped/tied/sim S 9/2/0/0, E 9/4/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 12, newborn 2, in answers; complex/flipped/tied/sim S 9/2/0/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+seed 912: S vote/flip/sim 19/19/88 V vote/flip/sim 19/109/69 K vote/flip/sim 19/19/88 E vote/flip/sim 19/19/119 N vote/flip/sim None/None/None
+  S-V: diverge at 39, newborn 7, in answers; complex/flipped/tied/sim S 9/2/2/0, V 9/0/4/0; a flipped vote or a phase-decided reply
+  S-K: diverge at 88, newborn 7, in answers; complex/flipped/tied/sim S 0/0/0/2, K 0/0/0/5; a flipped vote or a phase-decided reply
+  V-K: diverge at 39, newborn 7, in answers; complex/flipped/tied/sim V 9/0/4/0, K 9/2/2/0; a flipped vote or a phase-decided reply
+  S-E: diverge at 21, newborn 0, in answers; complex/flipped/tied/sim S 6/1/1/0, E 6/2/0/0; a flipped vote or a phase-decided reply
+  S-N: diverge at 39, newborn 7, in answers; complex/flipped/tied/sim S 9/2/2/0, N 0/0/0/0; a flipped vote or a phase-decided reply
+first differences with a flipped vote or a phase-decided reply in that newborn: 60; without: 0

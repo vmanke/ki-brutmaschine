@@ -8,6 +8,21 @@
 //! The LLM mutator (Claude) is reached only through the `GenRequest`s built here; its answers
 //! are recorded and replayed (ADR 0002), and `parse_llm_cascade` turns one answer back into a
 //! checked Cascade without repairing it.
+//!
+//! The operators work on genes (step 2, spec 9.1): each removes its parents' Souls and
+//! Coupling strengths first, so a child never carries either, it must differ from its
+//! parents' genes, and the draws are those of a Run without Souls. The `_sourced` variants
+//! also name the source of every child Worker: the parent Worker it was built from, or one
+//! Worker of each parent where the operator pairs Workers. Souletics in the breeder writes
+//! the child's Souls from these sources.
+//!
+//! With the setting `variation` on (arm W, `.scratch/seelen-modell/spec.md`, section 4.1),
+//! the `_steered` variants of SectionReplace, SectionAdd and section crossover weight their
+//! choices. Beside the genes they get a preference per Worker of the parent they change,
+//! and the gene pool's rule that names the families of a text. A weight multiplies the
+//! chance that today's operator gives an option, and the result is normalised again. Each
+//! choice takes one draw. With every preference 1 the weights are equal, and the operators
+//! make exactly today's draws.
 #![forbid(unsafe_code)]
 
 use rand::Rng;
@@ -65,6 +80,99 @@ pub enum Op {
     LlmMutate,
     /// A child proposed by the LLM mutator by merging two parents.
     LlmCrossover,
+}
+
+/// The source of a child Worker (step 2, spec 9.1): the Worker of a parent that the child
+/// Worker was built from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Source {
+    /// The parent, in the order the operator takes them: 0 for the first or only parent,
+    /// 1 for the second.
+    pub parent: usize,
+    /// The Worker's index in that parent, counted over its Stages in order.
+    pub worker: usize,
+}
+
+/// The sources of a child's Workers: one entry per Worker, in Stage order, with one source,
+/// or two in parent order where the operator pairs Workers.
+pub type Sources = Vec<Vec<Source>>;
+
+/// The sources of every Worker, stage by stage, while an operator edits the child.
+type SourceMap = Vec<Vec<Vec<Source>>>;
+
+/// The floor ε of every weight of arm W (`.scratch/seelen-modell/spec.md`, section 4.1), so
+/// that no choice becomes impossible. The spec marks it as a placeholder.
+pub const WEIGHT_FLOOR: f64 = 0.05;
+
+/// What steers the section operators in arm W: the gene pool's rule that names the families
+/// of a text, in the Domain's family order, and a preference per Worker of the parent that
+/// the operator changes, by the Worker's index over the parent's Stages. A preference holds
+/// one number w_f in [0, 2] per family; 1 neither favours nor disfavours the family. For
+/// section crossover the preferences are those of the first parent.
+#[derive(Clone, Copy, Debug)]
+pub struct Steer<'a> {
+    pub families_of: fn(&str) -> Vec<usize>,
+    pub preferences: &'a [Vec<f64>],
+}
+
+impl Steer<'_> {
+    /// The lens of the parent's Worker `k`; a Worker without a preference leans nowhere.
+    fn lens(&self, k: usize) -> Lens<'_> {
+        Lens {
+            families_of: self.families_of,
+            pref: self.preferences.get(k).map_or(&[], Vec::as_slice),
+        }
+    }
+}
+
+/// The choices that the weights of arm W decided in one operator call, and those they
+/// changed. Only a choice among options of unequal weight counts; one of equal weights
+/// makes today's uniform draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Steered {
+    /// Choices among options whose weights differ.
+    pub choices: u64,
+    /// Those of them whose pick differs from the uniform pick of the same draw.
+    pub changed: u64,
+}
+
+impl Steered {
+    /// Add the counts of `other`.
+    pub fn add(&mut self, other: Steered) {
+        self.choices += other.choices;
+        self.changed += other.changed;
+    }
+}
+
+/// One Worker's preference with the rule that names families: what weighs the choices of an
+/// operator that changes this Worker.
+#[derive(Clone, Copy, Debug)]
+struct Lens<'a> {
+    families_of: fn(&str) -> Vec<usize>,
+    pref: &'a [f64],
+}
+
+impl Lens<'_> {
+    /// The lean L of `text`: w_f − 1 summed over the families it names, each once, in
+    /// family order. A text that names no family has L = 0.
+    fn lean(&self, text: &str) -> f64 {
+        (self.families_of)(text)
+            .into_iter()
+            .filter_map(|f| self.pref.get(f))
+            .fold(0.0, |l, w| l + (w - 1.0))
+    }
+
+    /// 1 + L, at least ε: the weight of a Worker by its whole prompt, of a phrase, and of
+    /// each side of the coin of section crossover.
+    fn favour(&self, text: &str) -> f64 {
+        (1.0 + self.lean(text)).max(WEIGHT_FLOOR)
+    }
+
+    /// 1 − L, at least ε: the weight of a section that SectionReplace may overwrite, so a
+    /// Worker protects the texts it prefers.
+    fn protect(&self, text: &str) -> f64 {
+        (1.0 - self.lean(text)).max(WEIGHT_FLOOR)
+    }
 }
 
 /// Prompt-text gene pool: (section name, text). Mutation draws section texts from here.
@@ -421,23 +529,104 @@ pub fn mutate_with(
     phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op)> {
+    mutate_sourced(parent, limits, phrases, rng).map(|(child, op, _)| (child, op))
+}
+
+/// `mutate_with` that also names the source of every child Worker (spec 9.1): each Worker's
+/// source is the parent Worker at its position. The clone of WorkerAdd has the cloned
+/// Worker as its source, the new Worker of StageAdd the Worker it was copied from, and
+/// WorkerDrop and StageDrop shift the positions.
+pub fn mutate_sourced(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources)> {
+    mutate_inner(parent, limits, phrases, None, rng)
+        .map(|(child, op, sources, _)| (child, op, sources))
+}
+
+/// `mutate_sourced` for arm W: SectionReplace and SectionAdd weight their choices by the
+/// preferences of `steer`, one per Worker of `parent`. Also returns the choices the
+/// weights decided in the attempt that made the child.
+pub fn mutate_steered(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: &Steer<'_>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources, Steered)> {
+    mutate_inner(parent, limits, phrases, Some(steer), rng)
+}
+
+/// `mutate_sourced`, weighted by `steer` when it is given.
+fn mutate_inner(
+    parent: &Cascade,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Op, Sources, Steered)> {
+    let parent = parent.genes();
     let parents = [parent.id()];
 
     for _ in 0..MUTATE_ATTEMPTS {
         let op = draw_op(rng);
 
-        let Some(mut child) = apply_with(parent, op, limits, phrases, rng) else {
-            continue;
-        };
-
-        clamp_to_limits(&mut child, limits);
-
-        if acceptable(&child, limits, &parents) {
-            return Some((child, op));
+        if let Some((child, sources, steered)) =
+            attempt(&parent, &parents, op, limits, phrases, steer, rng)
+        {
+            return Some((child, op, sources, steered));
         }
     }
 
     None
+}
+
+/// One draw of the mutation operator `op` on `parent` (imagination,
+/// `.scratch/seelen-modell/spec-imagination.md`, section 3.2): what one attempt of
+/// `mutate_sourced` or `mutate_steered` makes once it has drawn `op`, with the same draws, but
+/// without drawing the operator and without a second attempt. The operator sees genes only,
+/// as every operator does. None when `op` cannot change this parent, or when the child fails
+/// `check(limits)` or has the parent's id.
+pub fn mutate_once(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    let parent = parent.genes();
+    let parents = [parent.id()];
+
+    attempt(&parent, &parents, op, limits, phrases, steer, rng)
+}
+
+/// One attempt of a mutation with the operator `op` on the genes `parent`, whose id is in
+/// `parents`: apply, clamp, and keep the child when it passes `check(limits)` and differs
+/// from the parent, with the source of every Worker and the choices the weights decided.
+fn attempt(
+    parent: &Cascade,
+    parents: &[String],
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    let mut steered = Steered::default();
+    let (mut child, map) = apply_steered(parent, op, limits, phrases, steer, &mut steered, rng)?;
+
+    clamp_to_limits(&mut child, limits);
+
+    if !acceptable(&child, limits, parents) {
+        return None;
+    }
+
+    let sources = flatten_sources(map, &child);
+
+    Some((child, sources, steered))
 }
 
 /// One-point crossover over stages: a prefix of `a` (1..=len stages), then a suffix of `b`,
@@ -453,6 +642,20 @@ pub fn stage_crossover(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    stage_crossover_sourced(a, b, limits, rng).map(|(child, _)| child)
+}
+
+/// `stage_crossover` that also names the source of every child Worker (spec 9.1): the
+/// Workers of the prefix come from `a`, those of the suffix from `b`, each from its own
+/// position.
+pub fn stage_crossover_sourced(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources)> {
+    let (a, b) = (&a.genes(), &b.genes());
+
     if a.stages.is_empty() || b.stages.is_empty() {
         return None;
     }
@@ -472,11 +675,17 @@ pub fn stage_crossover(
         let mut child = Cascade {
             stages: head.iter().chain(tail).cloned().collect(),
         };
+        let map: SourceMap = (0..prefix)
+            .map(|s| stage_sources(a, 0, s))
+            .chain((b.stages.len() - suffix..b.stages.len()).map(|s| stage_sources(b, 1, s)))
+            .collect();
 
         clamp_to_limits(&mut child, limits);
 
         if acceptable(&child, limits, &parents) {
-            return Some(child);
+            let sources = flatten_sources(map, &child);
+
+            return Some((child, sources));
         }
     }
 
@@ -497,6 +706,43 @@ pub fn section_crossover(
     limits: &CascadeLimits,
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    section_crossover_sourced(a, b, limits, rng).map(|(child, _)| child)
+}
+
+/// `section_crossover` that also names the sources of every child Worker (spec 9.1): Worker
+/// (s, w) has two, `a`'s Worker (s, w) and the partner Worker of `b`.
+pub fn section_crossover_sourced(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources)> {
+    section_crossover_inner(a, b, limits, None, rng).map(|(child, sources, _)| (child, sources))
+}
+
+/// `section_crossover_sourced` for arm W: the coin of each section weighs the two texts by
+/// the preferences of `steer`, one per Worker of the first parent `a`. Also returns the
+/// choices the weights decided in the attempt that made the child.
+pub fn section_crossover_steered(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    steer: &Steer<'_>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    section_crossover_inner(a, b, limits, Some(steer), rng)
+}
+
+/// `section_crossover_sourced`, weighted by `steer` when it is given.
+fn section_crossover_inner(
+    a: &Cascade,
+    b: &Cascade,
+    limits: &CascadeLimits,
+    steer: Option<&Steer<'_>>,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, Sources, Steered)> {
+    let (a, b) = (&a.genes(), &b.genes());
+
     if a.stages.is_empty() || b.stages.is_empty() {
         return None;
     }
@@ -505,23 +751,120 @@ pub fn section_crossover(
 
     for _ in 0..CROSSOVER_ATTEMPTS {
         let mut child = a.clone();
+        let mut steered = Steered::default();
 
         for (s, stage) in child.stages.iter_mut().enumerate() {
             for (w, worker) in stage.workers.iter_mut().enumerate() {
                 if let Some(other) = partner(b, s, w) {
-                    cross_worker(worker, other, rng);
+                    let lens = steer.map(|st| st.lens(worker_index(a, s, w)));
+
+                    cross_worker(worker, other, lens, &mut steered, rng);
                 }
             }
         }
 
+        let map: SourceMap = a
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(s, stage)| {
+                (0..stage.workers.len())
+                    .map(|w| {
+                        let own = Source {
+                            parent: 0,
+                            worker: worker_index(a, s, w),
+                        };
+
+                        std::iter::once(own)
+                            .chain(partner_source(b, 1, s, w))
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+
         clamp_to_limits(&mut child, limits);
 
         if acceptable(&child, limits, &parents) {
-            return Some(child);
+            let sources = flatten_sources(map, &child);
+
+            return Some((child, sources, steered));
         }
     }
 
     None
+}
+
+/// The sources of a child the Mutator wrote from `parents` (spec 9.1): Worker (s, w) has the
+/// source `partner(parent, s, w)` of every parent, in parent order. The Mutator sees no
+/// Souls and writes none, so only the shapes count.
+pub fn partner_sources(child: &Cascade, parents: &[&Cascade]) -> Sources {
+    child
+        .stages
+        .iter()
+        .enumerate()
+        .flat_map(|(s, stage)| {
+            (0..stage.workers.len()).map(move |w| {
+                parents
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(p, parent)| partner_source(parent, p, s, w))
+                    .collect()
+            })
+        })
+        .collect()
+}
+
+/// The index of Worker (stage `s`, position `w`) of `c`, counted over its Stages in order.
+pub fn worker_index(c: &Cascade, s: usize, w: usize) -> usize {
+    c.stages
+        .iter()
+        .take(s)
+        .map(|st| st.workers.len())
+        .sum::<usize>()
+        + w
+}
+
+/// Every Worker of Stage `s` of `c`, each its own source as Worker of parent `parent`.
+fn stage_sources(c: &Cascade, parent: usize, s: usize) -> Vec<Vec<Source>> {
+    let first = worker_index(c, s, 0);
+    let width = c.stages.get(s).map_or(0, |st| st.workers.len());
+
+    (first..first + width)
+        .map(|worker| vec![Source { parent, worker }])
+        .collect()
+}
+
+/// The source that `partner(c, s, w)` picks, as Worker of parent `parent`.
+fn partner_source(c: &Cascade, parent: usize, s: usize, w: usize) -> Option<Source> {
+    let (ps, pw) = partner_at(c, s, w)?;
+
+    Some(Source {
+        parent,
+        worker: worker_index(c, ps, pw),
+    })
+}
+
+/// The sources in Stage order, cut to the shape `child` kept after `clamp_to_limits`, which
+/// drops trailing Stages and Workers only.
+fn flatten_sources(mut map: SourceMap, child: &Cascade) -> Sources {
+    map.truncate(child.stages.len());
+
+    for (stage, sources) in child.stages.iter().zip(&mut map) {
+        sources.truncate(stage.workers.len());
+    }
+
+    debug_assert_eq!(
+        map.iter().map(Vec::len).collect::<Vec<_>>(),
+        child
+            .stages
+            .iter()
+            .map(|s| s.workers.len())
+            .collect::<Vec<_>>(),
+        "the source map follows the child's shape"
+    );
+
+    map.into_iter().flatten().collect()
 }
 
 /// Request to an LLM mutator (Claude) to improve one parent, given its public search
@@ -593,23 +936,34 @@ pub fn llm_crossover_request_with(
 /// are ignored), deserialize a Cascade (unknown fields are rejected by the struct), clamp
 /// nothing, and run `check(limits)`. Errors are `BrutError::Invalid` with a short reason.
 pub fn parse_llm_cascade(text: &str, limits: &CascadeLimits) -> Result<Cascade> {
-    let invalid = |reason: &str| BrutError::Invalid(format!("llm answer: {reason}"));
-
-    let start = text.find('{').ok_or_else(|| invalid("no JSON object"))?;
-    let end = closing_brace(text, start).ok_or_else(|| invalid("the JSON object is not closed"))?;
-    let json = text
-        .get(start..=end)
-        .ok_or_else(|| invalid("the JSON object is not closed"))?;
-
-    let cascade: Cascade =
-        serde_json::from_str(json).map_err(|e| invalid(&format!("not a Cascade: {e}")))?;
+    let cascade = read_llm_cascade(text)?;
 
     cascade.check(limits).map_err(|e| match e {
-        BrutError::Invalid(reason) => invalid(&reason),
+        BrutError::Invalid(reason) => llm_invalid(&reason),
         other => other,
     })?;
 
     Ok(cascade)
+}
+
+/// The Cascade in an LLM answer as `parse_llm_cascade` finds it, but unchecked. The breeder
+/// reads it to refuse an answer that writes a Soul before any other rule (step 2, spec 4.5).
+pub fn read_llm_cascade(text: &str) -> Result<Cascade> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| llm_invalid("no JSON object"))?;
+    let end =
+        closing_brace(text, start).ok_or_else(|| llm_invalid("the JSON object is not closed"))?;
+    let json = text
+        .get(start..=end)
+        .ok_or_else(|| llm_invalid("the JSON object is not closed"))?;
+
+    serde_json::from_str(json).map_err(|e| llm_invalid(&format!("not a Cascade: {e}")))
+}
+
+/// An error about an LLM answer.
+fn llm_invalid(reason: &str) -> BrutError {
+    BrutError::Invalid(format!("llm answer: {reason}"))
 }
 
 /// Draw one mutation operator by `MUTATION_WEIGHTS`.
@@ -630,6 +984,7 @@ fn draw_op(rng: &mut ChaCha8Rng) -> Op {
 
 /// Apply one mutation operator to a copy of `parent`, or None when the operator cannot
 /// change this parent. Section texts come from `phrases`. The result is not clamped yet.
+#[cfg(test)]
 fn apply_with(
     parent: &Cascade,
     op: Op,
@@ -637,7 +992,49 @@ fn apply_with(
     phrases: &'static [(&'static str, &'static str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
+    apply_sourced(parent, op, limits, phrases, rng).map(|(child, _)| child)
+}
+
+/// `apply_with` with the source of every child Worker, stage by stage.
+#[cfg(test)]
+fn apply_sourced(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, SourceMap)> {
+    apply_steered(
+        parent,
+        op,
+        limits,
+        phrases,
+        None,
+        &mut Steered::default(),
+        rng,
+    )
+}
+
+/// Apply one mutation operator to a copy of `parent`, with the source of every child
+/// Worker, stage by stage. A Worker that keeps its position keeps its source; the operators
+/// that add, remove or move Workers or Stages edit the map as they edit the child.
+///
+/// With `steer` (arm W), SectionReplace and SectionAdd weight their choices by its
+/// preferences, and `steered` counts the choices the weights decided. Without it every
+/// operator draws as before.
+fn apply_steered(
+    parent: &Cascade,
+    op: Op,
+    limits: &CascadeLimits,
+    phrases: &'static [(&'static str, &'static str)],
+    steer: Option<&Steer<'_>>,
+    steered: &mut Steered,
+    rng: &mut ChaCha8Rng,
+) -> Option<(Cascade, SourceMap)> {
     let mut child = parent.clone();
+    let mut map: SourceMap = (0..parent.stages.len())
+        .map(|s| stage_sources(parent, 0, s))
+        .collect();
 
     match op {
         Op::ThinkUp => {
@@ -705,29 +1102,42 @@ fn apply_with(
 
         Op::SectionReplace => {
             let slots = worker_slots(parent, |_, w| !w.sections.is_empty());
-            let (s, w) = pick(rng, &slots)?;
+            let (s, w) = pick_worker(rng, parent, &slots, steer, steered)?;
+            let lens = steer.map(|st| st.lens(worker_index(parent, s, w)));
             let worker = worker_mut(&mut child, s, w)?;
-            let i = rng.random_range(0..worker.sections.len());
+            let i = match lens {
+                None => rng.random_range(0..worker.sections.len()),
+                Some(lens) => {
+                    let weights: Vec<f64> = worker
+                        .sections
+                        .iter()
+                        .map(|x| lens.protect(&x.text))
+                        .collect();
+
+                    weighted_index(rng, &weights, steered)?
+                }
+            };
             let section = worker.sections.get_mut(i)?;
 
             section.text =
-                replacement_text(rng, phrases, &section.name, &section.text)?.to_string();
+                replacement_text(rng, phrases, &section.name, &section.text, lens, steered)?
+                    .to_string();
         }
 
         Op::SectionAdd => {
-            let (s, w) = pick(rng, &worker_slots(parent, |_, _| true))?;
+            let slots = worker_slots(parent, |_, _| true);
+            let (s, w) = pick_worker(rng, parent, &slots, steer, steered)?;
+            let lens = steer.map(|st| st.lens(worker_index(parent, s, w)));
             let worker = worker_mut(&mut child, s, w)?;
-            let options: Vec<(&str, &str)> = phrases
-                .iter()
-                .copied()
-                .filter(
-                    |(name, text)| match worker.sections.iter().find(|x| x.name == *name) {
-                        Some(existing) => existing.text != *text,
-                        None => worker.sections.len() < MAX_SECTIONS,
-                    },
-                )
-                .collect();
-            let (name, text) = pick(rng, &options)?;
+            let options = add_options(worker, phrases);
+            let (name, text) = match lens {
+                None => pick(rng, &options)?,
+                Some(lens) => {
+                    let weights = add_weights(worker, &options, lens);
+
+                    *options.get(weighted_index(rng, &weights, steered)?)?
+                }
+            };
 
             set_section(&mut worker.sections, name, text);
         }
@@ -773,6 +1183,10 @@ fn apply_with(
             clone.traits.temperature =
                 shifted_temperature(clone.traits.temperature, WORKER_ADD_WARMTH);
             stage.workers.push(clone);
+
+            let cloned = map.get(k)?.get(w)?.clone();
+
+            map.get_mut(k)?.push(cloned);
         }
 
         Op::WorkerDrop => {
@@ -781,6 +1195,7 @@ fn apply_with(
             let w = rng.random_range(0..stage.workers.len());
 
             stage.workers.remove(w);
+            map.get_mut(k)?.remove(w);
         }
 
         Op::StageAdd => {
@@ -805,6 +1220,10 @@ fn apply_with(
             set_section(&mut worker.sections, RESIDUAL, text);
 
             let at = rng.random_range(1..=parent.stages.len());
+            let copied = Source {
+                parent: 0,
+                worker: worker_index(parent, s, w),
+            };
 
             child.stages.insert(
                 at,
@@ -812,6 +1231,7 @@ fn apply_with(
                     workers: vec![worker],
                 },
             );
+            map.insert(at, vec![vec![copied]]);
         }
 
         Op::StageDrop => {
@@ -822,6 +1242,7 @@ fn apply_with(
             let k = rng.random_range(0..parent.stages.len());
 
             child.stages.remove(k);
+            map.remove(k);
         }
 
         Op::Seed | Op::StageCrossover | Op::SectionCrossover | Op::LlmMutate | Op::LlmCrossover => {
@@ -829,7 +1250,7 @@ fn apply_with(
         }
     }
 
-    Some(child)
+    Some((child, map))
 }
 
 /// True when `child` passes `check(limits)` and its id differs from every id in `parents`.
@@ -848,6 +1269,134 @@ fn pick<T: Copy>(rng: &mut ChaCha8Rng, items: &[T]) -> Option<T> {
     }
 
     items.get(rng.random_range(0..items.len())).copied()
+}
+
+/// The index of one of the options whose weights are `weights`, by one draw (arm W), or
+/// None without an option. When every weight is the same, the draw is today's uniform one
+/// and nothing is counted. Otherwise u is uniform in [0, 1), and the pick is the first
+/// option whose summed weight passes u times the total. `steered` counts the choice, and
+/// counts it as changed when the pick differs from ⌊u·n⌋, the pick of equal weights.
+fn weighted_index(rng: &mut ChaCha8Rng, weights: &[f64], steered: &mut Steered) -> Option<usize> {
+    let n = weights.len();
+    let first = *weights.first()?;
+
+    if weights.iter().all(|&w| w == first) {
+        return Some(rng.random_range(0..n));
+    }
+
+    let u: f64 = rng.random();
+    let total = weights.iter().fold(0.0, |sum, &w| sum + w);
+    let target = u * total;
+    let mut summed = 0.0;
+    // Rounding may leave the target at the total; then the last option, whose weight is at
+    // least ε, takes it.
+    let mut chosen = n - 1;
+
+    for (i, &w) in weights.iter().enumerate() {
+        summed += w;
+
+        if target < summed {
+            chosen = i;
+            break;
+        }
+    }
+
+    let uniform = ((u * n as f64) as usize).min(n - 1);
+
+    steered.choices += 1;
+
+    if chosen != uniform {
+        steered.changed += 1;
+    }
+
+    Some(chosen)
+}
+
+/// The coin of section crossover in arm W: true takes the partner's section, whose weight
+/// is `theirs` against `mine`. With equal weights it is today's coin of p = 1/2 and counts
+/// nothing. Otherwise u is uniform in [0, 1), and the coin is u < theirs / (mine + theirs);
+/// `steered` counts it, and counts it as changed when it differs from u < 1/2.
+fn weighted_coin(rng: &mut ChaCha8Rng, mine: f64, theirs: f64, steered: &mut Steered) -> bool {
+    if mine == theirs {
+        return rng.random_bool(0.5);
+    }
+
+    let u: f64 = rng.random();
+    let take = u < theirs / (mine + theirs);
+
+    steered.choices += 1;
+
+    if take != (u < 0.5) {
+        steered.changed += 1;
+    }
+
+    take
+}
+
+/// The Worker that SectionReplace or SectionAdd changes, among `slots` of `parent`:
+/// uniform without `steer`, otherwise with the weight 1 + L of each Worker's whole prompt
+/// under its own preference (choice 1 of spec 4.1).
+fn pick_worker(
+    rng: &mut ChaCha8Rng,
+    parent: &Cascade,
+    slots: &[(usize, usize)],
+    steer: Option<&Steer<'_>>,
+    steered: &mut Steered,
+) -> Option<(usize, usize)> {
+    let Some(steer) = steer else {
+        return pick(rng, slots);
+    };
+    let weights: Vec<f64> = slots
+        .iter()
+        .map(|&(s, w)| {
+            let prompt = parent
+                .stages
+                .get(s)
+                .and_then(|stage| stage.workers.get(w))
+                .map(Worker::system_prompt)
+                .unwrap_or_default();
+
+            steer.lens(worker_index(parent, s, w)).favour(&prompt)
+        })
+        .collect();
+
+    slots.get(weighted_index(rng, &weights, steered)?).copied()
+}
+
+/// The phrases SectionAdd may write into `worker`: one whose name a section has, if its
+/// text differs, or one of a new name while the Worker has room for another section.
+fn add_options(
+    worker: &Worker,
+    phrases: &'static [(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    phrases
+        .iter()
+        .copied()
+        .filter(
+            |(name, text)| match worker.sections.iter().find(|x| x.name == *name) {
+                Some(existing) => existing.text != *text,
+                None => worker.sections.len() < MAX_SECTIONS,
+            },
+        )
+        .collect()
+}
+
+/// The weights of the `options` of SectionAdd for `worker` (choice 3 of spec 4.1): 1 + L of
+/// the phrase, times the protection 1 − L of the section it would write over, if any; each
+/// factor and the product at least ε.
+fn add_weights(worker: &Worker, options: &[(&str, &str)], lens: Lens<'_>) -> Vec<f64> {
+    options
+        .iter()
+        .map(|(name, text)| {
+            let over = worker
+                .sections
+                .iter()
+                .find(|x| x.name == *name)
+                .map_or(1.0, |x| lens.protect(&x.text));
+
+            (lens.favour(text) * over).max(WEIGHT_FLOOR)
+        })
+        .collect()
 }
 
 /// Positions (stage, worker) of the Workers of `c` that satisfy `ok(stage, worker)`.
@@ -949,12 +1498,15 @@ fn model_tags(limits: &CascadeLimits) -> Vec<&str> {
 }
 
 /// A text of `phrases` other than `current`: with p = 0.7 one of the phrases named `name`
-/// (when there is such a phrase), otherwise one of the whole pool.
+/// (when there is such a phrase), otherwise one of the whole pool. Within the pool that is
+/// drawn, each text weighs alike, or with `lens` 1 + L of the text (arm W, choice 3).
 fn replacement_text(
     rng: &mut ChaCha8Rng,
     phrases: &'static [(&'static str, &'static str)],
     name: &str,
     current: &str,
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
 ) -> Option<&'static str> {
     let same_name: Vec<&'static str> = phrases
         .iter()
@@ -963,7 +1515,7 @@ fn replacement_text(
         .collect();
 
     if !same_name.is_empty() && rng.random_bool(SAME_NAME_P) {
-        return pick(rng, &same_name);
+        return pick_text(rng, &same_name, lens, steered);
     }
 
     let any: Vec<&'static str> = phrases
@@ -972,7 +1524,22 @@ fn replacement_text(
         .map(|(_, t)| *t)
         .collect();
 
-    pick(rng, &any)
+    pick_text(rng, &any, lens, steered)
+}
+
+/// One of `texts`: uniform without `lens`, otherwise with the weight 1 + L of each text.
+fn pick_text(
+    rng: &mut ChaCha8Rng,
+    texts: &[&'static str],
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
+) -> Option<&'static str> {
+    let Some(lens) = lens else {
+        return pick(rng, texts);
+    };
+    let weights: Vec<f64> = texts.iter().map(|t| lens.favour(t)).collect();
+
+    texts.get(weighted_index(rng, &weights, steered)?).copied()
 }
 
 /// Write `text` over the first section named `name`, or append a new section.
@@ -998,19 +1565,45 @@ fn droppable(s: &Section) -> bool {
 /// `b`'s Worker paired with Worker (s, w) of the other parent: the same position, or the
 /// last stage or Worker that `b` has.
 fn partner(b: &Cascade, s: usize, w: usize) -> Option<&Worker> {
-    let stage = b.stages.get(s.min(b.stages.len().checked_sub(1)?))?;
+    let (ps, pw) = partner_at(b, s, w)?;
 
-    stage
-        .workers
-        .get(w.min(stage.workers.len().checked_sub(1)?))
+    b.stages.get(ps)?.workers.get(pw)
+}
+
+/// The position (stage, Worker) of `partner(b, s, w)`, or None when `b` has no Worker there.
+fn partner_at(b: &Cascade, s: usize, w: usize) -> Option<(usize, usize)> {
+    let ps = s.min(b.stages.len().checked_sub(1)?);
+    let pw = w.min(b.stages.get(ps)?.workers.len().checked_sub(1)?);
+
+    Some((ps, pw))
 }
 
 /// Uniform crossover of one Worker with its partner, in place: every section whose name the
 /// partner also has, the model and each Trait field come from the partner with p = 0.5.
-fn cross_worker(child: &mut Worker, other: &Worker, rng: &mut ChaCha8Rng) {
+/// The Soul and the Coupling strength are no genes and are never crossed (spec 9.1): the
+/// operators see genes only, and Souletics gives the child its Souls.
+///
+/// With `lens` (arm W), the coin of each section takes the partner's text with the
+/// probability (1 + L(theirs)) / ((1 + L(mine)) + (1 + L(theirs))), each weight at least ε;
+/// `steered` counts the coins the weights decided. The other coins stay as they are.
+fn cross_worker(
+    child: &mut Worker,
+    other: &Worker,
+    lens: Option<Lens<'_>>,
+    steered: &mut Steered,
+    rng: &mut ChaCha8Rng,
+) {
     for section in &mut child.sections {
         if let Some(theirs) = other.sections.iter().find(|s| s.name == section.name)
-            && rng.random_bool(0.5)
+            && match lens {
+                None => rng.random_bool(0.5),
+                Some(lens) => weighted_coin(
+                    rng,
+                    lens.favour(&section.text),
+                    lens.favour(&theirs.text),
+                    steered,
+                ),
+            }
         {
             section.text = theirs.text.clone();
         }
@@ -1048,11 +1641,14 @@ fn llm_request(brief: &MutatorBrief, prompt: String, seed: u64) -> GenRequest {
         temperature: LLM_TEMPERATURE,
         seed,
         think_tokens: 0,
+        phases: None,
     }
 }
 
 /// The user prompt: context, format, limits, each parent as pretty JSON with its public
-/// search fitness, then the task and the rules.
+/// search fitness, then the task and the rules. A parent shows its genes only: the Mutator
+/// never sees a Soul or a Coupling strength (step 2, spec 4.5), so the format keeps its
+/// four Traits, and a parent with a Soul gives the request of the same parent without.
 fn llm_prompt(
     brief: &MutatorBrief,
     parents: &[(&str, &Cascade, f64)],
@@ -1067,7 +1663,7 @@ fn llm_prompt(
     p.push('\n');
 
     for (label, cascade, fitness) in parents {
-        let json = serde_json::to_string_pretty(cascade).unwrap_or_default();
+        let json = serde_json::to_string_pretty(&cascade.genes()).unwrap_or_default();
 
         p.push_str(&format!("{label}:\n{json}\n{}\n\n", fitness_line(*fitness)));
     }
@@ -1171,7 +1767,12 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::cascade::genome::{ModelSpec, THINK_TOKENS_CEILING, seed_cascades};
+    use crate::cascade::circuit_genes::{CIRCUIT_PHRASES, circuit_seed_cascades};
+    use crate::cascade::designer::named_families;
+    use crate::cascade::genome::{
+        COUPLING_MAX, ModelSpec, PhaseState, THINK_TOKENS_CEILING, seed_cascades,
+    };
+    use crate::cascade::soul::{QUARTER_TURN, Readout, preference};
 
     /// Every Op, in declaration order.
     const ALL_OPS: [Op; 19] = [
@@ -1727,6 +2328,7 @@ mod tests {
             temperature: 9.0,
             answer_tokens: 1,
             self_check: true,
+            ..Traits::default()
         };
 
         let mut odd = hot.clone();
@@ -1785,6 +2387,7 @@ mod tests {
             temperature: f32::NAN,
             answer_tokens: u32::MAX,
             self_check: false,
+            ..Traits::default()
         };
 
         for seed in 0..100 {
@@ -2280,5 +2883,1082 @@ mod tests {
 
             assert_eq!(back, op);
         }
+    }
+
+    /// A Cascade with Stages of these widths whose Workers differ in every gene: a note
+    /// section that names `tag` and the Worker, the model by parity, and each Trait.
+    fn distinct(tag: &str, widths: &[usize]) -> Cascade {
+        let base = seeds().remove(0).stages[0].workers[0].clone();
+        let mut k = 0u32;
+        let mut stages = Vec::new();
+
+        for &width in widths {
+            let mut workers = Vec::new();
+
+            for _ in 0..width {
+                let mut w = base.clone();
+
+                w.sections.push(Section {
+                    name: "note".to_string(),
+                    text: format!("Worker {tag}{k}."),
+                });
+                w.model = if k.is_multiple_of(2) {
+                    "sim:small"
+                } else {
+                    "sim:large"
+                }
+                .to_string();
+                w.traits = Traits {
+                    think_tokens: 128 * (k + 1),
+                    temperature: 0.1 * (k as f32 + 1.0),
+                    answer_tokens: 128 + 64 * k,
+                    self_check: !k.is_multiple_of(2),
+                    ..Traits::default()
+                };
+                workers.push(w);
+                k += 1;
+            }
+
+            stages.push(Stage { workers });
+        }
+
+        Cascade { stages }
+    }
+
+    /// Every Worker of `c`, in Stage order.
+    fn workers_of(c: &Cascade) -> Vec<&Worker> {
+        c.stages.iter().flat_map(|s| &s.workers).collect()
+    }
+
+    /// The genes of `w` that the mutation `op` leaves as they are: a child Worker shares
+    /// them with its source Worker.
+    fn kept(op: Op, w: &Worker) -> (Option<String>, Option<Vec<Section>>, Option<Traits>) {
+        let model = Some(w.model.clone());
+        let sections = Some(w.sections.clone());
+        let traits = Some(w.traits.clone());
+
+        match op {
+            Op::ThinkUp
+            | Op::ThinkDown
+            | Op::TemperatureShift
+            | Op::SelfCheckFlip
+            | Op::AnswerTokensShift => (model, sections, None),
+            Op::ModelSwitch => (None, sections, traits),
+            Op::SectionReplace
+            | Op::SectionAdd
+            | Op::SectionDrop
+            | Op::SectionSwap
+            | Op::StageAdd => (model, None, traits),
+            Op::WorkerAdd => {
+                let warm = Traits {
+                    temperature: 0.0,
+                    ..w.traits.clone()
+                };
+
+                (model, sections, Some(warm))
+            }
+            _ => (model, sections, traits),
+        }
+    }
+
+    /// The flat index of the Worker that `partner` picks in a parent of these widths,
+    /// computed by the rule itself: the same position, or the last Stage or Worker there is.
+    fn partner_by_rule(widths: &[usize], s: usize, w: usize) -> usize {
+        let ps = s.min(widths.len() - 1);
+        let pw = w.min(widths[ps] - 1);
+
+        widths[..ps].iter().sum::<usize>() + pw
+    }
+
+    #[test]
+    fn every_operator_names_its_sources() {
+        let limits = CascadeLimits::default();
+        let parent = distinct("P", &[2, 1, 2]);
+        let mutations: Vec<Op> = MUTATION_WEIGHTS.iter().map(|&(op, _)| op).collect();
+
+        assert!(parent.check(&limits).is_ok(), "{:?}", parent.check(&limits));
+
+        // Each mutation operator: every child Worker has one source, the parent Worker it
+        // was built from, which shares every gene the operator leaves alone.
+        for &op in &mutations {
+            let mut applied = 0;
+
+            for seed in 0..60 {
+                let Some((mut child, map)) =
+                    apply_sourced(&parent, op, &limits, PHRASES, &mut rng(seed))
+                else {
+                    continue;
+                };
+
+                clamp_to_limits(&mut child, &limits);
+
+                let sources = flatten_sources(map, &child);
+                let from = workers_of(&parent);
+
+                assert_eq!(sources.len(), child.worker_count(), "{op:?}");
+
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    assert_eq!(src.len(), 1, "{op:?}");
+                    assert_eq!(src[0].parent, 0, "{op:?}");
+                    assert_eq!(
+                        kept(op, w),
+                        kept(op, from[src[0].worker]),
+                        "{op:?} seed {seed}"
+                    );
+                }
+
+                applied += 1;
+            }
+
+            assert!(applied > 0, "{op:?} never applied");
+        }
+
+        // The structural operators move the map as they move the Workers.
+        let structural = |op: Op, seed: u64| {
+            let (child, map) =
+                apply_sourced(&parent, op, &limits, PHRASES, &mut rng(seed)).expect("applies");
+
+            flatten_sources(map, &child)
+                .iter()
+                .map(|s| s[0].worker)
+                .collect::<Vec<usize>>()
+        };
+        let shapes: BTreeSet<Vec<usize>> = (0..40)
+            .flat_map(|seed| {
+                [Op::WorkerAdd, Op::WorkerDrop, Op::StageAdd, Op::StageDrop]
+                    .map(|op| structural(op, seed))
+            })
+            .collect();
+
+        assert!(
+            shapes.contains(&vec![0, 1, 2, 3, 4, 0]),
+            "a clone of Worker 0"
+        );
+        assert!(shapes.contains(&vec![0, 2, 3, 4]), "Worker 1 dropped");
+        assert!(
+            shapes.contains(&vec![0, 1, 2, 3, 4, 2]),
+            "a new last Stage copied from 2"
+        );
+        assert!(
+            shapes.contains(&vec![0, 1, 3, 4]),
+            "the middle Stage dropped"
+        );
+
+        // The public operator names the same sources as the operator it drew.
+        for seed in 0..200 {
+            if let Some((child, op, sources)) =
+                mutate_sourced(&parent, &limits, PHRASES, &mut rng(seed))
+            {
+                let from = workers_of(&parent);
+
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    assert_eq!(kept(op, w), kept(op, from[src[0].worker]), "{op:?}");
+                }
+            }
+        }
+
+        // Both crossovers.
+        let (a, b) = (distinct("A", &[2, 1, 2]), distinct("B", &[1, 3]));
+        let (from_a, from_b) = (workers_of(&a), workers_of(&b));
+        let mut by_stage = 0;
+        let mut by_section = 0;
+
+        for seed in 0..100 {
+            // StageCrossover: the prefix from A, the suffix from B, each Worker as it was.
+            if let Some((child, sources)) = stage_crossover_sourced(&a, &b, &limits, &mut rng(seed))
+            {
+                for (w, src) in workers_of(&child).into_iter().zip(&sources) {
+                    let from = if src[0].parent == 0 { &from_a } else { &from_b };
+
+                    assert_eq!(src.len(), 1);
+                    assert_eq!(w, from[src[0].worker], "seed {seed}");
+                }
+
+                by_stage += 1;
+            }
+
+            // SectionCrossover: A's Worker at the same position and B's partner Worker;
+            // every gene of the child comes from one of them.
+            if let Some((child, sources)) =
+                section_crossover_sourced(&a, &b, &limits, &mut rng(seed))
+            {
+                let mut k = 0;
+
+                for (s, stage) in child.stages.iter().enumerate() {
+                    for (w, worker) in stage.workers.iter().enumerate() {
+                        let expected = [
+                            Source {
+                                parent: 0,
+                                worker: worker_index(&a, s, w),
+                            },
+                            Source {
+                                parent: 1,
+                                worker: partner_by_rule(&[1, 3], s, w),
+                            },
+                        ];
+
+                        assert_eq!(sources[k], expected, "seed {seed}");
+
+                        let (x, y) = (from_a[expected[0].worker], from_b[expected[1].worker]);
+
+                        assert!([&x.model, &y.model].contains(&&worker.model));
+                        assert!(
+                            [x.traits.think_tokens, y.traits.think_tokens]
+                                .contains(&worker.traits.think_tokens)
+                        );
+                        assert!(
+                            [x.traits.answer_tokens, y.traits.answer_tokens]
+                                .contains(&worker.traits.answer_tokens)
+                        );
+
+                        for (mine, own) in worker.sections.iter().zip(&x.sections) {
+                            let theirs = y.sections.iter().find(|t| t.name == own.name);
+
+                            assert_eq!(mine.name, own.name);
+                            assert!(
+                                mine.text == own.text
+                                    || theirs.is_some_and(|t| t.text == mine.text)
+                            );
+                        }
+
+                        k += 1;
+                    }
+                }
+
+                assert_eq!(k, sources.len());
+                by_section += 1;
+            }
+        }
+
+        assert!(by_stage > 0 && by_section > 0, "{by_stage} {by_section}");
+
+        // Mutator children: the partner rule on each parent, whatever shape the Mutator
+        // wrote.
+        let written = distinct("C", &[3, 1, 2, 2]);
+        let mutated = partner_sources(&written, &[&b]);
+        let crossed = partner_sources(&written, &[&a, &b]);
+        let mut k = 0;
+
+        for (s, stage) in written.stages.iter().enumerate() {
+            for w in 0..stage.workers.len() {
+                let of_a = Source {
+                    parent: 0,
+                    worker: partner_by_rule(&[2, 1, 2], s, w),
+                };
+                let of_b = Source {
+                    parent: 0,
+                    worker: partner_by_rule(&[1, 3], s, w),
+                };
+
+                assert_eq!(mutated[k], vec![of_b]);
+                assert_eq!(crossed[k], vec![of_a, Source { parent: 1, ..of_b }]);
+
+                // The source is the Worker that `partner` pairs with this position.
+                assert!(std::ptr::eq(
+                    from_b[of_b.worker],
+                    partner(&b, s, w).expect("a partner")
+                ));
+
+                k += 1;
+            }
+        }
+
+        assert_eq!((mutated.len(), crossed.len()), (8, 8));
+    }
+
+    /// `c` with a random Soul of `n` phases and a random Coupling strength on every Worker.
+    fn with_random_souls(c: &Cascade, n: usize, rng: &mut ChaCha8Rng) -> Cascade {
+        let mut c = c.clone();
+
+        for w in c.stages.iter_mut().flat_map(|s| &mut s.workers) {
+            w.traits.phase_state = Some(PhaseState((0..n).map(|_| rng.random()).collect()));
+            w.traits.coupling = rng.random_range(0..=COUPLING_MAX);
+        }
+
+        c
+    }
+
+    /// What one operator gives, and where the stream stands afterwards.
+    type Outcome = (Option<(Cascade, Option<Op>, Sources)>, u128);
+
+    /// Each operator on `(a, b)` from the stream `seed`, as the breeder calls it.
+    fn outcomes(a: &Cascade, b: &Cascade, limits: &CascadeLimits, seed: u64) -> [Outcome; 3] {
+        let mut r = rng(seed);
+        let mutated = mutate_sourced(a, limits, PHRASES, &mut r).map(|(c, op, s)| (c, Some(op), s));
+        let after_mutation = r.get_word_pos();
+        let mut r = rng(seed);
+        let by_stage = stage_crossover_sourced(a, b, limits, &mut r).map(|(c, s)| (c, None, s));
+        let after_stage = r.get_word_pos();
+        let mut r = rng(seed);
+        let by_section = section_crossover_sourced(a, b, limits, &mut r).map(|(c, s)| (c, None, s));
+
+        [
+            (mutated, after_mutation),
+            (by_stage, after_stage),
+            (by_section, r.get_word_pos()),
+        ]
+    }
+
+    #[test]
+    fn operators_see_no_souls() {
+        let limits = staged_limits();
+        let mut walk = rng(5);
+        let mut souls = rng(6);
+
+        for k in 0..1000 {
+            let a = evolved(k, 1 + k % 5, &limits, &mut walk);
+            let b = evolved(k + 1 + k % 3, 1 + k % 4, &limits, &mut walk);
+            let (sa, sb) = (
+                with_random_souls(&a, 7, &mut souls),
+                with_random_souls(&b, 8, &mut souls),
+            );
+
+            for (plain, souled) in outcomes(&a, &b, &limits, k as u64)
+                .into_iter()
+                .zip(outcomes(&sa, &sb, &limits, k as u64))
+            {
+                assert_eq!(plain, souled, "pair {k}");
+
+                if let Some((child, _, _)) = &souled.0 {
+                    assert!(!child.carries_soul(), "pair {k}");
+                }
+            }
+        }
+
+        // A SectionCrossover child with the genes of one parent is refused and drawn again,
+        // as without Souls. Parents that differ in one gene give only such children, so the
+        // operator gives up; with two genes some draws are refused and some accepted.
+        let a = seeds().remove(1);
+        let mut one = a.clone();
+
+        one.stages[0].workers[0].traits.self_check ^= true;
+
+        let mut two = one.clone();
+
+        two.stages[0].workers[0].traits.answer_tokens *= 2;
+
+        // Every coin of one attempt draws one u64, two words of the stream.
+        let coins = a.stages[0].workers[0].sections.len() + 5;
+        let words = 2 * coins as u128 * CROSSOVER_ATTEMPTS as u128;
+        let mut redrawn = 0;
+
+        for seed in 0..64 {
+            let (sa, s1, s2) = (
+                with_random_souls(&a, 7, &mut souls),
+                with_random_souls(&one, 7, &mut souls),
+                with_random_souls(&two, 7, &mut souls),
+            );
+            let crossed = |x: &Cascade, y: &Cascade| {
+                let mut r = rng(seed);
+                let child = section_crossover_sourced(x, y, &limits, &mut r);
+
+                (child, r.get_word_pos())
+            };
+
+            let (plain, pos) = crossed(&a, &one);
+
+            assert_eq!(plain, None, "a copy of a parent every time");
+            assert_eq!(pos, words, "all attempts drawn");
+            assert_eq!(crossed(&sa, &s1), (None, pos), "seed {seed}");
+
+            let (plain, pos) = crossed(&a, &two);
+            let attempts = pos * CROSSOVER_ATTEMPTS as u128 / words;
+
+            assert_eq!(crossed(&sa, &s2), (plain.clone(), pos), "seed {seed}");
+
+            if plain.is_some() && attempts > 1 {
+                redrawn += 1;
+            }
+        }
+
+        assert!(redrawn > 0, "some children were drawn again");
+    }
+
+    #[test]
+    fn cross_worker_never_crosses_a_soul() {
+        let (mut mine, mut theirs) = (
+            seeds()[0].stages[0].workers[0].clone(),
+            seeds()[1].stages[0].workers[0].clone(),
+        );
+
+        mine.traits.phase_state = Some(PhaseState(vec![1, 2, 3]));
+        mine.traits.coupling = 100;
+        theirs.traits.phase_state = Some(PhaseState(vec![4, 5, 6]));
+        theirs.traits.coupling = 900;
+
+        for seed in 0..50 {
+            let mut child = mine.clone();
+
+            cross_worker(
+                &mut child,
+                &theirs,
+                None,
+                &mut Steered::default(),
+                &mut rng(seed),
+            );
+
+            assert_eq!(child.traits.phase_state, mine.traits.phase_state);
+            assert_eq!(child.traits.coupling, 100);
+        }
+    }
+
+    /// The places of three circuit families in `designer::FAMILY_STEMS`.
+    const LINEAR: usize = 0;
+    const PHASE: usize = 1;
+    const SEARCH: usize = 4;
+
+    /// Draws of the statistical tests of arm W.
+    const DRAWS: u32 = 100_000;
+
+    /// The circuit seed Cascade `k` (linear, phase, hadamard, search), without its name.
+    fn circuit_seed(k: usize) -> Cascade {
+        circuit_seed_cascades().remove(k % 4).1
+    }
+
+    /// Circuit seed `k` after `steps` mutations with the circuit phrases.
+    fn evolved_circuit(
+        k: usize,
+        steps: usize,
+        limits: &CascadeLimits,
+        rng: &mut ChaCha8Rng,
+    ) -> Cascade {
+        let mut c = circuit_seed(k);
+
+        for _ in 0..steps {
+            if let Some((child, _)) = mutate_with(&c, limits, CIRCUIT_PHRASES, rng) {
+                c = child;
+            }
+        }
+
+        c
+    }
+
+    /// The preference of a circuit Soul with every phase at a quarter turn, which gives 1,
+    /// except the phases `given` as (family, phase).
+    fn prefer(given: &[(usize, u16)]) -> Vec<f64> {
+        let mut soul = [QUARTER_TURN; 8];
+
+        for &(f, p) in given {
+            soul[f] = p;
+        }
+
+        preference(&soul, Readout::Complex)
+    }
+
+    /// True when `got` lies within 3 standard errors of the share `p` over `n` draws.
+    fn within_3_se(got: f64, p: f64, n: u32) -> bool {
+        (got - p).abs() < 3.0 * (p * (1.0 - p) / f64::from(n)).sqrt()
+    }
+
+    /// A small pool for the protection test: strategies that name Search or no family, and
+    /// two texts that a new section takes.
+    const PROTECTION_PHRASES: &[(&str, &str)] = &[
+        (
+            "strategy",
+            "Search through all short gate sequences and stop at the first one that matches every row.",
+        ),
+        (
+            "strategy",
+            "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.",
+        ),
+        (
+            "check",
+            "If your circuit fails on even one input, drop it and test the next idea.",
+        ),
+        ("style", "Be concise."),
+    ];
+
+    #[test]
+    fn no_weight_falls_below_the_floor() {
+        let limits = CascadeLimits::default();
+        let mut souls = rng(31);
+        let mut walk = rng(32);
+        // The extremes, every family at 0 and at 2, and the preferences of random Souls in
+        // both readouts.
+        let mut prefs = vec![vec![0.0; 8], vec![2.0; 8], prefer(&[])];
+
+        for _ in 0..200 {
+            let soul: Vec<u16> = (0..8).map(|_| souls.random()).collect();
+
+            prefs.push(preference(&soul, Readout::Complex));
+            prefs.push(preference(&soul, Readout::Real));
+        }
+
+        let workers: Vec<Worker> = (0..60)
+            .flat_map(|k| evolved_circuit(k, k % 9, &limits, &mut walk).stages)
+            .flat_map(|s| s.workers)
+            .collect();
+        let mut lowest = f64::INFINITY;
+
+        for pref in &prefs {
+            let lens = Lens {
+                families_of: named_families,
+                pref,
+            };
+
+            for w in &workers {
+                let options = add_options(w, CIRCUIT_PHRASES);
+                let weights = [lens.favour(&w.system_prompt())]
+                    .into_iter()
+                    .chain(w.sections.iter().map(|s| lens.protect(&s.text)))
+                    .chain(CIRCUIT_PHRASES.iter().map(|(_, t)| lens.favour(t)))
+                    .chain(add_weights(w, &options, lens));
+
+                for x in weights {
+                    assert!(x >= WEIGHT_FLOOR, "{x} below the floor");
+                    lowest = lowest.min(x);
+                }
+            }
+        }
+
+        assert_eq!(lowest, WEIGHT_FLOOR, "the floor binds");
+    }
+
+    #[test]
+    fn a_preferring_worker_protects_its_family_by_the_expected_factor() {
+        let limits = CascadeLimits::default();
+        // The linear seed: a role and a format that name no family, and a strategy that
+        // names Linear.
+        let parent = circuit_seed(0);
+        let strategy = parent.stages[0].workers[0].sections[1].text.clone();
+
+        assert_eq!(named_families(&strategy), [LINEAR]);
+
+        // Its Soul prefers Linear at 2 (no turn), where the floor ε protects the strategy,
+        // and at about 1.5 (a sixth of a turn), where 1 − L does.
+        for phase in [0, 10923] {
+            let prefs = vec![prefer(&[(LINEAR, phase)])];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let protect = (2.0 - prefs[0][LINEAR]).max(WEIGHT_FLOOR);
+
+            assert!(prefs[0][LINEAR] > 1.49);
+
+            // The share of draws that overwrite the strategy, today and with the Soul.
+            // SectionReplace draws one of three sections with the weights 1, 1 − L and 1;
+            // SectionAdd writes one of two strategies over it, each with the weight
+            // 1 · (1 − L), or one of two new sections with the weight 1.
+            let cases = [
+                (Op::SectionReplace, 1.0 / 3.0, protect / (2.0 + protect)),
+                (Op::SectionAdd, 0.5, 2.0 * protect / (2.0 + 2.0 * protect)),
+            ];
+
+            for (op, today, steered) in cases {
+                let share = |steer: Option<&Steer<'_>>| {
+                    let mut r = rng(33);
+                    let hits = (0..DRAWS)
+                        .filter(|_| {
+                            let (child, _) = apply_steered(
+                                &parent,
+                                op,
+                                &limits,
+                                PROTECTION_PHRASES,
+                                steer,
+                                &mut Steered::default(),
+                                &mut r,
+                            )
+                            .expect("applies");
+
+                            child.stages[0].workers[0].sections[1].text != strategy
+                        })
+                        .count();
+
+                    hits as f64 / f64::from(DRAWS)
+                };
+                let (n, w) = (share(None), share(Some(&steer)));
+                let factor = steered / today;
+                // The standard error of a ratio of two independent shares, by the delta
+                // method.
+                let se = (w / n)
+                    * ((1.0 - w) / (w * f64::from(DRAWS)) + (1.0 - n) / (n * f64::from(DRAWS)))
+                        .sqrt();
+
+                eprintln!(
+                    "{op:?}, phase {phase}: overwritten {n:.4} today, {w:.4} with the Soul; factor {:.4} for {factor:.4}, 3 standard errors {:.4}",
+                    w / n,
+                    3.0 * se
+                );
+                assert!(w < n, "{op:?}: {w} against {n}");
+                assert!(
+                    (w / n - factor).abs() < 3.0 * se,
+                    "{op:?}, phase {phase}: factor {} for {factor}, standard error {se}",
+                    w / n
+                );
+                assert!(within_3_se(n, today, DRAWS), "{op:?} today: {n}");
+                assert!(within_3_se(w, steered, DRAWS), "{op:?} with the Soul: {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_choice_follows_its_weights() {
+        let limits = CascadeLimits::default();
+        let n = f64::from(DRAWS);
+
+        // Choice 1: SectionReplace changes the Worker whose prompt names Linear, with
+        // preference 2, by the weight 1 + 1 against 1 for the Worker that names no family
+        // the Soul leans to (Search, at preference 1).
+        let mut two = circuit_seed(0);
+        let other = circuit_seed(3).stages[0].workers[0].clone();
+
+        assert_eq!(
+            named_families(&two.stages[0].workers[0].system_prompt()),
+            [LINEAR]
+        );
+        assert_eq!(named_families(&other.system_prompt()), [SEARCH]);
+        two.stages[0].workers.push(other);
+
+        let prefs = vec![prefer(&[(LINEAR, 0)]); 2];
+        let steer = Steer {
+            families_of: named_families,
+            preferences: &prefs,
+        };
+        let mut r = rng(34);
+        let first = (0..DRAWS)
+            .filter(|_| {
+                let (child, _) = apply_steered(
+                    &two,
+                    Op::SectionReplace,
+                    &limits,
+                    CIRCUIT_PHRASES,
+                    Some(&steer),
+                    &mut Steered::default(),
+                    &mut r,
+                )
+                .expect("applies");
+
+                child.stages[0].workers[0] != two.stages[0].workers[0]
+            })
+            .count() as f64;
+
+        assert!(within_3_se(first / n, 2.0 / 3.0, DRAWS), "{}", first / n);
+
+        // Choice 3: the phrase, still from its section's name with probability 0.7 and from
+        // the whole pool otherwise, and within either by 1 + L. With Phase at 2, a strategy
+        // text that names Phase weighs 2 and every other 1.
+        let pref = prefer(&[(PHASE, 0)]);
+        let lens = Lens {
+            families_of: named_families,
+            pref: &pref,
+        };
+        let current = "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.";
+        let weight = |t: &str| {
+            if named_families(t).contains(&PHASE) {
+                2.0
+            } else {
+                1.0
+            }
+        };
+        let same: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(m, t)| *m == "strategy" && *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let any: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(_, t)| *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let total = |texts: &[&str]| texts.iter().map(|t| weight(t)).sum::<f64>();
+        let (phase_same, phase_any): (Vec<&str>, Vec<&str>) = (
+            same.iter().copied().filter(|t| weight(t) > 1.0).collect(),
+            any.iter().copied().filter(|t| weight(t) > 1.0).collect(),
+        );
+        let p_same = SAME_NAME_P + (1.0 - SAME_NAME_P) * total(&same) / total(&any);
+        let p_phase = SAME_NAME_P * total(&phase_same) / total(&same)
+            + (1.0 - SAME_NAME_P) * total(&phase_any) / total(&any);
+        let mut r = rng(35);
+        let (mut by_name, mut by_phase) = (0u32, 0u32);
+
+        assert!(!phase_same.is_empty() && phase_any.len() > phase_same.len());
+
+        for _ in 0..DRAWS {
+            let t = replacement_text(
+                &mut r,
+                CIRCUIT_PHRASES,
+                "strategy",
+                current,
+                Some(lens),
+                &mut Steered::default(),
+            )
+            .expect("a text");
+
+            by_name += u32::from(same.contains(&t));
+            by_phase += u32::from(weight(t) > 1.0);
+        }
+
+        assert!(within_3_se(f64::from(by_name) / n, p_same, DRAWS));
+        assert!(within_3_se(f64::from(by_phase) / n, p_phase, DRAWS));
+
+        // The coin of section crossover: the partner's text, which names no family, against
+        // a text that names Linear at 2, so with probability 1 / (1 + 2).
+        let pref = prefer(&[(LINEAR, 0)]);
+        let lens = Lens {
+            families_of: named_families,
+            pref: &pref,
+        };
+        let mine = circuit_seed(0).stages[0].workers[0].clone();
+        let mut theirs = mine.clone();
+
+        theirs.sections[1].text = current.to_string();
+
+        let mut r = rng(36);
+        let taken = (0..DRAWS)
+            .filter(|_| {
+                let mut child = mine.clone();
+
+                cross_worker(
+                    &mut child,
+                    &theirs,
+                    Some(lens),
+                    &mut Steered::default(),
+                    &mut r,
+                );
+
+                child.sections[1].text == current
+            })
+            .count() as f64;
+
+        assert!(within_3_se(taken / n, 1.0 / 3.0, DRAWS), "{}", taken / n);
+    }
+
+    #[test]
+    fn one_draw_of_an_operator_is_the_attempt_that_drew_it() {
+        // `mutate_once` makes what an attempt of today's mutation makes once it has drawn its
+        // operator: from the same place in the stream, the same child, the same sources and
+        // the same choices of arm W, and the stream stops at the same word. It draws no
+        // operator and tries once.
+        let limits = staged_limits();
+        let mut walk = rng(41);
+        let mut compared = BTreeSet::new();
+        let prefs = prefer(&[(0, 0), (2, 32768)]);
+
+        for k in 0..300 {
+            let parent = evolved_circuit(k, k % 7, &limits, &mut walk);
+            let prefs = vec![prefs.clone(); parent.worker_count()];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let seed = 4100 + k as u64;
+
+            for weighted in [None, Some(&steer)] {
+                let (mut today, mut once) = (rng(seed), rng(seed));
+                let op = draw_op(&mut once);
+                let Some((child, sources, steered)) =
+                    mutate_once(&parent, op, &limits, CIRCUIT_PHRASES, weighted, &mut once)
+                else {
+                    continue;
+                };
+                let full = match weighted {
+                    None => mutate_sourced(&parent, &limits, CIRCUIT_PHRASES, &mut today)
+                        .map(|(c, op, s)| (c, op, s, Steered::default())),
+                    Some(steer) => {
+                        mutate_steered(&parent, &limits, CIRCUIT_PHRASES, steer, &mut today)
+                    }
+                };
+
+                assert_eq!(full, Some((child, op, sources, steered)), "{op:?} {k}");
+                assert_eq!(today.get_word_pos(), once.get_word_pos(), "{op:?} {k}");
+                compared.insert(format!("{op:?}"));
+            }
+        }
+
+        for op in ["SectionReplace", "SectionAdd", "SectionDrop"] {
+            assert!(compared.contains(op), "{compared:?}");
+        }
+
+        // An operator that cannot change the parent gives no draw: a single Stage cannot
+        // drop a Stage.
+        let seed_one = circuit_seed(0);
+
+        assert_eq!(
+            mutate_once(
+                &seed_one,
+                Op::StageDrop,
+                &limits,
+                CIRCUIT_PHRASES,
+                None,
+                &mut rng(7)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn with_every_preference_one_the_operators_are_todays() {
+        // Complex phases all at a quarter turn give every family the preference 1.
+        let neutral = preference(&[QUARTER_TURN; 8], Readout::Complex);
+
+        assert_eq!(neutral, vec![1.0; 8]);
+
+        let limits = staged_limits();
+        let mut walk = rng(37);
+        let none = Steered::default();
+
+        for k in 0..400 {
+            let a = evolved_circuit(k, k % 9, &limits, &mut walk);
+            let b = evolved_circuit(k + 1 + k % 3, k % 6, &limits, &mut walk);
+            let prefs = vec![neutral.clone(); a.worker_count()];
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let seed = k as u64;
+
+            // Each section operator alone gives the same child, sources and place in the
+            // stream, and counts no weighted choice.
+            for op in [Op::SectionReplace, Op::SectionAdd] {
+                let (mut today, mut steered) = (rng(seed), rng(seed));
+                let mut tally = Steered::default();
+
+                assert_eq!(
+                    apply_sourced(&a, op, &limits, CIRCUIT_PHRASES, &mut today),
+                    apply_steered(
+                        &a,
+                        op,
+                        &limits,
+                        CIRCUIT_PHRASES,
+                        Some(&steer),
+                        &mut tally,
+                        &mut steered
+                    ),
+                    "{op:?} {k}"
+                );
+                assert_eq!(today.get_word_pos(), steered.get_word_pos(), "{op:?} {k}");
+                assert_eq!(tally, none);
+            }
+
+            // So do the operators as the breeder calls them.
+            let (mut today, mut steered) = (rng(seed), rng(seed));
+            let plain = mutate_sourced(&a, &limits, CIRCUIT_PHRASES, &mut today);
+            let weighted = mutate_steered(&a, &limits, CIRCUIT_PHRASES, &steer, &mut steered);
+
+            assert_eq!(
+                plain,
+                weighted.map(|(c, op, s, tally)| {
+                    assert_eq!(tally, none);
+                    (c, op, s)
+                })
+            );
+            assert_eq!(today.get_word_pos(), steered.get_word_pos());
+
+            let (mut today, mut steered) = (rng(seed), rng(seed));
+            let plain = section_crossover_sourced(&a, &b, &limits, &mut today);
+            let weighted = section_crossover_steered(&a, &b, &limits, &steer, &mut steered);
+
+            assert_eq!(
+                plain,
+                weighted.map(|(c, s, tally)| {
+                    assert_eq!(tally, none);
+                    (c, s)
+                })
+            );
+            assert_eq!(today.get_word_pos(), steered.get_word_pos());
+        }
+
+        // So the choices match today's in distribution: SectionReplace takes a phrase of the
+        // section's name with probability 0.7 plus that name's share of the whole pool, and
+        // each phrase within the pool that is drawn alike.
+        let lens = Lens {
+            families_of: named_families,
+            pref: &neutral,
+        };
+        let current = "Count the T and TDG gates first, then the CNOT gates; of two exact circuits, the one with fewer T gates wins.";
+        let same: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(m, t)| *m == "strategy" && *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let any: Vec<&str> = CIRCUIT_PHRASES
+            .iter()
+            .filter(|(_, t)| *t != current)
+            .map(|(_, t)| *t)
+            .collect();
+        let mut r = rng(38);
+        let mut counts: HashMap<&str, u32> = HashMap::new();
+
+        for _ in 0..DRAWS {
+            let t = replacement_text(
+                &mut r,
+                CIRCUIT_PHRASES,
+                "strategy",
+                current,
+                Some(lens),
+                &mut Steered::default(),
+            )
+            .expect("a text");
+
+            *counts.entry(t).or_default() += 1;
+        }
+
+        let p_same = SAME_NAME_P + (1.0 - SAME_NAME_P) * same.len() as f64 / any.len() as f64;
+        let by_name: u32 = same
+            .iter()
+            .map(|t| counts.get(t).copied().unwrap_or(0))
+            .sum();
+
+        assert!(within_3_se(
+            f64::from(by_name) / f64::from(DRAWS),
+            p_same,
+            DRAWS
+        ));
+
+        // Each phrase: a strategy has 0.7 / |same| + 0.3 / |any|, any other text 0.3 / |any|.
+        // The bound is 4 standard errors, since 60 phrases are tested at once.
+        for t in &any {
+            let p = (1.0 - SAME_NAME_P) / any.len() as f64
+                + if same.contains(t) {
+                    SAME_NAME_P / same.len() as f64
+                } else {
+                    0.0
+                };
+            let got = f64::from(counts.get(t).copied().unwrap_or(0)) / f64::from(DRAWS);
+            let se = (p * (1.0 - p) / f64::from(DRAWS)).sqrt();
+
+            assert!((got - p).abs() < 4.0 * se, "{t}: {got} for {p}");
+        }
+    }
+
+    #[test]
+    fn a_choice_changes_when_the_uniform_pick_of_its_draw_differs() {
+        // Equal weights make today's draw and count nothing.
+        for seed in 0..200 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+
+            assert_eq!(
+                weighted_index(&mut steered, &[0.4; 5], &mut tally),
+                Some(today.random_range(0..5))
+            );
+            assert_eq!(
+                weighted_coin(&mut steered, 3.0, 3.0, &mut tally),
+                today.random_bool(0.5)
+            );
+            assert_eq!(steered.get_word_pos(), today.get_word_pos());
+            assert_eq!(tally, Steered::default());
+        }
+
+        // Unequal weights draw one u in [0, 1): the pick is the first option whose summed
+        // weight passes u times the total, and the choice changed when ⌊u·n⌋ differs.
+        let weights = [1.0, 2.0, 0.25, 0.75];
+        let mut changed = 0;
+
+        for seed in 0..2000 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+            let pick = weighted_index(&mut steered, &weights, &mut tally).expect("a pick");
+            let u: f64 = today.random();
+            let x = 4.0 * u;
+            let expected = match x {
+                x if x < 1.0 => 0,
+                x if x < 3.0 => 1,
+                x if x < 3.25 => 2,
+                _ => 3,
+            };
+            let moved = expected != (4.0 * u) as usize;
+
+            assert_eq!(pick, expected);
+            assert_eq!(
+                tally,
+                Steered {
+                    choices: 1,
+                    changed: u64::from(moved)
+                }
+            );
+            assert_eq!(steered.get_word_pos(), today.get_word_pos());
+            changed += usize::from(moved);
+        }
+
+        // The weighted picks take u in [0, 0.25), [0.25, 0.75), [0.75, 0.8125) and [0.8125,
+        // 1), the uniform ones in quarters. They differ for u in [0.5, 0.8125): 5 / 16 of the
+        // draws change.
+        assert!(within_3_se(
+            f64::from(changed as u32) / 2000.0,
+            0.3125,
+            2000
+        ));
+
+        // The coin takes the partner's text when u lies below theirs / (mine + theirs), and
+        // it changed when that differs from u < 1/2.
+        for seed in 0..2000 {
+            let (mut steered, mut today) = (rng(seed), rng(seed));
+            let mut tally = Steered::default();
+            let take = weighted_coin(&mut steered, 2.0, 1.0, &mut tally);
+            let u: f64 = today.random();
+
+            assert_eq!(take, u < 1.0 / 3.0);
+            assert_eq!(
+                tally,
+                Steered {
+                    choices: 1,
+                    changed: u64::from((1.0 / 3.0..0.5).contains(&u))
+                }
+            );
+        }
+
+        // Without an option nothing is drawn.
+        let mut r = rng(1);
+        let mut tally = Steered::default();
+
+        assert_eq!(weighted_index(&mut r, &[], &mut tally), None);
+        assert_eq!((r.get_word_pos(), tally), (0, Steered::default()));
+    }
+
+    #[test]
+    fn steered_operators_see_genes_only() {
+        let limits = staged_limits();
+        let mut walk = rng(39);
+        let mut souls = rng(40);
+        let mut steered_some = 0;
+
+        for k in 0..300 {
+            let a = evolved_circuit(k, 1 + k % 6, &limits, &mut walk);
+            let b = evolved_circuit(k + 2, 1 + k % 4, &limits, &mut walk);
+            let prefs: Vec<Vec<f64>> = (0..a.worker_count())
+                .map(|_| {
+                    let soul: Vec<u16> = (0..8).map(|_| souls.random()).collect();
+
+                    preference(&soul, Readout::Complex)
+                })
+                .collect();
+            let steer = Steer {
+                families_of: named_families,
+                preferences: &prefs,
+            };
+            let (sa, sb) = (
+                with_random_souls(&a, 8, &mut souls),
+                with_random_souls(&b, 8, &mut souls),
+            );
+            let seed = k as u64;
+            let mutated =
+                |x: &Cascade| mutate_steered(x, &limits, CIRCUIT_PHRASES, &steer, &mut rng(seed));
+            let crossed = |x: &Cascade, y: &Cascade| {
+                section_crossover_steered(x, y, &limits, &steer, &mut rng(seed))
+            };
+            let (m, c) = (mutated(&a), crossed(&a, &b));
+
+            // Parents with Souls give the same children as without, and no child carries a
+            // Soul.
+            assert_eq!(m, mutated(&sa), "{k}");
+            assert_eq!(c, crossed(&sa, &sb), "{k}");
+
+            for child in [m.as_ref().map(|x| &x.0), c.as_ref().map(|x| &x.0)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(!child.carries_soul(), "{k}");
+            }
+
+            steered_some += [m.map(|x| x.3), c.map(|x| x.2)]
+                .into_iter()
+                .flatten()
+                .filter(|t| t.choices > 0)
+                .count();
+        }
+
+        assert!(steered_some > 100, "{steered_some}");
     }
 }
