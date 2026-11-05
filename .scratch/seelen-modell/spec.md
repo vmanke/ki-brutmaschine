@@ -11,6 +11,10 @@ decides the next step.
 Update of 2026-11-05: a third candidate, arm IG (`spec-imagination.md`), was built and screened
 in tickets 04 to 06. Its screen ended with stop too (`screen-ig.md`, pull request #57).
 
+Update of 2026-11-05, later: the owner asked that the model invent its own language, chosen by
+overall efficiency. The next candidate for the Workers, a Lexicon of coined words, is designed
+in `../eigene-sprache/spec.md`, part A.
+
 It follows the owner's decision of 2026-11-02 to drop the counted experiment of step 2. The
 pilot and that decision are on the branch `claude/schritt2-pilot`: `docs/pilot-step2/README.md`,
 `docs/PREREG_STEP2_SOUL.md` and `.scratch/seele-und-kappa/rule/diagnose.txt`. The terms are
