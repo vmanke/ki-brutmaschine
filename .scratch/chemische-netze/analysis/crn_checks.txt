@@ -1,0 +1,71 @@
+1. Fixed time, k1 = 1e4, k2 = 1, x- = 1: y = x / (1 - C exp(-k T x)), C = 1 - x / x+
+   kT=  10.0 x=-0.50 ode=0.001690 formula=0.001690 relu=0.00
+   kT=  10.0 x=-0.05 ode=0.067982 formula=0.067981 relu=0.00
+   kT=  10.0 x=+0.00 ode=0.090910 formula=0.090909 relu=0.00
+   kT=  10.0 x=+0.05 ode=0.118386 formula=0.118385 relu=0.05
+   kT=  10.0 x=+0.50 ode=0.502256 formula=0.502256 relu=0.50
+   kT= 100.0 x=-0.50 ode=0.000000 formula=0.000000 relu=0.00
+   kT= 100.0 x=-0.05 ode=0.000322 formula=0.000322 relu=0.00
+   kT= 100.0 x=+0.00 ode=0.009901 formula=0.009901 relu=0.00
+   kT= 100.0 x=+0.05 ode=0.050323 formula=0.050323 relu=0.05
+   kT= 100.0 x=+0.50 ode=0.500000 formula=0.500000 relu=0.50
+2. Kink x = 0, x+ = x- = 1, k1 = k2 = 1: y times T tends to 1
+   T=      10 y=1.044286e-01 y*T=1.0443
+   T=     100 y=1.004306e-02 y*T=1.0043
+   T=    1000 y=1.000429e-03 y*T=1.0004
+   T=   10000 y=1.000043e-04 y*T=1.0000
+3. Equilibrium, only the second reaction reversible, K = exp(dG), h = y- / K
+   dG=  5.0 x=-0.5 y=0.006563 smoothed=0.006563 relu=0.00
+   dG=  5.0 x=+0.0 y=0.078785 smoothed=0.078785 relu=0.00
+   dG=  5.0 x=+0.5 y=0.512965 smoothed=0.512965 relu=0.50
+   dG=  9.2 x=-0.5 y=0.000101 smoothed=0.000101 relu=0.00
+   dG=  9.2 x=+0.0 y=0.010001 smoothed=0.010001 relu=0.00
+   dG=  9.2 x=+0.5 y=0.500202 smoothed=0.500202 relu=0.50
+   dG= 15.0 x=-0.5 y=0.000000 smoothed=0.000000 relu=0.00
+   dG= 15.0 x=+0.0 y=0.000553 smoothed=0.000553 relu=0.00
+   dG= 15.0 x=+0.5 y=0.500001 smoothed=0.500001 relu=0.50
+4. Both reactions reversible with the same dG, x- = 1, x in [-1, 1]
+   dG=  5.0 RT error=0.07851 at x=+0.00 sqrt(1/K)=0.08208
+   dG=  7.0 RT error=0.02973 at x=+0.00 sqrt(1/K)=0.03020
+   dG=  9.2 RT error=0.01000 at x=+0.00 sqrt(1/K)=0.01005
+   dG= 12.0 RT error=0.00248 at x=+0.00 sqrt(1/K)=0.00248
+   dG= 15.0 RT error=0.00055 at x=+0.00 sqrt(1/K)=0.00055
+   dG= 20.0 RT error=0.00005 at x=+0.00 sqrt(1/K)=0.00005
+5. Kink x = 0 with x+ = x- = c, both reactions reversible, dG = 9.2 RT
+   c=  0.01 error=0.000956 sqrt(c/K)=0.001005
+   c=  0.10 error=0.003129 sqrt(c/K)=0.003179
+   c=  1.00 error=0.010001 sqrt(c/K)=0.010052
+   c= 10.00 error=0.031720 sqrt(c/K)=0.031787
+6. Chain without weights at equilibrium, the same dG in all reactions
+   dG=  5.0 depth=1 error=0.07851
+   dG=  5.0 depth=2 error=0.08944
+   dG=  5.0 depth=3 error=0.09247
+   dG=  5.0 depth=4 error=0.09368
+   dG=  9.2 depth=1 error=0.01000
+   dG=  9.2 depth=2 error=0.01050
+   dG=  9.2 depth=3 error=0.01058
+   dG=  9.2 depth=4 error=0.01060
+   dG= 15.0 depth=1 error=0.00055
+   dG= 15.0 depth=2 error=0.00056
+   dG= 15.0 depth=3 error=0.00056
+   dG= 15.0 depth=4 error=0.00056
+7. Star A -> B_i, 50 reactions with rate constant 1, RK4, bound about 2.785
+   dt=0.05    single rate= 0.050 loss sum=  2.500 -> A=7.381e-189
+   dt=0.0557  single rate= 0.056 loss sum=  2.785 -> A=6.424e-01
+   dt=0.06    single rate= 0.060 loss sum=  3.000 -> diverged
+   dt=0.1     single rate= 0.100 loss sum=  5.000 -> diverged
+   dt=0.5     single rate= 0.500 loss sum= 25.000 -> diverged
+   dt=2.0     single rate= 2.000 loss sum=100.000 -> diverged
+8. ReLU module, 1000 RK4 steps, x+ = x- = 1, k1 = k2 = 1
+   dt=0.1: T=100 y=1.004e-02 smallest positive value=3.720e-44
+   dt=0.5: T=500 y=2.002e-03 smallest positive value=1.059e-217
+   dt=1.0: T=1000 y=1.000e-03 smallest positive value=4.941e-324
+   dt=1.5: T=1500 y=6.661e-04 smallest positive value=4.941e-324
+   dt=2.0: diverged
+9. Share of subnormal values among states and rates, module, 1000 RK4 steps, x+ = x- = 1
+   irreversible  dt=1.0: subnormal share=0.833 % smallest positive value=4.941e-324
+   irreversible  dt=1.5: subnormal share=7.706 % smallest positive value=4.941e-324
+   dG = 20 RT    dt=1.0: subnormal share=0.000 % smallest positive value=2.063e-12
+   dG = 20 RT    dt=1.5: subnormal share=0.000 % smallest positive value=1.375e-12
+   dG = 100 RT   dt=1.0: subnormal share=0.000 % smallest positive value=3.721e-47
+   dG = 100 RT   dt=1.5: subnormal share=0.000 % smallest positive value=2.478e-47

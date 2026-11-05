@@ -62,3 +62,20 @@ the MLP mode?
 - If equal bits fail in some setting, the report names the setting and the cause.
 
 ## Comments
+
+- 2026-11-05, input before the spike. These are our own calculations, not peer reviewed
+  (`../research.md`, sections 3.7, 8.2 and 8.4; `../analysis/`).
+  - Subnormal numbers: the irreversible ReLU test network reaches them. Over 1000 RK4 steps,
+    0.83 % of its states and rates were subnormal at `dt = 1.0` and 7.7 % at `dt = 1.5`, down to
+    4.9e-324. The same module with reversible reactions had none at drops of 20 and 100 RT. We
+    measured about 0.3 ns per operation on normal numbers and 20 to 21 ns on subnormal ones, on
+    one Intel Xeon. Please report the time with subnormal values and with a fixed threshold that
+    sets a concentration below, for example, 1e-140 to exactly 0. Please also report whether the
+    hashes stay equal with that threshold.
+  - Step rule: dt times the largest single rate is too weak. A star of 50 reactions `A → B_i` with
+    rate constant 1 diverged under RK4 at `dt = 0.06`, where dt times the sum of A's loss rates,
+    3.0, lies above the bound of about 2.785. Please add such a star to the test networks and
+    state the recommended rule per species.
+  - A reference for the integrator: with both rate constants at 1, `x+ = x− = 1` and 1000 RK4
+    steps, our module gives `y+ − y−` of 1.004e-2 at `dt = 0.1`, 1.000e-3 at `dt = 1.0` and
+    6.661e-4 at `dt = 1.5`. It diverges at `dt = 2.0`.

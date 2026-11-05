@@ -65,3 +65,19 @@ physics?
 - Open choices go to the Fog of `../map.md`, not into the design.
 
 ## Comments
+
+- 2026-11-05, input before the design note. These are our own calculations, not peer reviewed
+  (`../research.md`, sections 3.7, 8.2 and 8.4; `../analysis/`).
+  - Step rule: it must sum the pseudo-first-order loss rates per species, at a bound on
+    concentrations. The largest single rate is too weak (`../analysis/crn_checks.txt`, check 7).
+    In a closed genome, conserved compositions bound every species with a nonzero composition
+    before the run. With chemostats, the concentration cap has to carry the rule.
+  - Range of energies: it needs room for the drop per reaction that a compiled module takes, about
+    `RT·ln(x+/ε²)`. That is 9.2 RT for a kink error of 0.01 at unit concentration, and 15 RT for
+    0.00055. Ticket 03 tests this on real networks.
+  - Reversibility: in the one module we tested, reversible reactions kept subnormal numbers away,
+    with none at drops of 20 and 100 RT against up to 7.7 % of states and rates when irreversible.
+    This bears on item 2 of the Fog in `../map.md`.
+  - Line references: those in this ticket date from 2026-10-31. At commit 3d3b2fe, `Limits` is at
+    `src/config.rs:71-107`, `Genome::validate` at `src/genome.rs:229-334` and the content id at
+    `src/genome.rs:336-349`. `src/genome.rs:58-65` still holds.
