@@ -52,3 +52,22 @@ How far does it drift once every reaction is reversible with a finite free-energ
   network's, or says that no tested value does.
 
 ## Comments
+
+- 2026-11-05, predictions before the prototype. This is our own derivation, not peer reviewed
+  (`../research.md`, section 3.7; `../analysis/crn_checks.py`). We checked it on one module and on
+  chains without weights only, so this ticket can falsify it for real networks.
+  - Read-out at a fixed time: for the irreversible module, the output at `x = 0` should fall like
+    `1/(k·T)`, not exponentially. With a fast first reaction, `y = x / (1 − C·exp(−k·T·x))` with
+    `C = 1 − x/x+`.
+  - Finite reverse rates: the module should follow `y = (x + sqrt(x² + 4h))/2` with `h = y−/K`.
+    The largest error should lie at the kink, at about `sqrt(x+/K)`.
+  - The question of this ticket: a kink error of 0.01 at unit concentration takes about 9.2 RT per
+    reaction in one module. Accuracy within 0.01 of the network is another measure. Please report
+    both against ΔG.
+  - Exact match: source 8 reads its outputs at convergence. With Euler or RK4 and a fixed number
+    of steps, every output is a polynomial of the initial concentrations (`../research.md`,
+    section 3.7), so a match can only hold within the tolerance this ticket states.
+  - Not tested by us: weights, biases, fan-out, a finite read-out time together with finite
+    reverse rates, and whether cancellation reactions sharpen the kink by lowering the overlap of
+    the rails, as `h = y−/K` suggests.
+  - Line reference: `src/task.rs:262-283` is `src/task.rs:373-396` at commit 3d3b2fe.

@@ -13,7 +13,13 @@ first tickets are in `issues/`.
 - **Preprints.** Sources 16, 19 and 60 are preprints. Each use says so.
 - **Our reading.** A sentence that begins with "Our reading:" is our own inference. No source
   states it in that form.
-- **This repository.** Facts about the code cite a file and a line, not a number.
+- **This repository.** Facts about the code cite a file and a line, not a number. Lines refer to
+  commit 3d3b2fe. On 2026-11-05, 15 of the note's 24 line references no longer pointed at the
+  cited code and were moved to that commit. The facts they cite still held.
+- **Additions of 2026-11-05.** Section 3.7 and every sentence marked "Added 2026-11-05" are our
+  own calculations, made after the source check of this note. They are not peer reviewed.
+  `analysis/crn_checks.py` and `analysis/denormal.rs` recompute their numbers. The outputs lie
+  beside them as `.txt` files.
 
 ## 1. Question
 
@@ -78,6 +84,10 @@ and spatial effects are outside the sources read (section 9.4).
 - **Methods.** Exact stochastic simulation exists [51, Sec. IIID]. Gradients that integrate a
   stiff CRN backwards in time failed [53, Sec. III.A]. Differentiating the discrete integrator
   itself gives the exact gradient of the simulated model [57, Sec. IV].
+- **What a genome computes.** Added 2026-11-05, our reading: the equal classes above need
+  irreversible reactions and a read-out as t → ∞. A reversible genome read at a fixed time only
+  approximates a ReLU network. Section 3.7 gives closed forms for one module: a kink error of
+  0.01 at unit concentration takes about 9.2 RT per reaction.
 - **For the Brutmaschine.** Our reading: CRNs could become a third kind of Candidate. Its genome
   would hold species energies, barriers, reactions and fuels, chemostatted or stored, so that
   local detailed balance holds by construction. A hand-written fixed-step integrator with only
@@ -213,11 +223,61 @@ The sources give five precise senses. Each holds only under its conditions.
   [1, abstract]. They compute either by relaxing to a stationary state or in time steps set by
   an oscillatory reaction [1, abstract].
 
+### 3.7 What a genome of section 8.2 computes
+
+Added 2026-11-05. All of this subsection is our own reading and calculation. No source of this
+note states it, and it is not peer reviewed. `analysis/crn_checks.py` recomputes every number;
+its output is `analysis/crn_checks.txt`. Concentrations are in units of the reference
+concentration (section 8.2).
+
+- **Outside the theorems.** Section 3.1 needs irreversible reactions and a read-out as t → ∞. A
+  genome of section 8.2 has reversible reactions and a read-out at a fixed time. So no
+  equivalence of section 3.1 holds for it exactly.
+- **A polynomial.** A forward-Euler or RK4 step of a mass-action network only adds, multiplies
+  and divides by constants. After a fixed number of steps, each output is therefore a polynomial
+  of the initial concentrations. MPRK steps divide by the state, which gives a rational function.
+  Neither equals `max(x+ − x−, 0)` on an open set around `x+ = x−`, because that function has a
+  kink there.
+- **A residual network.** A forward-Euler step `x + dt·S·r(x)`, with the stoichiometric matrix S
+  and the mass-action rates r, is a residual block with a polynomial activation. All steps share
+  its weights. A breeder would run a CRN in this sense, and the table above lacks it. It is the
+  classical counterpart of the residual blocks that
+  `.scratch/seelen-modell/research-qnn-resnet.md` discusses for qubit reaction networks.
+- **Read-out at a fixed time.** Take the ReLU module of section 3.1 with a first reaction much
+  faster than the second, whose rate constant is k. With `x = x+ − x−`, the free M obeys
+  `dm/dt = −k·m·(m − x)` from `m(0) = x+`, and the output `y+ − y−` equals m. At time T this gives
+  `y = x / (1 − C·exp(−k·T·x))` with `C = 1 − x/x+`, and `y = 1/(1/x+ + k·T)` at `x = 0`. Away
+  from the kink the error falls exponentially in T. At the kink it falls only like `1/(k·T)`.
+  Integration agrees with the formula to five decimals at `k·T` of 10 and 100. With both rate
+  constants at 1, `y·T` still tends to 1 at `x = 0`: it is 1.0000 at `T = 1e4`.
+- **A finite reverse rate.** Let the first reaction be complete, and let `M + X− ⇌ Y−` have the
+  equilibrium constant K. At equilibrium `y² − x·y − y−/K = 0`, so
+  `y = (x + sqrt(x² + 4h))/2` with `h = y−/K`. This is the activation of [9, Eq. 4], except that
+  h depends on the state. Integration agrees to six decimals at drops of 5, 9.2 and 15 RT.
+- **The energy it takes.** At `x = 0` the error is about `sqrt(x+/K)`. A target error ε then takes
+  a free-energy drop of about `RT·ln(x+/ε²)`. With both reactions reversible, the same drop in
+  each and `x− = 1`, the largest error over x in [−1, 1] lay at `x = 0`: 0.079 at 5 RT, 0.030 at
+  7 RT, 0.010 at 9.2 RT, 0.0025 at 12 RT, 0.00055 at 15 RT and 0.00005 at 20 RT.
+- **Overlap of the rails.** h grows with y−, which at the kink is about the overlap of the rails.
+  With `x+ = x− = c` at 9.2 RT, the error was 0.00096 at `c = 0.01`, 0.0031 at `c = 0.1`, 0.010 at
+  `c = 1` and 0.032 at `c = 10`, close to `sqrt(c/K)`. So the cancellation reactions of section
+  4.3 might also sharpen the kink. We did not test them.
+- **Depth.** In a chain of modules without weights, read at equilibrium, the largest error at
+  9.2 RT grew from 0.0100 at depth 1 to 0.0106 at depth 4. We did not test weights, biases,
+  fan-out, or a finite read-out time together with finite reverse rates (ticket 03).
+- **A step budget.** With both rate constants at 1, `x+ = x− = 1` and 1000 RK4 steps, the output
+  at `x = 0` was 1.0e-2 at `dt = 0.1`, 1.0e-3 at `dt = 1.0` and 6.7e-4 at `dt = 1.5`. At
+  `dt = 2.0` the run diverged.
+- **What follows.** The softness of the kink follows from the energy genes and the read-out time,
+  so a breeder can select for it. The formulas above are predictions that ticket 03 can falsify.
+
 **Our reading:** "generalized" holds for mass-action CRNs as a class. The class contains CRNs
 that compute what ReLU networks compute [6; 8], and CRNs that compute products and other
 algebraic functions [12, Thm. 1]. It does not hold for rate-independent or for error-free
-discrete CRNs, which cannot multiply (section 4.5). A breeder must therefore fix the semantics
-before it fixes a genome.
+discrete CRNs, which cannot multiply (section 4.5). Added 2026-11-05: the ReLU part of that
+containment holds only for irreversible reactions read as t → ∞. For the reversible networks
+that section 6 demands, it is an approximation, which section 3.7 sizes for one module. A breeder
+must therefore fix the semantics before it fixes a genome.
 
 ## 4. Proven results
 
@@ -918,7 +978,7 @@ Each rule names the source that owns it, and what breaks without it.
 - **libm.** The pure-Rust libm crate claims neither correct rounding nor determinism on its
   root page [72].
 - **This repository.** The MLP's softmax and the scorer call `exp` and `ln` (`src/nn.rs:345`,
-  `src/nn.rs:356`, `src/score.rs:191-193`). CNN training gives equal bits at any thread count
+  `src/nn.rs:356`, `src/score.rs:200-202`). CNN training gives equal bits at any thread count
   on one machine, while other CPUs may give other bits (ADR 0007). Every random value comes
   from the crate's own ChaCha8 stream (ADR 0007, W8). The step-1 report notes that another
   toolchain may round a floating-point function differently
@@ -1082,14 +1142,14 @@ our reading.
 - Our reading: a third variant would hold a reaction-network genome. It would follow the CNN
   pattern: old archives stay readable through a serde default, and every genome is checked
   before training (`.scratch/cnn-basismodelle/spec.md`, Design).
-- MLPs and CNNs share `Limits`, so that neither wins by size (`src/config.rs:34-67`;
+- MLPs and CNNs share `Limits`, so that neither wins by size (`src/config.rs:71-107`;
   `.scratch/cnn-basismodelle/spec.md`, Design, "Shape check"). Our reading: a chemical network
   would share them too.
 - Hidden scores come from a separate process (CONTEXT.md, "Hidden evaluation"). Our reading: that
   process needs the same simulator with the same bits, so the simulator must live in the crate.
 - The MLP is written by hand (`src/nn.rs:1-4`). Our reading: a hand-written integrator needs no
   new crate, so invariant I1 of both contracts holds (`docs/STAGE1_CONTRACT.md:33-35`,
-  `docs/STAGE2_BACKEND_CONTRACT.md:37-41`).
+  `docs/STAGE2_BACKEND_CONTRACT.md:53-57`).
 
 ### 8.2 Genome
 
@@ -1103,7 +1163,7 @@ Our reading, in one table:
 | Inputs | one dual-rail pair per task input; their initial concentrations come from the input value | 3.1 |
 | Outputs | one dual-rail pair per task output, read at a fixed time | 3.1 |
 | Context | initial concentrations of the other species, which act as biases or store fuel for outputs read at a fixed time | 3.1, 6.6 |
-| Integration | fixed by the Run, or a gene accepted only under a step rule, for example that dt times the largest pseudo-first-order rate stays below the scheme's stability bound | 7.2 |
+| Integration | fixed by the Run, or a gene accepted only under a step rule, for example that dt times the largest per-species sum of pseudo-first-order loss rates, at the concentration cap, stays below the scheme's stability bound | 7.2 |
 
 - **Rate constants.** Our reading: k+ and k− follow from the energies and the barrier excess as
   in section 6.3. A chemostat's concentration follows from its chemical potential through
@@ -1115,6 +1175,14 @@ Our reading, in one table:
   become identities in integer arithmetic on the genes.
 - **One unit.** Our reading: association rates depend on the standard state [42, Eq. 25], so the
   whole simulation would use one reference concentration as its unit.
+- **Step rule.** Added 2026-11-05, our reading: the largest single rate is too weak a measure. In
+  a star of 50 reactions `A → B_i` with rate constant 1, RK4 diverged at `dt = 0.06`, where dt
+  times the largest single rate is only 0.06. dt times the sum of A's loss rates is 3.0 there,
+  above RK4's real-axis bound of about 2.785. At `dt = 0.0557` that product is 2.785, and the run
+  did not diverge within 1000 steps. Rates depend on concentrations, so the rule needs the
+  concentration cap of section 8.3. In a closed genome, conserved compositions also bound every
+  species with a nonzero composition before the run; chemostats can break that bound (section
+  8.3). We tested only this linear star. Ticket 01 reports the rule for nonlinear networks.
 - **Reported properties.** Whether a network is feedforward and noncompetitive can be read off
   its reactions [8, Def. 4]. These properties say when the exact ReLU equivalence applies in the
   irreversible limit (section 3.1). Our reading: report them, but do not make them separate
@@ -1124,20 +1192,21 @@ Our reading, in one table:
 
 - Our reading: caps on species, reactions, molecularity, the range of energies and barrier
   excesses, peak concentration, steps and simulated time.
-- Our reading: a state that is not finite, or above the concentration cap, ends the Candidate
-  as a failure.
+- Our reading: a state that is not finite, negative or above the concentration cap ends the
+  Candidate as a failure (ticket 01). A fixed explicit step can leave the positive orthant that
+  the exact ODE keeps (section 6.1).
 - **FLOPs before the run.** Our reading: a fixed-step trajectory has a cost that follows from the
   genome. A rough count under our own assumptions: 50 reversible reactions with at most two
   reactants per side, 30 species, RK4 and 1000 steps cost about 2e6 FLOPs per input. One pass
-  over the 1000 training points of checkerboard (`src/task.rs:279`) then costs about 2e9 FLOPs.
-  The default `max_train_flops` of 2e10 (`src/config.rs:61`) buys about 9 such passes.
-- **Run-wide caps.** The default `max_total_flops` of 2e12 (`src/config.rs:64`) covers about 100
+  over the 1000 training points of checkerboard (`src/task.rs:392`) then costs about 2e9 FLOPs.
+  The default `max_train_flops` of 2e10 (`src/config.rs:101`) buys about 9 such passes.
+- **Run-wide caps.** The default `max_total_flops` of 2e12 (`src/config.rs:104`) covers about 100
   Candidates that spend the full 2e10. A default run has 16 + 30 × 16 = 496 Candidates
-  (`src/config.rs:130-132`). The run also stops at `max_total_seconds`, 300 s by default
-  (`src/config.rs:63`). Our reading: the cost estimate must be compared with these caps as
+  (`src/config.rs:184-186`). The run also stops at `max_total_seconds`, 300 s by default
+  (`src/config.rs:103`). Our reading: the cost estimate must be compared with these caps as
   well.
 - **Parameters.** Fitness subtracts a penalty per log10 of the parameter count and of the
-  training FLOPs (`src/score.rs:301-311`). What a parameter is for a CRN is open (`map.md`,
+  training FLOPs (`src/score.rs:396-409`). What a parameter is for a CRN is open (`map.md`,
   Fog).
 - **Further costs.** No source here bounds convergence time, reaction count or peak concentration for
   compiled networks [7, Sec. 6; 8, "Convergence Time Analysis"]. Our reading: they need cost
@@ -1163,7 +1232,7 @@ Our reading, in one table:
   - `W_c − ΔG`, with `G` from [39, Eq. 70], needs `ln` of every species concentration only at
     the start and at the read-out time. With constant chemostats, `W_c` needs only their
     potentials and the reaction extents. This keeps `ln` out of the loop, at the bar of the
-    scorer's `ln` (`src/score.rs:191-193`; `map.md`, Fog 5).
+    scorer's `ln` (`src/score.rs:200-202`; `map.md`, Fog 5).
 - **Numerical artifacts.** Training can settle in low-loss regions that are numerical artifacts,
   where the simulation no longer reflects the physical system [55, Sec. 6]. Our reading: rerun
   each scored Candidate at dt/2 on a fixed subset of inputs. It fails if its outputs change by
@@ -1179,13 +1248,24 @@ Our reading, in one table:
   (`src/nn.rs:3`). The CNN instead gives equal bits at any thread count (ADR 0007).
 - Equal bits also need that no Candidate is stopped by `max_candidate_seconds` (ADR 0007). For
   a CNN, `Genome::validate` holds the estimated training time to `max_train_flops /
-  TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the defaults (`src/genome.rs:310-319`,
-  `src/cnn/shape.rs:325`). Our reading: a CRN validator would estimate the simulation time from
+  TIME_BUDGET_FLOPS_PER_SECOND`, 20 s at the defaults (`src/genome.rs:322-331`,
+  `src/cnn/shape.rs:532`). Our reading: a CRN validator would estimate the simulation time from
   the genome at a measured worst-case FLOP rate and hold it to the same bound.
+- **Subnormal numbers.** Added 2026-11-05, our reading: they can break that condition, but in our
+  test only near the irreversible limit. In the irreversible ReLU module of section 3.7, 1000 RK4
+  steps reached 4.9e-324, and 0.83 % of the states and rates were subnormal at `dt = 1.0` and
+  7.7 % at `dt = 1.5`. With reversible reactions the same module had no subnormal value: its
+  smallest value was about 1e-12 at a drop of 20 RT and about 3e-47 at 100 RT. On one Intel Xeon
+  at 2.10 GHz, `analysis/denormal.rs` measures about 0.3 ns per operation on normal numbers and
+  20 to 21 ns on subnormal ones, a factor of 66 to 76. So about 4 % of subnormal operations would
+  use up the 1 ns per FLOP behind `TIME_BUDGET_FLOPS_PER_SECOND` on that machine. Compiled seeds
+  with irreversible reactions therefore need a time model that includes this cost, or a fixed
+  threshold below which a concentration becomes exactly 0, such as 1e-140. We did not test the
+  threshold (ticket 01). We tested one module, not a network.
 - `brut-eval` checks a CNN against `MAX_EVAL_FLOPS` (1e11) and against `MAX_EVAL_SECONDS`
-  (60 s) by a time model (`src/hidden_eval.rs:84-91`, `src/hidden_eval.rs:501-532`). Our
+  (60 s) by a time model (`src/hidden_eval.rs:84-91`, `src/hidden_eval.rs:510-541`). Our
   reading: a CRN needs a check of the same kind.
-- The scorer already calls `exp` and `ln` (`src/score.rs:191-193`). Our reading: that holds a
+- The scorer already calls `exp` and `ln` (`src/score.rs:200-202`). Our reading: that holds a
   chemical network to the same bar as an MLP, equal bits on one machine.
 - Our reading: a stochastic variant would draw from the ChaCha8 stream (ADR 0007, W8) and avoid
   `ln` as in section 7.3.
@@ -1211,8 +1291,8 @@ Our reading: three routes, which ticket 04 compares.
 ### 8.6 Tasks
 
 - Spirals and checkerboard have 2 inputs, sine regression 1 and parity 8
-  (`src/task.rs:262-305`). Our reading: each input becomes one dual-rail pair.
-- The image tasks have 16 × 16 = 256 inputs (`src/task.rs:29`, `src/task.rs:359-375`). Our
+  (`src/task.rs:34`, `src/task.rs:373-420`). Our reading: each input becomes one dual-rail pair.
+- The image tasks have 16 × 16 = 256 inputs (`src/task.rs:37`, `src/task.rs:497-517`). Our
   reading: 512 input species are large for a first step.
 - The formose reservoir's nonlinear tasks (XOR, checkers, circle, sine, concentric circles,
   dots) are 2-D classifications [36, "Nonlinear classification"]. Our reading: they are of the
@@ -1286,8 +1366,10 @@ The open choices are the Fog of `map.md`.
 - Our reading: universal approximation by smoothed-ReLU CRNs would follow from their exact
   implementation [9, Prop. 4.9] and a universal approximation theorem for non-polynomial
   activations, which [17, Thm. A.1] uses. No source here states this corollary.
-- How finite reverse rates degrade a compiled ReLU network is not quantified. The only worked
-  case is a parity algorithm [42, Sec. VI A].
+- No source here quantifies how finite reverse rates degrade a compiled ReLU network. The only
+  worked case in the sources is a parity algorithm [42, Sec. VI A]. Section 3.7 gives our own
+  estimate for one module and for chains without weights. Weights, biases and fan-out remain
+  open.
 - The limits of [47] are proven for (pseudo-)first-order networks, and their extension to
   bimolecular reactions is preliminary [47, Discussion].
 - No source here gives a general energy bound for inference or learning by a CRN neural network.
@@ -1337,6 +1419,8 @@ The open choices are the Fog of `map.md`.
   abstract: [25].
 - Not read in the primary: [10], restated by [11] and [12]; and [20], known through secondary
   statements.
+- The additions of 2026-11-05 checked no source again, except [9, Eq. 4, Prop. 4.9] in arXiv
+  2010.13290v3.
 
 ## 10. Sources
 
