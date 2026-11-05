@@ -79,5 +79,5 @@ physics?
     with none at drops of 20 and 100 RT against up to 7.7 % of states and rates when irreversible.
     This bears on item 2 of the Fog in `../map.md`.
   - Line references: those in this ticket date from 2026-10-31. At commit 3d3b2fe, `Limits` is at
-    `src/config.rs:71-107`, `Genome::validate` at `src/genome.rs:229-334` and the content id at
+    `src/config.rs:71-107`, `Genome::validate` at `src/genome.rs:226-334` and the content id at
     `src/genome.rs:336-349`. `src/genome.rs:58-65` still holds.
