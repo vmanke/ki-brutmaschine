@@ -1,6 +1,6 @@
 # 06 Screen arm IG against N, with arms G and I, on seeds 5001 to 5008
 
-Status: needs-triage
+Status: resolved
 Blocked by: 04, 05
 Spec: `../spec-imagination.md`, sections 4 and 5
 
@@ -75,3 +75,17 @@ for criteria 1 to 4 where they apply, and their pass times.
 - `.scratch/seelen-modell/screen-ig.md` holds every criterion with its numbers and the verdict,
   and the numbers of arms I and G for description.
 - The analysis script and its outputs are in `.scratch/seelen-modell/analysis/`.
+
+## Comments
+
+- 2026-11-05, done: the screen ran as fixed, with the binary of 00abe5c. All 32 Runs passed
+  `--verify`. The verdict is stop, because criterion 1 fails. Early: in IG, imagination
+  changed a pick by generation 5 on 4 of 8 seeds, where all 8 were needed; on the other four
+  the first change came in generation 6 to 13. Learning: the parents valued Linear, Phase and
+  Hadamard above the other families on 8 of 8 seeds. Imagination measures the effect: D was
+  above 0 on 7 of 8 seeds, pooled 0.19. Protection: IG lost a family in 43.4 % of the draws
+  that changed a promising Worker, where at most 40 % was allowed, against 54.6 % in N. IG
+  passed before N on 2 seeds and after N on 4, with 2 ties. Four Runs were stopped by the
+  session's background limit or a restart of the container, and each ran again from the
+  start. The results are in `../screen-ig.md`. No confirmatory experiment on IG follows; the
+  owner decides the next step.

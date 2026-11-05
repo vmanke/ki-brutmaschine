@@ -1,6 +1,6 @@
 # 05 Changing goals behind a switch (arm G)
 
-Status: needs-triage
+Status: resolved
 Blocked by: none
 Spec: `../spec-imagination.md`, sections 3.4 and 3.5
 
@@ -64,3 +64,4 @@ Spec: `../spec-imagination.md`, sections 3.4 and 3.5
 - Gate and smoke Runs: see ticket 04. In the smoke Run of arm G on seed 4242 the goals were all
   tasks in generations 0 to 20, G−Linear in 21 to 40 and all tasks in 41 to 60; its events equal
   arm N's up to the state line of generation 20.
+- 2026-11-05, screened in ticket 06: the verdict is stop (`../screen-ig.md`).

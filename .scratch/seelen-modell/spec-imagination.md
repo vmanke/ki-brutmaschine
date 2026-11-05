@@ -1,6 +1,7 @@
 # Spec: a Soul that learns, imagines and meets changing goals (arms I, G and IG)
 
-Status: needs-triage. A design for the owner. Nothing is built.
+Status: built in tickets 04 and 05 and screened in ticket 06 (pull request #57). The screen
+ended with stop on 2026-11-05 (`screen-ig.md`).
 
 It follows the owner's choice of 2026-11-04, after the screens of the grid (ticket 03) and of
 arm W (ticket 02). The owner chose two of the proposed next steps: weights that learn from the

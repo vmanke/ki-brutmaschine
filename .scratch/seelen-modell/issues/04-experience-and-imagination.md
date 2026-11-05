@@ -1,6 +1,6 @@
 # 04 Experience and imagination behind a switch (arm I)
 
-Status: needs-triage
+Status: resolved
 Blocked by: none
 Spec: `../spec-imagination.md`, sections 3.1 to 3.3 and 3.5
 
@@ -118,3 +118,4 @@ Spec: `../spec-imagination.md`, sections 3.1 to 3.3 and 3.5
   p ≠ 0, because few Workers had values other than 0 and the drawn changes did not touch their
   families. Over 60 generations I made 118 choices and changed 63 picks, IG 96 and 53. These Runs
   are no part of the screen.
+- 2026-11-05, screened in ticket 06: the verdict is stop (`../screen-ig.md`).

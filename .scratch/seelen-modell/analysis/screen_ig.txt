@@ -1,0 +1,99 @@
+== screen of arm IG: seeds 5001 to 5008, arms N, G, I, IG, 1000 generations
+
+Runs: pass time T, calls used, wall seconds, five hashes recorded, --verify.
+    N-5001  T   115  calls   2427119  wall   2399.1 s  hashes 5/5  verify: brut-breed: 51847 events, hash chain intact, head 2f4885a7a3
+    G-5001  T   134  calls   2219984  wall   1839.5 s  hashes 5/5  verify: brut-breed: 41394 events, hash chain intact, head 4c7a1cd36f
+    I-5001  T    90  calls   1105419  wall   4015.7 s  hashes 5/5  verify: brut-breed: 53366 events, hash chain intact, head eb2d12ebc8
+   IG-5001  T   187  calls   2729845  wall   2155.8 s  hashes 5/5  verify: brut-breed: 52190 events, hash chain intact, head 094e69c9a9
+    N-5002  T    90  calls   1098459  wall   1549.9 s  hashes 5/5  verify: brut-breed: 44379 events, hash chain intact, head a025dd5b09
+    G-5002  T    65  calls   1519379  wall   1580.7 s  hashes 5/5  verify: brut-breed: 42840 events, hash chain intact, head 7839357229
+    I-5002  T     8  calls   1230115  wall   2304.7 s  hashes 5/5  verify: brut-breed: 37336 events, hash chain intact, head b05b42f4f7
+   IG-5002  T     8  calls   1341574  wall   1893.2 s  hashes 5/5  verify: brut-breed: 48143 events, hash chain intact, head a1fd45d22a
+    N-5003  T    22  calls   1413146  wall   2081.4 s  hashes 5/5  verify: brut-breed: 51419 events, hash chain intact, head f95396cc75
+    G-5003  T   272  calls   1865439  wall   1573.7 s  hashes 5/5  verify: brut-breed: 52659 events, hash chain intact, head b275fc37a4
+    I-5003  T    46  calls   1082545  wall   1448.0 s  hashes 5/5  verify: brut-breed: 45091 events, hash chain intact, head 6ae5ab0df8
+   IG-5003  T    92  calls   1344820  wall   1656.1 s  hashes 5/5  verify: brut-breed: 50298 events, hash chain intact, head 87bc548b64
+    N-5004  T    28  calls   2189507  wall   3941.8 s  hashes 5/5  verify: brut-breed: 45835 events, hash chain intact, head 358618f1f3
+    G-5004  T    43  calls   1021381  wall   1431.9 s  hashes 5/5  verify: brut-breed: 38274 events, hash chain intact, head f1875fa50e
+    I-5004  T   500  calls   1642323  wall   1558.6 s  hashes 5/5  verify: brut-breed: 41449 events, hash chain intact, head c72588920e
+   IG-5004  T   186  calls   1065764  wall   1717.8 s  hashes 5/5  verify: brut-breed: 49876 events, hash chain intact, head 6b1b712ef2
+    N-5005  T     9  calls   1181556  wall   1786.6 s  hashes 5/5  verify: brut-breed: 44475 events, hash chain intact, head a76adb3004
+    G-5005  T     9  calls   1450416  wall   2056.0 s  hashes 5/5  verify: brut-breed: 53106 events, hash chain intact, head 0d8b375bfb
+    I-5005  T     9  calls   1494697  wall   2066.7 s  hashes 5/5  verify: brut-breed: 38872 events, hash chain intact, head e46245d20d
+   IG-5005  T     9  calls   1093140  wall   5944.7 s  hashes 5/5  verify: brut-breed: 50792 events, hash chain intact, head 9f8a63380f
+    N-5006  T    14  calls   1704266  wall   2258.2 s  hashes 5/5  verify: brut-breed: 42632 events, hash chain intact, head e72ebd916b
+    G-5006  T    14  calls   1019547  wall   1350.9 s  hashes 5/5  verify: brut-breed: 29570 events, hash chain intact, head 68305fbd12
+    I-5006  T    14  calls   1096890  wall   1756.0 s  hashes 5/5  verify: brut-breed: 25070 events, hash chain intact, head 3b0ecabd8b
+   IG-5006  T    14  calls    970767  wall   1451.4 s  hashes 5/5  verify: brut-breed: 25926 events, hash chain intact, head 989882deca
+    N-5007  T   142  calls   1222200  wall   2352.6 s  hashes 5/5  verify: brut-breed: 50768 events, hash chain intact, head c5120fc03c
+    G-5007  T    59  calls   1139357  wall   5579.3 s  hashes 5/5  verify: brut-breed: 45458 events, hash chain intact, head 0663b220c7
+    I-5007  T   109  calls   1685886  wall   2249.4 s  hashes 5/5  verify: brut-breed: 51929 events, hash chain intact, head a85ce5ca48
+   IG-5007  T    68  calls   1164305  wall   1979.6 s  hashes 5/5  verify: brut-breed: 50813 events, hash chain intact, head b16c69162e
+    N-5008  T    68  calls   2016024  wall   6139.4 s  hashes 5/5  verify: brut-breed: 53591 events, hash chain intact, head 345e94dbfb
+    G-5008  T   154  calls   2459082  wall   1960.5 s  hashes 5/5  verify: brut-breed: 50780 events, hash chain intact, head 259449c013
+    I-5008  T    73  calls   1081020  wall   1381.9 s  hashes 5/5  verify: brut-breed: 35637 events, hash chain intact, head 8687ffb027
+   IG-5008  T   198  calls   1471556  wall   2201.7 s  hashes 5/5  verify: brut-breed: 46454 events, hash chain intact, head 80ddf6316e
+
+Deviations: none
+Anomalies: none
+
+Per seed: pass times; divergence generations; first changed pick (I, IG); mean values of the parents' Workers in generations 41 to 50, Linear/Phase/Hadamard against the other five, in thousandths (I, IG).
+ seed   T_N   T_G   T_I  T_IG | IG-N  I-N  G-N | pick I   IG |   I lph   other |  IG lph   other
+ 5001   115   134    90   187 |    5    5   21 |      5    5 |  137.14   -5.48 |   59.62   -4.12
+ 5002    90    65     8     8 |    3    3   21 |      3    3 |   97.81   12.75 |   99.54   12.64
+ 5003    22   272    46    92 |    4    4   21 |      4    4 |   19.56    0.32 |    0.98   -0.06
+ 5004    28    43   500   186 |    5    5   21 |      5    5 |    0.08    0.92 |    0.57    0.22
+ 5005     9     9     9     9 |   10   10   21 |     10   10 |  107.66   17.12 |  107.64   16.80
+ 5006    14    14    14    14 |    6    6   21 |      6    6 |   28.31   -0.32 |   30.28   -0.40
+ 5007   142    59   109    68 |   13   13   21 |     13   13 |   28.08    0.00 |   24.53    0.55
+ 5008    68   154    73   198 |    8    8   21 |      8    8 |   12.36    6.53 |    2.66   -0.48
+
+Newborns with p other than 0 (count and mean s, p > 0 | p < 0; D = the difference):
+ 5001  I 374 -0.37 | 637 -0.40; D 0.04;   IG 303 -0.04 | 284 -0.28; D 0.24
+ 5002  I 1149 -0.16 | 580 -0.25; D 0.09;   IG 415 -0.09 | 387 -0.27; D 0.18
+ 5003  I 183 -0.10 | 594 -0.33; D 0.23;   IG 762 -0.33 | 399 -0.24; D -0.08
+ 5004  I 55 -0.05 | 17 -0.47; D 0.42;   IG 419 -0.19 | 465 -0.36; D 0.17
+ 5005  I 550 -0.02 | 828 -0.04; D 0.03;   IG 236 -0.13 | 872 -0.51; D 0.38
+ 5006  I 11 -0.09 | 54 -0.56; D 0.46;   IG 30 -0.07 | 59 -0.31; D 0.24
+ 5007  I 539 -0.22 | 336 -0.46; D 0.24;   IG 595 -0.09 | 344 -0.35; D 0.26
+ 5008  I 760 -0.16 | 547 -0.31; D 0.16;   IG 23 -0.04 | 97 -0.07; D 0.03
+Pooled I: p > 0 in 3621 newborns, mean s -0.16; p < 0 in 3593, mean s -0.28; D 0.11
+Pooled IG: p > 0 in 2783 newborns, mean s -0.17; p < 0 in 2907, mean s -0.36; D 0.19
+
+Imagination choices and changed picks over the Run (I, IG):
+  5001: I 2439/1465, IG 1999/984; 5002: I 3012/1851, IG 2220/1206; 5003: I 2428/1303, IG 2538/1426; 5004: I 522/202, IG 2156/1125; 5005: I 2454/1404, IG 2509/1487; 5006: I 912/377, IG 818/319; 5007: I 2463/1278, IG 2295/1245; 5008: I 2815/1559, IG 1042/450
+
+Goals of G and IG (blocks of generations from generation 1 on; the first 15):
+ 5001  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5002  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5003  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5004  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5005  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5006  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5007  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+ 5008  50 blocks, same in G and IG: all -Linear all -Phase all -Hadamard all -Compose all -Search all -Meet all -Simplify all
+
+Draws on a parent with a promising Worker, before the first Worker with all three (draws / changing a promising Worker / losing a family / bringing the missing one / making all three), and the first Worker with all three:
+ 5001  N 127/33/16/3/1 (g115 section_replace); G 143/56/38/3/1 (g134 section_replace); I 89/41/3/0/0 (g90 section_crossover); IG 228/106/35/5/1 (g187 section_replace)
+ 5002  N 133/79/37/1/0 (g90 section_crossover); G 84/56/25/3/1 (g65 section_add); I 11/11/3/1/1 (g8 section_add); IG 11/11/3/1/1 (g8 section_add)
+ 5003  N 28/15/9/2/1 (g22 section_replace); G 349/218/112/18/1 (g272 section_replace); I 72/53/22/4/1 (g46 section_replace); IG 133/93/45/9/1 (g92 section_replace)
+ 5004  N 10/5/5/0/0 (g28 stage_add); G 12/6/5/0/0 (g43 section_crossover); I 473/124/74/5/1 (g500 section_replace); IG 137/39/24/5/1 (g186 section_replace)
+ 5005  N 2/1/0/1/1 (g9 section_replace); G 2/1/0/1/1 (g9 section_replace); I 2/1/0/1/1 (g9 section_replace); IG 2/1/0/1/1 (g9 section_replace)
+ 5006  N 8/1/0/1/1 (g14 section_replace); G 8/1/0/1/1 (g14 section_replace); I 8/1/0/1/1 (g14 section_replace); IG 8/1/0/1/1 (g14 section_replace)
+ 5007  N 183/100/62/10/1 (g140 section_add); G 32/22/9/2/1 (g59 section_add); I 136/119/54/8/1 (g109 section_replace); IG 45/29/16/4/1 (g68 section_replace)
+ 5008  N 54/26/13/2/0 (g68 section_crossover); G 109/31/20/2/1 (g154 section_add); I 73/45/18/3/1 (g73 section_replace); IG 147/66/27/5/0 (g198 section_crossover)
+Pooled: N 545 draws, 260 change a promising Worker, 142 of those lose a family (54.6 %), 5 make all three; G 739 draws, 391 change a promising Worker, 209 of those lose a family (53.5 %), 7 make all three; I 864 draws, 395 change a promising Worker, 174 of those lose a family (44.1 %), 7 make all three; IG 711 draws, 346 change a promising Worker, 150 of those lose a family (43.4 %), 7 make all three
+
+== criteria (fixed before the first Run)
+1. Early: imagination changes a pick in generation 5 or earlier in IG on 4 of 8 seeds (needs all) [5001, 5002, 5003, 5004]; first changed picks ['5', '3', '4', '5', '10', '6', '13', '8']. FAILED. Arm I (description): 4 of 8, first changed picks ['5', '3', '4', '5', '10', '6', '13', '8'].
+2. Learning: the parents' mean value for Linear, Phase and Hadamard in generations 41 to 50 is above that of the other five families in IG on 8 of 8 seeds (needs 6) [5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008]. MET. Arm I (description): 7 of 8 [5001, 5002, 5003, 5005, 5006, 5007, 5008].
+3. Imagination measures the effect: D > 0 in IG on 7 of 8 seeds (needs 7) [5001, 5002, 5004, 5005, 5006, 5007, 5008]; seeds with fewer than 5 newborns in a group []. MET. Pooled IG: D 0.19. Arm I (description): 8 of 8 [5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008], pooled D 0.11.
+4. Protection: of the draws that change a promising Worker, IG loses a family in 150 of 346 (43.4 %; needs at most 40 %), N in 142 of 260 (54.6 %); IG must lie 10 points below N; IG and N need 30 such draws (both have). FAILED. Description: I 174 of 395 (44.1 %), G 209 of 391 (53.5 %).
+5. Direction (reported):
+   IG before N on 2 seeds [5002, 5007]; N before IG on 4 [5001, 5003, 5004, 5008]; ties 2.
+   I before N on 3 seeds [5001, 5002, 5007]; N before I on 3 [5003, 5004, 5008]; ties 2.
+   G before N on 2 seeds [5002, 5007]; N before G on 4 [5001, 5003, 5004, 5008]; ties 2.
+   IG before I on 2 seeds [5004, 5007]; I before IG on 3 [5001, 5003, 5008]; ties 3.
+   IG before G on 2 seeds [5002, 5003]; G before IG on 4 [5001, 5004, 5007, 5008]; ties 2.
+
+Verdict: STOP (criteria 1 failed, 2 met, 3 met, 4 failed; IG passes before N on 2 of 8).
