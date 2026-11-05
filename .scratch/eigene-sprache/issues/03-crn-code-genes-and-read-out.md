@@ -14,8 +14,9 @@ Spec: `../spec.md`, sections 2 and 4
 - Reporter genes: a set of reporter species read at the fixed read-out time. A linear read-out,
   fitted by ridge regression on the training split, maps them to the logits. State the ridge
   constant, that the fit is deterministic, and that its weights count as parameters.
-- Change Fog 1 of `../../chemische-netze/map.md` from "semantics first" to "decoder first", or
-  record why not.
+- Keep Fog 1 of `../../chemische-netze/map.md`, "semantics first": the reaction dynamics must
+  be chosen first, and this ticket assumes mass action with a fixed read-out time. Add the
+  decoder as a separate item of that Fog: a fixed linear decoder with a free code inside.
 - Name four controls: the same read-out on the raw inputs, a fixed random reservoir with the same
   read-out, a random assignment of codes, and the fixed read-out of the German draft
   (`entwurf-rekurrentes-chemisches-netz.md:759-760`).

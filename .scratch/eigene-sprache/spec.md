@@ -150,9 +150,11 @@ No source here describes the construction below. It is our own.
   coined phrase. The saving of M is the sum over the Workers that count, minus the words of the
   phrase once, for the Lexicon. This is a description length in the sense of Rissanen (1978),
   counted in words, as the simulator counts tokens.
-- **Coining.** If the best saving is above 0, the Run coins one word for that set. A tie goes to
-  the set with the lower family indices. At most one word is coined per step, and the Lexicon
-  holds at most 8 words. The coining step changes no member; it only adds a phrase to the pool.
+- **Coining.** A set that already has a word in the Lexicon is no candidate. If the best saving
+  of the other sets is above 0, the Run coins one word for that set. A tie goes to the set with
+  the lower family indices. At most one word is coined per step, and the Lexicon holds at most 8
+  words. The coining step changes no member; it only adds a phrase to the pool. Since the members
+  do not change, the same set could win again at the next step; the first rule prevents that.
 - **The phrase.** A Coined word is a readable phrase from a fixed term per family, for example
   "Use a hadamard basis change, then the phase polynomial." The order is the order in which the
   most Workers name the families. A test checks that `named_families` of each phrase is exactly
@@ -163,9 +165,12 @@ No source here describes the construction below. It is our own.
   Linear in one phrase is exactly what a coined word may do.
 - **Retirement.** A word that no Worker of the 22 best members holds at two coining steps in a
   row leaves the pool. Workers that hold it keep it; their text still names its families.
-- **Arm R, the control.** The same schedule, the same caps and the same retirement. At every
-  coining step with room in the Lexicon, arm R coins one word. Its meaning is a pair of families
-  drawn from its own stream, `lexicon/{g}`, so the generation's stream stays as it is.
+- **Arm R, the control.** The same schedule, the same caps and the same retirement. At each
+  coining step, arm R first applies L's rule to its own archive. If that rule would coin a set
+  of k families, arm R coins a word for a set of k families drawn at random from the sets that
+  have no word yet; otherwise it coins nothing. So both arms coin as often, and words of the same
+  size, and they differ only in how the meaning is chosen. The draw uses its own stream,
+  `lexicon/{g}`, so the generation's stream stays as it is.
 
 ### 3.3 Efficiency
 
@@ -174,9 +179,12 @@ No source here describes the construction below. It is our own.
 - The members must feel the cost too. Without a cost on length, codes do not become efficient
   (Chaabouni 2019), and efficiency needs pressure on both sides (Rita 2020).
 - Under lexicase the fitness orders the members but does not draw the parents. So a separate
-  switch `brevity` adds one case to lexicase. A member passes that case if the words of all its
-  Workers' system prompts are at most the median of the archive. When the case is drawn, the
-  shorter members go on, like a lazy speaker.
+  switch `brevity` adds one case to lexicase. A member passes that case, with score 1, if the
+  words of all its Workers' system prompts are at most the median of the archive; otherwise it
+  scores 0. The case uses the filter of every other case (`src/cascade/selection.rs:107-119`).
+  So when it is drawn and some remaining member passes, the longer ones drop out, like a lazy
+  speaker. When no remaining member passes, they tie and all stay. With a lexicase epsilon of 1
+  or more the case would remove no one, so such a Run is refused.
 - `brevity` works without a Lexicon too. In the screen all three arms use it, so the arms differ
   only in their Lexicon.
 
@@ -210,7 +218,9 @@ No source here describes the construction below. It is our own.
   dual-rail pair, read at a fixed time (`.scratch/chemische-netze/research.md`, section 8.2, the
   genome table).
 - The research note concludes that a breeder must fix the semantics before the genome
-  (`research.md`, the closing reading of section 3; `map.md`, Fog 1, "Semantics first").
+  (`research.md`, the closing reading of section 3; `map.md`, Fog 1, "Semantics first"). These
+  semantics are the reaction dynamics: rate-independent, mass action, or stochastic. They are
+  not the code of the inputs and outputs, and this part leaves them as they are.
 - The German draft fixes the read-out on purpose: "Die Auslese hat keine freie Verstärkung,
   damit die Chemie den Kontrast selbst erzeugen muss"
   (`.scratch/chemische-netze/entwurf-rekurrentes-chemisches-netz.md:759-760`). In its phase 1,
@@ -225,9 +235,11 @@ No source here describes the construction below. It is our own.
   fitted by ridge regression on the training split, maps their concentrations at the fixed read-out
   time to the logits, as in the formose reservoir (Baltussen 2024). The weights are fitted, not
   bred, and they count as parameters.
-- **Decoder first.** The note's "semantics first" becomes "decoder first": the class of the
-  decoder is fixed and checkable, a linear map at a fixed time. The code inside the network is
-  free. So the network may invent its own representation.
+- **A fixed decoder, a free code.** The reaction semantics still come first; this part needs
+  mass action with a fixed read-out time. Within them, the class of the decoder is fixed and
+  checkable, a linear map at a fixed time, and the code inside the network is free. So the
+  network may invent its own representation. This is a second choice beside Fog 1, not a
+  replacement for it.
 - **Efficiency.** The fitness keeps its form, the primary score − 0.005·log10(parameters) −
   0.002·log10(FLOPs) (German draft, lines 899-902). Parameters include the read-out weights and
   the code genes. Dissipation is reported; charging it needs an ADR, as the research note says.
