@@ -570,6 +570,80 @@ fn verify_and_a_resume_find_a_changed_word() {
     ok(&breed(&["--out", path(&dir), "--verify"]));
 }
 
+#[test]
+fn verify_checks_the_words_of_a_run_without_a_report() {
+    let root = fresh("without-report");
+    let config = arm_config(&root, "L");
+
+    // A finished Run whose report is gone, and a Run that waits for LLM answers at
+    // generation 41, after the coining steps of generations 20 and 40: neither has a report
+    // that --verify could recompute.
+    let gone = root.join("gone");
+
+    ok(&arm_run(&gone, "L", "6421", "4", "40"));
+    std::fs::remove_file(gone.join("report.json")).expect("remove the report");
+
+    let paused = root.join("paused");
+    let mut args = vec!["--out", path(&paused), "--config", path(&config)];
+
+    args.extend(screen("6421"));
+    args.extend(["--llm-every", "41"]);
+
+    let waiting = breed(&args);
+
+    assert_eq!(waiting.status.code(), Some(3), "{}", stdout(&waiting));
+    assert!(!paused.join("report.json").exists());
+
+    let change: fn(&mut Event) = |e| {
+        if let Event::Coined { phrase, .. } = e {
+            *phrase = phrase.replacen("Use ", "Try ", 1);
+        }
+    };
+
+    for (what, dir, why) in [
+        (
+            "no report",
+            &gone,
+            "there is no report.json; resume the run to write it",
+        ),
+        ("waiting", &paused, "the run is not finished"),
+    ] {
+        assert!(
+            !of_kind(&logged_events(dir), "coined").is_empty(),
+            "{what}: no word coined"
+        );
+
+        // The checkpoint's archive gives the logged words.
+        let checked = breed(&["--out", path(dir), "--verify"]);
+
+        ok(&checked);
+        assert!(
+            stdout(&checked).contains("; coined and retired events replayed and equal;")
+                && stdout(&checked).contains(why),
+            "{what}: {}",
+            stdout(&checked)
+        );
+
+        // A changed word under a rebuilt hash chain and anchor is found.
+        rewrite_log(dir, change);
+
+        let refused = breed(&["--out", path(dir), "--verify"]);
+
+        assert_eq!(
+            refused.status.code(),
+            Some(1),
+            "{what}: {}",
+            stdout(&refused)
+        );
+        assert!(
+            stderr(&refused).contains("integrity:")
+                && stderr(&refused).contains("coined and retired events differ"),
+            "{what}: {}",
+            stderr(&refused)
+        );
+    }
+}
+
 /// The names of the files in `dir`.
 fn left_in(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir)
@@ -609,7 +683,7 @@ fn the_settings_are_refused_where_they_cannot_work() {
             ..BreedConfig::default()
         },
     );
-    let cases: [(&str, &Path, &[&str], &str); 5] = [
+    let cases: [(&str, &Path, &[&str], &str); 6] = [
         (
             "a lexicon on grids",
             &lexicon,
@@ -640,6 +714,19 @@ fn the_settings_are_refused_where_they_cannot_work() {
                 "1",
             ],
             "brevity needs lexicase selection with a lexicase_epsilon below 1",
+        ),
+        (
+            "brevity with an epsilon that the tie slack takes to 1",
+            &brevity,
+            &[
+                "--domain",
+                "circuits",
+                "--selection",
+                "lexicase",
+                "--lexicase-epsilon",
+                "0.9999999999995",
+            ],
+            "lexicase_epsilon below 1, less the tie slack of 1e-12",
         ),
         (
             "brevity on grids with an epsilon of 1",

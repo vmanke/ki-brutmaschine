@@ -1073,7 +1073,9 @@ mod tests {
 
         assert_eq!(column, [1.0, 0.0, 1.0, 0.0]);
 
-        for epsilon in [0.0, 0.5, 0.99] {
+        // Up to the largest epsilons that a Run with brevity accepts, whose cut
+        // 1 − epsilon − TIE_SLACK stays above 0.
+        for epsilon in [0.0, 0.5, 0.99, 0.999_999_999_998] {
             // Some remaining member passes: every member above the median drops out.
             for pool in [vec![0, 1, 2, 3], vec![1, 2], vec![0, 3]] {
                 for _ in 0..50 {
@@ -1093,14 +1095,17 @@ mod tests {
             assert_eq!(seen, [false, true, false, true], "epsilon {epsilon}");
         }
 
-        // With an epsilon of 1 the case would remove no one, which is why such a Run is
-        // refused.
-        let mut seen = [false; 4];
+        // With an epsilon of 1, or just below it where the tie slack makes the cut negative,
+        // the case would remove no one, which is why such a Run is refused.
+        for epsilon in [1.0, 0.999_999_999_999_5] {
+            let mut seen = [false; 4];
 
-        for _ in 0..400 {
-            seen[lexicase_pick(&scores, &[0, 1, 2, 3], 1.0, &mut rng).expect("pick")] = true;
+            for _ in 0..400 {
+                seen[lexicase_pick(&scores, &[0, 1, 2, 3], epsilon, &mut rng).expect("pick")] =
+                    true;
+            }
+
+            assert_eq!(seen, [true; 4], "epsilon {epsilon}");
         }
-
-        assert_eq!(seen, [true; 4]);
     }
 }

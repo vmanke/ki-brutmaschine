@@ -48,7 +48,8 @@
 //! lexicase (`"brevity": true`) have no flag either: they come in --config
 //! (`.scratch/eigene-sprache/spec.md`, sections 3.2 and 3.3). The Lexicon needs a gene pool
 //! that names the families of a text, as the circuit gene pool does; brevity needs lexicase
-//! selection with a lexicase_epsilon below 1. Both define the experiment, so a resume cannot
+//! selection with a lexicase_epsilon below 1, less the tie slack of 1e-12, at which the case
+//! still filters. Both define the experiment, so a resume cannot
 //! change them. The Lexicon is no part of the checkpoint: a resume replays its coining steps
 //! on the checkpoint's archive and refuses to go on unless they give the `coined` and
 //! `retired` events the log holds up to the checkpoint.
@@ -70,7 +71,9 @@
 //! the `learned` events, or the values of its Born event when no event moved them
 //! (`.scratch/seelen-modell/spec-imagination.md`). In a run with a Lexicon, the coining steps
 //! replayed on that archive must give the `coined` and `retired` events of the log
-//! (`.scratch/eigene-sprache/spec.md`). Then it recomputes the count from that archive. A
+//! (`.scratch/eigene-sprache/spec.md`); every checkpoint holds the archive they replay on, so
+//! this check also runs for a run that is not finished or has no report. Then it recomputes
+//! the count from that archive. A
 //! finished grid run with Souls gets the same two checks of its archive and Souls; a grid run
 //! without Souls is checked as before step 2. A run with Souls keeps every
 //! select-panel answer, as a circuit run does, so on grids too a report that its checkpoint
@@ -986,10 +989,31 @@ fn verify<D: Domain>(out: &Path, cfg: &BreedConfig, family: &Family<D>) -> Resul
     // The archive of the checkpoint stands for the events up to its anchor; the log may
     // hold more (a process that ended after logging a generation, before its checkpoint).
     let covered = log.events().get(..cp.log_len as usize).unwrap_or_default();
+
+    // The Lexicon's coining steps replay on the checkpoint's archive, which every checkpoint
+    // holds, finished or not (`.scratch/eigene-sprache/spec.md`, section 3.4). So the `coined`
+    // and `retired` events it covers are checked in every run with a Lexicon: a finished run's
+    // with its archive (`check_archive`), any other here, from the checkpoint rebuilt for them.
+    let lexicon = match (&cfg.lexicon, &finished) {
+        (Some(_), None) => {
+            let rebuilt = Breeder::<D>::resume_from(
+                cfg.clone(),
+                family.genes,
+                &family.pool,
+                None,
+                cp.snapshot.clone(),
+            )?;
+
+            check_lexicon(out, &rebuilt, covered)?;
+
+            "; coined and retired events replayed and equal"
+        }
+        _ => "",
+    };
     let extra = (family.check_finish)(out, covered, finish)?;
 
     println!(
-        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}{extra}",
+        "brut-breed: {} events, hash chain intact, head {}; checkpoint at entry {} matches; settings match{report}{lexicon}{extra}",
         log.len,
         log.head(),
         cp.log_len

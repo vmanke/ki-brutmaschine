@@ -69,7 +69,8 @@ Spec: `../spec.md`, sections 2 and 3
   - Both are left out of the JSON when off, and a resume refuses a change of either.
   - A Run with `lexicon` is refused unless the gene pool names the families of a text and has
     a term for each family (circuits today). A Run with `brevity` is refused unless the
-    selection is lexicase with an epsilon below 1; it works on grids too.
+    selection is lexicase and 1 − epsilon − 1e-12, lexicase's tie slack, is above 0. It works
+    on grids too.
 - What was built.
   - `src/cascade/lexicon.rs` (new): the setting, the phrase, the coining step, the grown pool,
     the holding count and the brevity column.
@@ -125,8 +126,8 @@ Spec: `../spec.md`, sections 2 and 3
   - Arms N (brevity only), R and L over 60 generations are byte-equal at 1 and at 4 threads and
     pass `--verify`. A Run resumed at generation 30 equals a straight one. A log with a changed
     word fails both `--verify` and `--resume`.
-  - `cargo test`: 1222 passed, 0 failed, 22 ignored, over 23 test binaries.
-    `cargo clippy --all-targets -- -D warnings`: clean.
+  - `cargo test`, after the fixes below: 1223 passed, 0 failed, 22 ignored, over 23 test
+    binaries. `cargo clippy --all-targets -- -D warnings`: clean.
 - Probes, not the screen: 100 generations with the flags of ticket 02, seeds 6411 to 6413,
   arms L and R, the same configs in both rounds. Only the tie rule of the section name differs.
   - With the tie going to the alphabetically first name, none of the 27 coined words joined
@@ -141,3 +142,11 @@ Spec: `../spec.md`, sections 2 and 3
     arm R. The most in any generation was 5.
   - So a word now spreads about as often as any strategy phrase, and within 100 generations it
     barely spreads. This is worth weighing before ticket 02 is run.
+- 2026-11-06, two findings of the review of #62, both verified and fixed.
+  - `--verify` checked the `coined` and `retired` events only for a finished run with a report.
+    Every checkpoint holds the archive they replay on, so it now checks them in every run with
+    a Lexicon. A test changes a word in a finished run without its report and in a run that
+    waits for LLM answers, under a rebuilt hash chain and anchor; `--verify` finds both.
+  - The refusal of `brevity` accepted an epsilon just below 1, such as 0.9999999999995, at
+    which lexicase's tie slack makes the cut negative, so the case removed no one. The refusal
+    now computes the cut as lexicase does, and spec 3.3 says so.

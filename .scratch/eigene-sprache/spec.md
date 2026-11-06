@@ -188,8 +188,10 @@ No source here describes the construction below. It is our own.
   words of all its Workers' system prompts are at most the median of the archive; otherwise it
   scores 0. The case uses the filter of every other case (`src/cascade/selection.rs:107-119`).
   So when it is drawn and some remaining member passes, the longer ones drop out, like a lazy
-  speaker. When no remaining member passes, they tie and all stay. With a lexicase epsilon of 1
-  or more the case would remove no one, so such a Run is refused.
+  speaker. When no remaining member passes, they tie and all stay. Lexicase cuts at the best
+  score minus epsilon minus a tie slack of 1e-12 (`src/cascade/selection.rs:117`). So with an
+  epsilon at which 1 − epsilon − 1e-12 is not above 0, the case would remove no one, and such a
+  Run is refused.
 - `brevity` works without a Lexicon too. In the screen all three arms use it, so the arms differ
   only in their Lexicon.
 

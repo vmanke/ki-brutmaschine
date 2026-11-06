@@ -81,7 +81,8 @@ use crate::cascade::observe::{
 };
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::selection::{
-    SelectionParams, lexicase_pick, lexicase_weights, tournament_pick, tournament_weights,
+    SelectionParams, TIE_SLACK, lexicase_pick, lexicase_weights, tournament_pick,
+    tournament_weights,
 };
 use crate::cascade::soul::{
     ArrayVote, FIXED_PREFERRED, Inheritance, Phasor, Readout, SoulConfig, SoulDraws, Variation,
@@ -1701,15 +1702,17 @@ impl<'a, D: Domain> Breeder<'a, D> {
             ));
         }
 
-        // The brevity case filters as every case of lexicase does, and with a lexicase epsilon
-        // of 1 or more it would keep every member (spec 3.3). `check` refused an epsilon that
+        // The brevity case filters as every case of lexicase does (spec 3.3). When some member
+        // that remains passes it, the best score is 1, and lexicase keeps the members that
+        // fail it, with 0, exactly when its cut 1 − epsilon − TIE_SLACK is not above 0
+        // (`selection::lexicase_pick`). With such an epsilon the case would keep every member,
+        // so the cut is computed here as lexicase computes it. `check` refused an epsilon that
         // is not finite.
-        if cfg.brevity
-            && (cfg.selection != ParentSelection::Lexicase
-                || cfg.selection_params.lexicase_epsilon >= 1.0)
-        {
+        let brevity_cut = 1.0 - cfg.selection_params.lexicase_epsilon - TIE_SLACK;
+
+        if cfg.brevity && (cfg.selection != ParentSelection::Lexicase || brevity_cut <= 0.0) {
             return Err(BrutError::Invalid(
-                "breed config: brevity needs lexicase selection with a lexicase_epsilon below 1"
+                "breed config: brevity needs lexicase selection with a lexicase_epsilon below 1, less the tie slack of 1e-12"
                     .to_string(),
             ));
         }
@@ -12463,7 +12466,11 @@ mod tests {
             ..brief(cfg)
         };
 
-        for epsilon in [1.0, 2.5] {
+        // Lexicase subtracts its tie slack from the cut as well, so an epsilon just below 1,
+        // whose cut 1 − epsilon − TIE_SLACK is below 0, filters no one either.
+        for epsilon in [1.0, 2.5, 0.999_999_999_999_5] {
+            assert!(1.0 - epsilon - TIE_SLACK <= 0.0, "epsilon {epsilon}");
+
             let reason = invalid(
                 Breeder::<CircuitDomain>::start(
                     with_epsilon(circuit_config(6305), epsilon),
@@ -12475,13 +12482,17 @@ mod tests {
             );
 
             assert!(
-                reason.contains("brevity needs lexicase selection with a lexicase_epsilon below 1"),
+                reason.contains(
+                    "brevity needs lexicase selection with a lexicase_epsilon below 1, less the tie slack of 1e-12"
+                ),
                 "{reason}"
             );
         }
 
-        // Below 1 it starts, on circuits and on grids alike: it needs no families.
-        for epsilon in [0.0, 0.5, 0.999] {
+        // Where the cut stays above 0 it starts, on circuits and on grids alike: it needs no
+        // families.
+        for epsilon in [0.0, 0.5, 0.999, 0.999_999_999_998] {
+            assert!(1.0 - epsilon - TIE_SLACK > 0.0, "epsilon {epsilon}");
             assert!(
                 Breeder::<CircuitDomain>::start(
                     with_epsilon(circuit_config(6305), epsilon),
