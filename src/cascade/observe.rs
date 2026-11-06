@@ -27,6 +27,10 @@
 //! section 3.5) adds the group `mind`: the goal of the generation and, with imagination, how
 //! imagination chose this generation's children and the learned values of their parents.
 //! It is left out of the JSON otherwise.
+//!
+//! A Run with a Lexicon (`.scratch/eigene-sprache/spec.md`, section 3.4) adds the group
+//! `lexicon`: the words in the pool, those coined and retired so far, and how many of the
+//! best members hold a coined word. It is left out of the JSON otherwise.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,6 +62,9 @@ pub struct UniverseState {
     /// The mind of a Run with imagination or changing goals; left out of the JSON otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mind: Option<MindState>,
+    /// The Lexicon of a Run with `lexicon`; left out of the JSON otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lexicon: Option<LexiconState>,
 }
 
 /// How well the archive does on the search panel. A solved rate is solved / tasks, a
@@ -274,6 +281,21 @@ pub struct MindState {
     pub other_families_mean: Option<f64>,
 }
 
+/// The Lexicon of a Run after a commit and the coining step that may follow it
+/// (`.scratch/eigene-sprache/spec.md`, section 3.4), with `lexicon` on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LexiconState {
+    /// The words in the pool.
+    pub words: usize,
+    /// The words coined so far, and those of them retired so far.
+    pub coined: usize,
+    pub retired: usize,
+    /// The best members, the first `best` of the archive's ranking, of which some Worker holds
+    /// a coined word: a section whose text is the phrase of a word the Run coined, in the
+    /// pool or retired.
+    pub best_holding: usize,
+}
+
 /// A sum of learned values and their count, for a mean.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ValueSums {
@@ -357,6 +379,8 @@ pub struct ObserveInput<'a, A> {
     pub soul: Option<SoulInput<'a>>,
     /// In a Run with imagination or changing goals, what the mind group reads.
     pub mind: Option<MindInput<'a>>,
+    /// In a Run with a Lexicon, its group, which the breeder counts.
+    pub lexicon: Option<LexiconState>,
 }
 
 /// The observables of one committed generation.
@@ -374,6 +398,7 @@ pub fn observe<A: Serialize>(input: &ObserveInput<'_, A>) -> UniverseState {
             .as_ref()
             .map(|s| Box::new(soul_state(input.archive, input.first_new, s))),
         mind: input.mind.as_ref().map(mind_state),
+        lexicon: input.lexicon,
     }
 }
 
@@ -911,6 +936,7 @@ mod tests {
             tasks: 4,
             soul: None,
             mind: None,
+            lexicon: None,
         }
     }
 
@@ -1213,6 +1239,7 @@ mod tests {
                 tasks: 0,
                 soul: None,
                 mind: None,
+                lexicon: None,
             }),
             observe(&ObserveInput {
                 first_new: 99,
@@ -1362,6 +1389,43 @@ mod tests {
         );
         assert_eq!(off.mind, None);
         assert!(!serde_json::to_string(&off).expect("json").contains("mind"));
+    }
+
+    #[test]
+    fn the_lexicon_group_comes_last_and_is_left_out_when_off() {
+        let group = LexiconState {
+            words: 2,
+            coined: 3,
+            retired: 1,
+            best_holding: 5,
+        };
+        let state = observe(&ObserveInput {
+            lexicon: Some(group),
+            mind: Some(MindInput {
+                goal: "all",
+                imagination: None,
+            }),
+            ..input(&family(), &[], &[])
+        });
+        let event = Event::State(state.clone());
+        let json = serde_json::to_string(&event).expect("json");
+        let back: Event = serde_json::from_str(&json).expect("back");
+
+        assert_eq!(state.lexicon, Some(group));
+        assert!(
+            json.ends_with(r#""mind":{"goal":"all"},"lexicon":{"words":2,"coined":3,"retired":1,"best_holding":5}}"#),
+            "{json}"
+        );
+        assert_eq!(back, event);
+
+        let off = observe(&input(&family(), &[], &[]));
+
+        assert_eq!(off.lexicon, None);
+        assert!(
+            !serde_json::to_string(&off)
+                .expect("json")
+                .contains("lexicon")
+        );
     }
 
     #[test]
@@ -1516,6 +1580,7 @@ mod tests {
                     variation: None,
                 }),
                 mind: None,
+                lexicon: None,
             })
             .soul
             .expect("a soul group")

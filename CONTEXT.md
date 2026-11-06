@@ -342,6 +342,24 @@ _Avoid_: soul genetics
 How a Soul's hidden angles are read: as unit phasors (complex), or as the sign of the nearer of 0 and half a turn (real, the control of arm V). Both readouts read the same angles, and a phasor has length 1 in either, so the Soul carries no strength.
 _Avoid_: projection, measurement (that is an Observation)
 
+### A language of its own (planned screen)
+
+**Lexicon**:
+A Run's Coined words, behind the switch `lexicon`. The words not retired join the gene pool's phrases, after the fixed ones, and the section operators draw them like any other phrase. It is no part of the checkpoint: a resume replays every Coining step on the archive.
+_Avoid_: vocabulary, dictionary, codebook
+
+**Coined word**:
+A readable phrase that names two or three method families in one section, built from one fixed term per family, such as "Use a hadamard basis change, then the phase polynomial." It joins the pool under one section name. It is exempt from the pool's rule that no phrase names two of Hadamard, Phase and Linear.
+_Avoid_: token, abbreviation, macro (that is the Architect's)
+
+**Coining step**:
+The step after the commit of every `every`-th generation. It reads the Workers of the best members, retires the words that none of them held at two steps in a row, and coins at most one word: in arm L for the set of families whose word saves the most words, in arm R for a random set of the same size. It changes no member.
+_Avoid_: compression pass
+
+**Brevity case**:
+One more lexicase case, behind the switch `brevity`: a member passes it when the words of its Workers' system prompts are at most the archive's lower median. It changes no fitness.
+_Avoid_: length penalty
+
 ### Records and control
 
 **Run**:

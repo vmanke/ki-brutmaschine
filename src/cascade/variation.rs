@@ -526,7 +526,7 @@ pub fn mutate(
 pub fn mutate_with(
     parent: &Cascade,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op)> {
     mutate_sourced(parent, limits, phrases, rng).map(|(child, op, _)| (child, op))
@@ -539,7 +539,7 @@ pub fn mutate_with(
 pub fn mutate_sourced(
     parent: &Cascade,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op, Sources)> {
     mutate_inner(parent, limits, phrases, None, rng)
@@ -552,7 +552,7 @@ pub fn mutate_sourced(
 pub fn mutate_steered(
     parent: &Cascade,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     steer: &Steer<'_>,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op, Sources, Steered)> {
@@ -563,7 +563,7 @@ pub fn mutate_steered(
 fn mutate_inner(
     parent: &Cascade,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     steer: Option<&Steer<'_>>,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Op, Sources, Steered)> {
@@ -593,7 +593,7 @@ pub fn mutate_once(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     steer: Option<&Steer<'_>>,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Sources, Steered)> {
@@ -611,7 +611,7 @@ fn attempt(
     parents: &[String],
     op: Op,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     steer: Option<&Steer<'_>>,
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, Sources, Steered)> {
@@ -989,7 +989,7 @@ fn apply_with(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<Cascade> {
     apply_sourced(parent, op, limits, phrases, rng).map(|(child, _)| child)
@@ -1001,7 +1001,7 @@ fn apply_sourced(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     rng: &mut ChaCha8Rng,
 ) -> Option<(Cascade, SourceMap)> {
     apply_steered(
@@ -1026,7 +1026,7 @@ fn apply_steered(
     parent: &Cascade,
     op: Op,
     limits: &CascadeLimits,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&str, &str)],
     steer: Option<&Steer<'_>>,
     steered: &mut Steered,
     rng: &mut ChaCha8Rng,
@@ -1365,10 +1365,7 @@ fn pick_worker(
 
 /// The phrases SectionAdd may write into `worker`: one whose name a section has, if its
 /// text differs, or one of a new name while the Worker has room for another section.
-fn add_options(
-    worker: &Worker,
-    phrases: &'static [(&'static str, &'static str)],
-) -> Vec<(&'static str, &'static str)> {
+fn add_options<'p>(worker: &Worker, phrases: &[(&'p str, &'p str)]) -> Vec<(&'p str, &'p str)> {
     phrases
         .iter()
         .copied()
@@ -1500,15 +1497,15 @@ fn model_tags(limits: &CascadeLimits) -> Vec<&str> {
 /// A text of `phrases` other than `current`: with p = 0.7 one of the phrases named `name`
 /// (when there is such a phrase), otherwise one of the whole pool. Within the pool that is
 /// drawn, each text weighs alike, or with `lens` 1 + L of the text (arm W, choice 3).
-fn replacement_text(
+fn replacement_text<'p>(
     rng: &mut ChaCha8Rng,
-    phrases: &'static [(&'static str, &'static str)],
+    phrases: &[(&'p str, &'p str)],
     name: &str,
     current: &str,
     lens: Option<Lens<'_>>,
     steered: &mut Steered,
-) -> Option<&'static str> {
-    let same_name: Vec<&'static str> = phrases
+) -> Option<&'p str> {
+    let same_name: Vec<&'p str> = phrases
         .iter()
         .filter(|(n, t)| *n == name && *t != current)
         .map(|(_, t)| *t)
@@ -1518,7 +1515,7 @@ fn replacement_text(
         return pick_text(rng, &same_name, lens, steered);
     }
 
-    let any: Vec<&'static str> = phrases
+    let any: Vec<&'p str> = phrases
         .iter()
         .filter(|(_, t)| *t != current)
         .map(|(_, t)| *t)
@@ -1528,12 +1525,12 @@ fn replacement_text(
 }
 
 /// One of `texts`: uniform without `lens`, otherwise with the weight 1 + L of each text.
-fn pick_text(
+fn pick_text<'p>(
     rng: &mut ChaCha8Rng,
-    texts: &[&'static str],
+    texts: &[&'p str],
     lens: Option<Lens<'_>>,
     steered: &mut Steered,
-) -> Option<&'static str> {
+) -> Option<&'p str> {
     let Some(lens) = lens else {
         return pick(rng, texts);
     };

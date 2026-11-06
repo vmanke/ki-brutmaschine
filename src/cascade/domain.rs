@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cascade::arena::BreedConfig;
 use crate::cascade::genome::{Cascade, seed_cascades};
+use crate::cascade::lexicon::LexiconGenes;
 use crate::cascade::puzzle::{
     Grid, Puzzle, SELF_CHECK_TEXT, generate_panel, parse_answer, render_example,
     render_judge_prompt, render_solve_prompt,
@@ -117,6 +118,11 @@ pub struct GenePool {
     /// (step 2, arm W of `.scratch/seelen-modell/spec.md`, section 4.1). None for a gene
     /// pool that cannot name them; a Run whose Soul steers variation is refused then.
     pub families_of: Option<fn(&str) -> Vec<usize>>,
+    /// What the Lexicon builds its coined words from (arms L and R,
+    /// `.scratch/eigene-sprache/spec.md`, section 3.2): one readable term per family, and the
+    /// order in which a text names the families. None for a gene pool that coins no words; a
+    /// Run with `lexicon` is refused then.
+    pub lexicon: Option<LexiconGenes>,
 }
 
 impl GenePool {
@@ -129,6 +135,7 @@ impl GenePool {
             brief: &GRID_BRIEF,
             admit: |_| Ok(()),
             families_of: None,
+            lexicon: None,
         }
     }
 }
