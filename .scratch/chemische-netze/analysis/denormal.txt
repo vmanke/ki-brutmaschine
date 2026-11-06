@@ -1,0 +1,5 @@
+run 1: normal 0.31 ns per operation, subnormal 20.07 ns, factor 65.5
+run 2: normal 0.26 ns per operation, subnormal 19.83 ns, factor 76.3
+run 3: normal 0.31 ns per operation, subnormal 21.26 ns, factor 68.6
+model name	: Intel(R) Xeon(R) Processor @ 2.10GHz
+rustc 1.97.0 (2d8144b78 2026-07-07)
