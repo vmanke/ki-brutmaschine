@@ -125,7 +125,8 @@ Spec: `../spec.md`, sections 2 and 3
   - Arms N (brevity only), R and L over 60 generations are byte-equal at 1 and at 4 threads and
     pass `--verify`. A Run resumed at generation 30 equals a straight one. A log with a changed
     word fails both `--verify` and `--resume`.
-  - `cargo test`: TESTCOUNT. `cargo clippy --all-targets -- -D warnings`: clean.
+  - `cargo test`: 1222 passed, 0 failed, 22 ignored, over 23 test binaries.
+    `cargo clippy --all-targets -- -D warnings`: clean.
 - Probes, not the screen: 100 generations with the flags of ticket 02, seeds 6411 to 6413,
   arms L and R, the same configs in both rounds. Only the tie rule of the section name differs.
   - With the tie going to the alphabetically first name, none of the 27 coined words joined
