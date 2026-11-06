@@ -43,6 +43,16 @@
 //! the families of a text, as the circuit gene pool does; changing goals need lexicase
 //! selection on circuits. Both define the experiment, so a resume cannot change them.
 //!
+//! A Lexicon of coined words (`"lexicon": {"every": 20, "best": 22, "max_words": 8,
+//! "meaning": "compression"}`, arm L, or `"meaning": "random"`, arm R) and the brevity case of
+//! lexicase (`"brevity": true`) have no flag either: they come in --config
+//! (`.scratch/eigene-sprache/spec.md`, sections 3.2 and 3.3). The Lexicon needs a gene pool
+//! that names the families of a text, as the circuit gene pool does; brevity needs lexicase
+//! selection with a lexicase_epsilon below 1. Both define the experiment, so a resume cannot
+//! change them. The Lexicon is no part of the checkpoint: a resume replays its coining steps
+//! on the checkpoint's archive and refuses to go on unless they give the `coined` and
+//! `retired` events the log holds up to the checkpoint.
+//!
 //! A finished circuit run also writes `<dir>/rediscovery.json`, the pre-registered count
 //! of step 1: per library target, what the seed Cascades and the bred ones solved on the
 //! search panel, the share D of the targets the seeds miss that bred Cascades solve, the
@@ -58,9 +68,11 @@
 //! with imagination the Born event also holds each Worker's learned values and what the
 //! newborn's learning read, and every member's current values must be their last entry in
 //! the `learned` events, or the values of its Born event when no event moved them
-//! (`.scratch/seelen-modell/spec-imagination.md`). Then it recomputes the count from that
-//! archive. A finished grid run with Souls gets the same two checks of its archive and Souls;
-//! a grid run without Souls is checked as before step 2. A run with Souls keeps every
+//! (`.scratch/seelen-modell/spec-imagination.md`). In a run with a Lexicon, the coining steps
+//! replayed on that archive must give the `coined` and `retired` events of the log
+//! (`.scratch/eigene-sprache/spec.md`). Then it recomputes the count from that archive. A
+//! finished grid run with Souls gets the same two checks of its archive and Souls; a grid run
+//! without Souls is checked as before step 2. A run with Souls keeps every
 //! select-panel answer, as a circuit run does, so on grids too a report that its checkpoint
 //! cannot recompute is an integrity error.
 //! --promote refuses circuit runs: promotion of circuit Cascades is not part of step 1. It
@@ -554,6 +566,10 @@ fn drive<D: Domain>(
             Some(&book),
             cp.snapshot,
         )?;
+
+        // The breeder replayed the Lexicon's coining steps on the checkpoint's archive; they
+        // must give the words the log holds up to the checkpoint.
+        check_lexicon(out, &b, log.events())?;
 
         (b, log)
     } else {
@@ -1176,9 +1192,10 @@ fn check_rediscovery(
 /// is not in its Born event, and this does not check it. The current Souls, which
 /// Observations change after a member's birth, are checked against the `souls` events
 /// instead (`check_current_souls`), and the current learned values, which a member's children
-/// change at the commits, against the `learned` events (`check_current_values`). It runs for
-/// finished circuit runs and for finished grid runs with Souls; a grid answer has no text, so
-/// its Born event logs none.
+/// change at the commits, against the `learned` events (`check_current_values`). The coining
+/// steps replayed on the archive must give the `coined` and `retired` events of the log
+/// (`check_lexicon`). It runs for finished circuit runs and for finished grid runs with Souls;
+/// a grid answer has no text, so its Born event logs none.
 fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Event]) -> Result<()> {
     let tasks = breeder.search_panel().len();
     let born: Vec<&Event> = events
@@ -1236,7 +1253,31 @@ fn check_archive<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Even
     }
 
     check_current_souls(out, archive, events)?;
-    check_current_values(out, archive, events)
+    check_current_values(out, archive, events)?;
+    check_lexicon(out, breeder, events)
+}
+
+/// Error unless the `coined` and `retired` events among `events` are, in their order, those
+/// that the coining steps give on the archive and the comparisons of `breeder`, rebuilt from
+/// the checkpoint (`Breeder::lexicon_events`): each step run again on the members born up to
+/// its generation, ranked as its commit ranked them (`.scratch/eigene-sprache/spec.md`,
+/// sections 3.2 and 3.4). A run without a Lexicon has none.
+fn check_lexicon<D: Domain>(out: &Path, breeder: &Breeder<'_, D>, events: &[Event]) -> Result<()> {
+    let logged: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::Retired { .. } | Event::Coined { .. }))
+        .collect();
+    let replayed = breeder.lexicon_events();
+
+    if logged.iter().copied().ne(replayed.iter()) {
+        return Err(BrutError::Integrity(format!(
+            "{}: the coined and retired events differ from those the coining steps give on the archive of {}",
+            out.join(EVENTS).display(),
+            out.join(SNAPSHOT).display()
+        )));
+    }
+
+    Ok(())
 }
 
 /// Error unless every Worker's current learned values in the archive are its last entry in

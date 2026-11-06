@@ -45,6 +45,16 @@
 //! at the commit, which a `learned` event after the generation event lists. With `goals` on
 //! (arm G, section 3.4), the tasks that count for lexicase selection and for that effect
 //! change every few generations; every newborn is still evaluated on the whole search panel.
+//!
+//! With `lexicon` on (arms L and R, `.scratch/eigene-sprache/spec.md`, section 3.2), the
+//! gene pool's phrases grow during a Run (`lexicon.rs`). After the commit of every `every`-th
+//! generation a coining step reads the Workers of the best members, retires the words they no
+//! longer hold, and may coin one readable phrase for two or three families, which the section
+//! operators then draw like any other; `coined` and `retired` events log it. The Lexicon is
+//! no part of the checkpoint: a resume replays every coining step on the archive and the
+//! comparisons, each with the ranking its commit had. With `brevity` on (spec 3.3), lexicase
+//! gets one more case, after the tasks: a member passes it when its prompts are at most the
+//! archive's lower median in words.
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -60,12 +70,14 @@ use crate::cascade::domain::{Domain, DomainConfig, GenePool, Grade, GridDomain};
 use crate::cascade::genome::{
     COUPLING_MAX, Cascade, CascadeLimits, PhaseState, Worker, adapt_seeds, check_section_text,
 };
+use crate::cascade::lexicon::{Lexicon, LexiconConfig, Step as CoiningStep, brevity_case};
 use crate::cascade::mind::{
     ALL_TASKS, Change, Effect, Goal, GoalsConfig, IMAGINING_OPS, ImaginationConfig, VALUE_MAX,
     choose, error, goal_cycle, goal_index, named, prediction, step,
 };
 use crate::cascade::observe::{
-    ImaginationCounts, MindInput, ObserveInput, SoulInput, UniverseState, observe, strength_counts,
+    ImaginationCounts, LexiconState, MindInput, ObserveInput, SoulInput, UniverseState, observe,
+    strength_counts,
 };
 use crate::cascade::puzzle::{Grid, Puzzle, SELF_CHECK_TEXT, Verdict, parse_verdict};
 use crate::cascade::selection::{
@@ -878,6 +890,22 @@ pub struct BreedConfig {
     /// is a Run whose goal is always every task; it is left out of the JSON then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goals: Option<GoalsConfig>,
+    /// The Lexicon (arms L and R, `.scratch/eigene-sprache/spec.md`, section 3.2): coining
+    /// steps that add readable phrases for sets of families to the gene pool's phrases. None,
+    /// the default, is a Run without it; it is left out of the JSON then, so configs and fixed
+    /// hashes of earlier runs are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lexicon: Option<LexiconConfig>,
+    /// The brevity case of lexicase (spec 3.3): one more case, after the tasks, that the
+    /// members whose prompts are at most the archive's lower median in words pass. False, the
+    /// default, is left out of the JSON.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub brevity: bool,
+}
+
+/// For serde: leave a false flag out of the JSON.
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// How a generation draws its parents and crossover partners.
@@ -1009,6 +1037,8 @@ impl Default for BreedConfig {
             soul: None,
             imagination: None,
             goals: None,
+            lexicon: None,
+            brevity: false,
         }
     }
 }
@@ -1063,6 +1093,10 @@ impl BreedConfig {
 
         if let Some(goals) = &self.goals {
             goals.check()?;
+        }
+
+        if let Some(lexicon) = &self.lexicon {
+            lexicon.check()?;
         }
 
         Ok(())
@@ -1297,6 +1331,25 @@ pub enum Event {
     Learned {
         generation: usize,
         changed: Vec<ValueChange>,
+    },
+    /// A word that the coining step after the commit of `generation` retired
+    /// (`.scratch/eigene-sprache/spec.md`, sections 3.2 and 3.4): no Worker of the best
+    /// members held it at that step and at the step before. It leaves the pool; the Workers
+    /// that hold it keep it. After the generation's other events, before its `coined` event.
+    Retired {
+        phrase: String,
+        generation: usize,
+    },
+    /// A word that the coining step after the commit of `generation` coined (spec 3.2, 3.4):
+    /// its phrase, its meaning as the names of its families in index order, the section name
+    /// it joins the pool under, and its saving in words on the Workers of the best members.
+    /// Before the generation's `state` event.
+    Coined {
+        phrase: String,
+        meaning: Vec<String>,
+        section: String,
+        saving: i64,
+        generation: usize,
     },
     /// The universe observables of a committed generation: the last event of its step.
     State(UniverseState),
@@ -1534,6 +1587,9 @@ pub struct Breeder<'a, D: Domain = GridDomain> {
     /// One cycle of the goals on the search panel (`.scratch/seelen-modell/spec-imagination.md`,
     /// section 3.4); empty with `goals` off.
     goals: Vec<Goal>,
+    /// The Run's coined words (`.scratch/eigene-sprache/spec.md`, section 3.2); empty with
+    /// `lexicon` off. It is no part of the checkpoint: a resume replays it (`replay_lexicon`).
+    lexicon: Lexicon,
 }
 
 impl<'a> Breeder<'a, GridDomain> {
@@ -1629,6 +1685,35 @@ impl<'a, D: Domain> Breeder<'a, D> {
             ));
         }
 
+        // The Lexicon reads the families each section text names, and writes its phrases from
+        // one term per family (`.scratch/eigene-sprache/spec.md`, section 3.2), so it needs a
+        // gene pool that names the families of a text and has a term for each of them.
+        if cfg.lexicon.is_some()
+            && (genes.families_of.is_none()
+                || domain.families().is_empty()
+                || genes
+                    .lexicon
+                    .is_none_or(|l| l.terms.len() != domain.families().len()))
+        {
+            return Err(BrutError::Invalid(
+                "breed config: lexicon needs a gene pool that names the families of a text, and this Domain's gene pool does not"
+                    .to_string(),
+            ));
+        }
+
+        // The brevity case filters as every case of lexicase does, and with a lexicase epsilon
+        // of 1 or more it would keep every member (spec 3.3). `check` refused an epsilon that
+        // is not finite.
+        if cfg.brevity
+            && (cfg.selection != ParentSelection::Lexicase
+                || cfg.selection_params.lexicase_epsilon >= 1.0)
+        {
+            return Err(BrutError::Invalid(
+                "breed config: brevity needs lexicase selection with a lexicase_epsilon below 1"
+                    .to_string(),
+            ));
+        }
+
         // A seed brings no Soul and no Coupling strength (spec 4.4): a Run without Souls has
         // none, and in a Run with Souls Souletics gives every seed Worker its own.
         if let Some((name, _)) = seeds.iter().find(|(_, c)| c.carries_soul()) {
@@ -1670,6 +1755,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             finished: false,
             gene_ids: Vec::new(),
             goals,
+            lexicon: Lexicon::default(),
         })
     }
 
@@ -1762,6 +1848,11 @@ impl<'a, D: Domain> Breeder<'a, D> {
         b.next_generation = snap.next_generation;
         b.select_answers = snap.select_answers;
         b.finished = snap.finished;
+
+        // The Lexicon is no part of the checkpoint: every coining step so far runs again on the
+        // archive as each commit left it (`.scratch/eigene-sprache/spec.md`, section 3.2), so
+        // the resumed Run coins and retires as a straight one.
+        b.lexicon = b.replay_lexicon().0;
 
         Ok(b)
     }
@@ -2399,6 +2490,21 @@ impl<'a, D: Domain> Breeder<'a, D> {
         self.next_generation = g + 1;
         self.finished = false;
 
+        // The coining step (`.scratch/eigene-sprache/spec.md`, section 3.2): after the commit
+        // of every `every`-th generation the Lexicon reads the best members of the committed
+        // archive, in its ranking, and retires and coins words. It changes no member, and it
+        // draws nothing from the generation's stream; a coined phrase joins the pool of the
+        // generations to come.
+        if let Some(lexicon) = self.cfg.lexicon
+            && lexicon.coins_after(g)
+        {
+            let order = self.ranking();
+            let mut words = std::mem::take(&mut self.lexicon);
+
+            events.extend(self.coin(&mut words, g, &self.archive, &order));
+            self.lexicon = words;
+        }
+
         // The observables of the committed state, with the weights the next generation
         // draws its parents by, and in a Run with Souls this commit's Observations and the
         // search panel's strengths (spec 13.1).
@@ -2454,9 +2560,160 @@ impl<'a, D: Domain> Breeder<'a, D> {
             tasks: self.search.len(),
             soul,
             mind,
+            lexicon: self.lexicon_state(),
         })));
 
         Ok((Status::Continue, events))
+    }
+
+    /// The phrase pool the section operators draw from (`.scratch/eigene-sprache/spec.md`,
+    /// section 3.2): the gene pool's phrases, then the phrases of the words in the Lexicon's
+    /// pool, in coining order, each under its section name. Without a word in the pool it is
+    /// the gene pool's, phrase for phrase, so the operators draw as in a Run without a Lexicon.
+    fn phrases(&self) -> Vec<(&str, &str)> {
+        self.lexicon.pool(self.genes.phrases)
+    }
+
+    /// The coining step after the commit of generation `g` (`.scratch/eigene-sprache/spec.md`,
+    /// section 3.2) on `archive`, the members as that commit left them, ranked as `order`:
+    /// `lexicon` reads the Workers of the first `best` of them and retires and coins its words
+    /// (`Lexicon::step`). Arm R draws from the stream of the tag `lexicon/{g}`. Returns the
+    /// step's `retired` events, in coining order, then its `coined` event. Nothing without
+    /// `lexicon`, or with a gene pool that coins no words (`start` refuses that).
+    fn coin(
+        &self,
+        lexicon: &mut Lexicon,
+        g: usize,
+        archive: &[Member<D::Answer>],
+        order: &[usize],
+    ) -> Vec<Event> {
+        let (Some(config), Some(families_of), Some(genes)) =
+            (self.cfg.lexicon, self.genes.families_of, self.genes.lexicon)
+        else {
+            return Vec::new();
+        };
+        let names = self.domain.families();
+        let best: Vec<&Cascade> = order
+            .iter()
+            .take(config.best)
+            .filter_map(|&i| archive.get(i).map(|m| &m.cascade))
+            .collect();
+        let done = lexicon.step(&CoiningStep {
+            generation: g,
+            best: &best,
+            families: names.len(),
+            families_of,
+            phrases: self.genes.phrases,
+            genes,
+            config,
+            draw_seed: derive_seed(self.cfg.seed, &format!("lexicon/{g}")),
+        });
+        let mut events: Vec<Event> = done
+            .retired
+            .iter()
+            .filter_map(|&k| lexicon.words.get(k))
+            .map(|w| Event::Retired {
+                phrase: w.phrase.clone(),
+                generation: g,
+            })
+            .collect();
+
+        if let Some(w) = done.coined.and_then(|k| lexicon.words.get(k)) {
+            events.push(Event::Coined {
+                phrase: w.phrase.clone(),
+                meaning: w
+                    .meaning
+                    .iter()
+                    .filter_map(|&f| names.get(f).map(|n| n.to_string()))
+                    .collect(),
+                section: w.section.clone(),
+                saving: w.saving,
+                generation: g,
+            });
+        }
+
+        events
+    }
+
+    /// Every coining step of the generations committed so far, run again on the archive and
+    /// the comparisons as they stand (`.scratch/eigene-sprache/spec.md`, section 3.2): the
+    /// step after the commit of generation g reads the members born up to g, ranked as that
+    /// commit ranked them (`ranking_at`), with the Lexicon the steps before left. Returns the
+    /// Lexicon after the last step and the `retired` and `coined` events of every step, in log
+    /// order. An empty Lexicon and no event without `lexicon`.
+    fn replay_lexicon(&self) -> (Lexicon, Vec<Event>) {
+        let mut lexicon = Lexicon::default();
+        let mut events = Vec::new();
+        let Some(config) = self.cfg.lexicon else {
+            return (lexicon, events);
+        };
+
+        for g in (1..self.next_generation).filter(|&g| config.coins_after(g)) {
+            let (born, order) = ranking_at(
+                &self.archive,
+                &self.gene_ids,
+                &self.comparisons,
+                &self.cfg,
+                self.search.len(),
+                g,
+            );
+
+            events.extend(self.coin(&mut lexicon, g, &self.archive[..born], &order));
+        }
+
+        (lexicon, events)
+    }
+
+    /// The `retired` and `coined` events that every coining step so far gives on the archive
+    /// and the comparisons as they stand, in log order (`replay_lexicon`): what `--verify`
+    /// compares with the log. None without `lexicon`.
+    pub fn lexicon_events(&self) -> Vec<Event> {
+        self.replay_lexicon().1
+    }
+
+    /// The `lexicon` group of the state line (`.scratch/eigene-sprache/spec.md`, section
+    /// 3.4), after the commit and its coining step: the words in the pool, those coined and
+    /// retired so far, and the best members, the first `best` of the ranking, that hold a
+    /// coined word. None without `lexicon`.
+    fn lexicon_state(&self) -> Option<LexiconState> {
+        let config = self.cfg.lexicon?;
+        let best: Vec<&Cascade> = self
+            .ranking()
+            .into_iter()
+            .take(config.best)
+            .map(|i| &self.archive[i].cascade)
+            .collect();
+
+        Some(LexiconState {
+            words: self.lexicon.active().count(),
+            coined: self.lexicon.words.len(),
+            retired: self.lexicon.retired(),
+            best_holding: self.lexicon.holding(&best),
+        })
+    }
+
+    /// The words of every system prompt that member `m` sends, summed over its Workers
+    /// (`.scratch/eigene-sprache/spec.md`, section 3.3): each prompt exactly as the designer
+    /// receives it, with the domain's self-check text where that Trait is on and the member's
+    /// teaching section at its end, counted by `approx_tokens` as the simulated models count
+    /// prompt tokens.
+    fn prompt_words(&self, m: &Member<D::Answer>) -> u64 {
+        let check = self.domain.self_check_text();
+
+        m.cascade
+            .stages
+            .iter()
+            .flat_map(|s| &s.workers)
+            .map(|w| {
+                let mut system = worker_request_with(w, String::new(), 0, check).system;
+
+                if let Some(text) = &m.teaching {
+                    system.push_str(&section_block(text));
+                }
+
+                u64::from(approx_tokens(&system))
+            })
+            .sum()
     }
 
     /// The goal of generation `g` (`.scratch/seelen-modell/spec-imagination.md`, section
@@ -3189,7 +3446,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// passed every check, is draw 1 of its operator. Draws 2 and on apply the same operator
     /// to the same parents, each with its own stream, and the draw with the highest
     /// prediction becomes the child (`imagine`). They never touch `rng`, so the generation's
-    /// stream advances exactly as without imagination.
+    /// stream advances exactly as without imagination. With `lexicon` on, the section
+    /// operators draw their texts from the gene pool's phrases and the words in the Lexicon's
+    /// pool (`phrases`, `.scratch/eigene-sprache/spec.md`, section 3.2).
     fn fill_random(
         &self,
         g: usize,
@@ -3200,6 +3459,9 @@ impl<'a, D: Domain> Breeder<'a, D> {
         rng: &mut ChaCha8Rng,
     ) -> Result<()> {
         let mut attempts = 0;
+        // The gene pool's phrases and the words in the Lexicon's pool, for the whole
+        // generation: the commit before it was the last to change them.
+        let pool = self.phrases();
 
         while others + drafts.len() < self.cfg.children_per_generation
             && attempts < self.cfg.children_per_generation * DRAW_ATTEMPTS
@@ -3255,7 +3517,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
             }
 
             if child.is_none() {
-                let (limits, phrases) = (&self.cfg.limits, self.genes.phrases);
+                let (limits, phrases) = (&self.cfg.limits, pool.as_slice());
                 let made = match &steer {
                     Some(steer) => mutate_steered(&parent.cascade, limits, phrases, steer, rng),
                     None => mutate_sourced(&parent.cascade, limits, phrases, rng)
@@ -3381,7 +3643,7 @@ impl<'a, D: Domain> Breeder<'a, D> {
                     }
                 }
             }
-            _ => mutate_once(a, op, limits, self.genes.phrases, steer, rng)?,
+            _ => mutate_once(a, op, limits, &self.phrases(), steer, rng)?,
         };
 
         Some(Drawn {
@@ -3576,7 +3838,10 @@ impl<'a, D: Domain> Breeder<'a, D> {
     /// A grade error cannot occur here: it would have stopped the member's birth.
     ///
     /// With `goals` on, only the tasks of the goal of the next generation are cases, in panel
-    /// order (`.scratch/seelen-modell/spec-imagination.md`, section 3.4).
+    /// order (`.scratch/seelen-modell/spec-imagination.md`, section 3.4). With `brevity` on,
+    /// one more case follows the tasks (`.scratch/eigene-sprache/spec.md`, section 3.3): 1 for
+    /// a member whose prompt words are at most the lower median of the archive as it stands
+    /// before the next generation's draft, else 0 (`brevity_case`, `prompt_words`).
     fn case_scores(&self) -> Vec<Vec<f64>> {
         let scores = self
             .archive
@@ -3595,10 +3860,20 @@ impl<'a, D: Domain> Breeder<'a, D> {
             })
             .collect();
 
-        match self.goal(self.next_generation) {
+        let mut cases = match self.goal(self.next_generation) {
             Some(goal) => goal_cases(scores, &goal.tasks),
             None => scores,
+        };
+
+        if self.cfg.brevity {
+            let words: Vec<u64> = self.archive.iter().map(|m| self.prompt_words(m)).collect();
+
+            for (row, case) in cases.iter_mut().zip(brevity_case(&words)) {
+                row.push(case);
+            }
         }
+
+        cases
     }
 
     /// A crossover partner for member `a`: draw a few by selection weight and take the
@@ -3976,6 +4251,60 @@ fn rank<A>(archive: &[Member<A>], keys: &[String]) -> Vec<usize> {
     order
 }
 
+/// The members born up to generation `g` and their ranking at the commit of `g`, what
+/// `Breeder::ranking` gave then, from `archive` with the ranking keys `keys` and from
+/// `comparisons`, all as they stand now (`.scratch/eigene-sprache/spec.md`, section 3.2). The
+/// members born up to g are a prefix of the archive, in birth order, and so are the
+/// comparisons of generations up to g. `refresh` gives those members, with those comparisons,
+/// the fitness and the peer ratings that commit gave them; nothing else of a member enters
+/// `refresh` or `rank`. Returns the prefix's length and the ranking.
+fn ranking_at<A>(
+    archive: &[Member<A>],
+    keys: &[String],
+    comparisons: &[Comparison],
+    cfg: &BreedConfig,
+    puzzles: usize,
+    g: usize,
+) -> (usize, Vec<usize>) {
+    let born = archive.iter().take_while(|m| m.generation <= g).count();
+    let judged = comparisons.iter().take_while(|c| c.generation <= g).count();
+    let mut then: Vec<Member<A>> = archive[..born].iter().map(standing).collect();
+
+    refresh(&mut then, &comparisons[..judged], cfg, puzzles);
+
+    (born, rank(&then, &keys[..born.min(keys.len())]))
+}
+
+/// What `refresh` and `rank` read of member `m`: its id, solved count, graded value and usage.
+/// Everything else is left empty, and `refresh` counts the judgments again.
+fn standing<A>(m: &Member<A>) -> Member<A> {
+    Member {
+        id: m.id.clone(),
+        cascade: Cascade { stages: Vec::new() },
+        parents: Vec::new(),
+        op: m.op,
+        generation: m.generation,
+        answers: Vec::new(),
+        solved: m.solved,
+        quality: m.quality,
+        usage: m.usage,
+        children: 0,
+        judge_correct: 0,
+        judge_wrong: 0,
+        fitness: 0.0,
+        rating: 0.0,
+        soul_sources: None,
+        imprinted: None,
+        soul_now: None,
+        teaching: None,
+        authors: None,
+        votes: None,
+        values: None,
+        values_now: None,
+        effect: None,
+    }
+}
+
 /// The birth Soul of every Worker of `c`, in Stage order.
 fn birth_souls(c: &Cascade) -> Vec<PhaseState> {
     c.stages
@@ -4238,6 +4567,11 @@ mod tests {
     use crate::cascade::upbringing::{TEACHING_INTRO, UPBRINGING, model_word_in, teaching};
     use crate::cascade::variation::{GRID_BRIEF, MutatorBrief, Source};
     use std::collections::BTreeSet;
+
+    use crate::cascade::circuit_genes::LEXICON_TERMS;
+    use crate::cascade::circuit_text::CIRCUIT_SELF_CHECK_TEXT;
+    use crate::cascade::designer::{families_in_order, named_families};
+    use crate::cascade::lexicon::{LexiconGenes, Meaning, Word, phrase as coined_phrase};
 
     fn sim_pool() -> ModelPool {
         let mut pool = ModelPool::new();
@@ -5629,6 +5963,7 @@ mod tests {
             brief: &DOUBLING_BRIEF,
             admit: no_forbidden,
             families_of: None,
+            lexicon: None,
         }
     }
 
@@ -11970,5 +12305,618 @@ mod tests {
         assert_eq!(straight.archive, third.archive);
         assert_eq!(straight.comparisons, third.comparisons);
         assert!(third.calls_used() > straight.calls_used());
+    }
+
+    // The Lexicon and the brevity case (`.scratch/eigene-sprache/spec.md`, ticket 01).
+
+    /// `cfg` with the Lexicon `lexicon`.
+    fn lexical(cfg: BreedConfig, lexicon: LexiconConfig) -> BreedConfig {
+        BreedConfig {
+            lexicon: Some(lexicon),
+            ..cfg
+        }
+    }
+
+    /// `cfg` with lexicase selection and the brevity case.
+    fn brief(cfg: BreedConfig) -> BreedConfig {
+        BreedConfig {
+            selection: ParentSelection::Lexicase,
+            brevity: true,
+            ..cfg
+        }
+    }
+
+    /// The Lexicon of arm L or R with a coining step after every `every`-th generation.
+    fn coining_every(every: usize, meaning: Meaning) -> LexiconConfig {
+        LexiconConfig {
+            every,
+            meaning,
+            ..LexiconConfig::arm_l()
+        }
+    }
+
+    /// The `retired` and `coined` events among `events`, in order.
+    fn lexicon_log(events: &[Event]) -> Vec<Event> {
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Retired { .. } | Event::Coined { .. }))
+            .cloned()
+            .collect()
+    }
+
+    /// The lexicon group of every state line among `events`, in order.
+    fn lexicon_groups(events: &[Event]) -> Vec<Option<LexiconState>> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::State(s) => Some(s.lexicon),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_lexicon_and_brevity_are_refused_where_they_cannot_work() {
+        let pool = sim_pool();
+        let designers = designer_pool();
+        let arm_l = |cfg: BreedConfig| lexical(cfg, LexiconConfig::arm_l());
+
+        // The Lexicon reads the families of a text and writes a term for each: the grid gene
+        // pool has neither, a grid Domain names no family, and a gene pool without a term for
+        // every family cannot coin.
+        let reason = invalid(Breeder::new(arm_l(small_config(6301)), &pool, None), "grid");
+
+        assert!(reason.contains("lexicon needs a gene pool"), "{reason}");
+
+        let named = GenePool {
+            families_of: Some(|_| vec![0]),
+            lexicon: circuit_pool().lexicon,
+            ..GenePool::grid()
+        };
+        let termless = GenePool {
+            lexicon: None,
+            ..circuit_pool()
+        };
+        let short = GenePool {
+            lexicon: Some(LexiconGenes {
+                terms: &LEXICON_TERMS[..7],
+                mentions: families_in_order,
+            }),
+            ..circuit_pool()
+        };
+
+        for (what, refused) in [
+            (
+                "grid with families",
+                Breeder::<GridDomain>::start(arm_l(small_config(6301)), named, &pool, None)
+                    .map(|_| ()),
+            ),
+            (
+                "no terms",
+                Breeder::<CircuitDomain>::start(
+                    arm_l(circuit_config(6303)),
+                    termless,
+                    &designers,
+                    None,
+                )
+                .map(|_| ()),
+            ),
+            (
+                "too few terms",
+                Breeder::<CircuitDomain>::start(
+                    arm_l(circuit_config(6303)),
+                    short,
+                    &designers,
+                    None,
+                )
+                .map(|_| ()),
+            ),
+        ] {
+            let reason = invalid(refused, what);
+
+            assert!(
+                reason.contains("lexicon needs a gene pool"),
+                "{what}: {reason}"
+            );
+        }
+
+        // On circuits both arms start, with any selection.
+        for lexicon in [LexiconConfig::arm_l(), LexiconConfig::arm_r()] {
+            for selection in [ParentSelection::Dgm, ParentSelection::Lexicase] {
+                let cfg = BreedConfig {
+                    selection,
+                    ..lexical(circuit_config(6303), lexicon)
+                };
+
+                assert!(
+                    Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None).is_ok()
+                );
+            }
+        }
+
+        // Brevity filters as a case of lexicase, and an epsilon of 1 or more filters no one.
+        for selection in [
+            ParentSelection::Dgm,
+            ParentSelection::Uniform,
+            ParentSelection::Tournament,
+        ] {
+            let cfg = BreedConfig {
+                selection,
+                ..brief(circuit_config(6305))
+            };
+            let reason = invalid(
+                Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None),
+                "selection",
+            );
+
+            assert!(
+                reason.contains("brevity needs lexicase selection"),
+                "{reason}"
+            );
+        }
+
+        let with_epsilon = |cfg: BreedConfig, lexicase_epsilon: f64| BreedConfig {
+            selection_params: SelectionParams {
+                lexicase_epsilon,
+                ..SelectionParams::default()
+            },
+            ..brief(cfg)
+        };
+
+        for epsilon in [1.0, 2.5] {
+            let reason = invalid(
+                Breeder::<CircuitDomain>::start(
+                    with_epsilon(circuit_config(6305), epsilon),
+                    circuit_pool(),
+                    &designers,
+                    None,
+                ),
+                "epsilon",
+            );
+
+            assert!(
+                reason.contains("brevity needs lexicase selection with a lexicase_epsilon below 1"),
+                "{reason}"
+            );
+        }
+
+        // Below 1 it starts, on circuits and on grids alike: it needs no families.
+        for epsilon in [0.0, 0.5, 0.999] {
+            assert!(
+                Breeder::<CircuitDomain>::start(
+                    with_epsilon(circuit_config(6305), epsilon),
+                    circuit_pool(),
+                    &designers,
+                    None
+                )
+                .is_ok()
+            );
+            assert!(Breeder::new(with_epsilon(small_config(6307), epsilon), &pool, None).is_ok());
+        }
+
+        // A Lexicon out of range fails the check of the whole config.
+        for lexicon in [
+            coining_every(0, Meaning::Compression),
+            LexiconConfig {
+                best: 0,
+                ..LexiconConfig::arm_l()
+            },
+            LexiconConfig {
+                max_words: 0,
+                ..LexiconConfig::arm_r()
+            },
+        ] {
+            let cfg = lexical(circuit_config(6303), lexicon);
+
+            assert!(cfg.check().is_err(), "{cfg:?}");
+            invalid(
+                Breeder::<CircuitDomain>::start(cfg, circuit_pool(), &designers, None),
+                "out of range",
+            );
+        }
+
+        // A resume refuses a change of either setting, in both directions.
+        let base = BreedConfig {
+            selection: ParentSelection::Lexicase,
+            ..circuit_config(6309)
+        };
+        let arms = [
+            base.clone(),
+            brief(base.clone()),
+            lexical(base.clone(), LexiconConfig::arm_l()),
+            lexical(base.clone(), LexiconConfig::arm_r()),
+            lexical(base.clone(), coining_every(10, Meaning::Compression)),
+            brief(lexical(base.clone(), LexiconConfig::arm_l())),
+        ];
+
+        for from in &arms {
+            let snap = circuits_after_seeds(from.clone(), &designers).snapshot();
+
+            for to in arms.iter().filter(|to| *to != from) {
+                let reason = invalid(
+                    Breeder::<CircuitDomain>::resume_from(
+                        to.clone(),
+                        circuit_pool(),
+                        &designers,
+                        None,
+                        snap.clone(),
+                    ),
+                    "resume",
+                );
+
+                assert!(reason.contains("resume refused"), "{reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn with_no_word_coined_a_lexicon_drafts_todays_children() {
+        let designers = designer_pool();
+        let never = || false;
+
+        for selection in [ParentSelection::Dgm, ParentSelection::Lexicase] {
+            let cfg = BreedConfig {
+                selection,
+                generations: 21,
+                ..circuit_config(6311)
+            };
+            let mut today = circuits_after_seeds(cfg.clone(), &designers);
+            let mut arms = [LexiconConfig::arm_l(), LexiconConfig::arm_r()]
+                .map(|lexicon| circuits_after_seeds(lexical(cfg.clone(), lexicon), &designers));
+
+            // Generations 1 to 20 come before the first coining step: the pool is the gene
+            // pool's, the same children, and the generation's stream ends at the same word.
+            for g in 1..=20 {
+                let (want, _) = draft_record(&today, g);
+
+                for b in &arms {
+                    let (got, _) = draft_record(b, g);
+
+                    assert_eq!(got, want, "{selection:?}, generation {g}");
+                    assert!(b.lexicon.words.is_empty());
+                    assert_eq!(b.phrases(), CIRCUIT_PHRASES);
+                }
+
+                assert_eq!(today.step(&never).expect("step").0, Status::Continue);
+
+                for b in &mut arms {
+                    assert_eq!(b.step(&never).expect("step").0, Status::Continue);
+                }
+            }
+
+            // The same members; only the Lexicon may set them apart from now on.
+            for b in &arms {
+                assert_eq!(b.archive, today.archive, "{selection:?}");
+                assert_eq!(b.comparisons, today.comparisons, "{selection:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_brevity_case_follows_the_tasks_and_reads_the_prompts_the_designer_receives() {
+        let designers = designer_pool();
+        let never = || false;
+
+        // The words of each prompt as the designer receives it: the sections under their
+        // names, the self-check text where that Trait is on, and the teaching section.
+        let mut m = circuits_after_seeds(circuit_config(6321), &designers).archive[0].clone();
+        let plain = Worker {
+            model: "sim:small".to_string(),
+            sections: vec![
+                Section {
+                    name: "role".to_string(),
+                    text: "a b c".to_string(),
+                },
+                Section {
+                    name: "strategy".to_string(),
+                    text: "d e".to_string(),
+                },
+            ],
+            traits: Traits::default(),
+        };
+        let checking = Worker {
+            sections: vec![Section {
+                name: "format".to_string(),
+                text: "x".to_string(),
+            }],
+            traits: Traits {
+                self_check: true,
+                ..Traits::default()
+            },
+            ..plain.clone()
+        };
+        let b = circuits_after_seeds(brief(circuit_config(6321)), &designers);
+
+        m.cascade = Cascade {
+            stages: vec![Stage {
+                workers: vec![plain, checking],
+            }],
+        };
+
+        // "## role a b c ## strategy d e" and "## format x ## check" with the 17 words of the
+        // self-check text.
+        assert_eq!(approx_tokens(CIRCUIT_SELF_CHECK_TEXT), 17);
+        assert_eq!(b.prompt_words(&m), 9 + 3 + 2 + 17);
+
+        // "## upbringing t u v" ends both prompts.
+        m.teaching = Some("t u v".to_string());
+        assert_eq!(UPBRINGING, "upbringing");
+        assert_eq!(b.prompt_words(&m), 9 + 3 + 2 + 17 + 2 * 5);
+
+        // The case follows the task cases, the tasks of a goal too: 1 for the members at
+        // most the lower median of the archive before the draft, else 0.
+        for cfg in [
+            brief(circuit_config(6323)),
+            brief(with_goals(circuit_config(6323), 1)),
+        ] {
+            let mut b = circuits_after_seeds(cfg, &designers);
+
+            assert_eq!(b.step(&never).expect("generation 1").0, Status::Continue);
+
+            let with = b.case_scores();
+            let words: Vec<u64> = b.archive.iter().map(|m| b.prompt_words(m)).collect();
+            let column = brevity_case(&words);
+
+            b.cfg.brevity = false;
+
+            let without = b.case_scores();
+
+            assert_eq!(with.len(), b.archive.len());
+            assert!(column.contains(&0.0) && column.contains(&1.0), "{words:?}");
+
+            for ((row, plain), pass) in with.iter().zip(&without).zip(&column) {
+                assert_eq!(row.len(), plain.len() + 1);
+                assert_eq!(&row[..plain.len()], &plain[..]);
+                assert_eq!(row.last(), Some(pass));
+            }
+
+            // With goals of one generation, generation 2 has the goal without Linear, which
+            // leaves tasks out: the case still comes last.
+            if b.cfg.goals.is_some() {
+                assert!(without[0].len() < b.search.len());
+            }
+        }
+    }
+
+    #[test]
+    fn a_coined_phrase_joins_the_pool_under_its_section_name() {
+        let designers = designer_pool();
+        let mut b = circuits_after_seeds(
+            lexical(circuit_config(6341), LexiconConfig::arm_l()),
+            &designers,
+        );
+        let text = "Use a hadamard basis change, then the phase polynomial.";
+
+        assert_eq!(b.phrases(), CIRCUIT_PHRASES);
+
+        b.lexicon.words.push(Word {
+            phrase: text.to_string(),
+            meaning: vec![1, 2],
+            section: "strategy".to_string(),
+            saving: 9,
+            generation: 20,
+            retired: None,
+            unheld: false,
+        });
+
+        let pool: Vec<(String, String)> = b
+            .phrases()
+            .into_iter()
+            .map(|(n, t)| (n.to_string(), t.to_string()))
+            .collect();
+
+        assert_eq!(pool.len(), CIRCUIT_PHRASES.len() + 1);
+        assert_eq!(
+            pool.last(),
+            Some(&("strategy".to_string(), text.to_string()))
+        );
+
+        // SectionReplace on a seed's strategy draws it, one more text under its name; from the
+        // gene pool's phrases alone it never does.
+        let holds = |c: &Cascade| {
+            c.stages[0].workers[0]
+                .sections
+                .iter()
+                .any(|s| s.text == text)
+        };
+        let seed = b.archive[0].cascade.clone();
+        let draws = |phrases: &[(&str, &str)]| -> usize {
+            (0..1000)
+                .filter_map(|k| {
+                    let mut rng = ChaCha8Rng::seed_from_u64(k);
+
+                    mutate_once(
+                        &seed,
+                        Op::SectionReplace,
+                        &b.cfg.limits,
+                        phrases,
+                        None,
+                        &mut rng,
+                    )
+                })
+                .filter(|(c, _, _)| holds(c))
+                .count()
+        };
+
+        assert!(draws(&b.phrases()) > 0);
+        assert_eq!(draws(CIRCUIT_PHRASES), 0);
+
+        // A retired word leaves the pool.
+        b.lexicon.words[0].retired = Some(40);
+        assert_eq!(b.phrases(), CIRCUIT_PHRASES);
+    }
+
+    #[test]
+    fn coining_steps_are_logged_replay_from_the_archive_and_resume_as_a_straight_run() {
+        let designers = designer_pool();
+        let never = || false;
+
+        for meaning in [Meaning::Compression, Meaning::Random] {
+            let cfg = lexical(
+                brief(BreedConfig {
+                    generations: 24,
+                    children_per_generation: 8,
+                    ..circuit_config(6331)
+                }),
+                coining_every(4, meaning),
+            );
+            let start = || {
+                Breeder::<CircuitDomain>::start(cfg.clone(), circuit_pool(), &designers, None)
+                    .expect("circuits")
+            };
+            let (straight, events) = bred_with_events(start());
+            let logged = lexicon_log(&events);
+            let coined: Vec<(&str, &Vec<String>, usize)> = logged
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Coined {
+                        phrase,
+                        meaning,
+                        generation,
+                        ..
+                    } => Some((phrase.as_str(), meaning, *generation)),
+                    _ => None,
+                })
+                .collect();
+
+            assert!(!coined.is_empty(), "{meaning:?}: no word coined");
+
+            // The replay of the archive gives the logged events.
+            assert_eq!(straight.lexicon_events(), logged, "{meaning:?}");
+
+            // Each word names exactly its meaning, logged by name in index order; arm R's
+            // phrase names its families in index order too.
+            let names = straight.domain.families();
+
+            for (phrase, words, g) in &coined {
+                let places: Vec<usize> = words
+                    .iter()
+                    .map(|w| names.iter().position(|n| n == w).expect("a family"))
+                    .collect();
+
+                assert_eq!(g % 4, 0);
+                assert_eq!(named_families(phrase), places, "{phrase}");
+
+                if meaning == Meaning::Random {
+                    assert_eq!(*phrase, coined_phrase(&LEXICON_TERMS, &places));
+                }
+            }
+
+            // A step's events come after its generation's other events and before its state
+            // line.
+            for (i, e) in events.iter().enumerate() {
+                let (Event::Retired { generation, .. } | Event::Coined { generation, .. }) = e
+                else {
+                    continue;
+                };
+                let state = events[i..].iter().find_map(|x| match x {
+                    Event::State(s) => Some(s.generation),
+                    _ => None,
+                });
+                let last = events[..i].iter().rev().find_map(|x| match x {
+                    Event::Generation { generation, .. } => Some(*generation),
+                    _ => None,
+                });
+
+                assert_eq!(state, Some(*generation));
+                assert_eq!(last, Some(*generation));
+            }
+
+            // Every state line counts the words of the steps up to it.
+            let groups = lexicon_groups(&events);
+
+            assert_eq!(groups.len(), 25);
+
+            for (g, group) in groups.iter().enumerate() {
+                let group = group.expect("a lexicon group");
+                let count = |retired: bool| {
+                    logged
+                        .iter()
+                        .filter(|e| match e {
+                            Event::Retired { generation, .. } => retired && *generation <= g,
+                            Event::Coined { generation, .. } => !retired && *generation <= g,
+                            _ => false,
+                        })
+                        .count()
+                };
+
+                assert_eq!(group.coined, count(false), "generation {g}");
+                assert_eq!(group.retired, count(true), "generation {g}");
+                assert_eq!(group.words, group.coined - group.retired, "generation {g}");
+                assert!(group.best_holding <= 22);
+            }
+
+            assert_eq!(straight.lexicon.words.len(), coined.len());
+
+            // Stopped after generation 10 and resumed from the snapshot's JSON: the Lexicon
+            // replayed from the archive, and the same events to the end.
+            let mut first = start();
+            let mut split = Vec::new();
+
+            for _ in 0..=10 {
+                split.extend(first.step(&never).expect("step").1);
+            }
+
+            let json = serde_json::to_string(&first.snapshot()).expect("json");
+            let mut second = Breeder::<CircuitDomain>::resume_from(
+                cfg.clone(),
+                circuit_pool(),
+                &designers,
+                None,
+                serde_json::from_str(&json).expect("back"),
+            )
+            .expect("resume");
+
+            assert_eq!(second.lexicon, first.lexicon, "{meaning:?}");
+
+            while let (Status::Continue, ev) = second.step(&never).expect("step") {
+                split.extend(ev);
+            }
+
+            assert_eq!(split, events, "{meaning:?}");
+            assert_eq!(second.lexicon, straight.lexicon);
+            assert_eq!(second.archive, straight.archive);
+        }
+    }
+
+    #[test]
+    fn arm_r_draws_from_the_stream_of_its_generation() {
+        let designers = designer_pool();
+        let b = circuits_after_seeds(
+            lexical(circuit_config(6351), LexiconConfig::arm_r()),
+            &designers,
+        );
+        // The four seeds hold one family each, so no set saves words: a Worker that names
+        // Hadamard and Phase alone, at the top of the ranking, makes L's rule coin a pair.
+        let mut archive = b.archive.clone();
+        let hadamard = archive[2].cascade.stages[0].workers[0].sections[1].clone();
+
+        archive[1].cascade.stages[0].workers[0]
+            .sections
+            .push(hadamard);
+
+        let order: Vec<usize> = vec![1, 0, 2, 3];
+        let mut via_breeder = Lexicon::default();
+        let events = b.coin(&mut via_breeder, 20, &archive, &order);
+        let mut direct = Lexicon::default();
+        let best: Vec<&Cascade> = order.iter().map(|&i| &archive[i].cascade).collect();
+        let pool = circuit_pool();
+
+        direct.step(&CoiningStep {
+            generation: 20,
+            best: &best,
+            families: 8,
+            families_of: pool.families_of.expect("families"),
+            phrases: pool.phrases,
+            genes: pool.lexicon.expect("terms"),
+            config: LexiconConfig::arm_r(),
+            draw_seed: derive_seed(6351, "lexicon/20"),
+        });
+
+        assert_eq!(via_breeder, direct);
+        assert_eq!(via_breeder.words.len(), 1);
+        assert_eq!(via_breeder.words[0].meaning.len(), 2);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], Event::Coined { generation: 20, .. }));
     }
 }

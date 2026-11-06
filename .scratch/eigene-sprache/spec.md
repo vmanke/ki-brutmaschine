@@ -159,7 +159,12 @@ No source here describes the construction below. It is our own.
   "Use a hadamard basis change, then the phase polynomial." The order is the order in which the
   most Workers name the families. A test checks that `named_families` of each phrase is exactly
   its meaning. Readable phrases follow rule 2 and the finding of Grand (2024).
-- **Its section name.** The section name that the compressed sections carry most often.
+- **Its section name.** The section name that the compressed sections carry most often. A tie
+  goes to the name with the most fixed phrases in the gene pool, then to the alphabetically
+  first. Ties are common: a Worker often holds one family under "strategy" and the other under a
+  name that SectionReplace wrote it into. Under the name with the most texts, the word gets the
+  smallest share of the same-name draws, so it spreads by selection and not because few texts
+  share its name (ticket 01, Comments).
 - **Use.** A coined phrase joins the gene pool. The section operators draw it like any other
   phrase. It is exempt from the pool's rule of section 3.1: naming two of Hadamard, Phase and
   Linear in one phrase is exactly what a coined word may do.

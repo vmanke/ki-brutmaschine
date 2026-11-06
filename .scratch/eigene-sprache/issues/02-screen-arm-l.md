@@ -62,3 +62,10 @@ and in R.
 - The analysis script and its outputs are in `.scratch/eigene-sprache/analysis/`.
 
 ## Comments
+
+- 2026-11-06: not run, by the owner's decision of the same day; ticket 01 is built. Before this
+  screen is approved, note the probes in the Comments of ticket 01. With the section-name rule
+  now in spec 3.2, a coined word joins "strategy" and spreads about as often as any strategy
+  phrase. In 6 probes of 100 generations, at most 5 of the 22 best members held one in any
+  generation, and at most 2 at generation 100. Whether 1000 generations give it time to act is
+  open.

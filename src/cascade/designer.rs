@@ -259,6 +259,14 @@ pub fn named_families(text: &str) -> Vec<usize> {
     named
 }
 
+/// The families a text names, by their places in `FAMILY_STEMS`, in the order of their first
+/// mention, as the designer reads its method order: those of `knowledge`, as places. The
+/// Lexicon orders the families of a coined phrase by it (`.scratch/eigene-sprache/spec.md`,
+/// section 3.2).
+pub fn families_in_order(text: &str) -> Vec<usize> {
+    known(text).into_iter().map(Family::index).collect()
+}
+
 /// What the known families can build, whatever their order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Skills {
