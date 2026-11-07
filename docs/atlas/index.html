@@ -141,8 +141,6 @@ input[type="range"] { width: 100%; accent-color: var(--heat); }
 @media (max-width: 760px) { .soul { grid-template-columns: 1fr; } }
 
 /* Chart */
-.chart-wrap { position: relative; min-width: 520px; }
-.chart-wrap svg { min-width: 0; }
 .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.92rem; }
 .legend span { display: inline-flex; align-items: center; gap: 8px; }
 .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
@@ -213,7 +211,7 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
   <!-- Hero: the rings from the hot core outward -->
   <section class="hero" aria-labelledby="t-hero">
     <div class="hero-text">
-      <p class="eyebrow"><span class="de">Forschungs-Prototyp · Stand 31.10.2026</span><span class="en">Research prototype · as of 31 Oct 2026</span></p>
+      <p class="eyebrow"><span class="de">Forschungs-Prototyp · Stand 7.11.2026</span><span class="en">Research prototype · as of 7 Nov 2026</span></p>
       <h1 id="t-hero"><span class="de">Ein Brutkasten für denkende Ketten</span><span class="en">An incubator for thinking chains</span></h1>
       <p class="lede">
         <span class="de">Die Brutmaschine züchtet Kaskaden aus Sprachmodell-Workern nach dem Vorbild der Darwin-Gödel-Maschine. Jede Kaskade löst Aufgaben und urteilt zugleich über andere. Von innen nach außen kommen Wächter, Universen und der Mensch dazu.</span>
@@ -522,8 +520,8 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
         <span class="en">Each Worker is to carry phases, one per hypothesis family: its "soul". Votes add as complex numbers; the squared magnitude decides. Observation is an interaction of strength κ: the observed loses phase, the observer takes part of it. The sketch computes the model classically. By your definition, the pattern that many phases make together is the character. The next section computes such a pattern for your laser spot.</span>
       </p>
       <p class="prose">
-        <span class="de">Schritt 2 prüft dieses Modell; sein Entwurf ist fertig (PR #29). Die Fragen Q67 bis Q74 sind nach den empfohlenen Antworten entschieden. Sie können jede davon umstoßen. Der Bau ist seit PR #48 im Repository, das Begriffswörterbuch seit PR #49. Der Pilot (PR #50) fand keine Wirkung der Seele auf die Bestehenszeit; die gezählten Läufe entfallen.</span>
-        <span class="en">Step 2 tests this model; its design is finished (PR #29). Questions Q67 to Q74 are decided by the recommended answers. You can overrule any of them. The build is in the repository since PR #48, the glossary since PR #49. The pilot (PR #50) found no effect of the Soul on the pass time; the counted runs are not run.</span>
+        <span class="de">Schritt 2 hat dieses Modell geprüft (PR #48). Im Pilot wirkte die Seele selten und meist erst nach dem Bestehen; die gezählten Läufe entfallen (PR #50). Den weiteren Stand zeigt der Fahrplan.</span>
+        <span class="en">Step 2 tested this model (PR #48). In the pilot the Soul acted rarely, and mostly after the pass; the counted runs are not run (PR #50). The roadmap shows the rest.</span>
       </p>
     </header>
     <div class="soul">
@@ -858,51 +856,6 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
 <!-- step1-data:end -->
   </section>
 
-  <!-- Measured results -->
-  <section class="section" aria-labelledby="t-res">
-    <header>
-      <p class="eyebrow"><span class="de">Gemessen · simuliertes Modell</span><span class="en">Measured · simulated model</span></p>
-      <h2 id="t-res"><span class="de">Gezüchtet schlägt Startprogramm</span><span class="en">Bred beats seed</span></h2>
-      <p class="prose">
-        <span class="de">Drei Läufe mit Standardwerten, 10 Generationen. Gemessen auf 40 Rätseln, die die Suche nie gesehen hat (Auswahl-Panel). Positivkontrolle: Die Zahlen sagen nichts über echte Sprachmodelle.</span>
-        <span class="en">Three runs with default settings, 10 generations. Measured on 40 puzzles the search never saw (select panel). Positive control: the numbers say nothing about real language models.</span>
-      </p>
-    </header>
-    <figure>
-      <div class="legend" aria-hidden="true">
-        <span><i class="swatch" style="background:var(--violet)"></i><span class="de">bestes Startprogramm</span><span class="en">best seed Cascade</span></span>
-        <span><i class="swatch" style="background:var(--heat)"></i><span class="de">bester gezüchteter Finalist</span><span class="en">best bred finalist</span></span>
-      </div>
-      <div class="scroll"><div class="chart-wrap" id="chart-wrap">
-        <svg id="chart" viewBox="0 0 640 230" role="img" aria-label="Select-panel solved rate per seed: seed Cascade 0.300, 0.300, 0.325; bred finalist 0.500, 0.625, 0.550."></svg>
-        <div class="tooltip" id="tip" hidden></div>
-      </div></div>
-      <figcaption>
-        <span class="de">Vorsprung: +0.200, +0.325, +0.225. Drei Seeds ergeben keinen Signifikanztest.</span>
-        <span class="en">Lead: +0.200, +0.325, +0.225. Three seeds give no significance test.</span>
-      </figcaption>
-      <div class="scroll" style="padding-top:6px">
-        <table>
-          <thead>
-            <tr>
-              <th>Seed</th>
-              <th><span class="de">Kind, Such-Panel</span><span class="en">child, search panel</span></th>
-              <th><span class="de">Finalist, Auswahl</span><span class="en">finalist, select</span></th>
-              <th><span class="de">Startprogramm, Auswahl</span><span class="en">seed, select</span></th>
-              <th><span class="de">Aufrufe</span><span class="en">calls</span></th>
-              <th><span class="de">Laufzeit</span><span class="en">wall time</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>1</td><td>22/40</td><td>0.500</td><td>0.300</td><td>7 701</td><td>0.19 s</td></tr>
-            <tr><td>2</td><td>27/40</td><td>0.625</td><td>0.300</td><td>8 792</td><td>0.16 s</td></tr>
-            <tr><td>3</td><td>29/40</td><td>0.550</td><td>0.325</td><td>9 308</td><td>0.15 s</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </figure>
-  </section>
-
   <!-- Claim ladder -->
   <section class="section" aria-labelledby="t-ladder">
     <header>
@@ -911,7 +864,7 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
       <p class="prose"><span class="de">Eine Aussage reicht so weit wie ihre Messung. Die Stufen bauen aufeinander auf.</span><span class="en">A claim reaches as far as its measurement. The rungs build on each other.</span></p>
     </header>
     <ol class="ladder">
-      <li><div><h3><span class="de">Über unser Modell</span><span class="en">About our model</span></h3><p><span class="de">Hilft der Phasenzustand mit κ beim Erfinden? Gemessen in jedem Lauf gegen gleich große Kontrollen.</span><span class="en">Does the phase state with κ help inventing? Measured in every run against controls of equal size.</span></p></div></li>
+      <li><div><h3><span class="de">Über unser Modell</span><span class="en">About our model</span></h3><p><span class="de">Hilft der Phasenzustand mit κ beim Erfinden? Im Pilot von Schritt 2 zeigte sich kein Vorteil: S gegen V 4:4.</span><span class="en">Does the phase state with κ help inventing? The pilot of step 2 showed no advantage: S against V 4:4.</span></p></div></li>
       <li><div><h3><span class="de">Über menschliche Gefühle</span><span class="en">About human feelings</span></h3><p><span class="de">Verbessern Gefühls-Urteile das Erfinden? Blinde Protokolle, jeder Eingriff protokolliert.</span><span class="en">Do feeling judgments improve inventing? Blind protocols, every intervention logged.</span></p></div></li>
       <li><div><h3><span class="de">Über Physik</span><span class="en">About physics</span></h3><p><span class="de">Erfundene Schaltungen auf echter Quanten-Hardware: Die Natur prüft selbst. Später, mit eigenem ADR.</span><span class="en">Invented circuits on real quantum hardware: nature checks for itself. Later, with its own ADR.</span></p></div></li>
       <li><div><h3><span class="de">Über die Seele</span><span class="en">About the soul</span></h3><p><span class="de">Für unser Modell zeigt sich die Seele an ihrem Charakter (Q57). Für die Natur bleibt Frage Q48 offen: Sie verlangt eine Vorhersage, die anders ausfällt, je nachdem ob es eine Seele gibt.</span><span class="en">For our model, the soul shows itself through its character (Q57). For nature, question Q48 stays open: it needs a prediction that differs depending on whether a soul exists.</span></p></div></li>
@@ -926,17 +879,18 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
     </header>
     <ul class="road">
       <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">Stufe 2c: Cascades, Peer-Urteile, Darwin-Gödel-Elternwahl, Beförderung per PR (PR #8; Nachträge in #10 und #11)</span><span class="en">Stage 2c: Cascades, peer judging, Darwin Gödel parent choice, promotion by PR (PR #8; follow-ups in #10 and #11)</span></span></li>
-      <li><span class="pill built"><span class="de">Schritt 1</span><span class="en">step 1</span></span><span><span class="de">Gebaut sind die Messgrößen des Universums, der exakte Qubit-Simulator, Schaltungen als Aufgabe und der vorab festgelegte Vergleich (PR #12, #13, #15, #17 bis #19).</span><span class="en">Built: universe observables, the exact qubit simulator, circuits as a task and the pre-registered comparison (PRs #12, #13, #15, #17 to #19).</span> <span id="road-step1-state"><span class="de">Die gezählten Läufe sind abgeschlossen.</span><span class="en">The counted runs are finished.</span></span><span class="de"> Der Bericht mit den Ergebnissen steht seit PR #21 im Repository.</span><span class="en"> The report with the results is in the repository since PR #21.</span></span></li>
-      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">GPU-VM: <span class="mono">tools/vm-setup.sh</span> richtet mit einem Befehl eine VM mit Ubuntu 24.04 ein (PR #26). PR #30 und #31 brachten den systemd-Dienst <span class="mono">brut-remote-control</span>, der Claude Remote Control nach jedem Systemstart in tmux startet (zusehen: <span class="mono">tmux -L brut attach -t brut</span>; abschalten: <span class="mono">sudo systemctl disable --now brut-remote-control</span>). Dazu kamen die GitHub-Anmeldung mit einem einzigen Code, das Warten auf die Updates beim ersten Start und <span class="mono">gh</span> aus GitHubs eigener Paketquelle. Die Firewall <span class="mono">ufw</span> lässt nur SSH herein, und Docker veröffentlicht Ports standardmäßig auf <span class="mono">127.0.0.1</span>. Ihre VM bei Nebius hat eine NVIDIA H200 mit 143&nbsp;771 MiB GPU-Speicher, 16 vCPU und 196 GB RAM (gemessen) und läuft unterbrechbar zum Spot-Preis. Die Abrechnung der GPU endet erst, wenn die VM in der Nebius-Konsole oder über die API angehalten wird; ein Herunterfahren in der VM beendet sie laut Nebius-Dokumentation nicht, und Festplatten werden auch im angehaltenen Zustand abgerechnet.</span><span class="en">GPU VM: <span class="mono">tools/vm-setup.sh</span> sets up a VM with Ubuntu 24.04 with one command (PR #26). PRs #30 and #31 added the systemd service <span class="mono">brut-remote-control</span>, which starts Claude Remote Control in tmux after every boot (watch: <span class="mono">tmux -L brut attach -t brut</span>; turn off: <span class="mono">sudo systemctl disable --now brut-remote-control</span>). They also added GitHub sign-in with a single code, waiting for the first-boot updates and <span class="mono">gh</span> from GitHub's own package source. The firewall <span class="mono">ufw</span> lets only SSH in, and Docker publishes ports on <span class="mono">127.0.0.1</span> by default. Your Nebius VM has one NVIDIA H200 with 143&nbsp;771 MiB of GPU memory, 16 vCPU and 196 GB RAM (measured) and runs preemptible at the spot price. GPU billing stops only when the VM is stopped in the Nebius console or API; a shutdown from inside the VM does not stop it, according to the Nebius docs, and disks are billed even while the VM is stopped.</span></span></li>
-      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">Echte Sprachmodelle: PR #33 brachte das eigene Paket <span class="mono">backend-ollama</span> mit dem Programm <span class="mono">brut-breed-ollama</span>. Seine Tags lauten <span class="mono">ollama:&lt;modell&gt;</span>, und es spricht nur mit einer Loopback-Adresse. Vorerst erlaubt sind <span class="mono">qwen2.5:7b</span>, <span class="mono">qwen2.5:14b</span>, <span class="mono">qwen2.5:32b</span> und <span class="mono">llama3.1:8b</span>, alle ohne Denkmodus. Jeder Worker-Aufruf wird samt voller Antwort in <span class="mono">&lt;out&gt;/llm/worker-calls.jsonl</span> aufgezeichnet. Ein fortgesetzter Lauf spielt diese Aufzeichnung ab. Erste Läufe auf der H200 mit 2704 Worker-Aufrufen: Die Maschine läuft mit echten Modellen, ein Zuchtgewinn ist bei Panels von 12 bis 24 Rätseln noch nicht messbar (PR #34).</span><span class="en">Real language models: PR #33 added the separate crate <span class="mono">backend-ollama</span> with the program <span class="mono">brut-breed-ollama</span>. Its tags read <span class="mono">ollama:&lt;model&gt;</span>, and it talks only to a loopback address. Allowed for now are <span class="mono">qwen2.5:7b</span>, <span class="mono">qwen2.5:14b</span>, <span class="mono">qwen2.5:32b</span> and <span class="mono">llama3.1:8b</span>, all without thinking mode. Every Worker call is recorded with its full answer in <span class="mono">&lt;out&gt;/llm/worker-calls.jsonl</span>. A resumed run replays this record. First runs on the H200 with 2704 Worker calls: the machine runs with real models, and a breeding gain is not yet measurable with panels of 12 to 24 puzzles (PR #34).</span></span></li>
-      <li><span class="pill built">CNN</span><span><span class="de">CNN-Basismodelle im MLP-Modus. Teil 1 ist seit PR #24 im Repository, mit den Tickets 01 und 02; die Bibliothek ist candle an einem festen Commit. Er brachte einen Golden-Test des heutigen MLP-Verhaltens, die candle-Schicht mit acht Ersatz-Operationen und Gradiententests, fünf erzeugte Bild- und Folgenaufgaben, das CNN-Genom mit Formprüfung sowie Training, Bewertung und Einbindung von CNNs in den Lauf. Teil 2 ist gebaut, mit den Tickets 03, 04, 05 und 07: die 16 Familien mit je einem Basismodell, Mutationen und Kreuzung, die Basismodelle in Generation 0 eines Laufs, die Kommandozeile, ADR 0008 und die Beförderung der Sieger zu Basismodellen späterer Läufe. PR #27 brachte einen Zwischenstand, PR #32 zog die CNN-Tests auf Ticket 04 nach und korrigierte GoogLeNet und ConvNeXt, PR #43 schließt Teil 2 ab. Teil 3 (Ticket 06) ist seit PR #47 im Repository: Ein frisches CNN lernt je Trainingsaufgabe von ARC-AGI-1 und wird auf ganzen Rastern bewertet (ADR 0010). Auf 259 Aufgaben schlägt noch keines der zwei Basismodelle das bloße Kopieren der Eingabe; ganze Raster trifft das FCN in 1 von 264 Testrastern.</span><span class="en">CNN base models in the MLP mode. Part 1 is in the repository since PR #24, with tickets 01 and 02; the library is candle at a pinned commit. It brought a golden test of today's MLP behaviour, the candle layer with eight replacement operations and gradient tests, five generated image and sequence tasks, the CNN genome with its shape check, and the training, scoring and integration of CNNs into the run. Part 2 is built, with tickets 03, 04, 05 and 07: the 16 families with one base model each, mutations and crossover, the base models in generation 0 of a run, the command line, ADR 0008 and the promotion of winners to base models of later runs. PR #27 brought an interim state, PR #32 brought the CNN tests up to ticket 04 and fixed GoogLeNet and ConvNeXt, and PR #43 completes part 2. Part 3 (ticket 06) is in the repository since PR #47: a fresh CNN learns each ARC-AGI-1 training task and is scored on whole grids (ADR 0010). On 259 tasks neither of the two base models beats copying the input yet; the FCN gets 1 of 264 test grids right.</span></span></li>
-      <li><span class="pill work"><span class="de">Schritt 2</span><span class="en">step 2</span></span><span><span class="de">Seele und κ gegen die reelle Kontrolle. Der Entwurf steht im Repository: PR #28 brachte die erste Fassung, PR #29 die endgültige. Am 31.10.2026 wurden die Fragen Q67 bis Q74 nach den empfohlenen Antworten entschieden; Sie können jede davon umstoßen. Am selben Tag begann der Bau der Tickets 01 bis 09 und 12; am 02.11.2026 kam er mit PR #48 ins Repository, das Begriffswörterbuch mit PR #49. Ohne Seele bleibt jede bisherige Ausgabe byte-gleich. Der Pilot (Ticket 11, PR #50) lief auf 12 Seeds in fünf Armen. Die Seele wirkte selten und meist erst nach dem Bestehen: S gegen V 4:4, S gegen K 3:3, dazu viele Gleichstände. Die gezählten Läufe (Tickets 10 und 13) entfallen deshalb. Danach suchten wir ein Seelen-Modell, das früh und oft wirkt. Zwei Kandidaten erreichten im Vortest kein Go. Auf Gittern wirkt die Seele früh, aber ohne klaren Vorteil (PR #53). Bei Arm W wandten sich die vererbten Vorlieben nicht den nötigen Familien zu (PR #52). Eine Forschungsnotiz sammelt Belege für ein chemisches QNN-Resnet als Seele (PR #54).</span><span class="en">Soul and κ against the real-valued control. The design is in the repository: PR #28 brought the first draft, PR #29 the final one. On 31 Oct 2026, questions Q67 to Q74 were decided by their recommended answers; you can overrule any of them. The same day, the build of tickets 01 to 09 and 12 began; on 2 Nov 2026 it reached the repository with PR #48, the glossary with PR #49. Without a Soul, every earlier output stays byte-identical. The pilot (ticket 11, PR #50) ran 12 seeds in five arms. The Soul acted rarely, and mostly after the pass: S against V 4:4, S against K 3:3, with many ties. So the counted runs (tickets 10 and 13) are not run. Then we looked for a Soul model that acts early and often. Two candidates earned no go in their screens. On grids the Soul acts early, but without a clear advantage (PR #53). In arm W the inherited preferences did not turn towards the needed families (PR #52). A research note collects sources for a chemical QNN-ResNet as the Soul (PR #54).</span></span></li>
-      <li><span class="pill work"><span class="de">Vergleich</span><span class="en">comparison</span></span><span><span class="de">Zucht gegen Mehrheitsvotum. Die Auswahlstudie mit simulierten Modellen ist seit PR #45 im Repository; Lexicase lag dort vorn, in 17 von 30 Seeds besser und in 5 schlechter als DGM. Die Vorregistrierung des Vergleichs mit einem echten Modell (PR #46) ist entschieden und gebaut: Zucht, Lexicase und ein Mehrheitsvotum mit gleich vielen Aufrufen, mit einer einseitigen Stopp-Regel. Als Nächstes läuft der Pilot auf der VM; danach wird sie eingefroren.</span><span class="en">Breeding against a majority vote. The selection study with simulated models is in the repository since PR #45; lexicase led there, better than DGM in 17 of 30 seeds and worse in 5. The pre-registration of the comparison with a real model (PR #46) is decided and built: breeding, lexicase and a majority vote with as many calls, under a one-sided stopping rule. The pilot on the VM runs next; then it is frozen.</span></span></li>
+      <li><span class="pill built"><span class="de">Schritt 1</span><span class="en">step 1</span></span><span><span class="de">Messgrößen des Universums, exakter Qubit-Simulator, Schaltungen als Aufgabe und der vorab festgelegte Vergleich.</span><span class="en">Universe observables, the exact qubit simulator, circuits as a task and the pre-registered comparison.</span> <span id="road-step1-state"><span class="de">Die gezählten Läufe sind abgeschlossen.</span><span class="en">The counted runs are finished.</span></span><span class="de"> Beide Aussagen sind bewiesen; der Bericht steht seit PR #21 im Repository.</span><span class="en"> Both claims are proven; the report is in the repository since PR #21.</span></span></li>
+      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">GPU-VM: <span class="mono">tools/vm-setup.sh</span> richtet mit einem Befehl eine VM mit Ubuntu 24.04 und einer NVIDIA H200 ein (PR #26, #30, #31). Die Firewall lässt nur SSH herein. Bedienung und Kosten stehen in der README. Die GPU kostet, bis die VM in der Nebius-Konsole oder über die API angehalten ist.</span><span class="en">GPU VM: <span class="mono">tools/vm-setup.sh</span> sets up a VM with Ubuntu 24.04 and an NVIDIA H200 with one command (PRs #26, #30, #31). The firewall lets only SSH in. Operation and costs are in the README. The GPU costs money until the VM is stopped in the Nebius console or through the API.</span></span></li>
+      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">Echte Sprachmodelle: <span class="mono">brut-breed-ollama</span> spricht nur mit einer Loopback-Adresse, mit Ollama (PR #33) oder vLLM (PR #36; auf der H200 rund 40-mal mehr Durchsatz). Jeder Worker-Aufruf wird samt Antwort aufgezeichnet, und ein fortgesetzter Lauf spielt ihn ab.</span><span class="en">Real language models: <span class="mono">brut-breed-ollama</span> talks only to a loopback address, to Ollama (PR #33) or vLLM (PR #36; about 40 times the throughput on the H200). Every Worker call is recorded with its answer, and a resumed run replays it.</span></span></li>
+      <li><span class="pill built">CNN</span><span><span class="de">CNN-Basismodelle im MLP-Modus: 16 Familien mit je einem Basismodell, Mutation, Kreuzung und Beförderung der Sieger (PR #24, #43; ADR 0007 und 0008). Auf ARC-Rastern lernt je Aufgabe ein frisches CNN (PR #47, ADR 0010). Auf 259 Aufgaben schlägt noch keines der zwei Basismodelle das bloße Kopieren der Eingabe; das FCN trifft 1 von 264 Testrastern ganz.</span><span class="en">CNN base models in the MLP mode: 16 families with one base model each, mutation, crossover and promotion of the winners (PRs #24, #43; ADRs 0007 and 0008). On ARC grids a fresh CNN learns each task (PR #47, ADR 0010). On 259 tasks neither of the two base models beats copying the input yet; the FCN gets 1 of 264 test grids fully right.</span></span></li>
+      <li><span class="pill built"><span class="de">gebaut</span><span class="en">built</span></span><span><span class="de">Eigene Sprache: Ein Lauf prägt lesbare Wörter für zwei oder drei Methodenfamilien, gewählt nach den Wörtern, die sie sparen. Dazu kommt ein Kürze-Fall in Lexicase (Entwurf PR #60, gebaut hinter Schaltern PR #62). Ohne die Schalter bleibt jede Ausgabe byte-gleich. Der Vortest entfällt.</span><span class="en">A language of its own: a run coins readable words for two or three method families, chosen by the words they save. A brevity case in lexicase comes with it (design PR #60, built behind switches PR #62). Without the switches every output stays byte-identical. The screen is not run.</span></span></li>
+      <li><span class="pill work"><span class="de">Schritt 2</span><span class="en">step 2</span></span><span><span class="de">Seele und κ (PR #48). Im Pilot wirkte die Seele selten und meist erst nach dem Bestehen: S gegen V 4:4, S gegen K 3:3 (PR #50). Die gezählten Läufe entfallen. Drei Vortests suchten ein Seelen-Modell, das früh wirkt, und endeten ohne Go: Arm W (PR #52, ADR 0011), Gitter (PR #53) und Arm IG mit Erfahrung, Vorstellung und wechselnden Zielen (PR #57). Eine Forschungsnotiz prüft ein chemisches QNN-Resnet als Seele (PR #54). Die nächste Richtung ist offen.</span><span class="en">Soul and κ (PR #48). In the pilot the Soul acted rarely, and mostly after the pass: S against V 4:4, S against K 3:3 (PR #50). The counted runs are not run. Three screens looked for a Soul model that acts early and ended without a go: arm W (PR #52, ADR 0011), grids (PR #53) and arm IG with experience, imagination and changing goals (PR #57). A research note examines a chemical QNN-ResNet as the Soul (PR #54). The next direction is open.</span></span></li>
+      <li><span class="pill work"><span class="de">Vergleich</span><span class="en">comparison</span></span><span><span class="de">Zucht gegen Mehrheitsvotum. Lexicase ist der Standard: In der Auswahlstudie war es in 17 von 30 Seeds besser und in 5 schlechter als DGM (PR #45). Die Vorregistrierung mit einem echten Modell ist gebaut (PR #46). Ihr Pilot lief am 2.11.2026 auf der H200 mit drei Seeds; die Lexicase-Arme wurden abgebrochen. Rohsummen auf 100 ungesehenen Rätseln, noch ohne die vorab festgelegte Auswertung: Der DGM-Champion löste 23, 29 und 30, die ungezüchtete Start-Cascade 26, 28 und 30, das Mehrheitsvotum 23, 29 und 32. Die Fitness des Champions auf den 40 Such-Rätseln stieg, auf neuen Rätseln schlug er die Start-Cascade nicht. Der GPU-Kurzlauf mit Lexicase entfällt.</span><span class="en">Breeding against a majority vote. Lexicase is the standard: in the selection study it was better than DGM in 17 of 30 seeds and worse in 5 (PR #45). The pre-registration with a real model is built (PR #46). Its pilot ran on the H200 on 2 Nov 2026 with three seeds; the lexicase arms were stopped early. Raw totals on 100 unseen puzzles, before the pre-registered analysis: the DGM champion solved 23, 29 and 30, the unbred seed Cascade 26, 28 and 30, the majority vote 23, 29 and 32. The champion's fitness on the 40 search puzzles rose, but on new puzzles it did not beat the seed Cascade. The short GPU run with lexicase is dropped.</span></span></li>
       <li><span class="pill planned"><span class="de">Schritt 3</span><span class="en">step 3</span></span><span><span class="de">Wächter mit gepflanzten Fälschungen</span><span class="en">Overseers with planted fakes</span></span></li>
       <li><span class="pill planned"><span class="de">Schritt 4</span><span class="en">step 4</span></span><span><span class="de">Menschliche Gefühle in der Suche</span><span class="en">Human feelings in the search</span></span></li>
       <li><span class="pill planned"><span class="de">Schritt 5</span><span class="en">step 5</span></span><span><span class="de">Quanten-Worker und TextGrad-Operator</span><span class="en">Quantum Workers and the TextGrad operator</span></span></li>
-      <li><span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span><span><span class="de">Sprachmodelle nutzen CNNs: Der Entwurf ist geschrieben; der PR folgt. F1: Ein CNN arbeitet als Worker in einer Cascade. F2: Ein Sprachmodell schlägt als Architekt Baupläne für CNNs vor. F3: Ein CNN dient als Werkzeug, das das Sprachmodell aufruft, höchstens dreimal je Antwort.</span><span class="en">LLMs use CNNs: the design is written; the PR follows. F1: a CNN works as a Worker in a Cascade. F2: a language model, as Architect, proposes CNN blueprints. F3: a CNN serves as a tool that the language model calls, at most three times per answer.</span></span></li>
-      <li><span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span><span><span class="de">Chemische Netze: chemische Reaktionsnetze als verallgemeinerte neuronale Netze, eine spätere Modellart. Die Recherche ist fertig (PR #37): 74 geprüfte Quellen und vier Tickets für erste Prototypen.</span><span class="en">Chemical networks: chemical reaction networks as generalised neural networks, a later model kind. The research is done (PR #37): 74 checked sources and four tickets for first prototypes.</span></span></li>
+      <li><span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span><span><span class="de">Sprachmodelle nutzen CNNs: Der Entwurf steht seit PR #38 im Repository; seine 18 Tickets warten auf Ihre Freigabe. F1: Ein CNN arbeitet als Worker. F2: Ein Sprachmodell schlägt als Architekt Baupläne für CNNs vor. F3: Ein CNN dient als Werkzeug, höchstens dreimal je Antwort.</span><span class="en">LLMs use CNNs: the design is in the repository since PR #38; its 18 tickets wait for your approval. F1: a CNN works as a Worker. F2: a language model, as Architect, proposes CNN blueprints. F3: a CNN serves as a tool, at most three times per answer.</span></span></li>
+      <li><span class="pill planned"><span class="de">geplant</span><span class="en">planned</span></span><span><span class="de">Chemische Netze als verallgemeinerte neuronale Netze, eine spätere Modellart: Recherche mit 74 geprüften Quellen (PR #37, Faktenprüfung PR #58), Entwurf eines rekurrenten chemischen Netzes (PR #58) und Befunde zu Genom und Schrittregel (PR #61). Gebaut ist noch nichts.</span><span class="en">Chemical networks as generalised neural networks, a later model kind: research with 74 checked sources (PR #37, fact check PR #58), a draft of a recurrent chemical network (PR #58) and findings on the genome and the step rule (PR #61). Nothing is built yet.</span></span></li>
       <li><span class="pill planned"><span class="de">geparkt</span><span class="en">parked</span></span><span><span class="de">Quantenneuronale Netze: geparkt, bis echte Quanten-Hardware erreichbar ist (Idee 12 in <span class="mono">.scratch/universum-erfinden/issues/</span>).</span><span class="en">Quantum neural networks: parked until real quantum hardware is in reach (idea 12 in <span class="mono">.scratch/universum-erfinden/issues/</span>).</span></span></li>
     </ul>
   </section>
@@ -1025,62 +979,6 @@ summary:focus-visible { outline: 2px solid var(--heat); outline-offset: 3px; bor
   phase.addEventListener("input", updateSoul);
   kappa.addEventListener("input", updateSoul);
   updateSoul();
-
-  // Dumbbell chart: select-panel solved rate per seed, seed Cascade vs bred finalist.
-  var data = [
-    { seed: 1, base: 0.300, bred: 0.500 },
-    { seed: 2, base: 0.300, bred: 0.625 },
-    { seed: 3, base: 0.325, bred: 0.550 }
-  ];
-  var svg = document.getElementById("chart"), NS = "http://www.w3.org/2000/svg";
-  var W = 640, L = 70, Rm = 30, T = 18, rowH = 56, xMax = 0.7;
-  function x(v) { return L + (W - L - Rm) * (v / xMax); }
-  function el(name, attrs, text) {
-    var e = document.createElementNS(NS, name);
-    for (var a in attrs) e.setAttribute(a, attrs[a]);
-    if (text != null) e.textContent = text;
-    svg.appendChild(e); return e;
-  }
-  var bottom = T + rowH * data.length;
-  for (var t = 0; t <= 7; t++) {
-    var v = t / 10, gx = x(v);
-    el("line", { x1: gx, y1: T - 6, x2: gx, y2: bottom, style: "stroke:var(--line)", "stroke-width": 1 });
-    el("text", { x: gx, y: bottom + 18, "text-anchor": "middle", class: "small" }, v.toFixed(1));
-  }
-  var axisDe = el("text", { x: L + (W - L - Rm) / 2, y: bottom + 40, "text-anchor": "middle", class: "small de" }, "Lösungsquote auf dem Auswahl-Panel");
-  var axisEn = el("text", { x: L + (W - L - Rm) / 2, y: bottom + 40, "text-anchor": "middle", class: "small en" }, "solved rate on the select panel");
-  var tipEl = document.getElementById("tip"), wrap = document.getElementById("chart-wrap");
-  function showTip(evt, html) {
-    tipEl.innerHTML = html; tipEl.hidden = false;
-    var r = wrap.getBoundingClientRect();
-    var px = evt.clientX - r.left + 12, py = evt.clientY - r.top - 36;
-    tipEl.style.left = Math.min(px, r.width - 190) + "px"; tipEl.style.top = Math.max(py, 0) + "px";
-  }
-  function hideTip() { tipEl.hidden = true; }
-  data.forEach(function (d, i) {
-    var cy = T + rowH * i + rowH / 2;
-    el("text", { x: L - 14, y: cy + 4, "text-anchor": "end", class: "small" }, "Seed " + d.seed);
-    el("line", { x1: x(d.base), y1: cy, x2: x(d.bred), y2: cy, style: "stroke:var(--muted)", "stroke-width": 2 });
-    var lang = function () { return root.getAttribute("data-lang") === "en"; };
-    [["base", "var(--violet)"], ["bred", "var(--heat)"]].forEach(function (s) {
-      var val = d[s[0]], cx = x(val);
-      el("circle", { cx: cx, cy: cy, r: 7, style: "fill:" + s[1] + ";stroke:var(--bg)", "stroke-width": 2 });
-      el("text", { x: cx, y: cy - 13, "text-anchor": "middle", class: "small" }, val.toFixed(3));
-      var hit = el("circle", { cx: cx, cy: cy, r: 16, fill: "transparent", tabindex: 0 });
-      var label = function () {
-        var en = lang();
-        var who = s[0] === "base" ? (en ? "best seed Cascade" : "bestes Startprogramm") : (en ? "best bred finalist" : "bester gezüchteter Finalist");
-        return "<b>Seed " + d.seed + "</b><br>" + who + ": " + val.toFixed(3);
-      };
-      hit.addEventListener("mousemove", function (e) { showTip(e, label()); });
-      hit.addEventListener("mouseleave", hideTip);
-      hit.addEventListener("focus", function () {
-        var r = hit.getBoundingClientRect();
-        showTip({ clientX: r.left + r.width / 2, clientY: r.top }, label());
-      });
-      hit.addEventListener("blur", hideTip);
-    });
-  });
 
   // ---- Speckle simulator (verified against a direct DFT and Goodman's contrast formula) ----
   // Imaging speckle of a rough surface lit by a Gaussian laser beam (after Goodman).
