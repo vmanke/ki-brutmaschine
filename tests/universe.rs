@@ -170,9 +170,14 @@ fn digest(events: &[Event]) -> String {
                 "finalist id={} seed={} select={}/{}",
                 f.id, f.is_seed, f.select_solved, f.select_puzzles
             ),
-            // Runs without Souls write no `souls` event (step 2), and Runs without imagination
-            // no `learned` event (`.scratch/seelen-modell/spec-imagination.md`).
-            Event::State(_) | Event::Souls { .. } | Event::Learned { .. } => continue,
+            // Runs without Souls write no `souls` event (step 2), Runs without imagination no
+            // `learned` event (`.scratch/seelen-modell/spec-imagination.md`), and Runs without
+            // a Lexicon no `retired` or `coined` event (`.scratch/eigene-sprache/spec.md`).
+            Event::State(_)
+            | Event::Souls { .. }
+            | Event::Learned { .. }
+            | Event::Retired { .. }
+            | Event::Coined { .. } => continue,
         };
 
         out.push_str(&line);

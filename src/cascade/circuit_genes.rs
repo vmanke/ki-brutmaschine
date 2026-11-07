@@ -20,9 +20,10 @@
 //! Pure computation: no files, no network, no clock.
 #![forbid(unsafe_code)]
 
-use crate::cascade::designer::named_families;
+use crate::cascade::designer::{families_in_order, named_families};
 use crate::cascade::domain::GenePool;
 use crate::cascade::genome::{Cascade, Section, Stage, Traits, Worker};
+use crate::cascade::lexicon::LexiconGenes;
 use crate::cascade::qubit::Gate;
 use crate::cascade::variation::MutatorBrief;
 
@@ -258,6 +259,24 @@ pub const CIRCUIT_PHRASES: &[(&str, &str)] = &[
     ),
 ];
 
+/// One readable term per method family, in the order of `designer::FAMILY_STEMS`, from which
+/// the Lexicon builds its coined phrases (arms L and R, `.scratch/eigene-sprache/spec.md`,
+/// section 3.2), such as "Use a hadamard basis change, then the phase polynomial." Each term
+/// names its family alone, by one of its English stems. Every phrase of two or three of them,
+/// in any order, names exactly their families, in that order, and passes the genome's text
+/// rules and `no_gate_lists`. A coined phrase is exempt from the pool's rule above: naming
+/// two of Hadamard, Phase and Linear in one phrase is what a coined word may do.
+pub const LEXICON_TERMS: [&str; 8] = [
+    "linear row operations",
+    "the phase polynomial",
+    "a hadamard basis change",
+    "a conjugating sandwich",
+    "a short search",
+    "meet in the middle",
+    "simplify the result",
+    "the previous answer",
+];
+
 /// System prompt of every LLM mutator request on circuits.
 const BRIEF_SYSTEM: &str = "You are the mutation operator of a research breeding system. \
 You edit Cascades: JSON data that configures model Workers, which design quantum circuits. \
@@ -384,7 +403,8 @@ pub fn no_gate_lists(c: &Cascade) -> std::result::Result<(), String> {
 }
 
 /// The genes of circuit breeding: the seeds, the phrase pool, the brief, the rule that
-/// refuses gate lists, and the families a text names by the stems the designer reads.
+/// refuses gate lists, the families a text names by the stems the designer reads, and the
+/// terms and the order of first mention that the Lexicon coins its words from.
 pub fn circuit_pool() -> GenePool {
     GenePool {
         seeds: circuit_seed_cascades,
@@ -392,6 +412,10 @@ pub fn circuit_pool() -> GenePool {
         brief: &CIRCUIT_BRIEF,
         admit: no_gate_lists,
         families_of: Some(named_families),
+        lexicon: Some(LexiconGenes {
+            terms: &LEXICON_TERMS,
+            mentions: families_in_order,
+        }),
     }
 }
 
@@ -531,6 +555,7 @@ mod tests {
     };
     use crate::cascade::designer::{FAMILY_STEMS, SimDesigner, knowledge};
     use crate::cascade::genome::{CascadeLimits, MAX_SECTIONS, adapt_seeds};
+    use crate::cascade::lexicon::{meanings, phrase};
     use crate::cascade::qubit::{Circuit, Column, Dressing, Target, check};
     use crate::cascade::variation::{llm_crossover_request_with, llm_mutate_request_with};
     use crate::util::derive_seed;
@@ -1678,5 +1703,92 @@ mod tests {
         for (_, text) in CIRCUIT_PHRASES {
             assert_eq!(families_of(text), named_families(text), "{text}");
         }
+
+        // The Lexicon coins from the terms, and orders a phrase's families as the designer
+        // reads them, by first mention.
+        let lexicon = pool.lexicon.expect("circuits coin words");
+
+        assert_eq!(lexicon.terms, LEXICON_TERMS);
+        assert_eq!(
+            (lexicon.mentions)("Use the phase polynomial, then linear row operations."),
+            [1, 0]
+        );
+        assert_eq!((lexicon.mentions)(SEED_HADAMARD), [2]);
+    }
+
+    /// Every order of the families `m`.
+    fn orders(m: &[usize]) -> Vec<Vec<usize>> {
+        if m.len() <= 1 {
+            return vec![m.to_vec()];
+        }
+
+        (0..m.len())
+            .flat_map(|i| {
+                let mut rest = m.to_vec();
+                let first = rest.remove(i);
+
+                orders(&rest).into_iter().map(move |mut o| {
+                    o.insert(0, first);
+                    o
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lexicon_terms_and_phrases_name_exactly_their_families() {
+        let limits = CascadeLimits::default();
+        let fits = |text: &str| {
+            let c = single("strategy", text);
+            let lower = text.to_lowercase();
+
+            assert!(c.check(&limits).is_ok(), "{text}: {:?}", c.check(&limits));
+            assert_eq!(no_gate_lists(&c), Ok(()), "{text}");
+            assert!(text.is_ascii() && text.chars().count() <= 200, "{text}");
+            assert!(CIRCUIT_PHRASES.iter().all(|(_, t)| *t != text), "{text}");
+            assert!(!text.contains(CIRCUIT_SELF_CHECK_TEXT), "{text}");
+
+            for target in TARGET_NAMES {
+                assert!(!lower.contains(target), "{target:?} in {text:?}");
+            }
+
+            for word in BANNED {
+                assert!(!lower.contains(word), "{word:?} in {text:?}");
+            }
+        };
+
+        assert_eq!(LEXICON_TERMS.len(), FAMILY_STEMS.len());
+
+        // Each term names its family alone.
+        for (f, term) in LEXICON_TERMS.iter().enumerate() {
+            assert_eq!(named_families(term), [f], "{term}");
+            fits(term);
+        }
+
+        // Every phrase of two or three families, in every order, names exactly them, in its
+        // order: 28 pairs in 2 orders and 56 triples in 6.
+        let mut phrases = 0;
+
+        for m in meanings(LEXICON_TERMS.len()) {
+            for order in orders(&m) {
+                let text = phrase(&LEXICON_TERMS, &order);
+
+                assert_eq!(named_families(&text), m, "{text}");
+                assert_eq!(families_in_order(&text), order, "{text}");
+                assert_eq!(knowledge(&text).len(), m.len(), "{text}");
+                fits(&text);
+                phrases += 1;
+            }
+        }
+
+        assert_eq!(phrases, 28 * 2 + 56 * 6);
+        assert_eq!(
+            phrase(&LEXICON_TERMS, &[2, 1]),
+            "Use a hadamard basis change, then the phase polynomial."
+        );
+        assert_eq!(
+            knowledge(&phrase(&LEXICON_TERMS, &[2, 1, 0])),
+            ["Hadamard", "Phase", "Linear"]
+        );
     }
 }
