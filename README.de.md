@@ -97,8 +97,9 @@ Stand: 2026-11-02.
   wirken ([Spezifikation](.scratch/seelen-modell/spec.md), Englisch). Auf Gittern wirkt die
   Seele von Schritt 2 früh und oft, ihr Einfluss auf den Endpunkt ist aber nah am Münzwurf:
   S gegen N 21 zu 18, S gegen V 20 zu 18, S gegen K 18 zu 20
-  ([Ergebnis](.scratch/seelen-modell/grid-screen.md), Englisch, PR #53). Über die zwei offenen
-  Vergleiche entscheidet die Eigentümerin bzw. der Eigentümer. Bei Arm W gewichtet
+  ([Ergebnis](.scratch/seelen-modell/grid-screen.md), Englisch, PR #53). Die zwei offenen
+  Vergleiche, S gegen N und S gegen V, hat die Eigentümerin bzw. der Eigentümer am 2026-11-11
+  geschlossen, sodass kein gezähltes Experiment auf Gittern folgt. Bei Arm W gewichtet
   die Geburtsseele die Abschnitts-Operatoren; er ist gebaut und in der Voreinstellung aus
   ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
   Sein Vortest endete mit Stopp: Die vererbten Vorlieben wandten sich nicht Linear, Phase und

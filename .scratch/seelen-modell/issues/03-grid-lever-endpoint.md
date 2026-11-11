@@ -176,3 +176,6 @@ the synthetic Runs of its `--self-test`. It runs once, after all 160 Runs have f
   (open). S against K: 18 to 20 with 2 ties (stop). The results are in `../grid-screen.md`.
   So on grids the step 2 Soul acts early and often, but its effect on the endpoint is near a
   coin toss. Phase 3 does not start without a go; the owner decides on the two open comparisons.
+- 2026-11-11, the owner's decision. Both open comparisons, S against N and S against V, are
+  closed. No counted grid experiment is pre-registered, so phase 3 does not start. Section 7 of
+  `../grid-screen.md` holds the decision and the calculations the owner had.
