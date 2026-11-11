@@ -84,8 +84,10 @@ Status on 2026-11-02.
 - **Search for a Soul model (PR #51 to #54).** The design names candidates that act early
   ([spec](.scratch/seelen-modell/spec.md)). On grids the Soul of step 2 acts early and often,
   but its effect on the endpoint is close to a coin toss: S against N 21 to 18, S against V 20
-  to 18, S against K 18 to 20 ([result](.scratch/seelen-modell/grid-screen.md), PR #53). The
-  owner decides on the two open comparisons. In arm W the birth Soul weights the section operators; it is built and off by default
+  to 18, S against K 18 to 20 ([result](.scratch/seelen-modell/grid-screen.md), PR #53). On
+  2026-11-11 the owner closed the two open comparisons, S against N and S against V, so no
+  counted experiment on grids follows. In arm W the birth Soul weights the section operators;
+  it is built and off by default
   ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
   Its screen ended with stop: the inherited preferences did not turn towards Linear, Phase and
   Hadamard ([result](.scratch/seelen-modell/screen-w.md), PR #52). A fixed, hand-made
