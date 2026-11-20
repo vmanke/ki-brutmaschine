@@ -101,8 +101,8 @@ Stand: 2026-11-02.
   Vergleiche, S gegen N und S gegen V, hat die Eigentümerin bzw. der Eigentümer am 2026-11-11
   geschlossen, sodass kein gezähltes Experiment auf Gittern folgt. Bei Arm W gewichtet
   die Geburtsseele die Abschnitts-Operatoren; er ist gebaut und in der Voreinstellung aus
-  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
-  Sein Vortest endete mit Stopp: Die vererbten Vorlieben wandten sich nicht Linear, Phase und
+  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md),
+  am 2026-11-20 verworfen). Sein Vortest endete mit Stopp: Die vererbten Vorlieben wandten sich nicht Linear, Phase und
   Hadamard zu ([Ergebnis](.scratch/seelen-modell/screen-w.md), Englisch, PR #52). Eine feste,
   von Hand gesetzte Vorliebe (Arm WF) schützte diese Familien; sie wird nur beschrieben. Eine
   Forschungsnotiz sammelt Belege für ein chemisches QNN-Resnet als Seele
