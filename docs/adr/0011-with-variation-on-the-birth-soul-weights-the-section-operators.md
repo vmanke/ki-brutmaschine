@@ -48,3 +48,6 @@ Status: proposed on 2026-11-02; accepted on 2026-11-04 as a setting that is off 
 when the owner merged pull request #52. It applies only to Runs that set `variation`. Its
 screen (ticket 02) ended on 2026-11-03 with stop: criteria 1, 2 and 3 failed
 (`.scratch/seelen-modell/screen-w.md`). So no confirmatory experiment on W follows.
+
+Rejected by the owner on 2026-11-20, because of that screen. The setting stays in the code, off
+by default, so that the screen can still be recomputed.

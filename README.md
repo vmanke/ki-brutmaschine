@@ -88,8 +88,8 @@ Status on 2026-11-02.
   2026-11-11 the owner closed the two open comparisons, S against N and S against V, so no
   counted experiment on grids follows. In arm W the birth Soul weights the section operators;
   it is built and off by default
-  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md)).
-  Its screen ended with stop: the inherited preferences did not turn towards Linear, Phase and
+  ([ADR 0011](docs/adr/0011-with-variation-on-the-birth-soul-weights-the-section-operators.md),
+  rejected on 2026-11-20). Its screen ended with stop: the inherited preferences did not turn towards Linear, Phase and
   Hadamard ([result](.scratch/seelen-modell/screen-w.md), PR #52). A fixed, hand-made
   preference (arm WF) protected these families; it is reported for description only. A
   research note collects sources for a chemical QNN-ResNet as the Soul

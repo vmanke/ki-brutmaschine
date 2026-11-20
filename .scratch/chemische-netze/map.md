@@ -68,7 +68,7 @@ Research note: `research.md`. Child tickets: `issues/`.
    and their test (`tests/learner_security.rs:278`)? Admitting candle took an ADR, erratum E15
    and a change of that test (ADR 0007).
 5. **What counts as size and cost.** What is a parameter of a CRN, for `max_params` and for the
-   fitness penalty (`src/score.rs:301-311`)? How are reactions, molecularity, peak
+   fitness penalty (`src/score.rs:396-415`)? How are reactions, molecularity, peak
    concentration, convergence time and dissipation charged? The chemostats' work depends on the
    energy reference; the dissipation does not, but it needs `ln` (`research.md` section 8.3).
    Taken per reaction and step, it conflicts with the rule of no `exp`, `ln` or `powf` in the
@@ -86,3 +86,8 @@ Research note: `research.md`. Child tickets: `issues/`.
    which physics brief? This waits for the CNN Architect.
 10. **Beyond the MLP mode.** Could a chemical network later be a Worker or a tool of a Cascade,
     as the CNN draft plans for CNNs?
+11. **A fixed linear decoder with a free code inside.** A second choice beside item 1, not
+    instead of it. Inputs pick codes from a menu, and a linear read-out of reporter species at
+    a fixed time, fitted by ridge regression, gives the logits (`code-genes-and-read-out.md`).
+    Does the network then invent a code that fits, or does the fitted read-out do the work? Four
+    controls test it (same note, section 4).
