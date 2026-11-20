@@ -137,12 +137,14 @@ Recommendation: λ = 1e-4 (c°)², on raw concentrations. Three reasons, all our
   [R36] used L2 regularisation against the collinearity of its ion signals [R36, SI].
 - **A bounded gain.** Each logit's weights have a norm of at most σ_y/(2√λ), with σ_y the
   standard deviation of its target over the training split. For one-hot targets of two balanced
-  classes that is 25 per c°. A direction in reporter space with standard deviation σ over the
-  training inputs keeps the share σ²/(σ² + λ) of its least-squares weight: 0.99 at σ = 0.1 c°,
-  0.5 at 0.01 c° and 0.01 at 0.001 c°. So a contrast far below 1 % of the default code scale
-  counts little against stronger ones, and rounding noise is not blown up. This is a soft form
-  of the draft's rule that the chemistry must make the contrast itself (lines 759-760). The
-  draft instead rounds its read-out to multiples of 2^(−20) c° (lines 400-401).
+  classes that is 25 per c°. Take a principal direction of the reporters: a unit eigenvector of
+  their centred covariance over the training inputs, along which they have standard deviation σ.
+  The weight's component along it keeps the share σ²/(σ² + λ) of its least-squares value: 0.99
+  at σ = 0.1 c°, 0.5 at 0.01 c° and 0.01 at 0.001 c°. Along other directions ridge mixes these
+  shares. So a contrast far below 1 % of the default code scale counts little against stronger
+  ones, and rounding noise is not blown up. This is a soft form of the draft's rule that the
+  chemistry must make the contrast itself (lines 759-760). The draft instead rounds its read-out
+  to multiples of 2^(−20) c° (lines 400-401).
 - **A well-conditioned solve.** Each reporter lies in [0, c_max], so its variance is at most
   c_max²/4. The condition number, the ratio of the largest to the smallest eigenvalue of the
   fit's matrix, is then at most 1 + R·c_max²/(4λ). That is 4e6 at R = 16 and an example c_max of
