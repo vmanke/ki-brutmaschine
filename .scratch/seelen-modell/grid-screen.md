@@ -13,6 +13,9 @@ S passed arm N on 21 of 39 untied seeds and arm V on 20 of 38. Both comparisons 
 owner decides. Against arm K, arm S was higher on only 18 of 38 untied seeds, so that comparison
 stops.
 
+**Update of 2026-11-11.** The owner closed both open comparisons. No counted experiment follows
+from this screen. Section 7 holds the decision.
+
 ## 1. What ran
 
 - **Binary.** Every Run and every `--verify` used one frozen copy of `brut-breed`, outside the
@@ -94,6 +97,29 @@ effect: S was higher on about half of the untied seeds against every control. As
 by the method of `spec.md`, section 3: if the true shares were 0.54 and 0.53, the rule of the
 step 2 draft (p₁ = 3/4, at most 120 pairs) would prove a claim with probability 0.019 and 0.013.
 This screen makes no claim. Seeds 3001 to 3040 never count.
+
+## 7. The owner's decision of 2026-11-11
+
+The owner closed both open comparisons, S against N and S against V. Neither gets a counted
+experiment, so phase 3 of ticket 03 does not start. The owner gave the aim (translated): "I want
+real research results that really produce better AI models." The verdicts of section 3 stay as
+the rule gave them.
+
+The owner had the facts of section 6 and the calculations below. They are ours, exact binomial,
+made after the screen from the counts of section 3. They are context and no criterion.
+
+- **A share that the draft rule could confirm fits the counts badly.** If the true share of
+  untied seeds with S higher were 0.70, a count of at most 21 of 39 would occur with probability
+  0.024, and a count of at most 20 of 38 with probability 0.018. The rule of the step 2 draft
+  reaches a power of 0.79 at a share of 0.70 and of 0.44 at 0.65 (`spec.md`, section 3).
+- **A small effect stays possible, and it would be costly to show.** A one-sided test of fixed
+  size at the level 0.05 with a power of 0.80 needs about 1 000 untied pairs if the true share
+  is 0.54, and about 1 800 if it is 0.53. That is about 2 000 and 3 500 Runs for two arms. At
+  this screen's pace, 89.9 minutes for 160 Runs, they take about 19 and 33 hours.
+- **The differences are small.** The median of A_S − A_N, 32.5, is 0.43 % of arm N's median A
+  of 7477. The median of A_S − A_V is 4.5.
+
+Whether the search for a Soul model goes on stays open. The owner decides that separately.
 
 ## Appendix A: the analysis output
 
