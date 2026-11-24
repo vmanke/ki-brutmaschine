@@ -240,7 +240,9 @@ No source here describes the construction below. It is our own.
   (2017), or a population code over a few species. Each code costs its species.
 - **Reporter genes for outputs.** The genome names a few reporter species. A linear read-out,
   fitted by ridge regression on the training split, maps their concentrations at the fixed read-out
-  time to the logits, as in the formose reservoir (Baltussen 2024). The weights are fitted, not
+  time to the logits. The formose reservoir (Baltussen 2024) fitted ridge regression for
+  prediction and forecasting, and a linear support vector classifier for classification
+  (`../chemische-netze/code-genes-and-read-out.md`, section 3.1). The weights are fitted, not
   bred, and they count as parameters.
 - **A fixed decoder, a free code.** The reaction semantics still come first; this part needs
   mass action with a fixed read-out time. Within them, the class of the decoder is fixed and
@@ -249,7 +251,9 @@ No source here describes the construction below. It is our own.
   replacement for it.
 - **Efficiency.** The fitness keeps its form, the primary score − 0.005·log10(parameters) −
   0.002·log10(FLOPs) (German draft, lines 899-902). Parameters include the read-out weights and
-  the code genes. Dissipation is reported; charging it needs an ADR, as the research note says.
+  the code genes. Dissipation is reported; charging it needs an ADR, as Decision 5 of the German
+  draft says (lines 1309-1311). Ticket 02 of `../chemische-netze/` and `research.md` section 8.3
+  would charge it; the owner decides.
 - **Controls.** The same read-out on the raw inputs, without chemistry. A fixed random reservoir
   with the same read-out, the labelled baseline the research note already proposes. A random
   assignment of codes. The German draft's fixed read-out stays as a fourth arm, because a free

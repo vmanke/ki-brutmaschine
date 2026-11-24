@@ -31,3 +31,12 @@ Spec: `../spec.md`, sections 2 and 4
   a line.
 
 ## Comments
+
+- 2026-11-07, design note for the owner: `../../chemische-netze/code-genes-and-read-out.md`.
+- 2026-11-20, reviewed: the arithmetic, the code lines cited and source [S1] were checked again.
+  The note found two errors in `../spec.md`, now fixed: section 4 cited the research note for the
+  ADR on charging dissipation (it is the German draft, Decision 5), and the formose reservoir
+  used ridge only for prediction and forecasting. The stale fitness line of Fog 5 in
+  `../../chemische-netze/map.md` is fixed too. The ticket is done when the owner has read the
+  note. Its main open choice: dissipation reported, as the spec says, or charged, as ticket 02
+  says.

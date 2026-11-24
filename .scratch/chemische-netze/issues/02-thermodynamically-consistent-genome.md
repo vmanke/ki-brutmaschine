@@ -84,3 +84,4 @@ physics?
   - Line references: those in this ticket date from 2026-10-31. At commit 3d3b2fe, `Limits` is at
     `src/config.rs:71-107`, `Genome::validate` at `src/genome.rs:226-334` and the content id at
     `src/genome.rs:336-349`. `src/genome.rs:58-65` still holds.
+- 2026-11-07, design note on code genes and a fitted read-out: `../code-genes-and-read-out.md`.
