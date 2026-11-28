@@ -169,8 +169,8 @@ The Workers of a Cascade that answer the same input in parallel; when they disag
 _Avoid_: layer, step
 
 **Cascade**:
-One to four Stages run in order, each seeing the task plus the answers chosen by all earlier Stages (the residual path); the unit that is bred and competes.
-_Avoid_: pipeline, chain, ensemble, agent
+One to four Stages run in order, each seeing the task plus the answers chosen by all earlier Stages (the residual path); the unit that is bred and competes. German texts call it a Gedankenkaskade or Gedankenkette.
+_Avoid_: pipeline, chain, ensemble, agent; in German, „denkende Kette“
 
 **Judging skill**:
 How often a Cascade picks the right answer of a pair whose truth is known, with a Laplace prior (a Cascade never judged this way keeps 1/2); a reply without a usable verdict counts as a wrong pick. It enters fitness with a fixed weight.
